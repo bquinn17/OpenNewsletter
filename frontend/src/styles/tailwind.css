@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-cream text-ink font-sans antialiased;
+  }
+  ::selection { background: #181821; color: #FBF6EE; }
+}
+
+@layer components {
+  .canvas-bg {
+    background-color: #F1E9D7;
+  }
+  .app-container {
+    width: 100%;
+    margin: 0 auto;
+    background: #FBF6EE;
+    position: relative;
+    min-height: 100vh;
+  }
+  @media (min-width: 768px) {
+    .canvas-bg {
+      padding: 5rem 0;
+    }
+    .app-container {
+      max-width: 56rem;
+      min-height: calc(100vh - 10rem);
+      border-radius: 28px;
+      box-shadow:
+        0 30px 80px -30px rgba(20, 18, 30, 0.25),
+        0 0 0 1px rgba(20, 18, 30, 0.05);
+      overflow: hidden;
+    }
+  }
+  .ph-img {
+    background:
+      linear-gradient(135deg, rgba(123, 91, 255, 0.18), rgba(255, 90, 107, 0.18)),
+      repeating-linear-gradient(45deg, rgba(20, 18, 30, 0.05) 0 8px, transparent 8px 16px);
+    border: 1px solid rgba(20, 18, 30, 0.08);
+  }
+  .hero-april  { background: linear-gradient(135deg, #FF5A6B 0%, #FFB178 50%, #FFD23F 100%); }
+  .hero-may    { background: linear-gradient(135deg, #7B5BFF 0%, #5AC8FF 100%); }
+  .hero-june   { background: linear-gradient(135deg, #3DD9A4 0%, #5AC8FF 100%); }
+  .hero-march  { background: linear-gradient(135deg, #FFB178 0%, #FFD23F 100%); }
+  .hero-feb    { background: linear-gradient(135deg, #7B5BFF 0%, #FF5A6B 100%); }
+  .toggle {
+    position: relative;
+    width: 44px; height: 26px;
+    background: #E5DECC; border-radius: 999px;
+    transition: background 0.2s; cursor: pointer; flex-shrink: 0;
+  }
+  .toggle.on { background: #181821; }
+  .toggle::after {
+    content: "";
+    position: absolute; top: 3px; left: 3px;
+    width: 20px; height: 20px;
+    border-radius: 999px; background: #fff;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  .toggle.on::after { transform: translateX(18px); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
