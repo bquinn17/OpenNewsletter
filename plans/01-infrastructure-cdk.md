@@ -389,7 +389,8 @@ CDK Lambda assets reference compiled `bootstrap` binaries in `backend/target/lam
 
 - DynamoDB on-demand: ~$1–3/mo
 - Lambda + HTTP API: ~$1–2/mo (idle backend)
-- S3 + CloudFront: ~$1–5/mo (depends on image volume; CloudFront cache hits ~$0.085/GB)
+- S3 storage + requests: ~$0.50–2/mo (depends on image volume)
+- CloudFront egress: ~$0.085/GB cache miss (PriceClass_100, NA + EU); cache hits dominate after the first viewer per published newsletter. Fixed CloudFront cost is **$0** — the distribution itself is free; only egress and requests are billed. See [`08-media-uploads.md` §6.1](08-media-uploads.md) for why CloudFront is retained vs. direct-from-S3.
 - Cognito: free tier (50k MAU)
 - EventBridge schedules: <$1/mo
 - Secrets Manager: ~$0.40/secret/mo × ~5 secrets = ~$2/mo

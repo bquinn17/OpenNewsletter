@@ -303,6 +303,16 @@ Memory: 1024 MB (image processing is CPU-bound; arm64 Lambda's 1024 MB gives a f
 - A user's cookie is scoped to one group at a time; the SPA refreshes when switching.
 - Worst case: a member of group A guesses an image URL belonging to group B. They lack cookies for group B's path → CloudFront returns 403. Tenant boundary preserved.
 
+### 6.1 Why CloudFront (decision record)
+
+Removing CloudFront in favor of direct-from-S3 serving was considered. Three options were evaluated:
+
+- **(A) Keep CloudFront + signed cookies** — current design.
+- **(B) Public S3 bucket, unguessable keys** — radically simpler (static URLs, no signing, perfect browser/SW cache) but abandons the membership-based tenant isolation the rest of the system enforces. A leaked URL works forever.
+- **(C) Private S3, per-image SigV4 presigned GETs** — preserves tenant isolation but pushes signing into every handler that returns image URLs, and signed URLs change per request, breaking the SW `CacheFirst` strategy in [`04-frontend-architecture.md`](04-frontend-architecture.md) §SW.
+
+**Decision: (A).** Cost is effectively a wash at our scale: CloudFront egress ($0.085/GB, PriceClass_100) is actually slightly *cheaper* than S3 direct egress ($0.09/GB), and removing CloudFront only saves ~$0.40/mo (one Secrets Manager secret for the signing keypair). The non-cost benefits of (A) — edge cache for repeated reads of published newsletters, and stable URLs that the markdown renderer's `image:{imageId}` resolution and the SW cache both depend on — are what make it the simpler design once you account for what (B) or (C) would replace it with.
+
 ---
 
 ## 7. Image references in markdown
