@@ -62,19 +62,27 @@ A test that loads `shared/openapi.yaml`, then for every defined route checks tha
 
 ### 2.4 Running locally
 
-```bash
-# One-time:
-docker run -p 8000:8000 amazon/dynamodb-local
+By default, `cargo test` runs **unit tests only** — pure, no IO, no Docker, no AWS. This is the inner loop, intended to run on every save (`cargo watch -x test`).
 
-# Or via the test harness which auto-starts a container per test process via `testcontainers`:
+Integration tests (the DDB-local-backed suite in §2.2) are gated behind a feature flag and are **CI-only by default**. Developers don't need Docker or DynamoDB Local on their machines. See [`13-dev-environments.md` §10](13-dev-environments.md) for the full test-placement matrix.
+
+```bash
 cd backend
-cargo test                    # unit + integration
-cargo test --test lifecycle   # one suite
+
+# Inner loop (default): unit + contract tests, ~sub-second.
+cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+
+# Opt-in: integration tests against DDB-local. Requires Docker.
+# Used to debug a failing CI integration test locally.
+cargo test --features integration
+cargo test --features integration --test lifecycle   # one suite
 ```
 
-The `testcontainers` crate manages the DDB-local container lifecycle. One container per test binary, parallelism via per-test unique table names.
+When `--features integration` is passed, the `testcontainers` crate auto-starts a DDB-local container per test process — no manual `docker run` needed. One container per test binary, parallelism via per-test unique table names.
+
+CI runs `cargo test --features integration` on every backend PR, so coverage of the access-pattern + transaction tests is unchanged from the original plan; only the developer's local default has shifted.
 
 ---
 

@@ -304,12 +304,12 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
 ### 7.3 RespondPage `/g/:g/n/:c/respond/:q`
 
 - For text questions: a markdown editor (textarea with live preview toggle), drag-and-drop image uploader, autosave indicator, Publish button.
-  - `useResponseEditor` hook manages: server `version`, in-memory `body`, debounced PUT on every change.
+  - `useResponseEditor` hook manages in-memory `body` and a **debounced PUT** that fires once the user has stopped typing for `autosaveDebounceMs` (default 1500 ms). It also flushes on `blur` and on `visibilitychange → hidden`.
   - Image upload flow detailed in `08-media-uploads.md` §3.
 - For poll questions: option list with single-select, Publish button.
 - Banner showing time-until-deadline (group TZ).
 - After publish, page becomes read-only with an "Edit" toggle that reopens editor (until cycle close).
-- Gracefully handles 409 `RESPONSE_VERSION_CONFLICT`: refetches server state and offers "Use server version" / "Force overwrite" buttons.
+- **Concurrency: last-write-wins.** The server doesn't enforce optimistic-concurrency tokens (see `03-api-contract.md` §7.3) and the SPA does not implement a conflict-resolution UI. The debounced autosave makes interleaving rare — if a real conflict ever lands, the most recent save wins. We accept this trade for the v1 simplicity it buys; revisit if telemetry shows actual clobbering.
 
 ### 7.4 CandidatesPage `/g/:g/upcoming`
 
@@ -335,18 +335,20 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
 
 ### 7.6 SettingsPage
 
-- Avatar upload, display name edit.
-- Push notifications toggle (per-group).
-- "My devices" list — push subscriptions with delete buttons.
-- Session controls (logout, revoke all).
+- Profile card: display name edit, avatar upload (image) with a fallback color picker for users who don't upload one.
+- **Notifications**: a master push toggle plus, per group, three independently-toggleable categories — *cycle open*, *deadline reminders*, *publication*.
+- **My devices**: push subscriptions with delete buttons + "send test push" action.
+- **Your groups**: each group exposes Manage (admins) / View / **Leave**. Leaving the only group where you're the only admin is blocked (server returns `LAST_ADMIN`).
+- Session controls (sign out).
 
 ### 7.7 GroupAdminPage
 
 Tabs:
-- **Members** — list with role pickers, kick buttons, member count vs cap.
+- **Members** — list with role pickers, kick buttons (last-admin guarded), member count vs cap.
 - **Invites** — generate (with role + TTL), revoke, see status. Display invite as a copyable URL `https://opennewsletter.example.com/join?code=...`.
-- **Settings** — `<GroupSettingsForm/>` writing to `PATCH /groups/{g}`.
-- **Curate** — visible only when next cycle status is `voting`; shows top candidates with checkboxes and a "Promote selected" button writing to `POST /admin/.../curate/promote`.
+- **Settings** — `<GroupSettingsForm/>` writing to `PATCH /groups/{g}` (cycle parameters, on-cycle-open default).
+
+There is no Curate tab in v1 — admins do not override voting outcomes. See `06-newsletter-lifecycle.md` §7.
 
 ### 7.8 JoinPage `/join?code=...`
 
@@ -360,19 +362,18 @@ If authenticated: call `POST /invites/redeem` with the code.
 
 ### 8.1 Local model
 
-`useResponseEditor` keeps three layers:
+`useResponseEditor` keeps two layers:
 
-- **`server`**: last known `Response` from the server (`version`, `body`, `imageMediaIds`, etc.)
+- **`server`**: last known `Response` from the server (`body`, `imageMediaIds`, `imageCaptions`, etc.)
 - **`local`**: the user's working copy in the textarea
-- **`pending`**: an in-flight save request (if any)
 
 ### 8.2 Save loop
 
 1. `local` changes → `dirty = local !== server`
 2. After **1500 ms** of no further keystrokes (configurable in `env.ts`), or on `blur`, or on `visibilitychange` to hidden, trigger save.
-3. PUT body uses `version: server.version`.
+3. PUT the current local state.
 4. On success → `server = response`.
-5. On 409 `RESPONSE_VERSION_CONFLICT` → set conflict UI (server data displayed, two buttons "Use server" / "Overwrite with my changes"). Overwrite re-PUTs with the new server `version`.
+5. **No conflict handling**. The server uses last-write-wins (`03-api-contract.md` §7.3), so a successful save just becomes the new canonical state. There is no "Use server / Overwrite" UI.
 
 ### 8.3 Offline / failure
 
@@ -454,7 +455,73 @@ export const env = {
 
 ---
 
-## 14. Things explicitly NOT in v1
+## 14. PWA enablement checklist
+
+§5 above describes the target PWA architecture. This section is the concrete wiring an executor follows to flip the bit from "regular SPA" to "installable PWA with Web Push" on top of the current frontend. The current frontend is **not** yet a PWA — none of these steps have been done.
+
+### 14.1 Plugin + manifest
+
+1. `npm i -D vite-plugin-pwa workbox-window`.
+2. In [`vite.config.ts`](../frontend/vite.config.ts), register `VitePWA({...})` using `strategies: "injectManifest"` (so we can mix our own SW code with Workbox's precache + runtime caches), with the manifest values from §5.1.
+3. Add `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `apple-touch-icon.png` to `frontend/public/`. Source images: monochrome glyph on `theme_color`, with the maskable variant honoring the safe-zone (centered ≥80% of canvas).
+4. Confirm `<link rel="manifest" href="/manifest.webmanifest">` shows up in `index.html` (the plugin injects this automatically).
+
+### 14.2 Service worker
+
+1. Create `frontend/src/pwa/sw.ts` with the push + notificationclick handlers from §5.4 plus `precacheAndRoute(self.__WB_MANIFEST)` and the runtime caches from §5.2.
+2. Point the plugin at it: `srcDir: "src/pwa", filename: "sw.ts"` in the `VitePWA` config.
+3. Register from [`main.tsx`](../frontend/src/main.tsx):
+   ```ts
+   import { registerSW } from "virtual:pwa-register";
+   registerSW({ immediate: true });
+   ```
+4. Tokens / `/config` must bypass the SW (network-only) — declared inline via `registerRoute(({url}) => url.pathname === "/config", new NetworkOnly())`.
+
+### 14.3 Web Push subscription wiring
+
+1. Create `frontend/src/pwa/pushSetup.ts` containing `ensurePushSubscription(vapidPublicKey)` per §5.3.
+2. Call it from [`AuthProvider`](../frontend/src/auth/AuthProvider.tsx) after the user is loaded, using `config.vapidPublicKey` (already exposed by `GET /config`). See `07-notifications.md` §11.2.
+3. Replace today's mock master toggle with `pushSetup`'s permission-request flow: when the toggle flips on, call `ensurePushSubscription`; when off, call `pushManager.getSubscription()` and `unsubscribe()` + `POST /push/unsubscribe`.
+4. Feature-detect: hide the toggle entirely when `!('PushManager' in window) || !('Notification' in window)` and show the iOS-specific copy on iOS Safari per `07-notifications.md` §14.
+
+### 14.4 Install prompt
+
+1. In [`App.tsx`](../frontend/src/App.tsx), capture `beforeinstallprompt` and stash the event in a Zustand store (`src/state/installPrompt.ts`).
+2. Surface "Install OpenNewsletter" buttons on Home and Settings that call `event.prompt()`, then clear the store on `userChoice` resolution.
+3. iOS Safari does not fire `beforeinstallprompt`. On iOS user agents, show a static "Add to Home Screen" instruction banner (dismissible, persisted in `localStorage`).
+
+### 14.5 GitHub Pages SPA fallback
+
+The deploy workflow ([`.github/workflows/frontend-deploy.yml`](../.github/workflows/frontend-deploy.yml)) must `cp dist/index.html dist/404.html` after the Vite build so deep links work. Without this, refreshing on `/g/:groupId/n/:cycleId` returns a 404. The CNAME for the custom domain is already covered by §12.
+
+### 14.6 HTTPS in dev
+
+`pushManager.subscribe`, `Notification.requestPermission`, and the SW lifecycle all require a secure context. Add `npm run dev:https` invoking Vite with `--https` (Vite generates a self-signed cert under `node_modules/.vite/`). Document in [`frontend/README.md`](../frontend/README.md) that local push testing requires accepting the self-signed cert in the browser. `localhost` itself is treated as a secure context, so basic SW work doesn't need HTTPS — only Web Push does.
+
+### 14.7 VAPID keys
+
+Public key flows from `GET /config` (no `.env` needed for the SPA). Generation + Secrets Manager storage handled by [`scripts/generate_vapid_keys.py`](../scripts/generate_vapid_keys.py) per `07-notifications.md` §2. The build doesn't need the key inlined — fetched at runtime.
+
+### 14.8 Verification
+
+1. `npm run build && npm run preview` over HTTPS.
+2. Chrome DevTools → Application:
+   - **Manifest** tab shows all icons + correct theme.
+   - **Service Workers** tab shows the SW activated and bypass-for-network-only routes correctly listed.
+   - **Storage → Cache Storage** shows the precache populated post-load.
+3. Lighthouse PWA audit ≥ 90. Specifically check "Installable", "Configured for a custom splash screen", "Provides a valid `apple-touch-icon`".
+4. Force a push: `POST /push/test` with the test push button on Settings; confirm the OS notification fires and clicking it focuses/opens the right URL.
+5. Install via Chrome's address-bar install icon and verify the app launches in standalone mode (`display-mode: standalone` in `matchMedia`).
+
+### 14.9 Out-of-scope for the initial PWA flip
+
+- Background sync for offline draft saves (Workbox `BackgroundSyncPlugin`). Tracked separately; the current debounced-autosave + localStorage mirror covers tab-crash recovery.
+- Periodic background sync for prefetching open cycles. Browser support is Chrome-only and not worth the complexity for v1.
+- `share_target` manifest entry to receive shared images from other apps. Roadmap.
+
+---
+
+## 15. Things explicitly NOT in v1
 
 - Rich text editing beyond markdown.
 - @-mention notifications.

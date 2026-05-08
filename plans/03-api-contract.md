@@ -168,11 +168,13 @@ Last admin can't leave — returns 409 `LAST_ADMIN`.
 
 Response 204.
 
-### 3.6 `PATCH /groups/{groupId}/members/{userId}` (role change / nickname)
+### 3.6 `PATCH /groups/{groupId}/members/{userId}` (role change)
 
-**Lambda**: `lambda-groups`. **Role**: admin (for role); self (for nickname).
+**Lambda**: `lambda-groups`. **Role**: admin.
 
-Body: `{ "role"?: "admin"|"member", "nickname"?: string|null }`
+Body: `{ "role": "admin"|"member" }`
+
+Last-admin guard: demoting the only admin returns 409 `LAST_ADMIN`. Per-group nicknames are not a v1 feature; member display always reflects the user's account `displayName`.
 
 ---
 
@@ -186,7 +188,7 @@ Body: `{ "role"?: "admin"|"member", "nickname"?: string|null }`
 
 **Lambda**: `lambda-groups`. **Role**: member.
 
-Response 200: full `Group` (incl. settings) plus `members: [{userId, displayName, role, nickname}]`.
+Response 200: full `Group` (incl. settings) plus `members: [{userId, displayName, role, avatarColor, avatarUrl}]`.
 
 ### 4.3 `PATCH /groups/{groupId}`
 
@@ -393,13 +395,11 @@ Response 200:
 
 Response 200: same shape as 6.3.
 
-### 6.5 Admin curate routes (override voting outcome)
+### 6.5 Admin moderation routes
 
-All require **admin** role.
+There is **no admin curate / promote / override** surface in v1. The cycle tick is the source of truth for which candidates promote, and locked questions are immutable. See `06-newsletter-lifecycle.md` §7. The only admin-side mutation on candidates:
 
-- `POST /admin/groups/{groupId}/cycles/{cycleId}/curate/promote` — body `{ "questionIds": [...] }` — explicitly promotes a list. Cycle must still be in `voting`. Replaces `lockedQuestionIds`. Used to override a vote ranking before the cycle opens.
-- `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate (e.g., abusive). Removes votes too via batch delete.
-- `PATCH /admin/groups/{groupId}/cycles/{cycleId}/questions/{questionId}` — body `{ "displayOrder": number, "prompt"?: string }` — rearrange or fix typos. Cycle must be `open`; once `published`, prompt is immutable.
+- `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate while it's still in `voting` (e.g., abusive). Removes votes too via batch delete. Returns 409 `CANDIDATE_PROMOTED` if the candidate has already been locked into a cycle.
 
 ---
 
@@ -422,10 +422,10 @@ Response 200: `{ "items": [Response] }`
 Body (text):
 ```json
 {
-  "version": 7,                       // current server version known to client; null on first save
   "kind": "text",
   "body": "...markdown...",
   "imageMediaIds": ["01H...", "01H..."],
+  "imageCaptions": { "01H...": "Cocoa thermos at mile two." },
   "publish": false
 }
 ```
@@ -433,7 +433,6 @@ Body (text):
 Body (poll):
 ```json
 {
-  "version": 1,
   "kind": "poll",
   "pollOptionId": "01H...",
   "publish": true
@@ -441,10 +440,10 @@ Body (poll):
 ```
 
 Behavior:
-- Cycle must be in status `open` (else `CYCLE_NOT_OPEN`).
+- Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
 - If `publish=true`, status moves to `published` and `publishedAt` is set. Otherwise stays/becomes `draft`.
-- Optimistic concurrency: condition `attribute_not_exists(version) OR version = :expectedVersion`. On failure return 409 `RESPONSE_VERSION_CONFLICT` with the current server item embedded.
-- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`.
+- **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
+- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`. Captions ≤140 chars each, keyed by an imageId in `imageMediaIds`.
 - For polls: `pollOptionId` must be in question's options. Last-write-wins.
 
 Response 200: full updated `Response`.
@@ -452,10 +451,6 @@ Response 200: full updated `Response`.
 ### 7.4 Auto-republish after edit
 
 After the cycle has closed (status `published`), responses are immutable. Attempts to `PUT` return 409 `CYCLE_NOT_OPEN`. The frontend hides edit affordances accordingly.
-
-### 7.5 `DELETE` of own response
-
-Not exposed. Drafts simply remain unpublished. Published responses can only be removed by the user via a future feature (out of scope for v1).
 
 ---
 
@@ -629,10 +624,10 @@ A schema validation test in CI rejects any drift between handwritten Rust models
 | `GET /groups`, `GET /groups/{g}` | member |
 | `PATCH /groups/{g}` | admin |
 | `DELETE /groups/{g}/members/{u}` | self OR admin |
-| `PATCH /groups/{g}/members/{u}` | self (nickname) / admin (role) |
+| `PATCH /groups/{g}/members/{u}` | admin (role only) |
 | `GET /groups/{g}/newsletters*` | member |
 | `*` candidate-questions GET/POST/votes | member |
-| `*` admin/curate routes | admin |
+| `DELETE /admin/groups/{g}/candidate-questions/{q}` | admin |
 | `*` my-response routes | member (and self) |
 | `*` comments/reactions | member |
 | `POST /uploads*`, `GET /uploads/{id}`, `DELETE /uploads/{id}`, `GET /media-cookie` | member |

@@ -12,8 +12,9 @@ Region: **us-east-1**. Account: single account for both `dev` and `prod`, distin
 |---|---|---|
 | `DataStack` | DynamoDB table + GSIs | — |
 | `AuthStack` | Cognito user pool, IdPs, hosted UI domain | — |
-| `MediaStack` | S3 buckets, CloudFront distribution, image-process Lambda | `DataStack` |
-| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaStack` |
+| `MediaPersistentStack` | S3 buckets (originals + processed), CloudFront distribution, KeyGroup | `DataStack` |
+| `MediaPipelineStack` | `lambda-image-process` and its S3 event subscription | `DataStack`, `MediaPersistentStack` |
+| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack` |
 | `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack`, `ApiStack` |
 | `FrontendStack` | ACM cert (`us-east-1`) + Route53 records (if Route53) | — |
 | `MonitoringStack` | CloudWatch dashboards + alarms | All others |
@@ -136,9 +137,16 @@ For all three: attribute mapping `email -> email`, `name -> name`.
 
 ---
 
-## 5. `MediaStack`
+## 5. `MediaPersistentStack` and `MediaPipelineStack`
 
-### 5.1 S3 buckets
+The media resources are split across two stacks so that `dev` can recreate the image-processing pipeline freely without touching the slow-to-rebuild S3 + CloudFront infrastructure. See [`13-dev-environments.md` §3](13-dev-environments.md) for the rationale.
+
+- **`MediaPersistentStack`** — §5.1, §5.2: S3 buckets, CloudFront distribution, KeyGroup. Long-lived in dev (CloudFront takes 15–30 min to delete).
+- **`MediaPipelineStack`** — §5.3: `lambda-image-process` and its S3 event subscription. Volatile; recreated freely.
+
+In `prod` the split is structural-only; both stacks deploy together and behave identically to a combined stack.
+
+### 5.1 S3 buckets (`MediaPersistentStack`)
 
 Two buckets, both private (Block Public Access fully on):
 
@@ -156,7 +164,7 @@ Two buckets, both private (Block Public Access fully on):
   - Lifecycle: same as originals.
   - Read access only via CloudFront origin access control (OAC).
 
-### 5.2 CloudFront distribution
+### 5.2 CloudFront distribution (`MediaPersistentStack`)
 
 - **Origins**:
   - `processed` bucket via OAC (default origin)
@@ -171,7 +179,7 @@ Two buckets, both private (Block Public Access fully on):
 - **Domain alias**: `cdn.opennewsletter.example.com` (or `cdn-dev...`).
 - **Certificate**: ACM cert in `us-east-1` (created in `FrontendStack`).
 
-### 5.3 `lambda-image-process` (Rust)
+### 5.3 `lambda-image-process` (Rust, `MediaPipelineStack`)
 
 - **Trigger**: S3 ObjectCreated on originals bucket, prefix `uploads/`
 - **Memory**: 1024 MB
@@ -360,6 +368,18 @@ DynamoDB IAM patterns:
 - Read-only Lambdas (`lambda-newsletters`): `Query`, `GetItem`, `BatchGetItem` on table + GSIs.
 - Write Lambdas: add `PutItem`, `UpdateItem`, `DeleteItem`, `TransactWriteItems`.
 - Tick Lambdas need `Scan` on GSI2 (bounded by time-bucket prefix — see `02-data-model-dynamodb.md` §10).
+
+---
+
+## 10.5 Dev-environment resource policy overrides
+
+When `config.env == "dev"`, the following one-line overrides are applied so `cdk destroy` on a volatile stack succeeds without manual intervention. These are no-ops in `prod`. Full rationale in [`13-dev-environments.md` §5](13-dev-environments.md).
+
+- **DynamoDB table** (`DataStack`) — `removal_policy=DESTROY`, `point_in_time_recovery=False`.
+- **S3 buckets** (`MediaPersistentStack`) — `auto_delete_objects=True`, `removal_policy=DESTROY`. Without `auto_delete_objects`, destroy fails on non-empty buckets.
+- **Secrets Manager secrets** (every stack that creates one) — `removal_policy=DESTROY` and `recovery_window=Duration.days(0)`. The default 7-day soft-delete window blocks redeploy-within-a-week.
+- **CloudWatch log groups** (every Lambda) — `removal_policy=DESTROY`. Otherwise destroy succeeds but leaves orphans, and the next deploy errors on "log group already exists."
+- **Cognito user pool** (`AuthStack`) — unchanged. Persistent in dev. See [`13-dev-environments.md` §3](13-dev-environments.md).
 
 ---
 

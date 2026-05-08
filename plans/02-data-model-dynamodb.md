@@ -57,7 +57,6 @@ A user's membership in one group.
 | `groupId` | UUIDv7 |
 | `role` | `admin` \| `member` |
 | `joinedAt` | ISO-8601 |
-| `nickname` | string \| null (per-group display override) |
 
 Access patterns served:
 - "What groups am I in?" → `Query pk = USER#{userId} AND begins_with(sk, GROUP#)`

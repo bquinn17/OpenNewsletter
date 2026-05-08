@@ -59,7 +59,11 @@ Three reset levels, used for different scenarios:
 | **Warm** — volatile stacks | `make redeploy-volatile` | ~3–5 min | After schema, IAM, env-var, or Lambda config changes |
 | **Cold** — full teardown | `make reset-all` | ~15–30 min | Rare; major architectural changes |
 
-Optimizing for hot reset is what makes this strategy pleasant. `scripts/seed_dev_data.py` is idempotent and destructive: it scans + batch-deletes the DynamoDB table, empties S3 prefixes, and writes a deterministic fixture (one group, three users, two prior published cycles, one `open` cycle, one `voting` cycle), then prints sign-in credentials for the seeded admin.
+Optimizing for hot reset is what makes this strategy pleasant. `scripts/seed_dev_data.py` is idempotent and destructive: it scans + batch-deletes the DynamoDB table, empties S3 prefixes, and writes a small deterministic fixture (one group, the bootstrap admin as sole member, one `voting` cycle ready to accept question suggestions). It then prints sign-in credentials for the seeded admin.
+
+The seed only bootstraps the admin. Additional users are added by exercising the real invite-and-signup flow against the `dev` stack (`POST /admin/invites` → redeem URL → federated sign-in). This keeps the fixture small and means manual testing of multi-user scenarios uses the same code path as production.
+
+The seed deliberately does **not** touch the Cognito user pool. Federated users created during testing persist across `make seed` runs — only their DynamoDB rows and S3 objects are cleared. This avoids re-doing the OAuth dance after every reset and accepts a slow accumulation of stale Cognito accounts as a non-issue.
 
 ---
 
@@ -242,3 +246,49 @@ cd frontend && npm run test -- --watch
 ```
 
 That is the entire developer loop.
+
+---
+
+## 15. Inspection & debugging
+
+Manual testing fails. When it does, these are the inspection ladders.
+
+**DynamoDB state**
+- One-off lookup: `aws dynamodb get-item --table-name OpenNewsletter-dev --key '{"pk":{"S":"GROUP#01H..."},"sk":{"S":"META"}}'`
+- Browse a partition: `aws dynamodb query --table-name OpenNewsletter-dev --key-condition-expression "pk = :p" --expression-attribute-values '{":p":{"S":"GROUP#01H..."}}'`
+- The AWS Console's "Explore items" view is fine for ad-hoc poking; prefer it over the CLI when you don't yet know what key you're looking for.
+
+**Lambda logs**
+- Live tail one Lambda: `aws logs tail /aws/lambda/OpenNewsletter-questions-dev --follow --since 5m`
+- Search by correlation ID across all Lambdas in CloudWatch Logs Insights:
+  ```
+  fields @timestamp, @log, @message
+  | filter correlation_id = "01H..."
+  | sort @timestamp asc
+  ```
+- The frontend generates `x-correlation-id` per request ([`00-overview.md` §6](00-overview.md)) and surfaces it in the dev-mode error toast — copy it from there into the Insights query.
+
+**Image pipeline**
+- An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-image-process-dev --follow`.
+- Confirm the S3 object exists: `aws s3 ls s3://opennewsletter-media-originals-dev-{account}/uploads/{groupId}/{cycleId}/{questionId}/{userId}/`.
+- Confirm the processed variants were written: `aws s3 ls s3://opennewsletter-media-processed-dev-{account}/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/`.
+- Check the ImageMedia DDB row's `status` and `errorMessage` fields.
+
+**Stuck CloudFormation stack**
+- `cdk deploy` failures sometimes leave a stack in `UPDATE_ROLLBACK_FAILED` or `ROLLBACK_IN_PROGRESS`. Recovery, in order of escalation:
+  1. `aws cloudformation continue-update-rollback --stack-name OpenNewsletter-Api-dev` (often resolves transient resource-conflict failures).
+  2. `cdk destroy --context env=dev --force` against the affected volatile stack, then `cdk deploy` again.
+  3. As a last resort: delete the stack from the CloudFormation console with "retain failed resources," manually clean those resources, redeploy.
+- Persistent stacks (`AuthStack`, `MediaPersistentStack`) should never be destroyed casually — see §3.
+
+---
+
+## 16. Frontend mocking (interim)
+
+[`frontend/src/api/mockData.ts`](../frontend/src/api/mockData.ts) and the MSW handlers in [`frontend/src/mocks/`](../frontend/src/mocks/) are scaffolding for frontend iteration **before** Milestone 3.5 lands a working `dev` stack. They let UI work proceed without an AWS account.
+
+Once `dev` is online:
+- For Vitest component tests, MSW stays — it's how tests stub the API surface, per [`11-testing-ci-cd.md` §4.2](11-testing-ci-cd.md). This is permanent.
+- For browser dev (`npm run dev`), the default mode flips to `--mode dev` (real API). The MSW dev-mode toggle and `mockData.ts` are removed once no page in the app still depends on them.
+
+Treat any new `mockData.ts` entry added after Milestone 3.5 as a smell — the right answer at that point is a `make seed` fixture entry plus a `dev`-stack call.
