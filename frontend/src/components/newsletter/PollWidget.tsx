@@ -1,6 +1,7 @@
+import { useState } from "react";
 import clsx from "clsx";
-import { useCastPollVote } from "../../api/queries";
 import type { PublishedPollQuestion } from "../../api/types";
+import { CommentList } from "./CommentList";
 
 interface Props {
   question: PublishedPollQuestion;
@@ -8,21 +9,18 @@ interface Props {
   cycleId: string;
 }
 
+// Poll widget on a *published* edition.
+// Voting happens during the open cycle (via the response editor) and is locked
+// once the edition publishes — so this view is read-only. The caller's pick
+// is highlighted; everyone else just sees the tally.
 export function PollWidget({ question, groupId, cycleId }: Props) {
-  const cast = useCastPollVote(groupId, cycleId);
   const total = Math.max(1, question.totalVotes);
+  const [showAllComments, setShowAllComments] = useState(false);
+  const visibleComments = showAllComments ? question.comments : question.comments.slice(0, 2);
   return (
     <div className="bg-white rounded-3xl border border-line shadow-soft p-5">
       <div className="text-xs text-inkmuted mb-3">
         {question.totalVotes} vote{question.totalVotes === 1 ? "" : "s"}
-        {question.myVoteOptionId && (
-          <>
-            {" · "}you picked{" "}
-            <strong className="text-ink">
-              {question.options.find((o) => o.optionId === question.myVoteOptionId)?.label}
-            </strong>
-          </>
-        )}
       </div>
       <ul className="space-y-3">
         {question.options.map((opt) => {
@@ -30,37 +28,39 @@ export function PollWidget({ question, groupId, cycleId }: Props) {
           const mine = question.myVoteOptionId === opt.optionId;
           return (
             <li key={opt.optionId}>
-              <button
-                onClick={() => cast.mutate({ questionId: question.questionId, optionId: opt.optionId })}
-                className="w-full text-left"
+              <div className="text-sm font-semibold leading-snug mb-1">{opt.label}</div>
+              <div className="flex items-center gap-2 text-xs text-inkmuted mb-1.5">
+                {mine && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-grape text-white font-semibold">your pick</span>
+                )}
+                <span className="ml-auto tabular-nums">
+                  {opt.voteCount} · {pct}%
+                </span>
+              </div>
+              <div
+                className={clsx(
+                  "h-3 rounded-full bg-cream overflow-hidden",
+                  mine && "ring-2 ring-grape/40",
+                )}
               >
-                <div className="flex items-baseline justify-between text-sm font-semibold mb-1.5">
-                  <span className="flex items-center gap-2">
-                    {opt.label}
-                    {mine && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-grape text-white">your pick</span>
-                    )}
-                  </span>
-                  <span className="text-inkmuted">
-                    {opt.voteCount} · {pct}%
-                  </span>
-                </div>
                 <div
-                  className={clsx(
-                    "h-3 rounded-full bg-cream overflow-hidden",
-                    mine && "ring-2 ring-grape/40",
-                  )}
-                >
-                  <div
-                    className={clsx("h-full transition-all", mine ? "hero-may" : "bg-coral")}
-                    style={{ width: `${Math.max(1, pct)}%` }}
-                  />
-                </div>
-              </button>
+                  className={clsx("h-full transition-all", mine ? "hero-may" : "bg-coral")}
+                  style={{ width: `${Math.max(1, pct)}%` }}
+                />
+              </div>
             </li>
           );
         })}
       </ul>
+      <CommentList
+        comments={visibleComments}
+        totalCount={question.comments.length}
+        onShowAll={() => setShowAllComments(true)}
+        groupId={groupId}
+        cycleId={cycleId}
+        questionId={question.questionId}
+        responseId={question.questionId}
+      />
     </div>
   );
 }

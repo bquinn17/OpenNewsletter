@@ -99,8 +99,22 @@ export function JoinPage() {
           {redeem.isPending ? "Joining…" : "Continue with Google"} <span>→</span>
         </button>
         <div className="grid grid-cols-2 gap-2 mt-2">
-          <button className="bg-white border border-line rounded-2xl py-3 text-sm font-semibold"> Apple</button>
-          <button className="bg-white border border-line rounded-2xl py-3 text-sm font-semibold">f Facebook</button>
+          <button
+            type="button"
+            disabled={!preview || redeem.isPending}
+            onClick={handleContinue}
+            className="bg-white border border-line rounded-2xl py-3 text-sm font-semibold disabled:opacity-50"
+          >
+             Apple
+          </button>
+          <button
+            type="button"
+            disabled={!preview || redeem.isPending}
+            onClick={handleContinue}
+            className="bg-white border border-line rounded-2xl py-3 text-sm font-semibold disabled:opacity-50"
+          >
+            f Facebook
+          </button>
         </div>
 
         <p className="text-xs text-inkmuted mt-4 text-center">By continuing you agree to be excellent to your friends.</p>

@@ -10,13 +10,40 @@ import type { CandidateQuestion } from "../api/types";
 
 export function CandidatesPage() {
   const { groupId = "" } = useParams();
-  const { data, isLoading } = useCandidates(groupId);
+  const { data, isLoading, isError, error, refetch } = useCandidates(groupId);
   const cast = useCastVote(groupId);
   const withdraw = useWithdrawVote(groupId);
   const pushToast = useToasts((s) => s.push);
   const [sort, setSort] = useState<"top" | "recent">("top");
 
-  if (isLoading || !data) return null;
+  if (isLoading) {
+    return (
+      <div className="bg-cream pb-12">
+        <PageHeader title="Loading…" eyebrow="Upcoming" back="/" />
+        <div className="px-5 pt-6 space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-24 rounded-3xl bg-white border border-line animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return (
+      <div className="bg-cream pb-12">
+        <PageHeader title="Upcoming" eyebrow="Couldn't load" back="/" />
+        <div className="px-5 pt-8 text-center">
+          <div className="text-5xl mb-3">😬</div>
+          <p className="text-ink font-semibold">
+            {error instanceof Error ? error.message : "Couldn't load candidate questions."}
+          </p>
+          <button onClick={() => refetch()} className="mt-5 px-5 py-3 rounded-full bg-ink text-cream font-semibold">
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const sorted = [...data.candidates].sort((a, b) =>
     sort === "top"

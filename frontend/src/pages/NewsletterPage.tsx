@@ -10,13 +10,29 @@ import type { LockedQuestion, MyResponse } from "../api/types";
 
 export function NewsletterPage() {
   const { groupId = "", cycleId = "" } = useParams();
-  const { data, isLoading } = useNewsletter(groupId, cycleId);
+  const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
 
-  if (isLoading || !data) return <LoadingShell />;
+  if (isLoading) return <LoadingShell />;
+  if (isError || !data) return <ErrorState message={error instanceof Error ? error.message : "Couldn't load this edition."} onRetry={() => refetch()} />;
   if (data.status === "voting") return <CandidatesPage />;
   if (data.status === "open") return <OpenLayout data={data} />;
   if (data.status === "published") return <PublishedLayout data={data} groupId={groupId} cycleId={cycleId} />;
   return null;
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="bg-cream pb-12">
+      <PageHeader title="Edition" eyebrow="Couldn't load" back="/" />
+      <div className="px-5 pt-8 text-center">
+        <div className="text-5xl mb-3">😬</div>
+        <p className="text-ink font-semibold">{message}</p>
+        <button onClick={onRetry} className="mt-5 px-5 py-3 rounded-full bg-ink text-cream font-semibold">
+          Try again
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function LoadingShell() {

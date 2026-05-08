@@ -29,18 +29,9 @@ export function HomePage() {
           fallbackClass={membership?.gradient.className ?? "bg-coral"}
           fallbackName={membership?.groupName ?? "—"}
         />
-        <div className="flex items-center gap-2">
-          <Link
-            to="/settings"
-            className="w-9 h-9 rounded-full bg-white shadow-soft border border-line grid place-items-center"
-            aria-label="Settings"
-          >
-            ⚙️
-          </Link>
-          <Link to="/settings" aria-label="Profile">
-            <Avatar name={config?.user.displayName ?? "?"} color={config?.user.avatarColor} size="sm" />
-          </Link>
-        </div>
+        <Link to="/settings" aria-label="Profile">
+          <Avatar name={config?.user.displayName ?? "?"} color={config?.user.avatarColor} size="sm" />
+        </Link>
       </div>
 
       <div className="px-5 pt-2 pb-2">

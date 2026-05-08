@@ -17,7 +17,8 @@ export interface User {
   userId: UserId;
   email: string;
   displayName: string;
-  avatarColor: string; // tailwind color slug for the mock
+  avatarColor: string; // tailwind color slug fallback when no uploaded avatar
+  avatarUrl?: string | null; // when set, components show the image instead of the colored initial
 }
 
 export interface Membership {
@@ -37,8 +38,8 @@ export interface GroupMember {
   userId: UserId;
   displayName: string;
   role: Role;
-  nickname?: string | null;
   avatarColor: string;
+  avatarUrl?: string | null;
   editionsAnswered: number;
   joinedAt: string;
 }
@@ -105,6 +106,8 @@ export interface ImageMedia {
   thumbUrl?: string | null;
   displayUrl?: string | null;
   alt?: string;
+  /** Optional caption shown beneath the image. Author-supplied. */
+  caption?: string | null;
   width?: number;
   height?: number;
 }
@@ -120,7 +123,10 @@ export interface Comment {
   authorUserId: UserId;
   authorDisplayName: string;
   authorAvatarColor: string;
+  authorAvatarUrl?: string | null;
   body: string;
+  /** Optional single image attached to the comment. */
+  image?: ImageMedia | null;
   createdAt: string;
   editedAt: string | null;
 }
@@ -147,6 +153,7 @@ export interface PublishedPollQuestion extends LockedQuestion {
   options: (PollOption & { voteCount: number })[];
   totalVotes: number;
   myVoteOptionId: string | null;
+  comments: Comment[];
 }
 
 export type PublishedQuestion = PublishedTextQuestion | PublishedPollQuestion;
@@ -158,6 +165,8 @@ export interface MyResponse {
   kind: QuestionKind;
   body?: string;
   imageMediaIds?: string[];
+  /** Optional caption per attached image, keyed by imageId. */
+  imageCaptions?: Record<ImageId, string>;
   pollOptionId?: string | null;
   version: number;
   updatedAt: string;
@@ -233,6 +242,16 @@ export interface NotificationPref {
   groupId: GroupId;
   cycleOpen: boolean;
   deadlineReminders: boolean;
+  publication: boolean;
+}
+
+export interface ImageUploadStatus {
+  imageId: ImageId;
+  status: "uploading" | "processing" | "ready" | "failed";
+  progress: number; // 0..1
+  thumbUrl?: string | null;
+  displayUrl?: string | null;
+  error?: string | null;
 }
 
 export interface AppConfig {

@@ -9,12 +9,14 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { GroupAdminPage } from "./pages/GroupAdminPage";
 import { JoinPage } from "./pages/JoinPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ErrorPage } from "./pages/ErrorPage";
 import { GroupRedirect } from "./pages/GroupRedirect";
 
 const router = createBrowserRouter([
   {
     path: "/",
     element: <AppShell />,
+    errorElement: <ErrorPage />,
     children: [
       { index: true, element: <HomePage /> },
       { path: "g/:groupId", element: <GroupRedirect /> },

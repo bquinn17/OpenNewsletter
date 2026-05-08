@@ -4,6 +4,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { useConfig } from "../api/queries";
+import { useToasts } from "../state/toast";
 import type { User } from "../api/types";
 
 interface AuthValue {
@@ -19,7 +20,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthValue = {
     user: config?.user ?? null,
     isLoading,
-    signOut: () => alert("Sign out is mocked. Reload the tab to start over."),
+    signOut: () => {
+      useToasts.getState().push("Signed out (mocked). Reloading…", "default");
+      setTimeout(() => window.location.reload(), 800);
+    },
   };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

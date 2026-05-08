@@ -4,6 +4,7 @@ import { avatarClasses, initial } from "../../utils/avatar";
 interface Props {
   name: string;
   color?: string;
+  url?: string | null;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   className?: string;
   ringed?: boolean;
@@ -17,7 +18,21 @@ const sizes: Record<NonNullable<Props["size"]>, string> = {
   xl: "w-16 h-16 text-2xl rounded-3xl",
 };
 
-export function Avatar({ name, color, size = "md", className, ringed }: Props) {
+export function Avatar({ name, color, url, size = "md", className, ringed }: Props) {
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={name}
+        className={clsx(
+          "object-cover rounded-full select-none",
+          sizes[size],
+          ringed && "ring-2 ring-white",
+          className,
+        )}
+      />
+    );
+  }
   return (
     <div
       className={clsx(
