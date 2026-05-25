@@ -81,6 +81,18 @@ export interface PollOption {
   label: string;
 }
 
+/**
+ * Redacted author of a question. The server returns this populated when the
+ * question was submitted non-anonymously (or for any caller who is a group
+ * admin, who always sees authorship for moderation). When the submitter opted
+ * in to anonymity and the caller is a non-admin, `askedBy` comes back `null`.
+ */
+export interface QuestionAuthor {
+  userId: UserId;
+  displayName: string;
+  avatarColor?: string;
+}
+
 export interface CandidateQuestion {
   questionId: QuestionId;
   kind: QuestionKind;
@@ -89,6 +101,10 @@ export interface CandidateQuestion {
   voteCount: number;
   votedByMe: boolean;
   submittedAt: string;
+  /** True if the submitter chose to hide their identity from the group. Immutable after creation. */
+  isAnonymous: boolean;
+  /** Author info; null when `isAnonymous` is true and the caller is a non-admin. */
+  askedBy: QuestionAuthor | null;
 }
 
 export interface LockedQuestion {
@@ -98,6 +114,10 @@ export interface LockedQuestion {
   pollOptions?: PollOption[] | null;
   displayOrder: number;
   helperText?: string;
+  /** Copied from the candidate at promotion. Immutable. */
+  isAnonymous: boolean;
+  /** Author info; null when `isAnonymous` is true and the caller is a non-admin. */
+  askedBy: QuestionAuthor | null;
 }
 
 export interface ImageMedia {

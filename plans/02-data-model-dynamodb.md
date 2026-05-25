@@ -154,7 +154,8 @@ Suggested by users for the next not-yet-opened cycle.
 | `prompt` | string (≤500 chars) |
 | `pollOptions` | array<{ optionId: UUIDv7, label: string }> \| null (only when `kind=poll`) |
 | `voteCount` | number (denormalized; updated transactionally on vote add/remove) |
-| `submittedBy` | userId (server-side only; never returned to non-admins) |
+| `submittedBy` | userId (always recorded; returned to non-admins ONLY when `isAnonymous=false`) |
+| `isAnonymous` | boolean (submitter's choice at creation; immutable thereafter) |
 | `submittedAt` | ISO-8601 |
 
 GSI1 enables "leaderboard for current cycle" reads in O(votes) without a scan.
@@ -198,7 +199,8 @@ A candidate that has been promoted into a specific newsletter.
 | `prompt` | string |
 | `pollOptions` | array \| null |
 | `displayOrder` | number (admin-controllable; default = vote rank when promoted) |
-| `submittedBy` | userId (server-side only) |
+| `submittedBy` | userId (copied from the candidate at promotion; returned to non-admins ONLY when `isAnonymous=false`) |
+| `isAnonymous` | boolean (copied from the candidate at promotion; immutable) |
 | `lockedAt` | ISO-8601 |
 
 Access patterns:

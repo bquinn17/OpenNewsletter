@@ -165,12 +165,26 @@ export const groups: Record<string, Group> = {
 };
 
 // April 2026 — published, the rich edition
+//
+// Authorship convention for sample data: questions submitted by a specific
+// member carry an `askedBy` object with that member's id/name (matching the
+// "Kari asked: …" rendering in the UI). Questions that represent a recurring
+// "house" prompt are marked `isAnonymous: true` so they render as
+// "Asked anonymously" rather than attributed to any one person.
+const askedByMember = (m: { userId: string; displayName: string; avatarColor?: string }) => ({
+  userId: m.userId,
+  displayName: m.displayName,
+  avatarColor: m.avatarColor,
+});
+
 const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_apr_1",
     kind: "text",
     prompt: "What was the highlight of your April?",
     displayOrder: 0,
+    isAnonymous: true,
+    askedBy: null,
     answers: [
       {
         responseId: "r_apr_1_sam",
@@ -261,6 +275,8 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "Best meal you ate or cooked this month",
     displayOrder: 1,
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Sam")),
     answers: [
       {
         responseId: "r_apr_2_quinn",
@@ -284,6 +300,8 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "poll",
     prompt: "Best trail this month",
     displayOrder: 2,
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Riley")),
     options: [
       { optionId: "o1", label: "Lake 22", voteCount: 7 },
       { optionId: "o2", label: "Mt Si", voteCount: 4 },
@@ -299,6 +317,8 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "Something small that made you laugh",
     displayOrder: 3,
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Morgan")),
     answers: [
       {
         responseId: "r_apr_4_morgan",
@@ -332,6 +352,8 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "What are you looking forward to in May?",
     displayOrder: 4,
+    isAnonymous: true,
+    askedBy: null,
     answers: [
       {
         responseId: "r_apr_5_jordan",
@@ -363,8 +385,22 @@ const aprilNewsletter: PublishedNewsletter = {
 };
 
 const mayQuestions: LockedQuestion[] = [
-  { questionId: "q_may_1", kind: "text", prompt: "What was the highlight of your May?", displayOrder: 0 },
-  { questionId: "q_may_2", kind: "text", prompt: "Best meal you ate or cooked this month", displayOrder: 1 },
+  {
+    questionId: "q_may_1",
+    kind: "text",
+    prompt: "What was the highlight of your May?",
+    displayOrder: 0,
+    isAnonymous: true,
+    askedBy: null,
+  },
+  {
+    questionId: "q_may_2",
+    kind: "text",
+    prompt: "Best meal you ate or cooked this month",
+    displayOrder: 1,
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Sam")),
+  },
   {
     questionId: "q_may_3",
     kind: "poll",
@@ -377,9 +413,25 @@ const mayQuestions: LockedQuestion[] = [
       { optionId: "p4", label: "Option D" },
     ],
     helperText: "Vote for someone else's photo. No looking at the tally until publish.",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Quinn")),
   },
-  { questionId: "q_may_4", kind: "text", prompt: "Something small that made you laugh", displayOrder: 3 },
-  { questionId: "q_may_5", kind: "text", prompt: "What are you looking forward to in June?", displayOrder: 4 },
+  {
+    questionId: "q_may_4",
+    kind: "text",
+    prompt: "Something small that made you laugh",
+    displayOrder: 3,
+    isAnonymous: true,
+    askedBy: null,
+  },
+  {
+    questionId: "q_may_5",
+    kind: "text",
+    prompt: "What are you looking forward to in June?",
+    displayOrder: 4,
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Alex")),
+  },
 ];
 
 const myMayResponses: MyResponse[] = [
@@ -433,6 +485,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 7,
     votedByMe: true,
     submittedAt: "2026-05-01T10:00:00Z",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Sam")),
   },
   {
     questionId: "qc_2",
@@ -441,6 +495,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 5,
     votedByMe: false,
     submittedAt: "2026-05-03T12:00:00Z",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Riley")),
   },
   {
     questionId: "qc_3",
@@ -455,6 +511,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 5,
     votedByMe: true,
     submittedAt: "2026-04-30T08:00:00Z",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Quinn")),
   },
   {
     questionId: "qc_4",
@@ -463,6 +521,9 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 3,
     votedByMe: false,
     submittedAt: "2026-04-29T22:00:00Z",
+    // Submitted anonymously — `askedBy` is null for non-admin callers.
+    isAnonymous: true,
+    askedBy: null,
   },
   {
     questionId: "qc_5",
@@ -471,6 +532,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 2,
     votedByMe: false,
     submittedAt: "2026-04-28T19:00:00Z",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Alex")),
   },
   {
     questionId: "qc_6",
@@ -479,6 +542,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 2,
     votedByMe: false,
     submittedAt: "2026-04-25T11:00:00Z",
+    isAnonymous: true,
+    askedBy: null,
   },
   {
     questionId: "qc_7",
@@ -487,6 +552,8 @@ const juneCandidates: CandidateQuestion[] = [
     voteCount: 1,
     votedByMe: false,
     submittedAt: "2026-04-22T16:00:00Z",
+    isAnonymous: false,
+    askedBy: askedByMember(memberByName("Casey")),
   },
 ];
 
@@ -634,9 +701,13 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_1",
     kind: "poll",
+    // Authorship is now carried in `askedBy`; the UI prefixes "Kari asked:"
+    // automatically. The prompt itself is the bare question.
     prompt:
-      "Kari asked: Hypothetical — you're staying with two friends in another city. Days before arrival, friend A tells you friend B suddenly has to leave town for the duration. On arrival, friend A also has to flee under mysterious circumstances. Both are unreachable for ~a week. You let yourself in and discover a large stove pot of unidentified pasta dish taking up half the fridge. What do you do?",
+      "Hypothetical — you're staying with two friends in another city. Days before arrival, friend A tells you friend B suddenly has to leave town for the duration. On arrival, friend A also has to flee under mysterious circumstances. Both are unreachable for ~a week. You let yourself in and discover a large stove pot of unidentified pasta dish taking up half the fridge. What do you do?",
     displayOrder: 0,
+    isAnonymous: false,
+    askedBy: askedByMember(meepleMember("Kari")),
     options: [
       { optionId: "o_pasta_a", label: "A: Throw out the pasta — you don't want them coming back to a rotten fridge", voteCount: 0 },
       { optionId: "o_pasta_b", label: "B: Leave it alone — you don't know its plans for it", voteCount: 8 },
@@ -659,8 +730,10 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_2",
     kind: "text",
-    prompt: "Meha asked: Has there been a celebrity death that impacted you more than you might have expected?",
+    prompt: "Has there been a celebrity death that impacted you more than you might have expected?",
     displayOrder: 1,
+    isAnonymous: false,
+    askedBy: askedByMember(meepleMember("Meha")),
     answers: [
       meepleAnswer(
         "r_meeple_2_tara",
@@ -714,8 +787,10 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_3",
     kind: "text",
-    prompt: "Meha asked: Do you have ideas for healthy, easy, filling snacks for the work week? I'm okay with some prep/assembly!",
+    prompt: "Do you have ideas for healthy, easy, filling snacks for the work week? I'm okay with some prep/assembly!",
     displayOrder: 2,
+    isAnonymous: false,
+    askedBy: askedByMember(meepleMember("Meha")),
     answers: [
       meepleAnswer("r_meeple_3_tara", "Tara", "Unfortunately I don't think most of my regular snacks fall into the particularly healthy category. I almost exclusively source my office snacks from Trader Joe's lol. But I feel like nuts are a classic."),
       meepleAnswer(
@@ -757,8 +832,10 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_4",
     kind: "poll",
-    prompt: "Maria asked: pick a tiny home (all have leaky roofs though)",
+    prompt: "pick a tiny home (all have leaky roofs though)",
     displayOrder: 3,
+    isAnonymous: false,
+    askedBy: askedByMember(meepleMember("Maria")),
     options: [
       { optionId: "o_home_beach", label: "beach hut", voteCount: 5 },
       { optionId: "o_home_tree", label: "tree house", voteCount: 5 },
@@ -772,8 +849,10 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_5",
     kind: "text",
-    prompt: "Maria asked: name something happening in your neighborhood!",
+    prompt: "name something happening in your neighborhood!",
     displayOrder: 4,
+    isAnonymous: false,
+    askedBy: askedByMember(meepleMember("Maria")),
     answers: [
       meepleAnswer("r_meeple_5_tara", "Tara", "Is Porchfest a cop-out?\n\nThere was also Somerville Open Studios this weekend but I didn't get a chance to check it out."),
       meepleAnswer(
@@ -832,6 +911,9 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "📸 Photo Wall — share what you've been seeing this month",
     displayOrder: 5,
+    // Recurring "house" prompt — no specific submitter to attribute it to.
+    isAnonymous: true,
+    askedBy: null,
     answers: [
       meepleAnswer(
         "r_meeple_6_tara",
@@ -958,6 +1040,8 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "💭 On Your Mind — what's been on yours this month?",
     displayOrder: 6,
+    isAnonymous: true,
+    askedBy: null,
     answers: [
       meepleAnswer(
         "r_meeple_7_tara",
@@ -1074,6 +1158,8 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     kind: "text",
     prompt: "👀 Check It Out — drop a link, video, or recommendation",
     displayOrder: 7,
+    isAnonymous: true,
+    askedBy: null,
     answers: [
       meepleAnswer(
         "r_meeple_8_bryan",

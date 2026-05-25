@@ -154,6 +154,7 @@ for (idx, c) in enumerate(chosen):
         pollOptions: c.pollOptions,
         displayOrder: idx,
         submittedBy: c.submittedBy,
+        isAnonymous: c.isAnonymous,
         lockedAt: now,
     })
 

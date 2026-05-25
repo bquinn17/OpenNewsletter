@@ -18,6 +18,7 @@ const schema = z
   .object({
     kind: z.enum(["text", "poll"]),
     prompt: z.string().min(5, "Add a bit more").max(500, "500 characters max"),
+    isAnonymous: z.boolean(),
     options: z
       .array(z.object({ label: z.string().min(1).max(80) }))
       .max(6, "6 options max"),
@@ -52,12 +53,18 @@ export function SuggestPage() {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: "onChange",
-    defaultValues: { kind: "text", prompt: "", options: [{ label: "" }, { label: "" }] },
+    defaultValues: {
+      kind: "text",
+      prompt: "",
+      isAnonymous: false,
+      options: [{ label: "" }, { label: "" }],
+    },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "options" });
 
   const kind = watch("kind");
   const prompt = watch("prompt") ?? "";
+  const isAnonymous = watch("isAnonymous") ?? false;
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -65,8 +72,12 @@ export function SuggestPage() {
         kind: values.kind,
         prompt: values.prompt,
         pollOptions: values.kind === "poll" ? values.options.map((o) => o.label) : [],
+        isAnonymous: values.isAnonymous,
       });
-      pushToast("Question submitted anonymously.", "success");
+      pushToast(
+        values.isAnonymous ? "Question submitted anonymously." : "Question submitted.",
+        "success",
+      );
       navigate(`/g/${groupId}/upcoming`);
     } catch (e) {
       pushToast((e as Error).message ?? "Couldn't submit", "error");
@@ -79,12 +90,44 @@ export function SuggestPage() {
 
       <form onSubmit={onSubmit}>
         <div className="px-5 pt-5">
-          <div className="bg-grape/5 border border-grape/20 rounded-3xl p-4 text-sm text-grape flex gap-3">
-            <span className="text-lg">🎭</span>
-            <div>
-              <strong>Anonymous to the group.</strong> Your friends will see the question, but not who suggested it.
+          <label
+            className={`block rounded-3xl p-4 text-sm flex gap-3 cursor-pointer transition border ${
+              isAnonymous
+                ? "bg-grape/5 border-grape/40 text-grape"
+                : "bg-white border-line text-ink"
+            }`}
+          >
+            <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
+            <div className="flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <strong>
+                  {isAnonymous ? "Anonymous to the group" : "Asked by you"}
+                </strong>
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  {...register("isAnonymous")}
+                />
+                <span
+                  aria-hidden
+                  className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${
+                    isAnonymous ? "bg-grape" : "bg-line"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                      isAnonymous ? "translate-x-4" : ""
+                    }`}
+                  />
+                </span>
+              </div>
+              <div className="text-xs mt-1 opacity-90">
+                {isAnonymous
+                  ? "Your friends see the question, but not who suggested it."
+                  : "Your friends see “You asked: …” next to this question."}
+              </div>
             </div>
-          </div>
+          </label>
         </div>
 
         <div className="px-5 mt-5">
@@ -182,7 +225,11 @@ export function SuggestPage() {
             <span className="text-sm opacity-70">Voting opens immediately</span>
             <span className="flex-1" />
             <Button type="submit" disabled={!isValid || suggest.isPending}>
-              {suggest.isPending ? "Submitting…" : "Submit anonymously"}
+              {suggest.isPending
+                ? "Submitting…"
+                : isAnonymous
+                  ? "Submit anonymously"
+                  : "Submit"}
             </Button>
           </div>
         </div>

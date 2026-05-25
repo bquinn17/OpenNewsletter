@@ -132,6 +132,10 @@ export const mockApi = {
       (n) => n.groupId === groupId && n.status === "voting",
     ) as VotingNewsletter | undefined;
     if (!nl) throw new Error("no voting cycle");
+    // Submitter is always recorded server-side. The redacted `askedBy`
+    // returned to non-admin callers omits author info when isAnonymous=true,
+    // but the submitter themselves always sees their own attribution back —
+    // matching what the spec says (see plans/03-api-contract.md §6.2).
     const newCandidate: CandidateQuestion = {
       questionId: `qc_${Date.now()}`,
       kind: payload.kind,
@@ -143,6 +147,12 @@ export const mockApi = {
       voteCount: 0,
       votedByMe: false,
       submittedAt: new Date().toISOString(),
+      isAnonymous: payload.isAnonymous,
+      askedBy: {
+        userId: mockConfig.user.userId,
+        displayName: mockConfig.user.displayName,
+        avatarColor: mockConfig.user.avatarColor,
+      },
     };
     nl.candidates.unshift(newCandidate);
     return delay(structuredClone(newCandidate));
@@ -514,6 +524,8 @@ export interface NewCandidatePayload {
   kind: "text" | "poll";
   prompt: string;
   pollOptions: string[];
+  /** When true, hide the submitter from non-admin members. Defaults to false in the UI. */
+  isAnonymous: boolean;
 }
 
 export type SaveResponseBody =

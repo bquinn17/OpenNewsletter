@@ -271,6 +271,8 @@ Response 200 (published):
       "kind": "text",
       "prompt": "What's your favorite hike of the year?",
       "displayOrder": 0,
+      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "isAnonymous": false,
       "answers": [
         {
           "responseId": "01H...",
@@ -288,6 +290,8 @@ Response 200 (published):
       "questionId": "01H...",
       "kind": "poll",
       "prompt": "Which trail had the best views?",
+      "askedBy": null,
+      "isAnonymous": true,
       "options": [
         { "optionId": "01H...", "label": "Mt Si", "voteCount": 4 },
         { "optionId": "01H...", "label": "Lake 22", "voteCount": 7 }
@@ -323,6 +327,8 @@ Response 200:
       "questionId": "01H...",
       "kind": "text",
       "prompt": "...",
+      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "isAnonymous": false,
       "voteCount": 7,
       "votedByMe": true,
       "submittedAt": "..."
@@ -332,6 +338,8 @@ Response 200:
       "kind": "poll",
       "prompt": "...",
       "pollOptions": [{ "optionId": "01H...", "label": "..." }],
+      "askedBy": null,
+      "isAnonymous": true,
       "voteCount": 5,
       "votedByMe": false,
       "submittedAt": "..."
@@ -341,7 +349,7 @@ Response 200:
 }
 ```
 
-`submittedBy` is OMITTED for non-admins.
+`askedBy` is populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
 `sort=top` uses AP11 (GSI1, ScanIndexForward=false). `sort=recent` uses AP10 with sort by `submittedAt`.
 
@@ -354,7 +362,8 @@ Body:
 {
   "kind": "text",
   "prompt": "...",
-  "pollOptions": null
+  "pollOptions": null,
+  "isAnonymous": false
 }
 ```
 
@@ -366,13 +375,14 @@ Or for polls:
   "pollOptions": [
     { "label": "Mt Si" },
     { "label": "Lake 22" }
-  ]
+  ],
+  "isAnonymous": false
 }
 ```
 
-Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars, no duplicate labels.
+Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars, no duplicate labels. `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
 
-Response 201: full candidate item (without `submittedBy`).
+Response 201: full candidate item, with `askedBy` populated (the submitter is always allowed to see their own attribution, even when `isAnonymous=true`).
 
 Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exists — e.g., the upcoming cycle has already locked).
 

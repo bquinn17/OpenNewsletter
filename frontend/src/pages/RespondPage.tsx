@@ -121,7 +121,13 @@ export function RespondPage() {
 
       <div className="px-5 pt-5">
         <div className="bg-white rounded-3xl border border-line shadow-soft p-5">
-          <div className="text-xs uppercase tracking-widest text-grape font-bold">Question</div>
+          <div className="text-xs uppercase tracking-widest text-grape font-bold">
+            {question.askedBy
+              ? `${question.askedBy.displayName} asked`
+              : question.isAnonymous
+                ? "Asked anonymously"
+                : "Question"}
+          </div>
           <h1 className="font-display text-2xl font-bold leading-tight mt-1">{question.prompt}</h1>
           {question.helperText && <p className="text-sm text-inkmuted mt-2">{question.helperText}</p>}
         </div>

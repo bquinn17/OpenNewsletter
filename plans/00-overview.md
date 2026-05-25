@@ -138,7 +138,7 @@ OpenNewsletter/
 | **Group** | A tenant. A collection of users that share newsletters. Has its own admin(s), settings, and timezone. |
 | **Member** | A user who belongs to a group. Roles: `admin` or `member`. |
 | **Cycle / Newsletter** | One monthly edition for one group. Identified by `groupId + yyyymm`. Has a status: `voting | open | published | archived`. |
-| **Candidate question** | A user-suggested question in the pool for the next cycle, eligible for upvotes. Anonymous in the UI. |
+| **Candidate question** | A user-suggested question in the pool for the next cycle, eligible for upvotes. Authored by the submitter by default; the submitter may opt in to anonymous display. |
 | **Locked question** | A candidate that has been promoted into a specific cycle and is now visible as a prompt. May be `kind: text` or `kind: poll`. |
 | **Response / Answer** | A user's reply to one locked question in one cycle. Has a `status: draft | published`. May contain text + up to 10 image attachments, OR a poll vote. |
 | **Comment** | A flat, post-publication reply to a specific answer. Author can edit/delete. Admins can delete any. |
@@ -156,7 +156,7 @@ OpenNewsletter/
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in `03-api-contract.md`.
 - **Logging.** Structured JSON logs via `tracing` + `tracing-subscriber` with a `correlation_id` taken from `x-correlation-id` request header (frontend generates ULIDs).
 - **Auth claims.** Lambdas read `sub` (Cognito user ID) and `email` from the validated JWT context injected by API Gateway. Group memberships are NOT in the JWT — they are resolved on every request via DynamoDB (cached in-memory per cold-start for ≤60s).
-- **Anonymous question display.** Server returns candidate questions and locked questions without `submittedBy` UNLESS the caller is an admin of the group. The submitter is always recorded server-side for moderation.
+- **Question authorship & anonymity.** Questions are attributed to their submitter by default — candidate questions and locked questions return `submittedBy` (userId + display name) so the UI can render "Kari asked: …" style attribution. A submitter may opt in to anonymous display by setting `isAnonymous: true` on submission; in that case the server omits `submittedBy` for non-admin callers (admins always see it for moderation). The submitter's `userId` is always recorded server-side regardless.
 
 ---
 

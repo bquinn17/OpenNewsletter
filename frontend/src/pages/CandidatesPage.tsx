@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { useCandidates, useCastVote, useWithdrawVote } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Button } from "../components/ui/Button";
+import { AskedBy } from "../components/newsletter/AskedBy";
 import { useToasts } from "../state/toast";
 import { formatRelative } from "../utils/dates";
 import { useState } from "react";
@@ -147,6 +148,7 @@ export function CandidatesPage() {
                     Poll · {c.pollOptions?.length ?? 0} options
                   </span>
                 )}
+                <AskedBy askedBy={c.askedBy} isAnonymous={c.isAnonymous} className="mt-0.5" />
                 <p className="font-display text-lg leading-snug mt-0.5">{c.prompt}</p>
                 {c.kind === "poll" && c.pollOptions && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
@@ -158,7 +160,8 @@ export function CandidatesPage() {
                   </div>
                 )}
                 <div className="text-xs text-inkmuted mt-2">
-                  {c.voteCount} vote{c.voteCount === 1 ? "" : "s"} · submitted {formatRelative(c.submittedAt)} · anonymous
+                  {c.voteCount} vote{c.voteCount === 1 ? "" : "s"} · submitted {formatRelative(c.submittedAt)}
+                  {c.isAnonymous ? " · anonymous" : ""}
                 </div>
               </div>
             </div>
@@ -171,7 +174,7 @@ export function CandidatesPage() {
           <button className="w-full rounded-3xl border-2 border-dashed border-line p-5 text-center text-inkmuted hover:border-coral hover:text-coral transition">
             <div className="text-2xl mb-1">✨</div>
             <div className="font-semibold">Got an idea? Suggest a question</div>
-            <div className="text-xs mt-0.5">Submitted anonymously to the group</div>
+            <div className="text-xs mt-0.5">Asked by you — anonymous is one tap away</div>
           </button>
         </Link>
       </div>

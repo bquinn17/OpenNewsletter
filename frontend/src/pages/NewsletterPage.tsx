@@ -3,6 +3,7 @@ import { useNewsletter } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
+import { AskedBy } from "../components/newsletter/AskedBy";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { CandidatesPage } from "./CandidatesPage";
 import { shortCountdown } from "../utils/dates";
@@ -76,6 +77,7 @@ function PublishedLayout({
                 <span className="font-bold text-grape">{String(i + 1).padStart(2, "0")}</span>
                 <span>
                   {q.kind === "poll" && <span className="text-grape font-semibold">Poll · </span>}
+                  {q.askedBy && <span className="text-inkmuted">{q.askedBy.displayName} asked: </span>}
                   {q.prompt}
                 </span>
               </li>
@@ -96,6 +98,7 @@ function PublishedLayout({
               {q.kind === "poll" && (
                 <div className="text-xs uppercase tracking-widest text-grape font-bold">Poll</div>
               )}
+              <AskedBy askedBy={q.askedBy} isAnonymous={q.isAnonymous} />
               <h2 className="font-display text-2xl font-bold leading-tight">{q.prompt}</h2>
             </div>
           </div>
@@ -220,6 +223,11 @@ function QuestionRow({
       <div className={`w-9 h-9 rounded-2xl ${meta.iconBg} grid place-items-center font-bold`}>{meta.icon}</div>
       <div className="flex-1 min-w-0">
         <div className="text-xs uppercase tracking-widest font-bold text-coral">{meta.tone}</div>
+        {(q.askedBy || q.isAnonymous) && (
+          <div className="text-[11px] uppercase tracking-widest text-inkmuted font-bold mt-0.5">
+            {q.askedBy ? `${q.askedBy.displayName} asked` : "Asked anonymously"}
+          </div>
+        )}
         <div className="font-semibold mt-0.5">
           {q.kind === "poll" && <span className="text-grape">Poll · </span>}
           {q.prompt}
