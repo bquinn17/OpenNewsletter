@@ -188,7 +188,6 @@ export interface MyResponse {
   /** Optional caption per attached image, keyed by imageId. */
   imageCaptions?: Record<ImageId, string>;
   pollOptionId?: string | null;
-  version: number;
   updatedAt: string;
   publishedAt?: string | null;
   wordCount?: number;

@@ -150,7 +150,7 @@ OpenNewsletter/
 
 ## 6. Cross-cutting conventions
 
-- **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on.
+- **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see `02-data-model-dynamodb.md` §2.1.
 - **Timestamps.** All timestamps stored as ISO-8601 UTC strings. Group-local rendering happens client-side using the group's `timezone` field.
 - **Money.** Not applicable — this is a no-cost-to-user app.
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in `03-api-contract.md`.
@@ -164,8 +164,10 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — separate AWS account or dedicated stack suffix `-dev`. Uses `dev.opennewsletter.example.com` and `api-dev.opennewsletter.example.com`. Pre-seeded test users and one test group.
-- `prod` — the real thing.
+- `dev` — single shared AWS account with stack suffix `-dev`. Uses `dev.opennewsletter.example.com` and `api-dev.opennewsletter.example.com`. Pre-seeded test users and one test group.
+- `prod` — same account, stack suffix `-prod`.
+
+Both environments live in one personal AWS account (the account may host unrelated personal projects later; IAM users will remain few). Stronger account-level isolation is out of scope for v1; revisit if the threat model changes.
 
 CDK reads `--context env=dev|prod` and merges from `infra/opennewsletter/config.py`.
 

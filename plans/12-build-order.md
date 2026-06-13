@@ -118,7 +118,7 @@ Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
 
 **Deliverables**:
 - `lambda-newsletters` with `GET /groups/{g}/newsletters` and `GET /groups/{g}/newsletters/{c}` (handles all four status branches).
-- `lambda-questions` with candidate question CRUD + admin curate routes per `03-api-contract.md` §6.
+- `lambda-questions` with candidate question CRUD per `03-api-contract.md` §6. No admin curate/promote surface — voting is the sole source of truth (see `03-api-contract.md` §6.5 and `06-newsletter-lifecycle.md` §7). The only admin mutation is `DELETE /admin/groups/{g}/candidate-questions/{q}` for abusive content.
 - `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5; wired into EventBridge.
 - The "create-next-voting-cycle" logic that runs on group creation (in `bootstrap_admin.py` or in the group-creation transaction in `lambda-groups`).
 - Lifecycle integration test suite per `06-newsletter-lifecycle.md` §11.
@@ -231,7 +231,7 @@ Read: `07-notifications.md`.
 Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
 
 **Deliverables**:
-- `pages/GroupAdminPage` with the four tabs (Members, Invites, Settings, Curate).
+- `pages/GroupAdminPage` with the three tabs (Members, Invites, Settings). No Curate tab — admins do not override voting.
 
 **Done when**: I can create an invite, copy the URL, share, and see the new member appear.
 

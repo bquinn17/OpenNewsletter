@@ -2,7 +2,7 @@
 
 This document specifies every AWS resource the project provisions, organized into CDK stacks. A subagent should be able to translate this directly into Python CDK code.
 
-Region: **us-east-1**. Account: single account for both `dev` and `prod`, distinguished by stack suffix (`-dev`, `-prod`).
+Region: **us-east-1**. Account: single personal AWS account for both `dev` and `prod`, distinguished by stack suffix (`-dev`, `-prod`). See `00-overview.md` §7 for the rationale.
 
 ---
 
@@ -60,7 +60,7 @@ Provider OAuth credentials are pre-populated in AWS Secrets Manager out-of-band 
 - **Partition key**: `pk` (String)
 - **Sort key**: `sk` (String)
 - **Time-to-live attribute**: `ttl` (Number, epoch seconds) — used for invite expirations and ephemeral entities
-- **Streams**: `NEW_AND_OLD_IMAGES` enabled (consumed by archival Lambda — see `10-archival.md`)
+- **Streams**: **disabled in v1**. The only planned consumer is the archival Lambda (`10-archival.md`), which is deferred. Re-enable as `NEW_AND_OLD_IMAGES` when archival lands.
 - **Point-in-time recovery**: enabled in `prod`, disabled in `dev`
 - **Removal policy**: `RETAIN` in `prod`, `DESTROY` in `dev`
 - **Encryption**: AWS-managed KMS
@@ -84,7 +84,6 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 
 - `table_name`
 - `table_arn`
-- `table_stream_arn`
 
 ---
 
@@ -113,16 +112,25 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 
 For all three: attribute mapping `email -> email`, `name -> name`.
 
-### 4.3 App Client
+### 4.3 App Clients
 
-- **Name**: `frontend`
+Two app clients on the same user pool:
+
+**`frontend`** — the public client every end user goes through.
 - **Generate secret**: NO (public client)
 - **OAuth flows**: Authorization Code with PKCE
 - **OAuth scopes**: `openid`, `email`, `profile`
 - **Callback URLs**: `https://{config.domain}/auth/callback`, plus `http://localhost:5173/auth/callback` in `dev`
 - **Logout URLs**: `https://{config.domain}/`, plus `http://localhost:5173/` in `dev`
-- **Supported IdPs**: Google, Apple, Facebook (Cognito itself disabled for end users — bootstrap admin uses a separate "admin" client)
+- **Supported IdPs**: Google, Apple, Facebook (Cognito itself disabled for end users)
 - **Token validity**: ID 60min, Access 60min, Refresh 30 days
+
+**`admin-bootstrap`** — used only by `scripts/bootstrap_admin.py` and the dev-only `/admin/bootstrap-login` page (see `05-auth-flow.md` §9.2).
+- **Generate secret**: NO (public client)
+- **Auth flows**: `ALLOW_USER_PASSWORD_AUTH` + `ALLOW_REFRESH_TOKEN_AUTH`
+- **Supported IdPs**: Cognito only (no federation)
+- **Token validity**: same as `frontend`
+- In `prod` this client exists but is exercised once at first-admin bootstrap and then dormant; in `dev` it's the inner-loop sign-in path so we don't bounce through Google/Apple/Facebook for every iteration.
 
 ### 4.4 Hosted UI Domain
 
@@ -132,7 +140,8 @@ For all three: attribute mapping `email -> email`, `name -> name`.
 
 - `user_pool_id`
 - `user_pool_arn`
-- `user_pool_client_id`
+- `user_pool_client_id` (the `frontend` client)
+- `user_pool_bootstrap_client_id` (the `admin-bootstrap` client)
 - `hosted_ui_domain`
 
 ---
@@ -230,7 +239,7 @@ All Rust, runtime `provided.al2023`, architecture `arm64`, memory 256 MB (512 fo
 | `lambda-invites` | `POST /admin/invites`, `POST /invites/redeem` | RW | — | — |
 | `lambda-groups` | `GET /me`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}` (admin) | RW | — | — |
 | `lambda-newsletters` | `GET /groups/{g}/newsletters`, `GET /groups/{g}/newsletters/{nl}` | R | — | — |
-| `lambda-questions` | `GET/POST /groups/{g}/candidate-questions`, `POST/DELETE .../{q}/votes`, admin curate routes | RW | — | — |
+| `lambda-questions` | `GET/POST /groups/{g}/candidate-questions`, `POST/DELETE .../{q}/votes`, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
 | `lambda-responses` | response CRUD + autosave + publish + poll vote | RW | — | — |
 | `lambda-engagement` | comments + reactions | RW | — | — |
 | `lambda-media` | `POST /uploads`, `POST /uploads/{id}/complete`, `GET /media-cookie` | RW | PUT presign on originals; CloudFront cookie sign | Secrets:GetSecretValue on signing key |
@@ -270,11 +279,9 @@ A static JSON document baked into Lambda env at deploy time, providing defaults 
 
 Group settings stored in DynamoDB override these defaults per-group; see `02-data-model-dynamodb.md`.
 
-### 6.5 Public route exception
+### 6.5 No public routes
 
-`POST /invites/redeem` is NOT protected by the JWT authorizer — it accepts an unauthenticated Cognito access token from the OAuth callback flow as part of its body validation. See `05-auth-flow.md` §4.
-
-Actually — given Cognito triggers (`PreSignUp` + `PostConfirmation`) handle invite consumption end-to-end, `POST /invites/redeem` only exists as a fallback for **adding an existing user to an additional group**. It DOES require auth. So **all routes have JWT auth**.
+**All routes have JWT auth.** Invite redemption happens via `POST /invites/redeem`, which requires a valid Cognito JWT (see `05-auth-flow.md` §4 for the full flow). The handler performs both first-signup user creation and additional-group joins; there is no unauthenticated path into the API.
 
 ### 6.6 Outputs
 

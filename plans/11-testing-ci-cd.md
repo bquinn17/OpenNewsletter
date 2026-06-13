@@ -45,14 +45,13 @@ Per-transaction coverage from `02-data-model-dynamodb.md` §4: ≥1 test per tra
 
 Lifecycle integration suite (matches `06-newsletter-lifecycle.md` §11):
 1. Tick promotes top-N candidates correctly.
-2. Tick respects admin-curated promotion.
-3. Tick auto-publishes at deadline.
-4. Tick is idempotent under rapid re-runs (run loop 5x, assert single transition).
-5. Empty-candidate cycle still opens and publishes empty.
-6. Settings change mid-cycle applies to N+2.
-7. Membership cap enforced.
-8. Concurrent vote-cast and admin-delete-candidate produce consistent state.
-9. DST boundary in `America/New_York` cycle creation.
+2. Tick auto-publishes at deadline.
+3. Tick is idempotent under rapid re-runs (run loop 5x, assert single transition).
+4. Empty-candidate cycle still opens and publishes empty.
+5. Settings change mid-cycle applies to N+2.
+6. Membership cap enforced.
+7. Concurrent vote-cast and admin-delete-candidate produce consistent state.
+8. DST boundary in `America/New_York` cycle creation.
 
 Image-pipeline integration suite (matches `08-media-uploads.md` §10) running against `lambda-image-process` directly with sample fixtures in `backend/tests/fixtures/images/`.
 
@@ -90,6 +89,7 @@ CI runs `cargo test --features integration` on every backend PR, so coverage of 
 
 `infra/tests/test_stacks.py` using `aws_cdk.assertions`. For each stack, assert:
 - Expected resource counts (e.g. exactly 11 `AWS::Lambda::Function` in `ApiStack`).
+- Cognito user pool has exactly two app clients (`frontend` + `admin-bootstrap`).
 - IAM policy templates for each Lambda role match the documented least-privilege scope.
 - API routes match `03-api-contract.md` (auth attached to all but the explicit list of public ones — and there should be ZERO public routes).
 - DynamoDB table has correct keys + TTL attribute + 2 GSIs.
@@ -127,15 +127,15 @@ Golden-path tests (≤10):
 1. Sign in → land on home → see no groups → redeem invite → see group.
 2. Suggest a candidate question → see it in the list.
 3. Upvote a candidate → vote count increments.
-4. Cycle opens (test fast-forwards by directly mutating timestamps via test API) → see questions.
+4. Cycle opens (test fast-forwards via `POST /admin/dev/tick/cycle`) → see questions.
 5. Save draft → close tab → reopen → draft persists.
 6. Upload an image → wait for `ready` → image renders in preview.
 7. Publish answer → cycle closes → comments enabled.
 8. Comment on an answer → see it on reload.
 9. React with emoji → toggle off → toggle on different emoji.
-10. Admin curates and promotes manually → tick runs → expected questions locked.
+10. Upload avatar → poll until ready → `PATCH /me` → avatar renders in member listing.
 
-For tests that need to fast-forward time, expose a hidden `/test/advance-time` endpoint in `dev`-only builds (gated by `ENV=dev` env var; refuses outside dev).
+Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` routes (`03-api-contract.md` §11a), which are wired into the API only when `ENV=dev` and refuse with 404 in prod.
 
 ---
 

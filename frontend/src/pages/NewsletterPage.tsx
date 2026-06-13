@@ -7,7 +7,47 @@ import { AskedBy } from "../components/newsletter/AskedBy";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { CandidatesPage } from "./CandidatesPage";
 import { shortCountdown } from "../utils/dates";
-import type { LockedQuestion, MyResponse } from "../api/types";
+import type { LockedQuestion, MyResponse, PublishedQuestion } from "../api/types";
+
+type RecurringKind = "photo" | "mind" | "link";
+
+function recurringKind(prompt: string): RecurringKind | null {
+  if (prompt.includes("Photo Wall")) return "photo";
+  if (prompt.includes("On Your Mind")) return "mind";
+  if (prompt.includes("Check It Out")) return "link";
+  return null;
+}
+
+function summaryIcon(q: PublishedQuestion): string {
+  if (q.kind === "poll") return "\u{1F5F3}️"; // ballot box
+  const r = recurringKind(q.prompt);
+  if (r === "photo") return "\u{1F4F7}";
+  if (r === "mind") return "\u{1F4AC}";
+  if (r === "link") return "\u{1F440}";
+  return "❓"; // user-submitted
+}
+
+function summaryTitle(q: PublishedQuestion): string {
+  if (recurringKind(q.prompt)) {
+    // Strip leading emoji + the " — tagline" so the row shows just the feature name.
+    const sepIndex = q.prompt.indexOf(" — ");
+    const head = sepIndex >= 0 ? q.prompt.slice(0, sepIndex) : q.prompt;
+    return head.replace(/^\P{L}+/u, "").trim();
+  }
+  return q.prompt;
+}
+
+function summaryCount(q: PublishedQuestion): string {
+  if (q.kind === "poll") {
+    return `${q.totalVotes} ${q.totalVotes === 1 ? "vote" : "votes"}`;
+  }
+  if (recurringKind(q.prompt) === "photo") {
+    const photos = q.answers.reduce((n, a) => n + a.images.length, 0);
+    return `${photos} ${photos === 1 ? "photo" : "photos"}`;
+  }
+  const n = q.answers.length;
+  return `${n} ${n === 1 ? "reply" : "replies"}`;
+}
 
 export function NewsletterPage() {
   const { groupId = "", cycleId = "" } = useParams();
@@ -71,18 +111,35 @@ function PublishedLayout({
       <div className="px-5 pt-5">
         <div className="bg-white rounded-3xl border border-line p-4">
           <div className="text-xs uppercase tracking-widest text-inkmuted font-semibold mb-2">In this edition</div>
-          <ol className="space-y-2 text-sm">
-            {data.questions.map((q, i) => (
-              <li key={q.questionId} className="flex gap-3">
-                <span className="font-bold text-grape">{String(i + 1).padStart(2, "0")}</span>
-                <span>
-                  {q.kind === "poll" && <span className="text-grape font-semibold">Poll · </span>}
-                  {q.askedBy && <span className="text-inkmuted">{q.askedBy.displayName} asked: </span>}
-                  {q.prompt}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <ul className="text-sm">
+            {data.questions.map((q) => {
+              const asker = recurringKind(q.prompt) ? null : q.askedBy?.displayName ?? null;
+              return (
+                <li key={q.questionId}>
+                  <a
+                    href={`#q-${q.questionId}`}
+                    className="group flex gap-3 items-start -mx-2 px-2 py-2 rounded-xl hover:bg-cream transition-colors"
+                  >
+                    <span className="text-base leading-6 select-none flex-shrink-0" aria-hidden>
+                      {summaryIcon(q)}
+                    </span>
+                    <span className="flex-1 min-w-0 text-ink line-clamp-2 group-hover:text-grape">
+                      {summaryTitle(q)}
+                    </span>
+                    <span className="text-xs text-inkmuted whitespace-nowrap mt-0.5 flex-shrink-0">
+                      {asker && (
+                        <>
+                          <span>{asker}</span>
+                          <span className="mx-1">·</span>
+                        </>
+                      )}
+                      <span>{summaryCount(q)}</span>
+                    </span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
           <div className="text-xs text-inkmuted mt-3">
             Published {data.publishedAt ? new Date(data.publishedAt).toLocaleDateString() : ""} ·{" "}
             {data.questions.length} questions · {data.reactionTotal} reactions
@@ -90,10 +147,10 @@ function PublishedLayout({
         </div>
       </div>
 
-      {data.questions.map((q, i) => (
-        <section key={q.questionId} className="px-5 mt-8">
+      {data.questions.map((q) => (
+        <section key={q.questionId} id={`q-${q.questionId}`} className="px-5 mt-8 scroll-mt-20">
           <div className="flex items-baseline gap-3 mb-3">
-            <span className="font-display font-bold text-coral text-2xl">{String(i + 1).padStart(2, "0")}</span>
+            <span className="text-2xl leading-none flex-shrink-0" aria-hidden>{summaryIcon(q)}</span>
             <div>
               {q.kind === "poll" && (
                 <div className="text-xs uppercase tracking-widest text-grape font-bold">Poll</div>

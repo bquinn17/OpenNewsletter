@@ -443,7 +443,6 @@ const myMayResponses: MyResponse[] = [
     body:
       "Took my first solo trip in years — three nights on the Olympic coast. Walked until my feet hurt, slept in the back of the truck, and didn't open my laptop once.",
     imageMediaIds: ["i_may_1", "i_may_2", "i_may_3"],
-    version: 7,
     updatedAt: new Date(Date.now() - 60_000).toISOString(),
     publishedAt: new Date(Date.now() - 60_000).toISOString(),
     wordCount: 248,
@@ -456,7 +455,6 @@ const myMayResponses: MyResponse[] = [
     body:
       "Sam came over Sunday and we tried to make handmade ravioli. We did not succeed. The filling was incredible — brown butter, sage, ricotta, lemon zest — and we ended up just spooning it on top of pappardelle. 10/10, would fail again.",
     imageMediaIds: ["i_may_4", "i_may_5"],
-    version: 3,
     updatedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
     wordCount: 52,
   },

@@ -81,7 +81,6 @@ frontend/
 │   │   └── admin/
 │   │       ├── GroupSettingsForm.tsx
 │   │       ├── InviteList.tsx
-│   │       ├── CurateQuestionsForm.tsx
 │   │       └── MemberList.tsx
 │   ├── pages/
 │   │   ├── HomePage.tsx              # / — list of newsletters
@@ -139,7 +138,8 @@ React Router v6 data routers, with route-level loaders for the `useNewsletter`-s
 /g/:groupId/upcoming/suggest    New candidate form
 /g/:groupId/n/:cycleId      Newsletter view (voting/open/published states render different UIs)
 /g/:groupId/n/:cycleId/respond/:questionId   Editor for one question
-/g/:groupId/admin           Admin page (gated by role)
+/g/:groupId/admin           Admin page (gated by role) — Members / Invites / Settings tabs only (no Curate; see 06 §7)
+/admin/bootstrap-login      Dev-only username/password login against the `admin-bootstrap` Cognito client; hidden in prod via `env.appEnv !== "dev"` (see `13-dev-environments.md` §6)
 *                           NotFound
 ```
 
@@ -335,8 +335,8 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
 
 ### 7.6 SettingsPage
 
-- Profile card: display name edit, avatar upload (image) with a fallback color picker for users who don't upload one.
-- **Notifications**: a master push toggle plus, per group, three independently-toggleable categories — *cycle open*, *deadline reminders*, *publication*.
+- Profile card: display name edit, avatar upload (via the dedicated avatar pipeline — `POST /avatars` → poll `GET /avatars/{id}` → `PATCH /me` with the new `avatarMediaId`), and a fallback color picker for users who don't upload one (stored as `avatarColor` on User).
+- **Notifications**: a master push toggle plus, per group, two independently-toggleable categories — *cycle open* and *deadline reminders*. Publication push is always-on with no toggle; the master toggle and OS-level permission are the only kill-switches.
 - **My devices**: push subscriptions with delete buttons + "send test push" action.
 - **Your groups**: each group exposes Manage (admins) / View / **Leave**. Leaving the only group where you're the only admin is blocked (server returns `LAST_ADMIN`).
 - Session controls (sign out).
@@ -348,7 +348,7 @@ Tabs:
 - **Invites** — generate (with role + TTL), revoke, see status. Display invite as a copyable URL `https://opennewsletter.example.com/join?code=...`.
 - **Settings** — `<GroupSettingsForm/>` writing to `PATCH /groups/{g}` (cycle parameters, on-cycle-open default).
 
-There is no Curate tab in v1 — admins do not override voting outcomes. See `06-newsletter-lifecycle.md` §7.
+There is no Curate tab in v1 — admins do not override voting outcomes. See `06-newsletter-lifecycle.md` §7. The admin page has exactly three tabs (Members / Invites / Settings) and the `CurateQuestionsForm` component does not exist.
 
 ### 7.8 JoinPage `/join?code=...`
 
@@ -364,7 +364,7 @@ If authenticated: call `POST /invites/redeem` with the code.
 
 `useResponseEditor` keeps two layers:
 
-- **`server`**: last known `Response` from the server (`body`, `imageMediaIds`, `imageCaptions`, etc.)
+- **`server`**: last known `Response` from the server (`body`, `imageMediaIds`, etc. — image captions live on the `ImageMedia` row, not on the response)
 - **`local`**: the user's working copy in the textarea
 
 ### 8.2 Save loop
@@ -443,12 +443,17 @@ GitHub Pages deploy:
 export const env = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL,
   cdnBaseUrl: import.meta.env.VITE_CDN_BASE_URL,
-  cognitoAuthority: import.meta.env.VITE_COGNITO_AUTHORITY,    // https://cognito-idp.us-east-1.amazonaws.com/{poolId}
-  cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID,
+  cognitoUserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,         // us-east-1_xxxxx
+  cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID,              // public frontend client
+  cognitoBootstrapClientId: import.meta.env.VITE_COGNITO_BOOTSTRAP_CLIENT_ID, // admin-bootstrap client (dev login only)
   cognitoHostedDomain: import.meta.env.VITE_COGNITO_HOSTED_DOMAIN,
   redirectUri: import.meta.env.VITE_REDIRECT_URI,
+  appEnv: import.meta.env.VITE_ENV,                                     // "dev" | "prod"
   buildSha: import.meta.env.VITE_BUILD_SHA,
 };
+
+// Authority URL is derived in code so the env file stays minimal:
+//   `https://cognito-idp.us-east-1.amazonaws.com/${env.cognitoUserPoolId}`
 ```
 
 `.env.development`, `.env.production` checked in (with public-only values; no secrets in the SPA).
@@ -518,6 +523,22 @@ Public key flows from `GET /config` (no `.env` needed for the SPA). Generation +
 - Background sync for offline draft saves (Workbox `BackgroundSyncPlugin`). Tracked separately; the current debounced-autosave + localStorage mirror covers tab-crash recovery.
 - Periodic background sync for prefetching open cycles. Browser support is Chrome-only and not worth the complexity for v1.
 - `share_target` manifest entry to receive shared images from other apps. Roadmap.
+
+---
+
+## 14a. Client-derived display data (not API fields)
+
+Several pieces of display state live entirely in the frontend rather than on the API. They are derived from primitive API fields. Keep the derivation in `utils/`, not scattered through components.
+
+- **Month / year labels** (`"June"`, `"2026"`): derived from `responseOpenAt` using the group's `timezone`. Helper: `utils/dates.ts#cycleLabels(responseOpenAt, timezone)`. Never accept a server-supplied label.
+- **Word count** on the respond page footer: derived from the local `body` string. Trivial — no helper needed beyond `body.trim().split(/\s+/).length` (zero when empty).
+- **Reaction total** on the published-edition header: sum of `reactionGroups[].count` across all answers. Inline in `NewsletterPage.tsx`.
+- **"Hype check" banner** (`hypeMessage` in mocks): computed from per-user draft counts in the open-newsletter payload. Helper: `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` returns either a string or `null` (suppress when there's nothing motivating to say).
+- **`helperText` under recurring questions** (Photo Wall / On Your Mind / Check It Out): hard-coded map keyed by prompt slug in `utils/recurring.ts`. The API knows nothing about recurring questions — they're just regular questions that the frontend recognizes by prompt and decorates accordingly.
+- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-grape to-sky`): derived from `Group.gradient` (a slug like `grape-sky`) via a frontend palette table. The slug is the API contract; the class string is a presentation detail.
+- **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table.
+
+These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the OpenAPI spec). They live as computed values in component state or as the return type of utility functions.
 
 ---
 

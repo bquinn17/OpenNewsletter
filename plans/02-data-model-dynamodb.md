@@ -9,7 +9,7 @@ This document defines every entity stored in the `OpenNewsletter-{env}` table. R
 - Hash key: `pk` (S)
 - Range key: `sk` (S)
 - TTL attribute: `ttl` (N, epoch seconds; only set on items that should auto-expire)
-- Stream: NEW_AND_OLD_IMAGES (consumed by archival Lambda — see `10-archival.md`)
+- Stream: **disabled in v1.** The only planned consumer is the archival Lambda (`10-archival.md`), which is deferred. Streams add cost with no v1 reader. Re-enable (`NEW_AND_OLD_IMAGES`) when archival lands; the table reconfigure is non-disruptive.
 
 Two GSIs:
 
@@ -22,7 +22,7 @@ All keys are strings. All ID values are UUIDv7 unless noted.
 
 ## 2. Entity catalog
 
-For each entity below: `pk`, `sk`, optional GSI keys, the application attributes, and a brief explanation. `entity` attribute is set on every item for stream consumers and debugging.
+For each entity below: `pk`, `sk`, optional GSI keys, the application attributes, and a brief explanation. `entity` attribute is set on every item for debugging (and for the future archival stream consumer — streams themselves are off in v1).
 
 ### 2.1 User
 
@@ -33,14 +33,27 @@ A Cognito-authenticated person.
 | `pk` | `USER#{userId}` |
 | `sk` | `PROFILE` |
 | `entity` | `User` |
-| `userId` | UUIDv7 (= Cognito `sub`) |
+| `userId` | UUIDv7 (generated server-side on first invite redemption) |
+| `cognitoSub` | string (Cognito `sub` — UUIDv4-shaped) |
 | `email` | string |
 | `displayName` | string |
-| `avatarMediaId` | string \| null |
+| `avatarColor` | string (slug, e.g. `grape`/`coral`/`mint`; deterministic fallback derived from `userId` hash if unset) |
+| `avatarMediaId` | string \| null (references an `AvatarMedia` row — see §2.16) |
 | `createdAt` | ISO-8601 |
 | `lastLoginAt` | ISO-8601 |
 
-`userId` mirrors the Cognito sub so we never need to look it up.
+`userId` is our own UUIDv7, not the Cognito sub. This preserves the global "all IDs are UUIDv7, sortable by creation time" invariant. Map sub → userId via the lookup row below.
+
+### 2.1a Cognito-sub lookup
+
+| Attr | Value |
+|---|---|
+| `pk` | `COGNITO_SUB#{sub}` |
+| `sk` | `USER_ID` |
+| `entity` | `CognitoSubLookup` |
+| `userId` | UUIDv7 |
+
+Created in the same `TransactWriteItems` as the User row (during invite redemption). Read on every authenticated request to resolve `claims.sub` → our `userId`. Cached per cold-start for ≤60s alongside the membership cache.
 
 ### 2.2 GroupMembership (also serves as Group → user index via GSI1)
 
@@ -57,6 +70,7 @@ A user's membership in one group.
 | `groupId` | UUIDv7 |
 | `role` | `admin` \| `member` |
 | `joinedAt` | ISO-8601 |
+| `editionsAnswered` | number (denormalized; incremented in the publish-response transaction the first time a user publishes any answer in a given cycle) |
 
 Access patterns served:
 - "What groups am I in?" → `Query pk = USER#{userId} AND begins_with(sk, GROUP#)`
@@ -75,9 +89,10 @@ The tenant.
 | `name` | string |
 | `timezone` | IANA TZ string, default `America/New_York` |
 | `cycleSettings` | map: `{ questionsPerCycle, votesPerUserPerCycle, responseWindowDays, autoPublish: true }` |
-| `notificationSettings` | map: `{ offsetsHoursBeforeClose: [96, 48, 24], onCycleOpen: true }` |
+| `notificationSettings` | map: `{ offsetsHoursBeforeClose: [96, 48, 24], onCycleOpen: true }` (publication push is always-on with no toggle) |
 | `memberCount` | number (denormalized; updated transactionally on join/leave) |
 | `memberSoftCap` | number, default 50 |
+| `gradient` | string (slug from a small preset palette, e.g. `grape-sky`, `coral-sun`; chosen at group creation, admin-editable in Settings) |
 | `createdAt` | ISO-8601 |
 | `createdBy` | userId |
 
@@ -227,7 +242,6 @@ A user's reply to one locked question.
 | `body` | string (markdown-safe; ≤20k chars) — only when `kind=text` |
 | `pollOptionId` | UUIDv7 \| null — only when `kind=poll` (last-write-wins) |
 | `imageMediaIds` | array<string> (≤10) — only when `kind=text` |
-| `version` | number (monotonic; incremented on each save; used for optimistic concurrency) |
 | `updatedAt` | ISO-8601 |
 | `publishedAt` | ISO-8601 \| null |
 
@@ -259,6 +273,7 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `status` | `pending` \| `ready` \| `failed` |
 | `bytes` | number |
 | `width` / `height` | numbers (from processor) |
+| `caption` | string \| null (author-supplied, ≤140 chars; rendered beneath the image in the published view) |
 | `uploadedAt` | ISO-8601 |
 | `processedAt` | ISO-8601 \| null |
 
@@ -274,9 +289,10 @@ Flat reply to a published response.
 | `commentId` | UUIDv7 |
 | `authorUserId` | UUIDv7 |
 | `body` | string (≤2000 chars; markdown-safe) |
+| `imageMediaId` | string \| null (optional single image attached to the comment; references an `ImageMedia` row owned by the comment author) |
 | `createdAt` | ISO-8601 |
 | `editedAt` | ISO-8601 \| null |
-| `deletedAt` | ISO-8601 \| null (soft delete; body replaced with empty string when set) |
+| `deletedAt` | ISO-8601 \| null (soft delete; `body` and `imageMediaId` cleared when set) |
 
 Access patterns:
 - "Comments on an answer, oldest first" → `Query pk=GROUP#{g}#NL#{c}#Q#{q}#A#{u} AND begins_with(sk, C#)`
@@ -333,6 +349,8 @@ Per-user, per-group notification on/off.
 | `cycleOpen` | bool, default true |
 | `deadlineReminders` | bool, default true |
 
+Publication notifications are always-on with no user toggle; there is no `publication` field. The only kill-switch is the OS-level / browser-level push permission.
+
 ### 2.15 Counters and idempotency markers
 
 A few small entities for atomic bookkeeping:
@@ -341,6 +359,27 @@ A few small entities for atomic bookkeeping:
 - `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#CLOSE#{offsetHours}` — likewise per offset.
 - `pk=TICK` `sk=CYCLE` — single record updated on each `lambda-cycle-tick` run with `lastRanAt`.
 - `pk=TICK` `sk=NOTIFY` — likewise for `lambda-notify-tick`.
+
+### 2.16 AvatarMedia
+
+User avatars are uploaded via a dedicated pipeline (separate from the per-question image pipeline) so they can cross group boundaries. See `08-media-uploads.md` §11.
+
+| Attr | Value |
+|---|---|
+| `pk` | `USER#{userId}` |
+| `sk` | `AVATAR#{avatarId}` |
+| `entity` | `AvatarMedia` |
+| `avatarId` | UUIDv7 |
+| `userId` | UUIDv7 (owner) |
+| `mimeType` | `image/jpeg` \| `image/png` \| `image/webp` |
+| `originalKey` | S3 key in originals bucket (avatar prefix) |
+| `displayKey` | S3 key in processed bucket (256×256 WebP) — null until processed |
+| `status` | `pending` \| `ready` \| `failed` |
+| `bytes` | number |
+| `uploadedAt` | ISO-8601 |
+| `processedAt` | ISO-8601 \| null |
+
+The processed avatar bucket is served via a separate CloudFront behavior (`/avatar/*`) that does NOT require signed cookies — avatars are not tenant-scoped, URLs use the UUIDv7 `avatarId` (unguessable), and an avatar leak is acceptable. Cache-control: `public, max-age=86400, immutable` so changing avatars produces a new `avatarId` and never collides with the old one in caches.
 
 ---
 
@@ -379,7 +418,7 @@ The following operations MUST use `TransactWriteItems`:
 1. **Cast a vote** — Put `CandidateVote` with `attribute_not_exists(sk)` AND Update `CandidateQuestion` with `voteCount += 1` AND `gsi1sk` rewritten with new padded count. Plus a "vote-count check" on the voter partition (see `03-api-contract.md` §6.4).
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `voteCount -= 1` AND new `gsi1sk`.
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `lockedQuestionIds` and transition status from `voting` to `open`. Single transaction (cap 100 items).
-4. **Publish response** — Update response `status` from `draft` to `published`, increment `version`, set `publishedAt`. Must check `Newsletter.status = open`.
+4. **Publish response** — Update response `status` from `draft` to `published`, increment `version`, set `publishedAt`. Must check `Newsletter.status = open`. The transaction also increments `GroupMembership.editionsAnswered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.memberCount += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.memberCount -= 1`.
 
@@ -387,16 +426,9 @@ For all transactions, use a `ClientRequestToken` derived from the request's `x-c
 
 ---
 
-## 5. Optimistic concurrency for drafts
+## 5. Concurrency for drafts
 
-Response items carry a `version` (number). Autosave PUTs use:
-
-```
-ConditionExpression: attribute_not_exists(version) OR version = :expectedVersion
-UpdateExpression:    SET ..., version = :expectedVersion + 1
-```
-
-If the condition fails, the API returns `409 Conflict` with the current server version + body. The frontend reconciles (typically by overwriting if local state is newer; see `04-frontend-architecture.md` §7.4).
+Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs are unconditional `UpdateItem` calls that overwrite `body`, `imageMediaIds`, `pollOptionId`, and `updatedAt`. No `version` attribute, no `ConditionExpression`, no `409 Conflict` reconciliation. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
 
 ---
 

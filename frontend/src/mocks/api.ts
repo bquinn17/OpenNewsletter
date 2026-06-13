@@ -174,7 +174,6 @@ export const mockApi = {
         questionId,
         status: "draft",
         kind: body.kind,
-        version: 0,
         updatedAt: new Date().toISOString(),
       };
       nl.myResponses.push(existing);
@@ -187,7 +186,6 @@ export const mockApi = {
     } else {
       existing.pollOptionId = body.pollOptionId;
     }
-    existing.version += 1;
     existing.updatedAt = new Date().toISOString();
     if (body.publish) {
       existing.status = "published";
