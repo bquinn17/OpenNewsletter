@@ -1,1 +1,45 @@
+# Dependencies
+node_modules/
+
+# Rust
+target/
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test artifacts
+coverage/
+
+# Project-specific
 sample_newsletter/**
