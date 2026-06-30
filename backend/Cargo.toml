@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/persistence",
+    "crates/shared",
+    "crates/lambda-invites",
+    "crates/lambda-groups",
+    "crates/lambda-newsletters",
+    "crates/lambda-questions",
+    "crates/lambda-responses",
+    "crates/lambda-engagement",
+    "crates/lambda-media",
+    "crates/lambda-push",
+    "crates/lambda-image-process",
+    "crates/lambda-cycle-tick",
+    "crates/lambda-notify-tick",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+aws-sdk-dynamodb = "1"
+aws-config = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_dynamo = { version = "4.2", features = ["aws-sdk-dynamodb+1"] }
+thiserror = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v7", "v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+async-trait = "0.1"
+pretty_assertions = "1"
