@@ -64,7 +64,6 @@ id_newtype!(AvatarId);
 id_newtype!(PollOptionId);
 id_newtype!(SubscriptionId);
 
-/// Cognito's `sub` claim. UUIDv4-shaped but treated as opaque.
 id_newtype!(CognitoSub);
 
 /// `yyyymm` (e.g. `202605`).

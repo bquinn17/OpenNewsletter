@@ -62,24 +62,20 @@ All paths relative to `backend/`.
 
 - ✅ Every access pattern AP1–AP21 has a named function.
 - ✅ Every transaction in `02-data-model-dynamodb.md` §4 (#1–#6) implemented with `TransactWriteItems`.
-- ✅ `keys.rs` unit tests in place.
-- ❌ **DDB-local integration tests not yet written.** Plan calls for ≥1 testcontainers-backed test per AP and per transaction; deferred until the toolchain blocker (below) is cleared so tests can be authored against a real `cargo test` loop.
+- ✅ `keys.rs` unit tests in place (15 tests).
+- ✅ **Integration test files written** — 38 tests across 9 files in `backend/crates/persistence/tests/`. All compile clean against `testcontainers-modules` / `amazon/dynamodb-local`. **Blocked on Docker** (see B3); tests cannot run until Docker is present in WSL2.
 
 ---
 
 ## Active blockers
 
-### B1 — MSVC linker missing on the host (HIGH; blocks all M2 verification)
-
-`cargo check` and `cargo test` fail with `error: linker 'link.exe' not found` before any application code is type-checked, because build scripts for `rustls`, `getrandom`, `aws-lc-rs`, etc. need to link on the host. **Action:** install Visual Studio Build Tools with the "Desktop development with C++" workload (or switch to the `x86_64-pc-windows-gnu` Rust target + MinGW). Until this is resolved, none of M2 has been verified to compile or test green.
-
 ### B2 — Toolchain pin (`rust-toolchain.toml`) bumped from `1.79` → `stable`
 
 `coding-standards.md` §2.1 says "1.79+ stable". With 1.79 active, dependency resolution fails outright: `crypto-common 0.2.2` (transitive via the AWS SDK) requires Cargo's `edition2024` feature, which needs Rust 1.85+. I bumped the channel to `stable` (currently 1.96 on this machine) to make the workspace resolvable. **Action:** decide whether to (a) keep `stable`, (b) pin to a concrete minimum like `1.85`, or (c) pin transitive deps backwards. Then update `coding-standards.md` §2.1 wording to match.
 
-### B3 — DDB-local integration tests pending
+### B3 — DDB-local integration tests require Docker
 
-M2 deliverables include `cargo test -p persistence` going green against a testcontainers-managed DynamoDB-local. Only the `keys.rs` unit tests are written. Once B1 is cleared, add per-AP and per-transaction integration tests under `backend/crates/persistence/tests/`.
+Integration test files are written (`backend/crates/persistence/tests/*.rs`); all 38 tests compile clean. They require `docker` in `PATH` to run — `testcontainers` pulls `amazon/dynamodb-local` and needs the Docker socket. On this WSL2 instance Docker is not yet installed. **Action:** install Docker Engine in WSL2 (`sudo apt-get install -y docker.io && sudo service docker start`) or enable Docker Desktop → Settings → WSL Integration for this distro, then run `cargo test -p persistence` to exercise all AP and transaction tests.
 
 ### B4 — Pre-existing mock-only frontend will need replacement in M7
 
@@ -93,11 +89,9 @@ OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, a
 
 ## Suggested next steps (in order)
 
-1. **Install VS Build Tools** on this Windows machine to clear B1.
-2. Run `cargo test --workspace` from `backend/`; expect `keys.rs` unit tests to pass and the rest of the workspace to type-check.
-3. Resolve B2: edit `coding-standards.md` §2.1 to reflect the chosen toolchain floor.
-4. Write the DDB-local integration tests (B3) — one per AP and per transaction.
-5. Begin M3 (CDK infra baseline).
+1. **Install Docker in WSL2** to clear B3: `sudo apt-get install -y docker.io && sudo usermod -aG docker $USER && sudo service docker start`, then `cargo test -p persistence` from `backend/` to run all 38+15 tests.
+2. Resolve B2: edit `coding-standards.md` §2.1 to reflect the chosen toolchain floor (recommend pinning `1.85` as the minimum).
+3. Begin M3 (CDK infra baseline).
 
 ---
 

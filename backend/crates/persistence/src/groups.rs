@@ -2,7 +2,7 @@
 
 use crate::error::RepoError;
 use crate::keys::{
-    attr, group_pk, index, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk,
+    attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk,
     GROUP_META_SK,
 };
 use crate::repo::Repo;
