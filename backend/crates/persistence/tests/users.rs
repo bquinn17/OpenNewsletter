@@ -81,5 +81,10 @@ async fn it_updates_last_login() {
         .unwrap();
 
     let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
-    assert_eq!(got.last_login_at.to_rfc3339(), new_login);
+    assert_eq!(
+        got.last_login_at,
+        chrono::DateTime::parse_from_rfc3339(new_login)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    );
 }

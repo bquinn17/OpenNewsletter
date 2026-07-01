@@ -87,7 +87,7 @@ These apply regardless of language.
 ## 2. Rust
 
 ### 2.1 Toolchain
-- Pinned via `rust-toolchain.toml` (1.79+ stable). Don't override locally.
+- Pinned via `rust-toolchain.toml` (1.85+ stable; channel pinned to `stable` in `rust-toolchain.toml`). Don't override locally.
 - Edition 2021.
 - `cargo-lambda` for Lambda builds.
 

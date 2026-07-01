@@ -13,7 +13,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
 | M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py`, `infra/keys/`, `cf-signing.key` present as untracked files. Google/Apple/Facebook OAuth apps, Cognito domain, and DNS records still owed by the operator. |
 | **M2** | **Backend foundations (domain + persistence)** | 🟡 **code-complete, unverified** | See "M2 detail" below. |
-| M3 | Infrastructure baseline (CDK) | ⬜ not started | |
+| **M3** | **Infrastructure baseline (CDK)** | 🟡 **code-complete, unverified** | See "M3 detail" below. |
 | M3.5 | Dev environment online | ⬜ not started | |
 | M4 | Auth + bootstrap | ⬜ | |
 | M5 | Lifecycle engine + cycle CRUD | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-Roughly 2 of 14 milestones complete (~12%).
+Roughly 2 of 14 milestones complete (~14%); M3 code-complete and awaiting `cdk synth` verification.
 
 ---
 
@@ -67,11 +67,38 @@ All paths relative to `backend/`.
 
 ---
 
+## M3 detail — what landed
+
+All paths relative to `infra/`.
+
+- **`cdk.json`** — CDK app config with `python3 app.py` entry point and feature flags.
+- **`requirements.txt`** — `aws-cdk-lib>=2.100.0`, `constructs`, `python-dotenv`, `pytest`, `ruff`, `mypy`.
+- **`app.py`** — instantiates all M3 stacks; reads `--context env=<dev|prod>` and passes `EnvConfig` into each stack constructor.
+- **`opennewsletter/config.py`** — `EnvConfig` frozen dataclass; `load_config(env)` reads `.env.local` (dev) or env vars (CI/prod); falls back to placeholder ARNs when M1 values are absent.
+- **`opennewsletter/data_stack.py`** — `DataStack`: DDB table `OpenNewsletter-{env}`, pay-per-request, TTL on `ttl`, two GSIs (`gsi1`, `gsi2`), AWS-managed KMS, PITR in prod only, DESTROY removal in dev.
+- **`opennewsletter/auth_stack.py`** — `AuthStack`: Cognito User Pool, 3 federated IdPs (Google/Apple/Facebook) via CFN dynamic references to Secrets Manager, `frontend` + `admin-bootstrap` app clients, Cognito-managed hosted UI domain. Lambda triggers (PreSignUp/PostConfirmation) wired in M4.
+- **`opennewsletter/frontend_stack.py`** — `FrontendStack`: ACM cert (us-east-1) covering `domain`, `cdn.domain`, and `api_domain`; optional Route53 CNAME if `hosted_zone_id` is set.
+- **`opennewsletter/media_persistent_stack.py`** — `MediaPersistentStack`: S3 originals + processed buckets (both private, Block-Public-Access all-on), CloudFront distribution with OAC, signed-cookie `KeyGroup` reading `infra/keys/cf-signing.pub.pem`.
+- **`opennewsletter/media_pipeline_stack.py`** — `MediaPipelineStack`: `lambda-image-process` (shell stub, arm64, 1024 MB, `provided.al2023`), S3 `ObjectCreated` notification on `uploads/` prefix, least-privilege IAM.
+- **`opennewsletter/monitoring_stack.py`** — `MonitoringStack` skeleton: SNS alarm topic (+ email subscription if `alarm_email` set), empty CloudWatch dashboard. Metric widgets + alarms land in M13.
+- **`infra/keys/cf-signing.pub.pem`** — dev placeholder RSA-2048 public key for CloudFront `PublicKey`. In prod, operator generates real keypair: `openssl genrsa 2048 | openssl rsa -pubout > infra/keys/cf-signing.pub.pem`, uploads private key to Secrets Manager.
+- **`backend/lambda-stubs/lambda-image-process/bootstrap`** — shell stub so CDK asset hashing works at synth time; replaced by the real Rust binary in M8.
+- **`infra/tests/test_stacks.py`** — 20 CDK assertion tests covering DDB keys/TTL/GSIs, Cognito user pool settings (2 clients, 3 IdPs, no self-signup), S3 Block-Public-Access, CloudFront KeyGroup attachment, Lambda arm64/1024 MB.
+
+### M3 coverage vs. plan
+
+- ✅ `DataStack` — DynamoDB table + 2 GSIs.
+- ✅ `AuthStack` — Cognito user pool + 3 IdPs + 2 app clients + hosted UI domain.
+- ✅ `MediaPersistentStack` — S3 originals + processed + CloudFront + KeyGroup.
+- ✅ `MediaPipelineStack` — `lambda-image-process` stub + S3 event subscription.
+- ✅ `FrontendStack` — ACM cert + optional Route53 records.
+- ✅ `MonitoringStack` skeleton.
+- ✅ `infra/tests/test_stacks.py` — 20 assertion tests written.
+- 🟡 **`cdk synth` not yet verified** — requires Python 3.12 + pip (system has 3.8 only). See "Suggested next steps" item 2.
+
+---
+
 ## Active blockers
-
-### B2 — Toolchain pin (`rust-toolchain.toml`) bumped from `1.79` → `stable`
-
-`coding-standards.md` §2.1 says "1.79+ stable". With 1.79 active, dependency resolution fails outright: `crypto-common 0.2.2` (transitive via the AWS SDK) requires Cargo's `edition2024` feature, which needs Rust 1.85+. I bumped the channel to `stable` (currently 1.96 on this machine) to make the workspace resolvable. **Action:** decide whether to (a) keep `stable`, (b) pin to a concrete minimum like `1.85`, or (c) pin transitive deps backwards. Then update `coding-standards.md` §2.1 wording to match.
 
 ### B3 — DDB-local integration tests require Docker
 
@@ -89,9 +116,10 @@ OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, a
 
 ## Suggested next steps (in order)
 
-1. **Install Docker in WSL2** to clear B3: `sudo apt-get install -y docker.io && sudo usermod -aG docker $USER && sudo service docker start`, then `cargo test -p persistence` from `backend/` to run all 38+15 tests.
-2. Resolve B2: edit `coding-standards.md` §2.1 to reflect the chosen toolchain floor (recommend pinning `1.85` as the minimum).
-3. Begin M3 (CDK infra baseline).
+1. **Install Docker in WSL2** to clear B3: `sudo apt-get install -y docker.io && sudo usermod -aG docker $USER && sudo service docker start`, then `cargo test --features integration -p persistence` from `backend/` to run all 38+15 tests.
+2. **Install Python 3.12 + pip** in WSL2 (system has Python 3.8 only), then `cd infra && pip install -r requirements.txt && cdk synth --context env=dev` to verify M3.
+3. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS) to clear B5 and enable an end-to-end deploy.
+4. Begin M3.5 (Makefile + dev scripts) once `cdk synth` is green.
 
 ---
 
