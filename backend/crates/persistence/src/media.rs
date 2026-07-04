@@ -31,9 +31,15 @@ pub async fn get_image(
 
 pub async fn put_image(repo: &Repo, img: &ImageMedia) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(img)?;
-    item.insert(attr::PK.into(), AttributeValue::S(image_pk(&img.group_id, &img.cycle_id)));
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(image_pk(&img.group_id, &img.cycle_id)),
+    );
     item.insert(attr::SK.into(), AttributeValue::S(image_sk(&img.image_id)));
-    item.insert(attr::GSI1PK.into(), AttributeValue::S(image_gsi1pk(&img.user_id)));
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(image_gsi1pk(&img.user_id)),
+    );
     item.insert(
         attr::GSI1SK.into(),
         AttributeValue::S(image_gsi1sk(&img.uploaded_at.to_rfc3339(), &img.image_id)),

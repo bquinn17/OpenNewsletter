@@ -24,7 +24,12 @@ pub async fn list_comments(
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(
             ":pk",
-            AttributeValue::S(engagement_pk(group_id, cycle_id, question_id, answer_user_id)),
+            AttributeValue::S(engagement_pk(
+                group_id,
+                cycle_id,
+                question_id,
+                answer_user_id,
+            )),
         )
         .expression_attribute_values(":prefix", AttributeValue::S("C#".into()))
         .send()
@@ -40,7 +45,12 @@ pub async fn put_comment(repo: &Repo, c: &Comment) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(c)?;
     item.insert(
         attr::PK.into(),
-        AttributeValue::S(engagement_pk(&c.group_id, &c.cycle_id, &c.question_id, &c.answer_user_id)),
+        AttributeValue::S(engagement_pk(
+            &c.group_id,
+            &c.cycle_id,
+            &c.question_id,
+            &c.answer_user_id,
+        )),
     );
     item.insert(
         attr::SK.into(),
@@ -57,6 +67,10 @@ pub async fn put_comment(repo: &Repo, c: &Comment) -> Result<(), RepoError> {
     Ok(())
 }
 
+// Args mirror the DDB composite key (4 engagement-location fields + comment
+// identity + 2 timestamps); bundling them into a struct wouldn't reduce real
+// duplication since each field is independently required by the caller.
+#[allow(clippy::too_many_arguments)]
 pub async fn soft_delete_comment(
     repo: &Repo,
     group_id: &GroupId,
@@ -72,7 +86,12 @@ pub async fn soft_delete_comment(
         .table_name(&repo.table)
         .key(
             attr::PK,
-            AttributeValue::S(engagement_pk(group_id, cycle_id, question_id, answer_user_id)),
+            AttributeValue::S(engagement_pk(
+                group_id,
+                cycle_id,
+                question_id,
+                answer_user_id,
+            )),
         )
         .key(
             attr::SK,
@@ -103,7 +122,12 @@ pub async fn list_reactions(
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(
             ":pk",
-            AttributeValue::S(engagement_pk(group_id, cycle_id, question_id, answer_user_id)),
+            AttributeValue::S(engagement_pk(
+                group_id,
+                cycle_id,
+                question_id,
+                answer_user_id,
+            )),
         )
         .expression_attribute_values(":prefix", AttributeValue::S("R#".into()))
         .send()
@@ -119,7 +143,12 @@ pub async fn put_reaction(repo: &Repo, r: &Reaction) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(r)?;
     item.insert(
         attr::PK.into(),
-        AttributeValue::S(engagement_pk(&r.group_id, &r.cycle_id, &r.question_id, &r.answer_user_id)),
+        AttributeValue::S(engagement_pk(
+            &r.group_id,
+            &r.cycle_id,
+            &r.question_id,
+            &r.answer_user_id,
+        )),
     );
     item.insert(
         attr::SK.into(),
@@ -150,9 +179,17 @@ pub async fn delete_reaction(
         .table_name(&repo.table)
         .key(
             attr::PK,
-            AttributeValue::S(engagement_pk(group_id, cycle_id, question_id, answer_user_id)),
+            AttributeValue::S(engagement_pk(
+                group_id,
+                cycle_id,
+                question_id,
+                answer_user_id,
+            )),
         )
-        .key(attr::SK, AttributeValue::S(reaction_sk(reactor_user_id, emoji)))
+        .key(
+            attr::SK,
+            AttributeValue::S(reaction_sk(reactor_user_id, emoji)),
+        )
         .send()
         .await?;
     Ok(())

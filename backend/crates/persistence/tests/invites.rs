@@ -9,14 +9,19 @@ async fn it_puts_and_gets_invite() {
     let (_c, repo) = common::make_repo().await;
     let inv = common::invite("CODE1234", "g1", "u1");
     invites::put_invite(&repo, &inv, 9999999999).await.unwrap();
-    let got = invites::get_invite(&repo, &inv.code).await.unwrap().unwrap();
+    let got = invites::get_invite(&repo, &inv.code)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got, inv);
 }
 
 #[tokio::test]
 async fn it_returns_none_for_missing_invite() {
     let (_c, repo) = common::make_repo().await;
-    let result = invites::get_invite(&repo, &InviteCode::new("NO_SUCH")).await.unwrap();
+    let result = invites::get_invite(&repo, &InviteCode::new("NO_SUCH"))
+        .await
+        .unwrap();
     assert_eq!(result, None);
 }
 
@@ -28,7 +33,9 @@ async fn it_lists_invites_for_group_via_gsi1() {
     let other = common::invite("CODE0003", "g2", "u1");
     invites::put_invite(&repo, &inv1, 9999999999).await.unwrap();
     invites::put_invite(&repo, &inv2, 9999999999).await.unwrap();
-    invites::put_invite(&repo, &other, 9999999999).await.unwrap();
+    invites::put_invite(&repo, &other, 9999999999)
+        .await
+        .unwrap();
 
     let mut got = invites::list_invites_for_group(&repo, &GroupId::new("g1"))
         .await
@@ -47,7 +54,10 @@ async fn it_revokes_an_invite() {
 
     invites::revoke(&repo, &inv.code).await.unwrap();
 
-    let got = invites::get_invite(&repo, &inv.code).await.unwrap().unwrap();
+    let got = invites::get_invite(&repo, &inv.code)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got.status, InviteStatus::Revoked);
 }
 
@@ -67,14 +77,18 @@ async fn join_via_invite_tx_creates_membership_and_bumps_member_count() {
         .unwrap();
 
     // Invite must now be consumed.
-    let updated_inv = invites::get_invite(&repo, &inv.code).await.unwrap().unwrap();
-    assert_eq!(updated_inv.status, InviteStatus::Consumed);
-
-    // Membership must exist.
-    let got_m = persistence::groups::get_membership(&repo, &membership.user_id, &membership.group_id)
+    let updated_inv = invites::get_invite(&repo, &inv.code)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(updated_inv.status, InviteStatus::Consumed);
+
+    // Membership must exist.
+    let got_m =
+        persistence::groups::get_membership(&repo, &membership.user_id, &membership.group_id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(got_m.user_id, membership.user_id);
 
     // Group memberCount must be bumped.

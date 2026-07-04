@@ -4,8 +4,8 @@
 use crate::error::RepoError;
 use crate::keys::{
     attr, candidate_gsi1pk, candidate_gsi1sk, candidate_pk, candidate_sk, candidate_vote_pk,
-    candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk,
-    newsletter_gsi2sk, newsletter_sk,
+    candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
+    newsletter_sk,
 };
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
@@ -28,7 +28,10 @@ pub async fn list_candidates(
         .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
-        .expression_attribute_values(":pk", AttributeValue::S(candidate_pk(group_id, next_cycle_id)))
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
+        )
         .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()))
         .send()
         .await?;
@@ -120,11 +123,26 @@ pub async fn list_locked_questions(
 
 pub async fn put_candidate(repo: &Repo, q: &CandidateQuestion) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(q)?;
-    item.insert(attr::PK.into(), AttributeValue::S(candidate_pk(&q.group_id, &q.next_cycle_id)));
-    item.insert(attr::SK.into(), AttributeValue::S(candidate_sk(&q.question_id)));
-    item.insert(attr::GSI1PK.into(), AttributeValue::S(candidate_gsi1pk(&q.group_id, &q.next_cycle_id)));
-    item.insert(attr::GSI1SK.into(), AttributeValue::S(candidate_gsi1sk(q.vote_count, &q.question_id)));
-    item.insert(attr::ENTITY.into(), AttributeValue::S("CandidateQuestion".into()));
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(candidate_pk(&q.group_id, &q.next_cycle_id)),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(candidate_sk(&q.question_id)),
+    );
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(candidate_gsi1pk(&q.group_id, &q.next_cycle_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(candidate_gsi1sk(q.vote_count, &q.question_id)),
+    );
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("CandidateQuestion".into()),
+    );
 
     repo.client
         .put_item()
@@ -144,7 +162,10 @@ pub async fn delete_candidate(
     repo.client
         .delete_item()
         .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(candidate_pk(group_id, next_cycle_id)))
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
+        )
         .key(attr::SK, AttributeValue::S(candidate_sk(question_id)))
         .send()
         .await?;
@@ -163,10 +184,20 @@ pub async fn cast_vote_tx(
     let mut vote_item: std::collections::HashMap<String, AttributeValue> = to_item(vote)?;
     vote_item.insert(
         attr::PK.into(),
-        AttributeValue::S(candidate_vote_pk(&vote.group_id, &vote.cycle_id, &vote.user_id)),
+        AttributeValue::S(candidate_vote_pk(
+            &vote.group_id,
+            &vote.cycle_id,
+            &vote.user_id,
+        )),
     );
-    vote_item.insert(attr::SK.into(), AttributeValue::S(candidate_vote_sk(&vote.question_id)));
-    vote_item.insert(attr::ENTITY.into(), AttributeValue::S("CandidateVote".into()));
+    vote_item.insert(
+        attr::SK.into(),
+        AttributeValue::S(candidate_vote_sk(&vote.question_id)),
+    );
+    vote_item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("CandidateVote".into()),
+    );
 
     let put_vote = Put::builder()
         .table_name(&repo.table)
@@ -179,7 +210,10 @@ pub async fn cast_vote_tx(
     let new_gsi1sk = candidate_gsi1sk(new_vote_count, &vote.question_id);
     let bump = Update::builder()
         .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)))
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)),
+        )
         .key(attr::SK, AttributeValue::S(candidate_sk(&vote.question_id)))
         .update_expression("SET vote_count = vote_count + :one, #g1sk = :sk")
         .condition_expression("vote_count = :prev")
@@ -213,9 +247,16 @@ pub async fn withdraw_vote_tx(
         .table_name(&repo.table)
         .key(
             attr::PK,
-            AttributeValue::S(candidate_vote_pk(&vote.group_id, &vote.cycle_id, &vote.user_id)),
+            AttributeValue::S(candidate_vote_pk(
+                &vote.group_id,
+                &vote.cycle_id,
+                &vote.user_id,
+            )),
         )
-        .key(attr::SK, AttributeValue::S(candidate_vote_sk(&vote.question_id)))
+        .key(
+            attr::SK,
+            AttributeValue::S(candidate_vote_sk(&vote.question_id)),
+        )
         .condition_expression("attribute_exists(#sk)")
         .expression_attribute_names("#sk", attr::SK)
         .build()
@@ -224,7 +265,10 @@ pub async fn withdraw_vote_tx(
     let new_gsi1sk = candidate_gsi1sk(new_vote_count, &vote.question_id);
     let dec = Update::builder()
         .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)))
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)),
+        )
         .key(attr::SK, AttributeValue::S(candidate_sk(&vote.question_id)))
         .update_expression("SET vote_count = vote_count - :one, #g1sk = :sk")
         .condition_expression("vote_count = :prev")
@@ -259,9 +303,18 @@ pub async fn promote_candidates_tx(
 
     for q in locked {
         let mut item: std::collections::HashMap<String, AttributeValue> = to_item(q)?;
-        item.insert(attr::PK.into(), AttributeValue::S(locked_pk(&q.group_id, &q.cycle_id)));
-        item.insert(attr::SK.into(), AttributeValue::S(locked_sk(&q.question_id)));
-        item.insert(attr::ENTITY.into(), AttributeValue::S("LockedQuestion".into()));
+        item.insert(
+            attr::PK.into(),
+            AttributeValue::S(locked_pk(&q.group_id, &q.cycle_id)),
+        );
+        item.insert(
+            attr::SK.into(),
+            AttributeValue::S(locked_sk(&q.question_id)),
+        );
+        item.insert(
+            attr::ENTITY.into(),
+            AttributeValue::S("LockedQuestion".into()),
+        );
         let put = Put::builder()
             .table_name(&repo.table)
             .set_item(Some(item))
@@ -283,7 +336,10 @@ pub async fn promote_candidates_tx(
     let flip = Update::builder()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(group_pk(&newsletter.group_id)))
-        .key(attr::SK, AttributeValue::S(newsletter_sk(&newsletter.cycle_id)))
+        .key(
+            attr::SK,
+            AttributeValue::S(newsletter_sk(&newsletter.cycle_id)),
+        )
         .update_expression(
             "SET #s = :open, locked_question_ids = :ids, #g2pk = :g2pk, #g2sk = :g2sk",
         )
@@ -300,7 +356,11 @@ pub async fn promote_candidates_tx(
         )
         .expression_attribute_values(
             ":g2sk",
-            AttributeValue::S(newsletter_gsi2sk(&when, &newsletter.group_id, &newsletter.cycle_id)),
+            AttributeValue::S(newsletter_gsi2sk(
+                &when,
+                &newsletter.group_id,
+                &newsletter.cycle_id,
+            )),
         )
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;

@@ -44,7 +44,10 @@ async fn it_resolves_cognito_sub_to_user_id() {
         "cognito_sub".into(),
         AttributeValue::S(u.cognito_sub.to_string()),
     );
-    item.insert(attr::ENTITY.into(), AttributeValue::S("CognitoSubLookup".into()));
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("CognitoSubLookup".into()),
+    );
     repo.client
         .put_item()
         .table_name(&repo.table)

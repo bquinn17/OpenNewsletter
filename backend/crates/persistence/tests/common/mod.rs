@@ -302,12 +302,7 @@ pub fn reaction(
     }
 }
 
-pub fn image_media(
-    group_id: &str,
-    cycle_id: &str,
-    image_id: &str,
-    user_id: &str,
-) -> ImageMedia {
+pub fn image_media(group_id: &str, cycle_id: &str, image_id: &str, user_id: &str) -> ImageMedia {
     ImageMedia {
         image_id: ImageId::new(image_id),
         user_id: UserId::new(user_id),

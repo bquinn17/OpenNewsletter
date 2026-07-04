@@ -9,7 +9,10 @@ async fn it_puts_and_gets_group() {
     let (_c, repo) = common::make_repo().await;
     let g = common::group("g1", "creator");
     groups::put_group(&repo, &g).await.unwrap();
-    let got = groups::get_group(&repo, &g.group_id).await.unwrap().unwrap();
+    let got = groups::get_group(&repo, &g.group_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got, g);
 }
 
@@ -43,10 +46,22 @@ async fn it_lists_memberships_for_user() {
     for m in [&m1, &m2] {
         let mut item: std::collections::HashMap<String, AttributeValue> = to_item(m).unwrap();
         item.insert(attr::PK.into(), AttributeValue::S(user_pk(&m.user_id)));
-        item.insert(attr::SK.into(), AttributeValue::S(membership_sk(&m.group_id)));
-        item.insert(attr::GSI1PK.into(), AttributeValue::S(membership_gsi1pk(&m.group_id)));
-        item.insert(attr::GSI1SK.into(), AttributeValue::S(membership_gsi1sk(&m.user_id)));
-        item.insert(attr::ENTITY.into(), AttributeValue::S("GroupMembership".into()));
+        item.insert(
+            attr::SK.into(),
+            AttributeValue::S(membership_sk(&m.group_id)),
+        );
+        item.insert(
+            attr::GSI1PK.into(),
+            AttributeValue::S(membership_gsi1pk(&m.group_id)),
+        );
+        item.insert(
+            attr::GSI1SK.into(),
+            AttributeValue::S(membership_gsi1sk(&m.user_id)),
+        );
+        item.insert(
+            attr::ENTITY.into(),
+            AttributeValue::S("GroupMembership".into()),
+        );
         repo.client
             .put_item()
             .table_name(&repo.table)
@@ -82,10 +97,22 @@ async fn it_lists_members_for_group_via_gsi1() {
     for m in [&m1, &m2] {
         let mut item: std::collections::HashMap<String, AttributeValue> = to_item(m).unwrap();
         item.insert(attr::PK.into(), AttributeValue::S(user_pk(&m.user_id)));
-        item.insert(attr::SK.into(), AttributeValue::S(membership_sk(&m.group_id)));
-        item.insert(attr::GSI1PK.into(), AttributeValue::S(membership_gsi1pk(&m.group_id)));
-        item.insert(attr::GSI1SK.into(), AttributeValue::S(membership_gsi1sk(&m.user_id)));
-        item.insert(attr::ENTITY.into(), AttributeValue::S("GroupMembership".into()));
+        item.insert(
+            attr::SK.into(),
+            AttributeValue::S(membership_sk(&m.group_id)),
+        );
+        item.insert(
+            attr::GSI1PK.into(),
+            AttributeValue::S(membership_gsi1pk(&m.group_id)),
+        );
+        item.insert(
+            attr::GSI1SK.into(),
+            AttributeValue::S(membership_gsi1sk(&m.user_id)),
+        );
+        item.insert(
+            attr::ENTITY.into(),
+            AttributeValue::S("GroupMembership".into()),
+        );
         repo.client
             .put_item()
             .table_name(&repo.table)
@@ -118,10 +145,22 @@ async fn leave_group_tx_deletes_membership_and_decrements_count() {
 
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(&m).unwrap();
     item.insert(attr::PK.into(), AttributeValue::S(user_pk(&m.user_id)));
-    item.insert(attr::SK.into(), AttributeValue::S(membership_sk(&m.group_id)));
-    item.insert(attr::GSI1PK.into(), AttributeValue::S(membership_gsi1pk(&m.group_id)));
-    item.insert(attr::GSI1SK.into(), AttributeValue::S(membership_gsi1sk(&m.user_id)));
-    item.insert(attr::ENTITY.into(), AttributeValue::S("GroupMembership".into()));
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(membership_sk(&m.group_id)),
+    );
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(membership_gsi1pk(&m.group_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(membership_gsi1sk(&m.user_id)),
+    );
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("GroupMembership".into()),
+    );
     repo.client
         .put_item()
         .table_name(&repo.table)
@@ -152,7 +191,6 @@ async fn leave_group_tx_fails_when_membership_absent() {
     let g = common::group("g1", "u1");
     groups::put_group(&repo, &g).await.unwrap();
 
-    let result =
-        groups::leave_group_tx(&repo, &UserId::new("ghost"), &GroupId::new("g1")).await;
+    let result = groups::leave_group_tx(&repo, &UserId::new("ghost"), &GroupId::new("g1")).await;
     assert!(result.is_err());
 }

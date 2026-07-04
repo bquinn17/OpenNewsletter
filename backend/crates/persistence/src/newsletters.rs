@@ -1,9 +1,7 @@
 //! Newsletter (cycle) access (AP7, AP8, AP9) and status-transition writer.
 
 use crate::error::RepoError;
-use crate::keys::{
-    attr, group_pk, index, newsletter_gsi2pk, newsletter_gsi2sk, newsletter_sk,
-};
+use crate::keys::{attr, group_pk, index, newsletter_gsi2pk, newsletter_gsi2sk, newsletter_sk};
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::AttributeValue;
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
@@ -86,8 +84,14 @@ pub async fn list_cycles_due(
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(nl)?;
     item.insert(attr::PK.into(), AttributeValue::S(group_pk(&nl.group_id)));
-    item.insert(attr::SK.into(), AttributeValue::S(newsletter_sk(&nl.cycle_id)));
-    item.insert(attr::GSI2PK.into(), AttributeValue::S(newsletter_gsi2pk(nl.status)));
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(newsletter_sk(&nl.cycle_id)),
+    );
+    item.insert(
+        attr::GSI2PK.into(),
+        AttributeValue::S(newsletter_gsi2pk(nl.status)),
+    );
     let when = nl
         .next_transition_at
         .map(|d| d.to_rfc3339())

@@ -2,11 +2,10 @@
 
 use crate::error::RepoError;
 use crate::keys::{
-    attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk,
-    GROUP_META_SK,
+    attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk, GROUP_META_SK,
 };
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, TransactWriteItem, Delete, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, Delete, TransactWriteItem, Update};
 use domain::{Group, GroupId, GroupMembership, UserId};
 use serde_dynamo::{from_item, to_item};
 
@@ -29,7 +28,10 @@ pub async fn get_group(repo: &Repo, group_id: &GroupId) -> Result<Option<Group>,
 
 pub async fn put_group(repo: &Repo, group: &Group) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(group)?;
-    item.insert(attr::PK.into(), AttributeValue::S(group_pk(&group.group_id)));
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(group_pk(&group.group_id)),
+    );
     item.insert(attr::SK.into(), AttributeValue::S(GROUP_META_SK.into()));
     item.insert(attr::ENTITY.into(), AttributeValue::S("Group".into()));
 

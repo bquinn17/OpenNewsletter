@@ -10,15 +10,15 @@ pub mod error;
 pub mod keys;
 pub mod repo;
 
-pub mod users;
+pub mod engagement;
 pub mod groups;
 pub mod invites;
+pub mod media;
 pub mod newsletters;
+pub mod push;
 pub mod questions;
 pub mod responses;
-pub mod engagement;
-pub mod media;
-pub mod push;
+pub mod users;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_factories;

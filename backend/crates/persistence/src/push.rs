@@ -33,8 +33,14 @@ pub async fn list_subs_for_user(
 pub async fn put_subscription(repo: &Repo, s: &PushSubscription) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(s)?;
     item.insert(attr::PK.into(), AttributeValue::S(user_pk(&s.user_id)));
-    item.insert(attr::SK.into(), AttributeValue::S(push_sk(&s.endpoint_hash)));
-    item.insert(attr::ENTITY.into(), AttributeValue::S("PushSubscription".into()));
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(push_sk(&s.endpoint_hash)),
+    );
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("PushSubscription".into()),
+    );
 
     repo.client
         .put_item()
@@ -84,7 +90,10 @@ pub async fn put_pref(repo: &Repo, p: &NotificationPref) -> Result<(), RepoError
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(p)?;
     item.insert(attr::PK.into(), AttributeValue::S(user_pk(&p.user_id)));
     item.insert(attr::SK.into(), AttributeValue::S(npref_sk(&p.group_id)));
-    item.insert(attr::ENTITY.into(), AttributeValue::S("NotificationPref".into()));
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("NotificationPref".into()),
+    );
 
     repo.client
         .put_item()

@@ -9,6 +9,9 @@ pub struct Repo {
 
 impl Repo {
     pub fn new(client: Client, table: impl Into<String>) -> Self {
-        Self { client, table: table.into() }
+        Self {
+            client,
+            table: table.into(),
+        }
     }
 }

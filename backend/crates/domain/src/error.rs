@@ -38,9 +38,16 @@ impl ApiErrorCode {
             ValidationFailed => 422,
             InviteInvalid => 400,
             InviteExpired => 410,
-            InviteConsumed | MemberCapReached | LastAdmin | VoteCapReached
-            | CycleNotVoting | CycleNotOpen | CycleNotPublished | ResponseVersionConflict
-            | ImageLimitExceeded | CandidatePromoted => 409,
+            InviteConsumed
+            | MemberCapReached
+            | LastAdmin
+            | VoteCapReached
+            | CycleNotVoting
+            | CycleNotOpen
+            | CycleNotPublished
+            | ResponseVersionConflict
+            | ImageLimitExceeded
+            | CandidatePromoted => 409,
             ImageTooLarge => 413,
             ImageBadType => 415,
             RateLimited => 429,
@@ -58,7 +65,10 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(code: ApiErrorCode, detail: impl Into<String>) -> Self {
-        Self { code, detail: detail.into() }
+        Self {
+            code,
+            detail: detail.into(),
+        }
     }
 
     pub fn forbidden(detail: impl Into<String>) -> Self {

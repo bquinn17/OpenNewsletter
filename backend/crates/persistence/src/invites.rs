@@ -51,14 +51,27 @@ pub async fn list_invites_for_group(
         .collect()
 }
 
-pub async fn put_invite(repo: &Repo, invite: &Invite, ttl_epoch_seconds: i64) -> Result<(), RepoError> {
+pub async fn put_invite(
+    repo: &Repo,
+    invite: &Invite,
+    ttl_epoch_seconds: i64,
+) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(invite)?;
     item.insert(attr::PK.into(), AttributeValue::S(invite_pk(&invite.code)));
     item.insert(attr::SK.into(), AttributeValue::S(INVITE_SK.into()));
-    item.insert(attr::GSI1PK.into(), AttributeValue::S(invite_gsi1pk(&invite.group_id)));
-    item.insert(attr::GSI1SK.into(), AttributeValue::S(invite_gsi1sk(&invite.code)));
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(invite_gsi1pk(&invite.group_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(invite_gsi1sk(&invite.code)),
+    );
     item.insert(attr::ENTITY.into(), AttributeValue::S("Invite".into()));
-    item.insert(attr::TTL.into(), AttributeValue::N(ttl_epoch_seconds.to_string()));
+    item.insert(
+        attr::TTL.into(),
+        AttributeValue::N(ttl_epoch_seconds.to_string()),
+    );
 
     repo.client
         .put_item()
@@ -70,7 +83,8 @@ pub async fn put_invite(repo: &Repo, invite: &Invite, ttl_epoch_seconds: i64) ->
 }
 
 pub async fn revoke(repo: &Repo, code: &InviteCode) -> Result<(), RepoError> {
-    let status = serde_json::to_string(&InviteStatus::Revoked).unwrap_or_else(|_| "\"revoked\"".to_string());
+    let status =
+        serde_json::to_string(&InviteStatus::Revoked).unwrap_or_else(|_| "\"revoked\"".to_string());
     let trimmed = status.trim_matches('"').to_string();
     repo.client
         .update_item()
@@ -113,11 +127,26 @@ pub async fn join_via_invite_tx(
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
     let mut mem_item: std::collections::HashMap<String, AttributeValue> = to_item(membership)?;
-    mem_item.insert(attr::PK.into(), AttributeValue::S(user_pk(&membership.user_id)));
-    mem_item.insert(attr::SK.into(), AttributeValue::S(membership_sk(&membership.group_id)));
-    mem_item.insert(attr::GSI1PK.into(), AttributeValue::S(membership_gsi1pk(&membership.group_id)));
-    mem_item.insert(attr::GSI1SK.into(), AttributeValue::S(membership_gsi1sk(&membership.user_id)));
-    mem_item.insert(attr::ENTITY.into(), AttributeValue::S("GroupMembership".into()));
+    mem_item.insert(
+        attr::PK.into(),
+        AttributeValue::S(user_pk(&membership.user_id)),
+    );
+    mem_item.insert(
+        attr::SK.into(),
+        AttributeValue::S(membership_sk(&membership.group_id)),
+    );
+    mem_item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(membership_gsi1pk(&membership.group_id)),
+    );
+    mem_item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(membership_gsi1sk(&membership.user_id)),
+    );
+    mem_item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("GroupMembership".into()),
+    );
 
     let put_member = Put::builder()
         .table_name(&repo.table)
@@ -147,4 +176,3 @@ pub async fn join_via_invite_tx(
         .await?;
     Ok(())
 }
-

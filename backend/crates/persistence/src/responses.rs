@@ -3,8 +3,7 @@
 
 use crate::error::RepoError;
 use crate::keys::{
-    attr, index, membership_sk, response_gsi1pk, response_gsi1sk, response_pk, response_sk,
-    user_pk,
+    attr, index, membership_sk, response_gsi1pk, response_gsi1sk, response_pk, response_sk, user_pk,
 };
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, TransactWriteItem, Update};
@@ -25,7 +24,10 @@ pub async fn list_answers(
         .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
-        .expression_attribute_values(":pk", AttributeValue::S(response_pk(group_id, cycle_id, question_id)))
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+        )
         .expression_attribute_values(":prefix", AttributeValue::S("A#".into()))
         .send()
         .await?;
@@ -71,7 +73,10 @@ pub async fn get_my_response(
         .client
         .get_item()
         .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(response_pk(group_id, cycle_id, question_id)))
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+        )
         .key(attr::SK, AttributeValue::S(response_sk(user_id)))
         .send()
         .await?;
@@ -84,10 +89,19 @@ pub async fn get_my_response(
 /// Last-write-wins draft save. Unconditional Put per `02-data-model-dynamodb.md` §5.
 pub async fn save_draft(repo: &Repo, r: &Response) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(r)?;
-    item.insert(attr::PK.into(), AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)));
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)),
+    );
     item.insert(attr::SK.into(), AttributeValue::S(response_sk(&r.user_id)));
-    item.insert(attr::GSI1PK.into(), AttributeValue::S(response_gsi1pk(&r.user_id, &r.cycle_id)));
-    item.insert(attr::GSI1SK.into(), AttributeValue::S(response_gsi1sk(&r.question_id)));
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(response_gsi1pk(&r.user_id, &r.cycle_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(response_gsi1sk(&r.question_id)),
+    );
     item.insert(attr::ENTITY.into(), AttributeValue::S("Response".into()));
 
     repo.client
@@ -110,7 +124,10 @@ pub async fn publish_response_tx(
 ) -> Result<(), RepoError> {
     let flip = Update::builder()
         .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)))
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)),
+        )
         .key(attr::SK, AttributeValue::S(response_sk(&r.user_id)))
         .update_expression("SET #s = :pub, published_at = :at, updated_at = :at")
         .expression_attribute_names("#s", "status")
@@ -140,4 +157,3 @@ pub async fn publish_response_tx(
     req.send().await?;
     Ok(())
 }
-

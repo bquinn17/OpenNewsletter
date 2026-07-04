@@ -146,10 +146,7 @@ pub fn locked_sk(question_id: &QuestionId) -> String {
 // ---------- Response (§2.9) ----------
 
 pub fn response_pk(group_id: &GroupId, cycle_id: &CycleId, question_id: &QuestionId) -> String {
-    format!(
-        "GROUP#{}#NL#{}#Q#{}",
-        group_id, cycle_id, question_id
-    )
+    format!("GROUP#{}#NL#{}#Q#{}", group_id, cycle_id, question_id)
 }
 
 pub fn response_sk(user_id: &UserId) -> String {
@@ -261,11 +258,21 @@ mod tests {
     use super::*;
     use domain::*;
 
-    fn uid() -> UserId { UserId::new("01HX1") }
-    fn gid() -> GroupId { GroupId::new("01HG2") }
-    fn cid() -> CycleId { CycleId::new("202606") }
-    fn qid() -> QuestionId { QuestionId::new("01HQ3") }
-    fn iid() -> ImageId { ImageId::new("01HI4") }
+    fn uid() -> UserId {
+        UserId::new("01HX1")
+    }
+    fn gid() -> GroupId {
+        GroupId::new("01HG2")
+    }
+    fn cid() -> CycleId {
+        CycleId::new("202606")
+    }
+    fn qid() -> QuestionId {
+        QuestionId::new("01HQ3")
+    }
+    fn iid() -> ImageId {
+        ImageId::new("01HI4")
+    }
 
     #[test]
     fn user_keys() {
@@ -304,9 +311,15 @@ mod tests {
     #[test]
     fn newsletter_keys() {
         assert_eq!(newsletter_sk(&cid()), "NL#202606");
-        assert_eq!(newsletter_gsi2pk(NewsletterStatus::Voting), "NL_STATUS#voting");
+        assert_eq!(
+            newsletter_gsi2pk(NewsletterStatus::Voting),
+            "NL_STATUS#voting"
+        );
         assert_eq!(newsletter_gsi2pk(NewsletterStatus::Open), "NL_STATUS#open");
-        assert_eq!(newsletter_gsi2pk(NewsletterStatus::Published), "NL_STATUS#published");
+        assert_eq!(
+            newsletter_gsi2pk(NewsletterStatus::Published),
+            "NL_STATUS#published"
+        );
         assert_eq!(
             newsletter_gsi2sk("2026-06-01T00:00:00Z", &gid(), &cid()),
             "2026-06-01T00:00:00Z#01HG2#202606"
@@ -317,7 +330,10 @@ mod tests {
     fn candidate_keys_and_padding() {
         assert_eq!(candidate_pk(&gid(), &cid()), "GROUP#01HG2#CYCLE#202606");
         assert_eq!(candidate_sk(&qid()), "QC#01HQ3");
-        assert_eq!(candidate_gsi1pk(&gid(), &cid()), "GROUP#01HG2#CYCLE#202606#VOTES");
+        assert_eq!(
+            candidate_gsi1pk(&gid(), &cid()),
+            "GROUP#01HG2#CYCLE#202606#VOTES"
+        );
         assert_eq!(candidate_gsi1sk(7, &qid()), "000007#01HQ3");
         assert_eq!(candidate_gsi1sk(0, &qid()), "000000#01HQ3");
         // pad width keeps lexicographic order matching numeric across realistic counts

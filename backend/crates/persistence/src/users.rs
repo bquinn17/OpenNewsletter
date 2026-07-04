@@ -1,9 +1,7 @@
 //! User and Cognito-sub-lookup access (AP1, plus auth resolution).
 
 use crate::error::RepoError;
-use crate::keys::{
-    attr, cognito_sub_pk, user_pk, COGNITO_SUB_SK, USER_PROFILE_SK,
-};
+use crate::keys::{attr, cognito_sub_pk, user_pk, COGNITO_SUB_SK, USER_PROFILE_SK};
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::AttributeValue;
 use domain::{CognitoSub, CognitoSubLookup, User, UserId};

@@ -32,10 +32,14 @@ async fn it_lists_top_candidates_by_votes_descending() {
     questions::put_candidate(&repo, &mid).await.unwrap();
     questions::put_candidate(&repo, &top).await.unwrap();
 
-    let top2 =
-        questions::list_top_candidates_by_votes(&repo, &GroupId::new("g1"), &CycleId::new("202606"), 2)
-            .await
-            .unwrap();
+    let top2 = questions::list_top_candidates_by_votes(
+        &repo,
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+        2,
+    )
+    .await
+    .unwrap();
     assert_eq!(top2.len(), 2);
     assert_eq!(top2[0].question_id, top.question_id);
     assert_eq!(top2[1].question_id, mid.question_id);
@@ -169,7 +173,7 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     nl.status = NewsletterStatus::Open;
     nl.locked_question_ids = vec![lq.question_id.clone()];
     nl.next_transition_at = Some(Utc::now());
-    questions::promote_candidates_tx(&repo, &[lq.clone()], &nl)
+    questions::promote_candidates_tx(&repo, std::slice::from_ref(&lq), &nl)
         .await
         .unwrap();
 
