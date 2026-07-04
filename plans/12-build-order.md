@@ -91,7 +91,7 @@ Read: [`13-dev-environments.md`](13-dev-environments.md).
 - Dev-environment removal-policy overrides applied across all CDK stacks per [`01-infrastructure-cdk.md` §10.5](01-infrastructure-cdk.md).
 - `MediaStack` split into `MediaPersistentStack` + `MediaPipelineStack` per [`01-infrastructure-cdk.md` §5](01-infrastructure-cdk.md).
 - `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations land in M5/M9; the routes exist now so manual testing has a fast-forward path.
-- AWS Budgets alarm at $25/mo wired to `config.alarm_email`.
+- AWS Budgets alarm at $10/mo wired to `config.alarm_email`.
 
 **Done when**: `make deploy-dev && make seed && make fe`, sign in via the `/admin/bootstrap-login` route as the seeded admin, and see the seeded group's home page. `make redeploy-volatile` succeeds end-to-end (proves the dev removal-policy overrides are correct).
 

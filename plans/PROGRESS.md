@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-06-29. Working document — update as milestones complete or
+Snapshot as of 2026-07-03. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -14,7 +14,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py`, `infra/keys/`, `cf-signing.key` present as untracked files. Google/Apple/Facebook OAuth apps, Cognito domain, and DNS records still owed by the operator. |
 | **M2** | **Backend foundations (domain + persistence)** | 🟡 **code-complete, unverified** | See "M2 detail" below. |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **code-complete, unverified** | See "M3 detail" below. |
-| M3.5 | Dev environment online | ⬜ not started | |
+| **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
 | M4 | Auth + bootstrap | ⬜ | |
 | M5 | Lifecycle engine + cycle CRUD | ⬜ | |
 | M6 | Responses + drafts | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-Roughly 2 of 14 milestones complete (~14%); M3 code-complete and awaiting `cdk synth` verification.
+Roughly 2 of 15 milestones complete (~13%); M3 and M3.5 code-complete, both awaiting `cdk synth` + deploy verification.
 
 ---
 
@@ -63,7 +63,7 @@ All paths relative to `backend/`.
 - ✅ Every access pattern AP1–AP21 has a named function.
 - ✅ Every transaction in `02-data-model-dynamodb.md` §4 (#1–#6) implemented with `TransactWriteItems`.
 - ✅ `keys.rs` unit tests in place (15 tests).
-- ✅ **Integration test files written** — 38 tests across 9 files in `backend/crates/persistence/tests/`. All compile clean against `testcontainers-modules` / `amazon/dynamodb-local`. **Blocked on Docker** (see B3); tests cannot run until Docker is present in WSL2.
+- ✅ **Integration tests written and passing** — 49 tests across 9 files in `backend/crates/persistence/tests/`, run against `testcontainers-modules` / `amazon/dynamodb-local`. All green: `cargo test -p persistence` (49 integration + 15 `keys.rs` unit tests, 64 total). `cargo fmt --check` and `cargo clippy --workspace --tests --all-targets -- -D warnings` both clean.
 
 ---
 
@@ -80,7 +80,7 @@ All paths relative to `infra/`.
 - **`opennewsletter/frontend_stack.py`** — `FrontendStack`: ACM cert (us-east-1) covering `domain`, `cdn.domain`, and `api_domain`; optional Route53 CNAME if `hosted_zone_id` is set.
 - **`opennewsletter/media_persistent_stack.py`** — `MediaPersistentStack`: S3 originals + processed buckets (both private, Block-Public-Access all-on), CloudFront distribution with OAC, signed-cookie `KeyGroup` reading `infra/keys/cf-signing.pub.pem`.
 - **`opennewsletter/media_pipeline_stack.py`** — `MediaPipelineStack`: `lambda-image-process` (shell stub, arm64, 1024 MB, `provided.al2023`), S3 `ObjectCreated` notification on `uploads/` prefix, least-privilege IAM.
-- **`opennewsletter/monitoring_stack.py`** — `MonitoringStack` skeleton: SNS alarm topic (+ email subscription if `alarm_email` set), empty CloudWatch dashboard. Metric widgets + alarms land in M13.
+- **`opennewsletter/monitoring_stack.py`** — `MonitoringStack` skeleton: SNS alarm topic (+ email subscription if `alarm_email` set), empty CloudWatch dashboard, AWS Budgets alarm ($10/mo). Metric widgets + alarms land in M13.
 - **`infra/keys/cf-signing.pub.pem`** — dev placeholder RSA-2048 public key for CloudFront `PublicKey`. In prod, operator generates real keypair: `openssl genrsa 2048 | openssl rsa -pubout > infra/keys/cf-signing.pub.pem`, uploads private key to Secrets Manager.
 - **`backend/lambda-stubs/lambda-image-process/bootstrap`** — shell stub so CDK asset hashing works at synth time; replaced by the real Rust binary in M8.
 - **`infra/tests/test_stacks.py`** — 20 CDK assertion tests covering DDB keys/TTL/GSIs, Cognito user pool settings (2 clients, 3 IdPs, no self-signup), S3 Block-Public-Access, CloudFront KeyGroup attachment, Lambda arm64/1024 MB.
@@ -92,17 +92,48 @@ All paths relative to `infra/`.
 - ✅ `MediaPersistentStack` — S3 originals + processed + CloudFront + KeyGroup.
 - ✅ `MediaPipelineStack` — `lambda-image-process` stub + S3 event subscription.
 - ✅ `FrontendStack` — ACM cert + optional Route53 records.
-- ✅ `MonitoringStack` skeleton.
+- ✅ `MonitoringStack` skeleton + AWS Budgets alarm ($10/mo).
 - ✅ `infra/tests/test_stacks.py` — 20 assertion tests written.
-- 🟡 **`cdk synth` not yet verified** — requires Python 3.12 + pip (system has 3.8 only). See "Suggested next steps" item 2.
+- 🟡 **`cdk synth` not yet verified** — `infra/.venv` is ready; run `source infra/.venv/bin/activate && cdk synth --context env=dev` to verify.
+
+---
+
+## M3.5 detail — what landed
+
+- **[`Makefile`](../Makefile)** — six targets at repo root:
+  - `make deploy-dev` — `cdk deploy --all --outputs-file cdk.out/dev-outputs.json` + writes `frontend/.env.dev`
+  - `make seed` — runs `scripts/seed_dev_data.py --env dev`
+  - `make redeploy-volatile` — destroy + redeploy `DataStack-dev`, `MediaPipelineStack-dev`, `MonitoringStack-dev`
+  - `make reset-all` — interactive prompt then `cdk destroy --all --force` (warns about Cognito loss)
+  - `make deploy-lambda LAMBDA=<name>` — `cargo lambda build --release --arm64` + `aws lambda update-function-code` (~5s path)
+  - `make fe` — `cd frontend && npm run dev -- --mode dev`
+- **[`scripts/seed_dev_data.py`](../scripts/seed_dev_data.py)** — idempotent + destructive:
+  - Reads `infra/cdk.out/dev-outputs.json` for table name, bucket names, user pool ID.
+  - Scan + batch-deletes all DynamoDB items; deletes all S3 objects from originals + processed buckets.
+  - Creates or finds the bootstrap admin Cognito user (idempotent; skips creation if already exists).
+  - Writes 5 DynamoDB fixture items: CognitoSubLookup, User, Group, GroupMembership (admin), Newsletter (voting).
+  - IDs are derived deterministically from the Cognito sub so re-seeding gives the same user/group IDs.
+  - Accepts `--cycle-close-in DUR` (e.g. `5m`, `2h`, `4d`) to set the response-window deadline relative to now.
+  - Prints sign-in credentials and the `admin-initiate-auth` CLI command for inner-loop testing.
+- **[`scripts/write_frontend_env.py`](../scripts/write_frontend_env.py)** — reads `infra/cdk.out/{env}-outputs.json`, writes `frontend/.env.{env}` with all `VITE_*` vars. `VITE_API_BASE_URL` falls back to a TODO placeholder until `ApiStack` lands in M4.
+- **Tick Lambda stubs upgraded** — `lambda-cycle-tick` and `lambda-notify-tick` replaced `fn main() {}` with proper `lambda_runtime = "1"` handlers (accept any event, return stub JSON). Added `lambda_runtime = "1"` to workspace deps. `cargo check --workspace` clean.
+- **AWS Budgets alarm** (in `MonitoringStack`) — `CfnBudget` at $10/mo; alerts at 80% actual and 100% forecasted to `config.alarm_email`.
+
+### M3.5 coverage vs. plan
+
+- ✅ `Makefile` — all 6 targets per `13-dev-environments.md` §8.
+- ✅ `scripts/seed_dev_data.py` — idempotent, destructive, `--cycle-close-in` supported.
+- ✅ `scripts/write_frontend_env.py` — writes `frontend/.env.{env}` from CDK outputs.
+- ✅ Dev removal-policy overrides — already applied in M3 (DynamoDB DESTROY, S3 auto_delete, log groups DESTROY).
+- ✅ `MediaStack` split — already done in M3 (`MediaPersistentStack` + `MediaPipelineStack`).
+- ✅ Tick Lambda stubs — `lambda-cycle-tick` and `lambda-notify-tick` are proper `lambda_runtime` binaries.
+- ✅ AWS Budgets alarm — $10/mo in `MonitoringStack`.
+- 🟡 **`POST /admin/dev/tick/{cycle|notify}` HTTP routes** — Lambda code ready; API Gateway routes wired in M5 when `ApiStack` is created.
+- 🟡 **End-to-end verification blocked** — `infra/.venv` is ready; blocked on M1 operator tasks + CDK bootstrap + AWS account for `cdk deploy`. See `docs/RUNBOOK.md`.
 
 ---
 
 ## Active blockers
-
-### B3 — DDB-local integration tests require Docker
-
-Integration test files are written (`backend/crates/persistence/tests/*.rs`); all 38 tests compile clean. They require `docker` in `PATH` to run — `testcontainers` pulls `amazon/dynamodb-local` and needs the Docker socket. On this WSL2 instance Docker is not yet installed. **Action:** install Docker Engine in WSL2 (`sudo apt-get install -y docker.io && sudo service docker start`) or enable Docker Desktop → Settings → WSL Integration for this distro, then run `cargo test -p persistence` to exercise all AP and transaction tests.
 
 ### B4 — Pre-existing mock-only frontend will need replacement in M7
 
@@ -110,16 +141,25 @@ Commit `91188ba` shipped a rich UI built against in-memory mocks. M7's deliverab
 
 ### B5 — M1 operator tasks outstanding
 
-OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, and DNS records are still owed by the human operator. These are non-blocking for M2/M3 code work but block any end-to-end auth verification in M4.
+OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, and DNS records are still owed by the human operator. These are non-blocking for M2/M3/M3.5 code work but block any end-to-end auth verification in M4.
 
 ---
 
 ## Suggested next steps (in order)
 
-1. **Install Docker in WSL2** to clear B3: `sudo apt-get install -y docker.io && sudo usermod -aG docker $USER && sudo service docker start`, then `cargo test --features integration -p persistence` from `backend/` to run all 38+15 tests.
-2. **Install Python 3.12 + pip** in WSL2 (system has Python 3.8 only), then `cd infra && pip install -r requirements.txt && cdk synth --context env=dev` to verify M3.
-3. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS) to clear B5 and enable an end-to-end deploy.
-4. Begin M3.5 (Makefile + dev scripts) once `cdk synth` is green.
+1. **Verify CDK synth** — the `infra/.venv` is ready; run:
+   ```bash
+   source infra/.venv/bin/activate && cd infra && cdk synth --context env=dev && pytest tests/
+   ```
+2. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS) to clear B5 and enable end-to-end deploy.
+   See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the full step-by-step.
+3. **Bootstrap CDK** in the dev AWS account:
+   ```bash
+   source infra/.venv/bin/activate && cdk bootstrap aws://ACCOUNT_ID/us-east-1
+   ```
+4. **Deploy and verify M3.5**: `make deploy-dev && make seed && make fe`
+   (see `docs/RUNBOOK.md` §M3/M3.5 for what to check).
+5. **Begin M4** (Auth + bootstrap): `lambda-invites` with PreSignUp trigger, `lambda-groups` with `/me` + `/groups`, `ApiStack`.
 
 ---
 

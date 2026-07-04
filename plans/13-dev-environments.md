@@ -182,7 +182,7 @@ Per-PR E2E gets a fresh `ci-pr-{n}` stack:
 Two safety nets:
 
 - **Auto-cleanup sweeper** — a scheduled Lambda (in `dev` account, runs daily) that destroys any `ci-pr-*` stack older than 24h. Catches the case where a workflow crashed before its cleanup step.
-- **AWS Budgets alarm** at $25/mo, emailed to `config.alarm_email`. Catches stranded resources.
+- **AWS Budgets alarm** at $10/mo, emailed to `config.alarm_email`. Catches stranded resources.
 
 ---
 
