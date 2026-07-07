@@ -1,0 +1,9 @@
+[package]
+name = "lambda-media"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"

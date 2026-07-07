@@ -92,7 +92,9 @@ Response 200: `User` shape from `02-data-model-dynamodb.md` §2.1.
 
 **Lambda**: `lambda-groups`. **Auth**: required.
 
-Body: `{ "displayName"?: string, "avatarMediaId"?: string|null }`
+Body: `{ "displayName"?: string, "avatarColor"?: string, "avatarMediaId"?: string|null }`
+
+Validation: `displayName` 1–40 chars, non-whitespace. `avatarColor` one of the allowed slugs. `avatarMediaId` (when non-null) must reference an `AvatarMedia` row owned by the caller in `status=ready`; otherwise `VALIDATION_FAILED`. Setting `avatarMediaId: null` clears the photo and the deterministic `avatarColor` takes over for rendering.
 
 Response 200: updated `User`.
 
@@ -168,11 +170,13 @@ Last admin can't leave — returns 409 `LAST_ADMIN`.
 
 Response 204.
 
-### 3.6 `PATCH /groups/{groupId}/members/{userId}` (role change / nickname)
+### 3.6 `PATCH /groups/{groupId}/members/{userId}` (role change)
 
-**Lambda**: `lambda-groups`. **Role**: admin (for role); self (for nickname).
+**Lambda**: `lambda-groups`. **Role**: admin.
 
-Body: `{ "role"?: "admin"|"member", "nickname"?: string|null }`
+Body: `{ "role": "admin"|"member" }`
+
+Last-admin guard: demoting the only admin returns 409 `LAST_ADMIN`. Per-group nicknames are not a v1 feature; member display always reflects the user's account `displayName`.
 
 ---
 
@@ -186,7 +190,7 @@ Body: `{ "role"?: "admin"|"member", "nickname"?: string|null }`
 
 **Lambda**: `lambda-groups`. **Role**: member.
 
-Response 200: full `Group` (incl. settings) plus `members: [{userId, displayName, role, nickname}]`.
+Response 200: full `Group` (incl. settings + `gradient` slug) plus `members: [{userId, displayName, role, avatarColor, avatarUrl, joinedAt, editionsAnswered}]`. `avatarUrl` is the absolute CloudFront URL for the member's avatar (`https://cdn.{domain}/avatar/{avatarId}/display.webp`) when they have one set, else `null`; `avatarColor` is the deterministic / chosen fallback color slug rendered as a colored initial when `avatarUrl` is null.
 
 ### 4.3 `PATCH /groups/{groupId}`
 
@@ -197,6 +201,7 @@ Body (all optional):
 {
   "name": "...",
   "timezone": "America/New_York",
+  "gradient": "grape-sky",
   "cycleSettings": {
     "questionsPerCycle": 5,
     "votesPerUserPerCycle": 3,
@@ -210,7 +215,9 @@ Body (all optional):
 }
 ```
 
-Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle * 2`; `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1.
+`gradient` must be one of the preset palette slugs (the frontend's palette is the source of truth for the allowed set; the server validates against the same shared list).
+
+Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1.
 
 ---
 
@@ -245,6 +252,8 @@ Response 200:
 
 Implementation note: `myDraftCount`/`myPublishedCount` are computed via AP15 (one Query per cycle returned). Cap `limit` at 24 to keep this bounded.
 
+The API does NOT return month-name or year labels. Clients derive display strings (e.g. `"June"` / `"2026"`) from `responseOpenAt` using the group's `timezone`. The published timestamp (`publishedAt`) and `responseOpenAt` together let the UI compute every label it needs.
+
 ### 5.2 `GET /groups/{groupId}/newsletters/{cycleId}`
 
 **Lambda**: `lambda-newsletters`. **Role**: member.
@@ -269,6 +278,8 @@ Response 200 (published):
       "kind": "text",
       "prompt": "What's your favorite hike of the year?",
       "displayOrder": 0,
+      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "isAnonymous": false,
       "answers": [
         {
           "responseId": "01H...",
@@ -286,11 +297,16 @@ Response 200 (published):
       "questionId": "01H...",
       "kind": "poll",
       "prompt": "Which trail had the best views?",
+      "askedBy": null,
+      "isAnonymous": true,
       "options": [
         { "optionId": "01H...", "label": "Mt Si", "voteCount": 4 },
         { "optionId": "01H...", "label": "Lake 22", "voteCount": 7 }
       ],
       "myVoteOptionId": "01H..."
+      // Poll questions do not carry top-level comments. Comments are always
+      // attached to a specific text answer (see §8). Poll widgets are
+      // comment-free in v1.
     }
   ]
 }
@@ -321,6 +337,8 @@ Response 200:
       "questionId": "01H...",
       "kind": "text",
       "prompt": "...",
+      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "isAnonymous": false,
       "voteCount": 7,
       "votedByMe": true,
       "submittedAt": "..."
@@ -330,6 +348,8 @@ Response 200:
       "kind": "poll",
       "prompt": "...",
       "pollOptions": [{ "optionId": "01H...", "label": "..." }],
+      "askedBy": null,
+      "isAnonymous": true,
       "voteCount": 5,
       "votedByMe": false,
       "submittedAt": "..."
@@ -339,7 +359,7 @@ Response 200:
 }
 ```
 
-`submittedBy` is OMITTED for non-admins.
+`askedBy`, when populated, has shape `{ userId, displayName, avatarColor, avatarUrl }` — mirroring the member-listing avatar fields so the UI can render a small avatar swatch next to the asker. It's populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
 `sort=top` uses AP11 (GSI1, ScanIndexForward=false). `sort=recent` uses AP10 with sort by `submittedAt`.
 
@@ -352,7 +372,8 @@ Body:
 {
   "kind": "text",
   "prompt": "...",
-  "pollOptions": null
+  "pollOptions": null,
+  "isAnonymous": false
 }
 ```
 
@@ -364,13 +385,14 @@ Or for polls:
   "pollOptions": [
     { "label": "Mt Si" },
     { "label": "Lake 22" }
-  ]
+  ],
+  "isAnonymous": false
 }
 ```
 
-Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars, no duplicate labels.
+Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars, no duplicate labels. `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
 
-Response 201: full candidate item (without `submittedBy`).
+Response 201: full candidate item, with `askedBy` populated (the submitter is always allowed to see their own attribution, even when `isAnonymous=true`).
 
 Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exists — e.g., the upcoming cycle has already locked).
 
@@ -393,13 +415,11 @@ Response 200:
 
 Response 200: same shape as 6.3.
 
-### 6.5 Admin curate routes (override voting outcome)
+### 6.5 Admin moderation routes
 
-All require **admin** role.
+There is **no admin curate / promote / override** surface in v1. The cycle tick is the source of truth for which candidates promote, and locked questions are immutable. See `06-newsletter-lifecycle.md` §7. The only admin-side mutation on candidates:
 
-- `POST /admin/groups/{groupId}/cycles/{cycleId}/curate/promote` — body `{ "questionIds": [...] }` — explicitly promotes a list. Cycle must still be in `voting`. Replaces `lockedQuestionIds`. Used to override a vote ranking before the cycle opens.
-- `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate (e.g., abusive). Removes votes too via batch delete.
-- `PATCH /admin/groups/{groupId}/cycles/{cycleId}/questions/{questionId}` — body `{ "displayOrder": number, "prompt"?: string }` — rearrange or fix typos. Cycle must be `open`; once `published`, prompt is immutable.
+- `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate while it's still in `voting` (e.g., abusive). Removes votes too via batch delete. Returns 409 `CANDIDATE_PROMOTED` if the candidate has already been locked into a cycle.
 
 ---
 
@@ -422,7 +442,6 @@ Response 200: `{ "items": [Response] }`
 Body (text):
 ```json
 {
-  "version": 7,                       // current server version known to client; null on first save
   "kind": "text",
   "body": "...markdown...",
   "imageMediaIds": ["01H...", "01H..."],
@@ -430,10 +449,11 @@ Body (text):
 }
 ```
 
+Image captions are stored on the `ImageMedia` row itself (set via `PATCH /uploads/{imageId}`, see §9.6) — they are not part of the response save payload. This keeps a caption attached to its image across edits and means an image's caption is the same wherever the image appears.
+
 Body (poll):
 ```json
 {
-  "version": 1,
   "kind": "poll",
   "pollOptionId": "01H...",
   "publish": true
@@ -441,9 +461,9 @@ Body (poll):
 ```
 
 Behavior:
-- Cycle must be in status `open` (else `CYCLE_NOT_OPEN`).
+- Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
 - If `publish=true`, status moves to `published` and `publishedAt` is set. Otherwise stays/becomes `draft`.
-- Optimistic concurrency: condition `attribute_not_exists(version) OR version = :expectedVersion`. On failure return 409 `RESPONSE_VERSION_CONFLICT` with the current server item embedded.
+- **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
 - Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`.
 - For polls: `pollOptionId` must be in question's options. Last-write-wins.
 
@@ -452,10 +472,6 @@ Response 200: full updated `Response`.
 ### 7.4 Auto-republish after edit
 
 After the cycle has closed (status `published`), responses are immutable. Attempts to `PUT` return 409 `CYCLE_NOT_OPEN`. The frontend hides edit affordances accordingly.
-
-### 7.5 `DELETE` of own response
-
-Not exposed. Drafts simply remain unpublished. Published responses can only be removed by the user via a future feature (out of scope for v1).
 
 ---
 
@@ -469,17 +485,17 @@ All require the cycle to be `published`. Pre-publish, this surface is hidden in 
 
 ### 8.2 `POST /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments`
 
-Body: `{ "body": "..." }` (1–2000 chars).
+Body: `{ "body"?: string, "imageMediaId"?: string|null }`. `body` 0–2000 chars; `imageMediaId` must reference a `ready` ImageMedia owned by the caller. At least one of the two must be non-empty. See `09-engagement.md` §1.3.
 
-Response 201: created comment.
+Response 201: created comment (with `image` hydrated when set).
 
 ### 8.3 `PATCH /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments/{commentId}`
 
-Body: `{ "body": "..." }`. Allowed for the author only. Sets `editedAt`.
+Body: `{ "body"?: string, "imageMediaId"?: string|null }`. Allowed for the author only. Same validation as POST. Sets `editedAt`. Passing `"imageMediaId": null` removes the attachment.
 
 ### 8.4 `DELETE /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments/{commentId}`
 
-Soft delete (sets `deletedAt`, blanks `body`). Allowed for author OR group admin.
+Soft delete: sets `deletedAt`, blanks `body`. The row remains so the parent thread's ordering is preserved and audit/moderation history exists. Allowed for author OR group admin. Idempotent — a `DELETE` of an already-soft-deleted row returns 204; a `DELETE` of a missing row returns 404.
 
 ### 8.5 `GET /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions`
 
@@ -561,6 +577,26 @@ Response 200 sets cookies via `Set-Cookie` headers (`CloudFront-Policy`, `CloudF
 
 For the SPA, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan).
 
+### 9.6 `PATCH /uploads/{imageId}`
+
+**Lambda**: `lambda-media`. **Role**: caller must own the image.
+
+Body: `{ "caption": "Cocoa thermos at mile two." | null }` (≤140 chars; `null` clears it).
+
+Updates the `ImageMedia.caption` field. Allowed regardless of whether the image is referenced by a draft or published response — the caption is a property of the image, not of a particular usage.
+
+Response 200: updated `ImageMedia`.
+
+### 9.7 Avatar routes
+
+Avatars use a separate pipeline (see `08-media-uploads.md` §11) so they can cross group boundaries.
+
+- `POST /avatars` — request a pre-signed PUT URL. Body: `{ "mimeType": "image/jpeg|png|webp", "byteSize": ... }`. Validation: `byteSize` ≤ 5 MB. Server creates an `AvatarMedia` row (`status=pending`) and returns `{ "avatarId", "uploadUrl", "headers", "expiresInSeconds": 600 }`.
+- `GET /avatars/{avatarId}` — returns the row (status, processed URL). Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
+- `DELETE /avatars/{avatarId}` — caller must own. Marks the row for cleanup; if the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering).
+
+Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see `02-data-model-dynamodb.md` §2.16.
+
 ---
 
 ## 10. Push routes
@@ -591,7 +627,7 @@ Sends a test push to all of the caller's subscriptions. Useful from the Settings
 
 ### 10.5 `PUT /push/preferences/{groupId}`
 
-Body: `{ "cycleOpen": true, "deadlineReminders": true }`. Upserts a `NotificationPref` row.
+Body: `{ "cycleOpen": true, "deadlineReminders": true }`. Upserts a `NotificationPref` row. Publication notifications are always-on with no per-user toggle; the API rejects any `publication` field in the body with `VALIDATION_FAILED`.
 
 ---
 
@@ -602,6 +638,28 @@ Body: `{ "cycleOpen": true, "deadlineReminders": true }`. Upserts a `Notificatio
 **Lambda**: `lambda-groups`. **Auth**: required (so it stays inside the protected stage; idle backend principle).
 
 Response 200: `{ "status": "ok", "version": "git-sha", "buildAt": "..." }`.
+
+---
+
+## 11a. Dev-only endpoints
+
+These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT_FOUND` in any other environment. They exist so manual testing and Playwright E2E can fast-forward state without waiting for EventBridge. See `13-dev-environments.md` §9.
+
+### 11a.1 `POST /admin/dev/tick/cycle`
+
+**Lambda**: `lambda-cycle-tick`. **Auth**: required. **Role**: any group admin.
+
+Synchronously invokes the cycle-tick handler. Optional body `{ "advanceCycleClosesBy"?: "5m"|"1h"|... }` rewrites the targeted group's `nextTransitionAt` before running so transitions become due immediately.
+
+Response 200: `{ "transitions": [{ "groupId", "cycleId", "from", "to" }] }`.
+
+### 11a.2 `POST /admin/dev/tick/notify`
+
+**Lambda**: `lambda-notify-tick`. **Auth**: required. **Role**: any group admin.
+
+Synchronously invokes the notify-tick handler. Returns `{ "fanouts": [{ "groupId", "cycleId", "kind", "delivered", "failed" }] }`.
+
+Both routes are also called by Playwright E2E (`11-testing-ci-cd.md` §4.3) — implement once, two consumers.
 
 ---
 
@@ -629,12 +687,14 @@ A schema validation test in CI rejects any drift between handwritten Rust models
 | `GET /groups`, `GET /groups/{g}` | member |
 | `PATCH /groups/{g}` | admin |
 | `DELETE /groups/{g}/members/{u}` | self OR admin |
-| `PATCH /groups/{g}/members/{u}` | self (nickname) / admin (role) |
+| `PATCH /groups/{g}/members/{u}` | admin (role only) |
 | `GET /groups/{g}/newsletters*` | member |
 | `*` candidate-questions GET/POST/votes | member |
-| `*` admin/curate routes | admin |
+| `DELETE /admin/groups/{g}/candidate-questions/{q}` | admin |
 | `*` my-response routes | member (and self) |
 | `*` comments/reactions | member |
-| `POST /uploads*`, `GET /uploads/{id}`, `DELETE /uploads/{id}`, `GET /media-cookie` | member |
+| `POST /uploads*`, `GET /uploads/{id}`, `PATCH /uploads/{id}`, `DELETE /uploads/{id}`, `GET /media-cookie` | member (owner for PATCH/DELETE) |
+| `POST /avatars`, `GET /avatars/{id}`, `DELETE /avatars/{id}` | self (owner) |
 | `*` push routes | self |
 | `GET /healthz` | authenticated |
+| `POST /admin/dev/tick/*` | admin (dev environment only; 404 in prod) |

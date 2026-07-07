@@ -1,0 +1,28 @@
+[package]
+name = "persistence"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+test-utils = []
+
+[dependencies]
+domain = { path = "../domain" }
+shared = { path = "../shared" }
+aws-sdk-dynamodb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_dynamo.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+pretty_assertions.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true

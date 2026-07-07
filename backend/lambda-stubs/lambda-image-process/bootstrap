@@ -1,0 +1,13 @@
+#!/bin/bash
+# Stub bootstrap for lambda-image-process — replaced in M8 with the real Rust binary.
+# Handles the Lambda Runtime API protocol so the function reports success without processing.
+set -euo pipefail
+
+RUNTIME_API="http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime"
+
+while true; do
+    RESPONSE=$(curl -sSf "${RUNTIME_API}/invocation/next" -D /tmp/lambda-headers)
+    REQUEST_ID=$(grep -i 'lambda-runtime-aws-request-id' /tmp/lambda-headers | awk '{print $2}' | tr -d '\r')
+    curl -sSf -X POST "${RUNTIME_API}/invocation/${REQUEST_ID}/response" \
+        -d '{"status":"stub - image processing not yet implemented"}'
+done

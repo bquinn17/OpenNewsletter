@@ -2,7 +2,7 @@
 
 This document specifies every AWS resource the project provisions, organized into CDK stacks. A subagent should be able to translate this directly into Python CDK code.
 
-Region: **us-east-1**. Account: single account for both `dev` and `prod`, distinguished by stack suffix (`-dev`, `-prod`).
+Region: **us-east-1**. Account: single personal AWS account for both `dev` and `prod`, distinguished by stack suffix (`-dev`, `-prod`). See `00-overview.md` §7 for the rationale.
 
 ---
 
@@ -12,8 +12,9 @@ Region: **us-east-1**. Account: single account for both `dev` and `prod`, distin
 |---|---|---|
 | `DataStack` | DynamoDB table + GSIs | — |
 | `AuthStack` | Cognito user pool, IdPs, hosted UI domain | — |
-| `MediaStack` | S3 buckets, CloudFront distribution, image-process Lambda | `DataStack` |
-| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaStack` |
+| `MediaPersistentStack` | S3 buckets (originals + processed), CloudFront distribution, KeyGroup | `DataStack` |
+| `MediaPipelineStack` | `lambda-image-process` and its S3 event subscription | `DataStack`, `MediaPersistentStack` |
+| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack` |
 | `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack`, `ApiStack` |
 | `FrontendStack` | ACM cert (`us-east-1`) + Route53 records (if Route53) | — |
 | `MonitoringStack` | CloudWatch dashboards + alarms | All others |
@@ -59,7 +60,7 @@ Provider OAuth credentials are pre-populated in AWS Secrets Manager out-of-band 
 - **Partition key**: `pk` (String)
 - **Sort key**: `sk` (String)
 - **Time-to-live attribute**: `ttl` (Number, epoch seconds) — used for invite expirations and ephemeral entities
-- **Streams**: `NEW_AND_OLD_IMAGES` enabled (consumed by archival Lambda — see `10-archival.md`)
+- **Streams**: **disabled in v1**. The only planned consumer is the archival Lambda (`10-archival.md`), which is deferred. Re-enable as `NEW_AND_OLD_IMAGES` when archival lands.
 - **Point-in-time recovery**: enabled in `prod`, disabled in `dev`
 - **Removal policy**: `RETAIN` in `prod`, `DESTROY` in `dev`
 - **Encryption**: AWS-managed KMS
@@ -83,7 +84,6 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 
 - `table_name`
 - `table_arn`
-- `table_stream_arn`
 
 ---
 
@@ -112,16 +112,25 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 
 For all three: attribute mapping `email -> email`, `name -> name`.
 
-### 4.3 App Client
+### 4.3 App Clients
 
-- **Name**: `frontend`
+Two app clients on the same user pool:
+
+**`frontend`** — the public client every end user goes through.
 - **Generate secret**: NO (public client)
 - **OAuth flows**: Authorization Code with PKCE
 - **OAuth scopes**: `openid`, `email`, `profile`
 - **Callback URLs**: `https://{config.domain}/auth/callback`, plus `http://localhost:5173/auth/callback` in `dev`
 - **Logout URLs**: `https://{config.domain}/`, plus `http://localhost:5173/` in `dev`
-- **Supported IdPs**: Google, Apple, Facebook (Cognito itself disabled for end users — bootstrap admin uses a separate "admin" client)
+- **Supported IdPs**: Google, Apple, Facebook (Cognito itself disabled for end users)
 - **Token validity**: ID 60min, Access 60min, Refresh 30 days
+
+**`admin-bootstrap`** — used only by `scripts/bootstrap_admin.py` and the dev-only `/admin/bootstrap-login` page (see `05-auth-flow.md` §9.2).
+- **Generate secret**: NO (public client)
+- **Auth flows**: `ALLOW_USER_PASSWORD_AUTH` + `ALLOW_REFRESH_TOKEN_AUTH`
+- **Supported IdPs**: Cognito only (no federation)
+- **Token validity**: same as `frontend`
+- In `prod` this client exists but is exercised once at first-admin bootstrap and then dormant; in `dev` it's the inner-loop sign-in path so we don't bounce through Google/Apple/Facebook for every iteration.
 
 ### 4.4 Hosted UI Domain
 
@@ -131,14 +140,22 @@ For all three: attribute mapping `email -> email`, `name -> name`.
 
 - `user_pool_id`
 - `user_pool_arn`
-- `user_pool_client_id`
+- `user_pool_client_id` (the `frontend` client)
+- `user_pool_bootstrap_client_id` (the `admin-bootstrap` client)
 - `hosted_ui_domain`
 
 ---
 
-## 5. `MediaStack`
+## 5. `MediaPersistentStack` and `MediaPipelineStack`
 
-### 5.1 S3 buckets
+The media resources are split across two stacks so that `dev` can recreate the image-processing pipeline freely without touching the slow-to-rebuild S3 + CloudFront infrastructure. See [`13-dev-environments.md` §3](13-dev-environments.md) for the rationale.
+
+- **`MediaPersistentStack`** — §5.1, §5.2: S3 buckets, CloudFront distribution, KeyGroup. Long-lived in dev (CloudFront takes 15–30 min to delete).
+- **`MediaPipelineStack`** — §5.3: `lambda-image-process` and its S3 event subscription. Volatile; recreated freely.
+
+In `prod` the split is structural-only; both stacks deploy together and behave identically to a combined stack.
+
+### 5.1 S3 buckets (`MediaPersistentStack`)
 
 Two buckets, both private (Block Public Access fully on):
 
@@ -156,7 +173,7 @@ Two buckets, both private (Block Public Access fully on):
   - Lifecycle: same as originals.
   - Read access only via CloudFront origin access control (OAC).
 
-### 5.2 CloudFront distribution
+### 5.2 CloudFront distribution (`MediaPersistentStack`)
 
 - **Origins**:
   - `processed` bucket via OAC (default origin)
@@ -171,7 +188,7 @@ Two buckets, both private (Block Public Access fully on):
 - **Domain alias**: `cdn.opennewsletter.example.com` (or `cdn-dev...`).
 - **Certificate**: ACM cert in `us-east-1` (created in `FrontendStack`).
 
-### 5.3 `lambda-image-process` (Rust)
+### 5.3 `lambda-image-process` (Rust, `MediaPipelineStack`)
 
 - **Trigger**: S3 ObjectCreated on originals bucket, prefix `uploads/`
 - **Memory**: 1024 MB
@@ -222,7 +239,7 @@ All Rust, runtime `provided.al2023`, architecture `arm64`, memory 256 MB (512 fo
 | `lambda-invites` | `POST /admin/invites`, `POST /invites/redeem` | RW | — | — |
 | `lambda-groups` | `GET /me`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}` (admin) | RW | — | — |
 | `lambda-newsletters` | `GET /groups/{g}/newsletters`, `GET /groups/{g}/newsletters/{nl}` | R | — | — |
-| `lambda-questions` | `GET/POST /groups/{g}/candidate-questions`, `POST/DELETE .../{q}/votes`, admin curate routes | RW | — | — |
+| `lambda-questions` | `GET/POST /groups/{g}/candidate-questions`, `POST/DELETE .../{q}/votes`, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
 | `lambda-responses` | response CRUD + autosave + publish + poll vote | RW | — | — |
 | `lambda-engagement` | comments + reactions | RW | — | — |
 | `lambda-media` | `POST /uploads`, `POST /uploads/{id}/complete`, `GET /media-cookie` | RW | PUT presign on originals; CloudFront cookie sign | Secrets:GetSecretValue on signing key |
@@ -262,11 +279,9 @@ A static JSON document baked into Lambda env at deploy time, providing defaults 
 
 Group settings stored in DynamoDB override these defaults per-group; see `02-data-model-dynamodb.md`.
 
-### 6.5 Public route exception
+### 6.5 No public routes
 
-`POST /invites/redeem` is NOT protected by the JWT authorizer — it accepts an unauthenticated Cognito access token from the OAuth callback flow as part of its body validation. See `05-auth-flow.md` §4.
-
-Actually — given Cognito triggers (`PreSignUp` + `PostConfirmation`) handle invite consumption end-to-end, `POST /invites/redeem` only exists as a fallback for **adding an existing user to an additional group**. It DOES require auth. So **all routes have JWT auth**.
+**All routes have JWT auth.** Invite redemption happens via `POST /invites/redeem`, which requires a valid Cognito JWT (see `05-auth-flow.md` §4 for the full flow). The handler performs both first-signup user creation and additional-group joins; there is no unauthenticated path into the API.
 
 ### 6.6 Outputs
 
@@ -363,6 +378,18 @@ DynamoDB IAM patterns:
 
 ---
 
+## 10.5 Dev-environment resource policy overrides
+
+When `config.env == "dev"`, the following one-line overrides are applied so `cdk destroy` on a volatile stack succeeds without manual intervention. These are no-ops in `prod`. Full rationale in [`13-dev-environments.md` §5](13-dev-environments.md).
+
+- **DynamoDB table** (`DataStack`) — `removal_policy=DESTROY`, `point_in_time_recovery=False`.
+- **S3 buckets** (`MediaPersistentStack`) — `auto_delete_objects=True`, `removal_policy=DESTROY`. Without `auto_delete_objects`, destroy fails on non-empty buckets.
+- **Secrets Manager secrets** (every stack that creates one) — `removal_policy=DESTROY` and `recovery_window=Duration.days(0)`. The default 7-day soft-delete window blocks redeploy-within-a-week.
+- **CloudWatch log groups** (every Lambda) — `removal_policy=DESTROY`. Otherwise destroy succeeds but leaves orphans, and the next deploy errors on "log group already exists."
+- **Cognito user pool** (`AuthStack`) — unchanged. Persistent in dev. See [`13-dev-environments.md` §3](13-dev-environments.md).
+
+---
+
 ## 11. Deployment
 
 ```bash
@@ -389,7 +416,8 @@ CDK Lambda assets reference compiled `bootstrap` binaries in `backend/target/lam
 
 - DynamoDB on-demand: ~$1–3/mo
 - Lambda + HTTP API: ~$1–2/mo (idle backend)
-- S3 + CloudFront: ~$1–5/mo (depends on image volume; CloudFront cache hits ~$0.085/GB)
+- S3 storage + requests: ~$0.50–2/mo (depends on image volume)
+- CloudFront egress: ~$0.085/GB cache miss (PriceClass_100, NA + EU); cache hits dominate after the first viewer per published newsletter. Fixed CloudFront cost is **$0** — the distribution itself is free; only egress and requests are billed. See [`08-media-uploads.md` §6.1](08-media-uploads.md) for why CloudFront is retained vs. direct-from-S3.
 - Cognito: free tier (50k MAU)
 - EventBridge schedules: <$1/mo
 - Secrets Manager: ~$0.40/secret/mo × ~5 secrets = ~$2/mo

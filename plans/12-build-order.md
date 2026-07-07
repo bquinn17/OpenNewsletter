@@ -68,12 +68,32 @@ Read: `01-infrastructure-cdk.md`.
 - `infra/opennewsletter/config.py` with `EnvConfig` dataclass and dev/prod loaders.
 - `DataStack` — DynamoDB table + GSIs.
 - `AuthStack` — Cognito user pool + 3 IdPs + app client + hosted UI domain (use placeholder secret ARNs from M1; refresh once the operator finalizes).
-- `MediaStack` — S3 buckets + CloudFront + `lambda-image-process` (the Lambda code can be a stub at this point; replaced in M8).
+- `MediaPersistentStack` — S3 buckets + CloudFront + KeyGroup.
+- `MediaPipelineStack` — `lambda-image-process` (the Lambda code can be a stub at this point; replaced in M8) and its S3 event subscription.
 - `FrontendStack` — ACM cert and DNS records.
 - `MonitoringStack` skeleton (alarms wired empty for now).
 - `infra/tests/test_stacks.py` per `11-testing-ci-cd.md` §3.
 
-**Done when**: `cdk synth --context env=dev` succeeds; `pytest infra/tests/` is green; a manual `cdk deploy --context env=dev DataStack AuthStack MediaStack FrontendStack` produces working resources (verifiable via console).
+**Done when**: `cdk synth --context env=dev` succeeds; `pytest infra/tests/` is green; a manual `cdk deploy --context env=dev DataStack AuthStack MediaPersistentStack MediaPipelineStack FrontendStack` produces working resources (verifiable via console).
+
+---
+
+## Milestone 3.5 — Dev environment online (½ day)
+
+Read: [`13-dev-environments.md`](13-dev-environments.md).
+
+**Goal**: Make the `dev` AWS environment usable for daily work. Every milestone after this is testable end-to-end against real AWS from the moment its code lands.
+
+**Deliverables**:
+- `Makefile` targets: `make deploy-dev`, `make seed`, `make redeploy-volatile`, `make reset-all`, `make deploy-lambda LAMBDA=...`, `make fe`.
+- `scripts/seed_dev_data.py` — idempotent + destructive: scans + batch-deletes the DynamoDB table, empties S3 prefixes, writes the small fixture (one group, bootstrap admin as sole member, one `voting` cycle). Does NOT touch Cognito. Prints sign-in credentials. See [`13-dev-environments.md` §4](13-dev-environments.md).
+- `scripts/write_frontend_env.py` — reads `cdk.out/dev-outputs.json`, writes `frontend/.env.dev` with API/CDN/Cognito values per [`13-dev-environments.md` §7](13-dev-environments.md).
+- Dev-environment removal-policy overrides applied across all CDK stacks per [`01-infrastructure-cdk.md` §10.5](01-infrastructure-cdk.md).
+- `MediaStack` split into `MediaPersistentStack` + `MediaPipelineStack` per [`01-infrastructure-cdk.md` §5](01-infrastructure-cdk.md).
+- `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations land in M5/M9; the routes exist now so manual testing has a fast-forward path.
+- AWS Budgets alarm at $10/mo wired to `config.alarm_email`.
+
+**Done when**: `make deploy-dev && make seed && make fe`, sign in via the `/admin/bootstrap-login` route as the seeded admin, and see the seeded group's home page. `make redeploy-volatile` succeeds end-to-end (proves the dev removal-policy overrides are correct).
 
 ---
 
@@ -98,7 +118,7 @@ Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
 
 **Deliverables**:
 - `lambda-newsletters` with `GET /groups/{g}/newsletters` and `GET /groups/{g}/newsletters/{c}` (handles all four status branches).
-- `lambda-questions` with candidate question CRUD + admin curate routes per `03-api-contract.md` §6.
+- `lambda-questions` with candidate question CRUD per `03-api-contract.md` §6. No admin curate/promote surface — voting is the sole source of truth (see `03-api-contract.md` §6.5 and `06-newsletter-lifecycle.md` §7). The only admin mutation is `DELETE /admin/groups/{g}/candidate-questions/{q}` for abusive content.
 - `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5; wired into EventBridge.
 - The "create-next-voting-cycle" logic that runs on group creation (in `bootstrap_admin.py` or in the group-creation transaction in `lambda-groups`).
 - Lifecycle integration test suite per `06-newsletter-lifecycle.md` §11.
@@ -211,7 +231,7 @@ Read: `07-notifications.md`.
 Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
 
 **Deliverables**:
-- `pages/GroupAdminPage` with the four tabs (Members, Invites, Settings, Curate).
+- `pages/GroupAdminPage` with the three tabs (Members, Invites, Settings). No Curate tab — admins do not override voting.
 
 **Done when**: I can create an invite, copy the URL, share, and see the new member appear.
 

@@ -76,28 +76,18 @@ Goal: a person with an invite URL becomes a Cognito user AND is added to a group
 
 Crate: `lambda-invites` (it has both the API endpoints and the Cognito triggers — they share the persistence module). Distinct binary entry points.
 
-### 3.1 Inputs
+### 3.1 Role
 
-The Cognito event includes:
-- `request.userAttributes.email`
-- `clientMetadata` map — populated from the OAuth `clientMetadata` parameter the SPA passes during the authorize call
+`PreSignUp` is a **pure pass-through** that auto-confirms federated accounts. It does NOT see or consume the invite code — Cognito's hosted UI does not reliably forward `clientMetadata` from the front channel, so we don't depend on it.
 
-The SPA passes `clientMetadata.invite` by appending `&clientMetadata=...` and `&state=...`. The hosted-UI flow propagates these through the OAuth dance via the `clientMetadata` parameter on `oidc-client-ts`'s `signinRedirect({ extraQueryParams: { ... } })` — but actually Cognito's hosted UI does NOT forward `clientMetadata` from the front channel. The robust approach:
-
-**Use the `state` parameter.** The SPA Base64-encodes `{ invite: "XYZ", returnTo: "/" }` into `state` before redirect. The Cognito callback returns this `state` to the SPA. After token exchange, the SPA discovers the user is *new* (no User row in DynamoDB → `/config` returns `pendingInvite: true`) and posts the invite to `POST /invites/redeem` to finalize.
-
-This means the actual flow is:
-
-> The `PreSignUp` trigger does NOT see the invite. It only checks that an account *can* be created (allows OAuth-flagged users through). The **post-token** `/invites/redeem` call from the SPA does the linking, and its handler does both invite consumption AND group membership creation.
-
-This simplifies the system materially. Revised flow in §4 below.
+Invite consumption happens later, after the SPA holds a real JWT, via `POST /invites/redeem` (§4). That handler does both invite consumption AND group membership creation in a single transaction, and creates the User row lazily on first redemption.
 
 ### 3.2 Why this is fine
 
 - Without an invite redemption, the user has zero memberships → `/config` returns empty groups → SPA redirects to `/join`. They cannot reach any group's data because every protected route checks membership.
 - The user IS in Cognito but completely inert. We accept the small downside of having user-pool entries that never finished onboarding (cleaned up via a periodic job — see `10-archival.md` §6).
 
-### 3.3 PreSignUp logic (final)
+### 3.3 PreSignUp logic
 
 ```rust
 // returns auto-confirm true so federated users skip email confirm
@@ -108,7 +98,7 @@ fn handle(event: PreSignUp) -> PreSignUp {
 }
 ```
 
-Pure pass-through. Invite validation moved to `POST /invites/redeem`.
+The SPA preserves the invite code across the OAuth round-trip by base64-encoding `{ invite, returnTo }` into the OIDC `state` parameter. After token exchange, the SPA reads the code back out of `state` and posts it to `/invites/redeem`.
 
 ---
 
@@ -124,7 +114,7 @@ The single, canonical place where invites are consumed.
 ### 4.2 Algorithm
 
 ```
-caller_id = jwt.sub
+sub = jwt.sub
 code = body.code
 
 # 1. Look up invite
@@ -138,29 +128,42 @@ if now() > invite.expiresAt: return 410 INVITE_EXPIRED
 group = GetItem(pk=GROUP#{invite.groupId}, sk=META)
 if group.memberCount >= group.memberSoftCap: return 409 MEMBER_CAP_REACHED
 
-# 3. Look up caller's existing User row (it may not exist yet)
-user = GetItem(pk=USER#{caller_id}, sk=PROFILE)
+# 3. Resolve sub -> userId (or mint a new one)
+lookup = GetItem(pk=COGNITO_SUB#{sub}, sk=USER_ID)
+if lookup is None:
+    user_id = uuidv7()                          # first-ever redemption for this Cognito account
+    is_new_user = True
+else:
+    user_id = lookup.userId
+    is_new_user = False
 
-# 4. Determine if a User row needs to be created
-items_to_write = []
-if user is None:
-    items_to_write.append(Put(User row, derived from JWT email/name))
+# 4. Already a member? Short-circuit (idempotent retries land here).
+if not is_new_user:
+    existing = GetItem(pk=USER#{user_id}, sk=GROUP#{invite.groupId})
+    if existing is not None:
+        return 200 { groupId, groupName, role: existing.role }
 
 # 5. Atomic transaction (TransactWriteItems)
+items_to_write = []
+if is_new_user:
+    items_to_write += [
+        Put(CognitoSubLookup(sub=sub, userId=user_id),
+            Condition: attribute_not_exists(pk)),
+        Put(User(userId=user_id, cognitoSub=sub, email=jwt.email, displayName=jwt.name or jwt.email,
+                  avatarColor=derive_color(user_id))),
+    ]
 items_to_write += [
     Update(invite,
         Condition: status = "pending" AND now < expiresAt,
-        Set: status = "consumed", consumedBy = caller_id, consumedAt = now()),
-    Put(GroupMembership(userId=caller_id, groupId=invite.groupId, role=invite.roleOnRedeem),
-        Condition: attribute_not_exists(pk)),  # idempotent on retry, but a duplicate join is a programmer error
+        Set: status = "consumed", consumedBy = user_id, consumedAt = now()),
+    Put(GroupMembership(userId=user_id, groupId=invite.groupId, role=invite.roleOnRedeem),
+        Condition: attribute_not_exists(pk)),
     Update(group, ADD memberCount 1,
         Condition: memberCount < memberSoftCap),
 ]
+write_transact(items_to_write)
 
-# 6. If the membership Put fails because the row already exists, the user is already a member.
-#    Detect this case before transaction and short-circuit with 200.
-
-# Return success
+return 200 { groupId, groupName, role: invite.roleOnRedeem }
 ```
 
 ### 4.3 First-signup vs additional-group
@@ -171,7 +174,7 @@ The same algorithm covers both cases:
 
 ### 4.4 Idempotency
 
-Re-POSTing the same code with the same caller after success: invite is `consumed`, so we return 409 `INVITE_CONSUMED`. To make the SPA's life simpler, the handler ALSO checks whether `consumedBy == caller_id`; if yes, it returns 200 with the membership info (this happens if the user double-submits or the network retries).
+Re-POSTing the same code with the same caller after success: invite is `consumed`, so we return 409 `INVITE_CONSUMED`. To make the SPA's life simpler, the handler ALSO checks whether `consumedBy == user_id`; if yes, it returns 200 with the membership info (this happens if the user double-submits or the network retries).
 
 ### 4.5 SPA wrapper
 
@@ -225,6 +228,24 @@ fn extract_claims(req: &Request) -> Result<AuthClaims, ApiError> {
 ```
 
 The handler does NOT re-verify the signature — API Gateway already did. It trusts the claims.
+
+After extracting claims, every protected handler resolves `claims.sub` → our internal `userId` via the `CognitoSubLookup` row (`02-data-model-dynamodb.md` §2.1a). This lookup is cached per cold-start for ≤60s alongside the membership cache so the cost is amortized:
+
+```rust
+pub async fn resolve_user_id(repo: &Repo, sub: &str) -> Result<UserId, ApiError> {
+    if let Some(cached) = SUB_LOOKUP_CACHE.get(sub) {
+        if cached.cached_at.elapsed() < Duration::from_secs(60) {
+            return Ok(cached.user_id.clone());
+        }
+    }
+    let user_id = repo.lookup_user_id_by_sub(sub).await?
+        .ok_or(ApiError::Unauthenticated)?;   // happens on first request before invite redemption
+    SUB_LOOKUP_CACHE.insert(sub.to_string(), Cached { user_id: user_id.clone(), cached_at: Instant::now() });
+    Ok(user_id)
+}
+```
+
+A `None` from the lookup means the JWT is valid but the account has never redeemed an invite — `/config` handles this case specially (returns empty memberships); other handlers return `UNAUTHENTICATED`.
 
 Defense-in-depth for local development: the Rust shared crate has a `JwtVerifier` that fetches JWKS and validates signatures. This is gated behind the `ENV=local` flag (used by `scripts/run_local.sh`, which proxies HTTP requests to Lambdas without API Gateway).
 

@@ -1,0 +1,15 @@
+[package]
+name = "lambda-notify-tick"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+lambda_runtime.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"

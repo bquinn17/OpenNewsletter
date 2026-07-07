@@ -187,7 +187,7 @@ When `publish(nl)` runs in `lambda-cycle-tick`, async-invoke `lambda-push`'s `pu
 
 Idempotency marker: `NOTIFIED#PUBLISH`. Same algorithm as §6 but with the `publication` payload.
 
-This was not on the original requirement list (the spec only mentioned cycle-open + deadline reminders) but is the natural counterpart: users want to know when there's a new edition to read. **Default ON.** A `notificationSettings.onPublication: bool` group setting can disable it.
+This was not on the original requirement list (the spec only mentioned cycle-open + deadline reminders) but is the natural counterpart: users want to know when there's a new edition to read. **Always on; no user-facing toggle.** The only kill-switch is the OS-/browser-level push permission. `NotificationPref` carries no `publication` field; `Group.notificationSettings` carries no `onPublication`. The fan-out still respects "user has zero subscriptions" — those users simply receive nothing.
 
 ---
 
@@ -245,7 +245,7 @@ A single toggle "Push notifications" with:
 - An "Allow" CTA that requests permission and creates a subscription.
 - A "Send test push" button (after enabled).
 - A "My devices" list with each subscription's user-agent string + last-success timestamp + delete button.
-- Per-group preference toggles ("Cycle open", "Deadline reminders", "Publication") with `PUT /push/preferences/{g}`.
+- Per-group preference toggles ("Cycle open", "Deadline reminders") with `PUT /push/preferences/{g}`. Publication push is always-on and has no toggle.
 
 ### 11.2 Re-subscribe-on-load
 

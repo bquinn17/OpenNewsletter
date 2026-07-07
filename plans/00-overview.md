@@ -138,7 +138,7 @@ OpenNewsletter/
 | **Group** | A tenant. A collection of users that share newsletters. Has its own admin(s), settings, and timezone. |
 | **Member** | A user who belongs to a group. Roles: `admin` or `member`. |
 | **Cycle / Newsletter** | One monthly edition for one group. Identified by `groupId + yyyymm`. Has a status: `voting | open | published | archived`. |
-| **Candidate question** | A user-suggested question in the pool for the next cycle, eligible for upvotes. Anonymous in the UI. |
+| **Candidate question** | A user-suggested question in the pool for the next cycle, eligible for upvotes. Authored by the submitter by default; the submitter may opt in to anonymous display. |
 | **Locked question** | A candidate that has been promoted into a specific cycle and is now visible as a prompt. May be `kind: text` or `kind: poll`. |
 | **Response / Answer** | A user's reply to one locked question in one cycle. Has a `status: draft | published`. May contain text + up to 10 image attachments, OR a poll vote. |
 | **Comment** | A flat, post-publication reply to a specific answer. Author can edit/delete. Admins can delete any. |
@@ -150,13 +150,13 @@ OpenNewsletter/
 
 ## 6. Cross-cutting conventions
 
-- **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on.
+- **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see `02-data-model-dynamodb.md` §2.1.
 - **Timestamps.** All timestamps stored as ISO-8601 UTC strings. Group-local rendering happens client-side using the group's `timezone` field.
 - **Money.** Not applicable — this is a no-cost-to-user app.
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in `03-api-contract.md`.
 - **Logging.** Structured JSON logs via `tracing` + `tracing-subscriber` with a `correlation_id` taken from `x-correlation-id` request header (frontend generates ULIDs).
 - **Auth claims.** Lambdas read `sub` (Cognito user ID) and `email` from the validated JWT context injected by API Gateway. Group memberships are NOT in the JWT — they are resolved on every request via DynamoDB (cached in-memory per cold-start for ≤60s).
-- **Anonymous question display.** Server returns candidate questions and locked questions without `submittedBy` UNLESS the caller is an admin of the group. The submitter is always recorded server-side for moderation.
+- **Question authorship & anonymity.** Questions are attributed to their submitter by default — candidate questions and locked questions return `submittedBy` (userId + display name) so the UI can render "Kari asked: …" style attribution. A submitter may opt in to anonymous display by setting `isAnonymous: true` on submission; in that case the server omits `submittedBy` for non-admin callers (admins always see it for moderation). The submitter's `userId` is always recorded server-side regardless.
 
 ---
 
@@ -164,8 +164,10 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — separate AWS account or dedicated stack suffix `-dev`. Uses `dev.opennewsletter.example.com` and `api-dev.opennewsletter.example.com`. Pre-seeded test users and one test group.
-- `prod` — the real thing.
+- `dev` — single shared AWS account with stack suffix `-dev`. Uses `dev.opennewsletter.example.com` and `api-dev.opennewsletter.example.com`. Pre-seeded test users and one test group.
+- `prod` — same account, stack suffix `-prod`.
+
+Both environments live in one personal AWS account (the account may host unrelated personal projects later; IAM users will remain few). Stronger account-level isolation is out of scope for v1; revisit if the threat model changes.
 
 CDK reads `--context env=dev|prod` and merges from `infra/opennewsletter/config.py`.
 

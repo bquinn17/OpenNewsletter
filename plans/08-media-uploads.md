@@ -211,7 +211,7 @@ Cookies are first-party from the browser's perspective because `cdn.opennewslett
 
 ### 5.1 Trigger configuration
 
-S3 event: `s3:ObjectCreated:*` filtered to `prefix: uploads/`. Async batch with `BatchSize: 1` for simplicity.
+S3 event: `s3:ObjectCreated:*` filtered to `prefix: uploads/`. S3 invokes the Lambda once per object (no batching configurable on direct S3→Lambda notifications).
 
 ### 5.2 Algorithm (Rust)
 
@@ -303,6 +303,16 @@ Memory: 1024 MB (image processing is CPU-bound; arm64 Lambda's 1024 MB gives a f
 - A user's cookie is scoped to one group at a time; the SPA refreshes when switching.
 - Worst case: a member of group A guesses an image URL belonging to group B. They lack cookies for group B's path → CloudFront returns 403. Tenant boundary preserved.
 
+### 6.1 Why CloudFront (decision record)
+
+Removing CloudFront in favor of direct-from-S3 serving was considered. Three options were evaluated:
+
+- **(A) Keep CloudFront + signed cookies** — current design.
+- **(B) Public S3 bucket, unguessable keys** — radically simpler (static URLs, no signing, perfect browser/SW cache) but abandons the membership-based tenant isolation the rest of the system enforces. A leaked URL works forever.
+- **(C) Private S3, per-image SigV4 presigned GETs** — preserves tenant isolation but pushes signing into every handler that returns image URLs, and signed URLs change per request, breaking the SW `CacheFirst` strategy in [`04-frontend-architecture.md`](04-frontend-architecture.md) §SW.
+
+**Decision: (A).** Cost is effectively a wash at our scale: CloudFront egress ($0.085/GB, PriceClass_100) is actually slightly *cheaper* than S3 direct egress ($0.09/GB), and removing CloudFront only saves ~$0.40/mo (one Secrets Manager secret for the signing keypair). The non-cost benefits of (A) — edge cache for repeated reads of published newsletters, and stable URLs that the markdown renderer's `image:{imageId}` resolution and the SW cache both depend on — are what make it the simpler design once you account for what (B) or (C) would replace it with.
+
 ---
 
 ## 7. Image references in markdown
@@ -360,3 +370,41 @@ Detailed in `11-testing-ci-cd.md`. Image-pipeline-specific tests:
 6. SVG upload is rejected at the validation step (not in allowed MIME list).
 7. CloudFront signed cookies for group A do not allow access to group B images.
 8. The 10-image cap is enforced (11th `POST /uploads` returns `IMAGE_LIMIT_EXCEEDED`).
+
+---
+
+## 11. Avatars (separate pipeline)
+
+Avatars are uploaded via a dedicated, simpler pipeline because they need to cross group boundaries (a user belongs to multiple groups; one avatar serves them all).
+
+### 11.1 Buckets and keys
+
+A pair of buckets, structured like §2 but with avatar-specific prefixes:
+
+- `opennewsletter-avatars-originals-{env}-{accountId}` — `uploads/{userId}/{avatarId}.{ext}`
+- `opennewsletter-avatars-processed-{env}-{accountId}` — `avatar/{avatarId}/display.webp`
+
+Constraints:
+- Allowed MIME: `image/jpeg`, `image/png`, `image/webp` (no GIF — animated avatars aren't worth the encoder complexity in v1).
+- Max bytes: **5 MB** (capped client-side and via bucket policy).
+- Processed variant: WebP, 256×256 (center-crop to square), quality 82. No thumb — a 256px avatar is already small.
+
+### 11.2 Upload + processing
+
+Same shape as the per-question pipeline:
+1. SPA calls `POST /avatars` → receives presigned PUT URL + `avatarId`.
+2. SPA PUTs binary directly to S3 (originals bucket).
+3. `lambda-image-process` (same Lambda) receives the S3 event, branches on key prefix (`uploads/` → response image, `avatars/uploads/` → avatar), produces the 256×256 WebP, updates the `AvatarMedia` row to `status=ready`.
+4. SPA polls `GET /avatars/{avatarId}` until `ready`, then `PATCH /me` with `avatarMediaId`.
+
+### 11.3 Serving
+
+A second CloudFront **behavior** (not a second distribution) on the same `cdn.{domain}` host:
+- Path pattern: `/avatar/*` → processed-avatars bucket via OAC.
+- **No trusted KeyGroup** — avatars are not signed. Tenant isolation is unnecessary: an avatar URL leak grants someone the ability to render a 256×256 image of a user, which is identical to seeing them in any group they share with the leaker.
+- The `avatarId` is a UUIDv7, unguessable in practice.
+- Cache-control: `public, max-age=86400, immutable`. Changing avatars produces a new `avatarId`, so cached entries never collide.
+
+### 11.4 Cleanup
+
+When a user replaces or removes their avatar, the previous `AvatarMedia` row is soft-marked `failed` (same field reuse as response images) and the bucket lifecycle reclaims storage. No active deletion in v1.

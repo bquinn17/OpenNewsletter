@@ -15,14 +15,23 @@ type Comment = {
   commentId: string;
   authorUserId: string;
   authorDisplayName: string;
-  body: string;          // 1-2000 chars; markdown allowed (sanitized identical to response bodies)
+  body: string;          // 0-2000 chars; markdown allowed (sanitized identical to response bodies)
+  image: {               // optional single attached image; null when none
+    imageId: string;
+    displayUrl: string;
+    thumbUrl: string;
+    width: number;
+    height: number;
+    caption: string | null;
+  } | null;
   createdAt: string;
   editedAt: string | null;
-  deletedAt: string | null;
 };
 ```
 
-A deleted comment shows as `"[deleted]"` in the UI but its row remains for audit (soft delete). Hard delete is reserved for compliance and not exposed in v1.
+Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
+
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder.
 
 ### 1.2 Permissions
 
@@ -38,15 +47,19 @@ Editing reopens the markdown body and sets `editedAt`. The UI marks edited comme
 
 ### 1.3 Validation
 
-`body`: 1–2000 chars, must not be only whitespace, allowed markdown subset (paragraphs, emphasis, code, links to https only — no images embedded; if a user wants to attach an image, that's a future feature).
+`body`: 0–2000 chars, allowed markdown subset (paragraphs, emphasis, code, links to https only — no `![]()` images embedded in the markdown body; instead, comments support a single optional **attached** image via `imageMediaId`).
+
+`imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`. The image is uploaded through the same pipeline as response images (`POST /uploads`) and rendered beneath the comment text.
+
+A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected with `VALIDATION_FAILED`.
 
 ### 1.4 Endpoints
 
 Detailed in `03-api-contract.md` §8.1–8.4. Server-side handler highlights:
 
 - `POST` validates cycle status = `published`, validates response exists, inserts new row with `commentId = uuidv7()`, returns the created comment with `authorDisplayName` joined in.
-- `PATCH` checks `claims.sub == row.authorUserId` (or admin), updates `body` and `editedAt`.
-- `DELETE` (soft): sets `deletedAt = now()`, blanks `body`. Idempotent (re-delete of a deleted comment is a 200).
+- `PATCH` checks `claims.sub == row.authorUserId`, updates `body` and `editedAt`. Admins cannot edit other users' comments.
+- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when `claims.sub == row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404.
 
 ### 1.5 Author display name resolution
 
@@ -56,15 +69,12 @@ Comments embed `authorDisplayName` in the response payload (denormalized read; t
 // After querying comments
 let user_ids: HashSet<_> = comments.iter().map(|c| c.author_user_id.clone()).collect();
 let users = repo.batch_get_users(&user_ids).await?;
-let mut name_map: HashMap<String, String> = users.into_iter()
+let name_map: HashMap<String, String> = users.into_iter()
     .map(|u| (u.user_id, u.display_name)).collect();
-// Apply per-group nicknames if present
-let memberships = repo.list_group_members(&group_id, &user_ids).await?;
-for m in memberships { if let Some(n) = m.nickname { name_map.insert(m.user_id, n); } }
 // Inject into output
 ```
 
-Cache the membership list per cold-start (60s TTL) to avoid the second query for hot cycles.
+Cache the user batch per cold-start (60s TTL) to avoid repeating the read for hot cycles. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
 
 ### 1.6 Notifications on comments
 
@@ -134,7 +144,7 @@ A poll is a *kind* of question. Its lifecycle differs slightly from text questio
 | Suggest (voting phase) | Members type a free-form prompt | Members type a prompt + 2–6 option labels |
 | Lock (cycle opens) | Becomes a prompt | Becomes a prompt with options |
 | Respond (cycle open) | Members write text + images | Members select **one** option; last-write-wins |
-| Publish | All text answers visible | Per-option tallies + caller's vote |
+| Publish | All text answers visible; comments + reactions on each answer | Per-option tallies + caller's vote. No comments or reactions on the poll widget itself — engagement lives on text answers only. |
 
 ### 3.1 Storage
 
@@ -157,9 +167,13 @@ For cycles with very large groups (>200) this would warrant denormalized tallies
 - `pollOptions` length 2–6 at suggestion time.
 - Labels 1–80 chars, no duplicates (case-insensitive).
 - A user's `pollOptionId` on submit must match one of the question's option IDs.
-- Admins can edit option labels via `PATCH /admin/.../questions/{q}` while cycle is `open`. Once `published`, all options become immutable.
+- Option labels are immutable once a candidate is promoted into a cycle; whatever the suggester typed is what the group votes on.
 
-### 3.4 Anonymity
+### 3.4 Vote lock at publish
+
+While the cycle is `open`, a user can change their vote freely (overwrites their existing `Response` row). When the cycle transitions to `published`, votes are frozen — the published-newsletter endpoint omits any vote-mutation surface, the SPA's poll widget is read-only, and any late `PUT my-response` for a poll question returns 409 `CYCLE_NOT_OPEN`. The user's last pre-publish selection is the one that gets counted.
+
+### 3.5 Anonymity
 
 Poll votes are **not anonymous** — the tallies are. The `Response` row records `userId`. The published newsletter's poll widget shows aggregate counts only; individual votes are never exposed in any response payload (the server filters them out for poll questions when assembling the published view).
 

@@ -137,13 +137,12 @@ The tick is idempotent: if a previous run started but didn't finish, the next ru
 
 ```
 group = get_group(nl.groupId)
-candidates = query GSI1
+chosen = query GSI1
    gsi1pk = "GROUP#{nl.groupId}#CYCLE#{nl.cycleId}#VOTES"
    ScanIndexForward = false
    Limit = group.cycleSettings.questionsPerCycle
 
-if admin curated (lockedQuestionIds already set on nl):
-    use those instead of voted top-N
+# Admins cannot override the voting outcome — see §7.
 
 locked = []
 for (idx, c) in enumerate(chosen):
@@ -154,6 +153,7 @@ for (idx, c) in enumerate(chosen):
         pollOptions: c.pollOptions,
         displayOrder: idx,
         submittedBy: c.submittedBy,
+        isAnonymous: c.isAnonymous,
         lockedAt: now,
     })
 
@@ -257,16 +257,9 @@ If the timezone changes, the upcoming `voting` cycle's `responseOpenAt` may shif
 
 ## 7. Manual admin overrides
 
-Admins can:
-- **Curate** which questions get promoted (set `lockedQuestionIds` while still in `voting`). The tick honors this.
-- **Edit display order or prompt** of a locked question while in `open`.
-- **Delete a candidate question** (with cascading vote deletions).
+Admins **cannot** override the cycle in v1. The tick is the source of truth: top-N voted candidates promote, the cycle closes after the response window, and the edition publishes. There is no admin-curate surface, no manual promote/demote of candidates, no editing of locked questions, no early publish, no rollback, no skip-month, and no cycle cancel.
 
-Admins **cannot** in v1:
-- Cancel a cycle.
-- Roll back from `published` to `open`.
-- Manually trigger publication early (Roadmap; for now they wait for the deadline).
-- Skip a month entirely (Roadmap).
+The simpler rule is intentional: every member's vote counts equally and the schedule is predictable. If a question is genuinely problematic, an admin can delete the candidate while it's still in `voting` (cascading its votes); after promotion the question stays as it was suggested.
 
 ---
 
