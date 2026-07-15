@@ -8,6 +8,7 @@ volatile pipeline stack never touches the long-lived CloudFront distribution
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_certificatemanager as acm
@@ -31,7 +32,7 @@ class MediaPersistentStack(cdk.Stack):
         config: EnvConfig,
         table: dynamodb.Table,
         certificate: acm.Certificate,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
 

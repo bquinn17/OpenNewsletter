@@ -54,7 +54,8 @@ def load_config(env: str) -> EnvConfig:
                     raw[k.strip()] = v.strip()
 
     def get(key: str, default: str = "") -> str:
-        return raw.get(key) or os.environ.get(key, default)
+        value = raw.get(key)
+        return value if value else os.environ.get(key, default)
 
     def get_opt(key: str) -> str | None:
         v = raw.get(key) or os.environ.get(key)

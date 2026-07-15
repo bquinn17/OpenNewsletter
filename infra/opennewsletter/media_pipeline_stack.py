@@ -9,10 +9,10 @@ The Lambda code is a shell stub at M3; the real Rust implementation lands in M8.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_dynamodb as dynamodb
-from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as aws_lambda
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
@@ -36,7 +36,7 @@ class MediaPipelineStack(cdk.Stack):
         table: dynamodb.Table,
         originals_bucket: s3.Bucket,
         processed_bucket: s3.Bucket,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
 
@@ -79,8 +79,22 @@ class MediaPipelineStack(cdk.Stack):
         originals_bucket.grant_read(self.image_process_fn)
         processed_bucket.grant_put(self.image_process_fn)
 
-        # S3 event subscription — fires on every upload to the originals prefix
-        originals_bucket.add_event_notification(
+        # S3 event subscription — fires on every upload to the originals prefix.
+        #
+        # `add_event_notification` attaches its BucketNotifications custom resource
+        # (and its singleton handler Lambda) to the construct tree of the bucket it's
+        # called on. Calling it on `originals_bucket` directly would attach that
+        # resource to MediaPersistentStack, which would then need this stack's Lambda
+        # ARN — creating a cyclic dependency with the IAM grants above, which need
+        # MediaPersistentStack's bucket ARN. Re-importing the bucket by ARN scopes the
+        # notification resource to this (volatile) stack instead, matching the intent
+        # that redeploying MediaPipelineStack never requires touching MediaPersistentStack.
+        notifications_bucket = s3.Bucket.from_bucket_attributes(
+            self,
+            "OriginalsBucketForNotifications",
+            bucket_arn=originals_bucket.bucket_arn,
+        )
+        notifications_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3_notifications.LambdaDestination(self.image_process_fn),
             s3.NotificationKeyFilter(prefix="uploads/"),

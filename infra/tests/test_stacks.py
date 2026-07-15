@@ -21,7 +21,6 @@ from opennewsletter.data_stack import DataStack
 from opennewsletter.frontend_stack import FrontendStack
 from opennewsletter.media_persistent_stack import MediaPersistentStack
 from opennewsletter.media_pipeline_stack import MediaPipelineStack
-from opennewsletter.monitoring_stack import MonitoringStack
 
 AWS_ENV = cdk.Environment(region="us-east-1")
 
@@ -261,8 +260,16 @@ def test_cloudfront_redirect_to_https(
 def test_image_process_lambda_exists(
     media_templates: tuple[assertions.Template, assertions.Template],
 ) -> None:
+    # CDK also adds its own singleton BucketNotificationsHandler Lambda to this
+    # stack (the S3 event subscription is imported here to avoid a cyclic
+    # dependency with MediaPersistentStack — see media_pipeline_stack.py), so we
+    # match on the business function specifically rather than counting all
+    # AWS::Lambda::Function resources.
     _, pipeline = media_templates
-    pipeline.resource_count_is("AWS::Lambda::Function", 1)
+    pipeline.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"FunctionName": "OpenNewsletter-ImageProcess-dev"},
+    )
 
 
 def test_image_process_lambda_arm64(

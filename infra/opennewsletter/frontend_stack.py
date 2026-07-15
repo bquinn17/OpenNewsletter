@@ -7,17 +7,18 @@ plumbing. The ACM cert is created here and passed to MediaPersistentStack
 
 from __future__ import annotations
 
+from typing import Any
+
 import aws_cdk as cdk
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_route53 as route53
-from aws_cdk import aws_route53_targets as targets
 from constructs import Construct
 
 from .config import EnvConfig
 
 
 class FrontendStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: object) -> None:
+    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
         super().__init__(scope, id, **kwargs)
 
         if config.hosted_zone_id and config.hosted_zone_name:

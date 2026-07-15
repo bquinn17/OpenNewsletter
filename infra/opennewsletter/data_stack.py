@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import aws_cdk as cdk
 from aws_cdk import aws_dynamodb as dynamodb
 from constructs import Construct
@@ -8,7 +10,7 @@ from .config import EnvConfig
 
 
 class DataStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: object) -> None:
+    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
         super().__init__(scope, id, **kwargs)
 
         removal_policy = (

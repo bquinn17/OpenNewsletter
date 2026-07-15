@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-07-03. Working document — update as milestones complete or
+Snapshot as of 2026-07-14. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -13,7 +13,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
 | M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py`, `infra/keys/`, `cf-signing.key` present as untracked files. Google/Apple/Facebook OAuth apps, Cognito domain, and DNS records still owed by the operator. |
 | **M2** | **Backend foundations (domain + persistence)** | 🟡 **code-complete, unverified** | See "M2 detail" below. |
-| **M3** | **Infrastructure baseline (CDK)** | 🟡 **code-complete, unverified** | See "M3 detail" below. |
+| **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
 | M4 | Auth + bootstrap | ⬜ | |
 | M5 | Lifecycle engine + cycle CRUD | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-Roughly 2 of 15 milestones complete (~13%); M3 and M3.5 code-complete, both awaiting `cdk synth` + deploy verification.
+Roughly 2 of 15 milestones complete (~13%); M3's `cdk synth`/`pytest infra/tests/` are now verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 is code-complete and awaiting the same deploy step.
 
 ---
 
@@ -93,8 +93,17 @@ All paths relative to `infra/`.
 - ✅ `MediaPipelineStack` — `lambda-image-process` stub + S3 event subscription.
 - ✅ `FrontendStack` — ACM cert + optional Route53 records.
 - ✅ `MonitoringStack` skeleton + AWS Budgets alarm ($10/mo).
-- ✅ `infra/tests/test_stacks.py` — 20 assertion tests written.
-- 🟡 **`cdk synth` not yet verified** — `infra/.venv` is ready; run `source infra/.venv/bin/activate && cdk synth --context env=dev` to verify.
+- ✅ `infra/tests/test_stacks.py` — 21 assertion tests, all green.
+- ✅ **`cdk synth --context env=dev` and `--context env=prod` both verified** (2026-07-14). `infra/.venv` recreated from `requirements.txt` (it's gitignored, not committed); `cdk` CLI run via `npx aws-cdk@2` since it isn't installed globally.
+- 🟡 **`cdk deploy` still unverified** — needs an AWS account + `cdk bootstrap`. Blocked on B5 (M1 operator tasks) for a full end-to-end check; see "Suggested next steps."
+
+**Bug found + fixed during verification**: `MediaPersistentStack` and `MediaPipelineStack` had a real circular dependency, not just an ordering issue. `MediaPipelineStack.add_event_notification()` was called directly on the `originals_bucket` object passed in from `MediaPersistentStack`; CDK attaches the `BucketNotifications` custom resource (and its singleton handler Lambda) to the *bucket's own* stack, so that resource ended up needing `MediaPipelineStack`'s Lambda ARN from `MediaPersistentStack` — while the Lambda's IAM grants (`grant_read`, `grant_put`) already needed `MediaPersistentStack`'s bucket ARNs the other way. `cdk synth` failed with `RuntimeError: ... would create a cyclic reference`.
+
+  Fix ([`media_pipeline_stack.py`](../infra/opennewsletter/media_pipeline_stack.py)): inside `MediaPipelineStack`, re-import the originals bucket via `s3.Bucket.from_bucket_attributes(self, ..., bucket_arn=originals_bucket.bucket_arn)` and call `add_event_notification` on that imported reference instead of the real bucket object. This scopes the notification custom resource (and its singleton handler) to `MediaPipelineStack` — matching the stated design intent that redeploying the volatile pipeline stack should never require touching the stable persistent stack. Direct S3→Lambda notifications (not EventBridge) were kept per `08-media-uploads.md`'s explicit "no batching configurable on direct S3→Lambda notifications" requirement.
+
+  This added a second `AWS::Lambda::Function` (CDK's own `BucketNotificationsHandler` singleton) to `MediaPipelineStack`'s template, so `test_image_process_lambda_exists` in `infra/tests/test_stacks.py` was updated to match on `FunctionName` rather than asserting a raw count of 1.
+
+**Other cleanup during verification** (pre-existing issues, not introduced by the above): `ruff check .` found 3 unused imports (`aws_route53_targets` in `frontend_stack.py`, `aws_iam` in `media_pipeline_stack.py`, `MonitoringStack` in `test_stacks.py`) — auto-fixed. `mypy` found 43 errors, all from the same pattern: every stack's `**kwargs: object` doesn't satisfy `cdk.Stack.__init__`'s keyword-only parameter types; changed to `**kwargs: Any` across all 6 stack files. Also fixed a real `Optional[str]`-vs-`str` type error in `config.py`'s `get()` helper. `ruff` and `mypy` are both clean now.
 
 ---
 
@@ -147,17 +156,14 @@ OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, a
 
 ## Suggested next steps (in order)
 
-1. **Verify CDK synth** — the `infra/.venv` is ready; run:
-   ```bash
-   source infra/.venv/bin/activate && cd infra && cdk synth --context env=dev && pytest tests/
-   ```
+1. ~~Verify CDK synth~~ — done 2026-07-14 (`cdk synth` clean for `dev` and `prod`, `pytest infra/tests/` 21/21, `ruff`/`mypy` clean). Note: `infra/.venv` is gitignored and not committed — recreate with `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`. The `cdk` CLI isn't installed globally in this environment either; invoke it via `npx aws-cdk@2 <command>`.
 2. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS) to clear B5 and enable end-to-end deploy.
    See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the full step-by-step.
 3. **Bootstrap CDK** in the dev AWS account:
    ```bash
-   source infra/.venv/bin/activate && cdk bootstrap aws://ACCOUNT_ID/us-east-1
+   source infra/.venv/bin/activate && npx aws-cdk@2 bootstrap aws://ACCOUNT_ID/us-east-1
    ```
-4. **Deploy and verify M3.5**: `make deploy-dev && make seed && make fe`
+4. **Deploy and verify M3** (the `cdk deploy` half of the done-when gate) **and M3.5**: `make deploy-dev && make seed && make fe`
    (see `docs/RUNBOOK.md` §M3/M3.5 for what to check).
 5. **Begin M4** (Auth + bootstrap): `lambda-invites` with PreSignUp trigger, `lambda-groups` with `/me` + `/groups`, `ApiStack`.
 

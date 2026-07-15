@@ -7,6 +7,8 @@ until M1 operator tasks are complete.
 
 from __future__ import annotations
 
+from typing import Any
+
 import aws_cdk as cdk
 from aws_cdk import aws_cognito as cognito
 from constructs import Construct
@@ -19,7 +21,7 @@ def _sm_ref(secret_arn: str, json_field: str) -> str:
 
 
 class AuthStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: object) -> None:
+    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
         super().__init__(scope, id, **kwargs)
 
         self.user_pool = cognito.UserPool(
