@@ -8,7 +8,7 @@ A canonical OpenAPI 3.1 document lives at `shared/openapi.yaml`. This Markdown i
 
 ## 1. General conventions
 
-- Base URL: `https://api.opennewsletter.example.com` (prod) / `https://api-dev.opennewsletter.example.com` (dev)
+- Base URL: `https://api.opennewsletter.example.com` (prod). Dev has no custom domains — the raw `https://{apiId}.execute-api.us-east-1.amazonaws.com` endpoint is used (see `13-dev-environments.md` §2).
 - Content type: `application/json` (UTF-8) for everything except media uploads (which go directly to S3).
 - Auth: All routes require a Cognito JWT in `Authorization: Bearer {accessToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint.
 - Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per `02-data-model-dynamodb.md` §6).
@@ -49,7 +49,8 @@ Error code catalog (machine-readable codes; `fieldErrors[].code` is a subset):
 | `CYCLE_NOT_VOTING` | 409 | Action requires cycle in `voting` status |
 | `CYCLE_NOT_OPEN` | 409 | Action requires cycle in `open` status |
 | `CYCLE_NOT_PUBLISHED` | 409 | Action requires cycle in `published` status |
-| `RESPONSE_VERSION_CONFLICT` | 409 | Optimistic concurrency mismatch on draft save |
+| `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin |
+| `CANDIDATE_PROMOTED` | 409 | Candidate already locked into a cycle; can no longer be deleted |
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
@@ -94,7 +95,7 @@ Response 200: `User` shape from `02-data-model-dynamodb.md` §2.1.
 
 Body: `{ "displayName"?: string, "avatarColor"?: string, "avatarMediaId"?: string|null }`
 
-Validation: `displayName` 1–40 chars, non-whitespace. `avatarColor` one of the allowed slugs. `avatarMediaId` (when non-null) must reference an `AvatarMedia` row owned by the caller in `status=ready`; otherwise `VALIDATION_FAILED`. Setting `avatarMediaId: null` clears the photo and the deterministic `avatarColor` takes over for rendering.
+Validation: `displayName` 1–40 chars, non-whitespace. `avatarColor` one of the eight allowed slugs: `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet`, `pink` (canonical home: an enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table — the contract test in `11-testing-ci-cd.md` §2.3 keeps the Rust mirror honest). `avatarMediaId` (when non-null) must reference an `AvatarMedia` row owned by the caller in `status=ready`; otherwise `VALIDATION_FAILED`. Setting `avatarMediaId: null` clears the photo and the deterministic `avatarColor` takes over for rendering.
 
 Response 200: updated `User`.
 
@@ -147,7 +148,7 @@ Response 204.
 
 **Lambda**: `lambda-invites`. **Auth**: required. **Role**: any authenticated user.
 
-Used **only** by an existing user to join an additional group. (First-signup invite consumption happens in the Cognito `PreSignUp` trigger — see `05-auth-flow.md` §3.)
+The single, canonical place where invites are consumed. It covers **both** cases: first signup (the handler lazily creates the `CognitoSubLookup` + `User` rows when the caller's `sub` has no `userId` yet) and an existing user joining an additional group. The `PreSignUp` trigger is a pass-through and never touches invites — see `05-auth-flow.md` §3–§4 for the full algorithm.
 
 Body: `{ "code": "ABCD-EFGH-JKMN-PQRS" }`
 
@@ -215,9 +216,9 @@ Body (all optional):
 }
 ```
 
-`gradient` must be one of the preset palette slugs (the frontend's palette is the source of truth for the allowed set; the server validates against the same shared list).
+`gradient` must be one of the six preset palette slugs: `grape-sky`, `ember-rose`, `forest-mint`, `ocean-dusk`, `citrus-blush`, `slate-lilac` (canonical home: an enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table).
 
-Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1.
+Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see `07-notifications.md` §7.1).
 
 ---
 
@@ -464,7 +465,7 @@ Behavior:
 - Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
 - If `publish=true`, status moves to `published` and `publishedAt` is set. Otherwise stays/becomes `draft`.
 - **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
-- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`.
+- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.
 - For polls: `pollOptionId` must be in question's options. Last-write-wins.
 
 Response 200: full updated `Response`.
@@ -485,7 +486,7 @@ All require the cycle to be `published`. Pre-publish, this surface is hidden in 
 
 ### 8.2 `POST /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments`
 
-Body: `{ "body"?: string, "imageMediaId"?: string|null }`. `body` 0–2000 chars; `imageMediaId` must reference a `ready` ImageMedia owned by the caller. At least one of the two must be non-empty. See `09-engagement.md` §1.3.
+Body: `{ "body"?: string, "imageMediaId"?: string|null }`. `body` 0–2000 chars; `imageMediaId` must reference a `ready` ImageMedia owned by the caller with `purpose: "comment"` (uploaded via §9.1 with `purpose: "comment"`, which is valid while the cycle is `published`). At least one of the two must be non-empty. See `09-engagement.md` §1.3.
 
 Response 201: created comment (with `image` hydrated when set).
 
@@ -503,7 +504,7 @@ Soft delete: sets `deletedAt`, blanks `body`. The row remains so the parent thre
 
 ### 8.6 `PUT /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions/{emoji}`
 
-Idempotent toggle-on. Body empty. `emoji` URL-encoded; server validates it's a single grapheme cluster (1–12 codepoints) and otherwise rejects with `VALIDATION_FAILED`. Path-encoded emoji simplifies the `R#{user}#{emoji}` sort key.
+Idempotent toggle-on. Body empty. `emoji` URL-encoded; server validates it per the canonical emoji predicate in `09-engagement.md` §2.2 (NFC-normalized, 1–12 codepoints, at least one `Extended_Pictographic` or regional-indicator codepoint) and otherwise rejects with `VALIDATION_FAILED`. Path-encoded emoji simplifies the `R#{user}#{emoji}` sort key.
 
 ### 8.7 `DELETE /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions/{emoji}`
 
@@ -523,13 +524,14 @@ Body:
   "groupId": "01H...",
   "cycleId": "202605",
   "questionId": "01H...",
+  "purpose": "response",     // "response" (default) | "comment" — see 08-media-uploads.md §3.1
   "mimeType": "image/jpeg",
   "byteSize": 4823920,
   "sha256": "base64url..."   // optional but recommended; included in the presign condition
 }
 ```
 
-Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`}, `byteSize` ≤ 15728640 (15MB), cycle status `open`, caller is member of group.
+Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`}, `byteSize` ≤ 15728640 (15MB), caller is member of group. Cycle-status check depends on `purpose`: `"response"` requires the cycle to be `open`; `"comment"` requires it to be `published` (comments only exist post-publish — this is the upload path for comment attachments, `09-engagement.md` §1.3). The 10-image cap applies to `purpose=response` uploads only.
 
 Server creates an `ImageMedia` row with `status=pending` and an S3 key:
 ```
@@ -575,7 +577,7 @@ Response 200 sets cookies via `Set-Cookie` headers (`CloudFront-Policy`, `CloudF
 }
 ```
 
-For the SPA, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan).
+For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan). In **dev** there is no shared registrable domain (raw AWS endpoints), so cookies cannot flow — the SPA instead appends the JSON-body values as CloudFront signed-URL query params to each image URL. See `08-media-uploads.md` §4.5.
 
 ### 9.6 `PATCH /uploads/{imageId}`
 
@@ -649,7 +651,7 @@ These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT
 
 **Lambda**: `lambda-cycle-tick`. **Auth**: required. **Role**: any group admin.
 
-Synchronously invokes the cycle-tick handler. Optional body `{ "advanceCycleClosesBy"?: "5m"|"1h"|... }` rewrites the targeted group's `nextTransitionAt` before running so transitions become due immediately.
+Synchronously invokes the cycle-tick handler. Optional body `{ "groupId"?: "01H...", "advanceCycleClosesBy"?: "5m"|"1h"|... }`. When `advanceCycleClosesBy` is present, `groupId` is **required** and the caller must be an admin of that group: the group's active cycle has its `nextTransitionAt` (and the matching `responseOpenAt`/`responseCloseAt` field) rewound by the given duration before the tick runs, making the transition due immediately. With an empty body the tick just runs globally; the role check is "caller is an admin of at least one group."
 
 Response 200: `{ "transitions": [{ "groupId", "cycleId", "from", "to" }] }`.
 

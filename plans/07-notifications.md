@@ -29,7 +29,7 @@ python scripts/generate_vapid_keys.py
 
 The script uses the `py_vapid` library. The output is stored in Secrets Manager under `opennewsletter/vapid/{env}`. Public key is exposed via `GET /config`.
 
-The Rust `lambda-notify-tick` and `lambda-push` use `web-push` crate (which is the maintained Rust web push library). Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value`, cached in `OnceCell` for the warm container's lifetime.
+The Rust `lambda-notify-tick` and `lambda-push` use the `web-push` crate. Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value`, cached in `OnceCell` for the warm container's lifetime. The `privateKey` value is py_vapid's URL-safe-base64 raw key; the Rust side consumes it directly via `VapidSignatureBuilder::from_base64` (§10) — **no PEM conversion step exists anywhere**.
 
 ---
 
@@ -109,7 +109,15 @@ The service worker reads this, calls `showNotification`, and uses `tag` to coale
 
 ## 6. Cycle-open fan-out
 
-Triggered from `lambda-cycle-tick` immediately after promoting a cycle to `open`. Implemented as an async Lambda invoke (fire-and-forget) of `lambda-push`'s internal handler `cycle_open_fanout`, with payload `{ groupId, cycleId }`.
+Triggered from `lambda-cycle-tick` immediately after promoting a cycle to `open`. Implemented as an async Lambda invoke (fire-and-forget) of `lambda-push`'s internal handler `cycle_open_fanout`.
+
+`lambda-push` serves API Gateway routes and these direct invokes from a single binary, dispatching on **event shape**: if the incoming JSON has a `requestContext` field it's an API Gateway event and routes by method+path; if it has an `internal` field it's a fan-out invoke. The direct-invoke envelope is:
+
+```json
+{ "internal": "cycle_open_fanout" | "publication_fanout", "groupId": "01H...", "cycleId": "202605" }
+```
+
+Anything matching neither shape is logged at ERROR and dropped.
 
 ### 6.1 `cycle_open_fanout` algorithm
 
@@ -151,11 +159,16 @@ If a group ever exceeds 200 members (we'd revisit the soft cap first), refactor 
 ```
 now = utc_now()
 group_offsets_default = [96, 48, 24]   # hours
+MAX_REMINDER_OFFSET_HOURS = 168        # constant in shared/src/config.rs;
+                                       # PATCH /groups validation caps every offset at this
+                                       # (03-api-contract.md §4.3), so the query window below
+                                       # is guaranteed to cover all configured offsets.
 
-# Find any open cycle whose responseCloseAt is within max_offset (=96)h ahead
+# Find any open cycle whose responseCloseAt is within the maximum allowed offset
 candidates = query GSI2
     gsi2pk = "NL_STATUS#open"
-    gsi2sk between f"{now.isoformat()}#~~~" and f"{(now + 96h).isoformat()}#~~~"
+    gsi2sk between f"{now.isoformat()}#~~~"
+              and f"{(now + MAX_REMINDER_OFFSET_HOURS hours).isoformat()}#~~~"
 
 for nl in candidates:
     group = get_group(nl.groupId)
@@ -201,7 +214,7 @@ This was not on the original requirement list (the spec only mentioned cycle-ope
 
 ## 10. Web Push delivery details (Rust)
 
-Using the `web-push` crate (or `web-push-native` if it's the maintained one — pick at implementation time).
+Using the `web-push` crate, pinned in the workspace `Cargo.toml` (it ships the `IsahcWebPushClient` used below).
 
 ```rust
 async fn send_push(sub: &PushSubscription, payload: &Payload) -> SendResult {
@@ -214,7 +227,8 @@ async fn send_push(sub: &PushSubscription, payload: &Payload) -> SendResult {
     builder.set_urgency(Urgency::Normal);
     let msg = builder.build()?;
 
-    let signer = VapidSignatureBuilder::from_pem(VAPID_PRIVATE_KEY_PEM, &info)?
+    // Private key is stored as URL-safe base64 raw bytes (py_vapid's output format).
+    let signer = VapidSignatureBuilder::from_base64(VAPID_PRIVATE_KEY_B64, URL_SAFE_NO_PAD, &info)?
         .add_claim("sub", VAPID_SUBJECT)
         .build()?;
 

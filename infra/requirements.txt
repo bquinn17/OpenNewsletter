@@ -1,5 +1,8 @@
 aws-cdk-lib>=2.100.0
 constructs>=10.0.0,<11.0.0
+# jsii's runtime type-checks call typeguard's 2.x API; 3.x/4.x break on Python 3.8
+# with "check_type() got an unexpected keyword argument 'argname'"
+typeguard~=2.13.3
 python-dotenv>=1.0.0
 pytest>=8.0.0
 ruff>=0.4.0

@@ -31,8 +31,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class EnvConfig:
     env: str                          # "dev" | "prod"
-    domain: str                       # "opennewsletter.example.com" or "dev.opennewsletter.example.com"
-    api_domain: str                   # "api.opennewsletter.example.com" or "api-dev..."
+    domain: str | None                # "opennewsletter.example.com" in prod; None in dev (raw AWS endpoints, 13-dev-environments.md §2)
+    api_domain: str | None            # "api.opennewsletter.example.com" in prod; None in dev
     hosted_zone_id: str | None        # if Route53, else None (DNS managed externally)
     hosted_zone_name: str | None
     cognito_domain_prefix: str        # globally unique; e.g. "opennewsletter-prod"
@@ -98,11 +98,10 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 - **MFA**: optional, TOTP only
 - **Account recovery**: email
 - **Standard attributes**: email (required), name (optional)
-- **Custom attributes**:
-  - `pendingInvite` (mutable string, max 64) — set during the OAuth callback before the user redeems
+- **Custom attributes**: none. (The invite code survives the OAuth round-trip inside the OIDC `state` parameter managed by the SPA — see `05-auth-flow.md` §3 — so no Cognito-side storage is needed.)
 - **Lambda triggers**:
-  - `PreSignUp` Lambda (Rust, in `lambda-invites` crate) — validates invite code from `clientMetadata.invite`, marks the code consumed-on-success in DynamoDB. Rejects signup if invite is missing/invalid/expired/already-used.
-  - `PostConfirmation` Lambda (Rust, same crate) — creates the User entity and the GroupMembership entity in DynamoDB.
+  - `PreSignUp` Lambda (Rust, in `lambda-invites` crate) — **pure pass-through** that auto-confirms federated accounts (`auto_confirm_user = true`). It does NOT see, validate, or consume invite codes. Invite consumption happens after login via `POST /invites/redeem` (§6.5 below and `05-auth-flow.md` §4), which also lazily creates the `User` row on first redemption.
+  - There is **no `PostConfirmation` trigger** (`05-auth-flow.md` §5).
 
 ### 4.2 Identity Providers (federated)
 
@@ -173,6 +172,14 @@ Two buckets, both private (Block Public Access fully on):
   - Lifecycle: same as originals.
   - Read access only via CloudFront origin access control (OAC).
 
+Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — avatars cross group boundaries, so they don't share the media buckets' group-scoped key layout or signing):
+
+- **`opennewsletter-avatars-originals-{env}-{accountId}`**
+  - Same CORS, lifecycle, and encryption settings as media originals; no versioning.
+  - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes the same `lambda-image-process` (wired in `MediaPipelineStack`).
+- **`opennewsletter-avatars-processed-{env}-{accountId}`**
+  - No versioning. Read access only via the CloudFront `/avatar/*` behavior (§5.2) — no key group.
+
 ### 5.2 CloudFront distribution (`MediaPersistentStack`)
 
 - **Origins**:
@@ -183,23 +190,25 @@ Two buckets, both private (Block Public Access fully on):
   - Allowed methods: `GET, HEAD`
   - Viewer protocol: redirect-to-HTTPS
   - Cache policy: `CachingOptimized` (managed)
-  - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key (private key in Secrets Manager) → enables **signed cookies** for tenant isolation. See `08-media-uploads.md` §6.
+  - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key (private key in Secrets Manager) → enables **signed cookies** for tenant isolation. See `08-media-uploads.md` §6. (In dev the same key group is used but the SPA presents the signature as signed-URL query params — `08-media-uploads.md` §4.5.)
+- **Avatar behavior**: path pattern `/avatar/*` → `avatars-processed` bucket via OAC. `GET, HEAD`, `CachingOptimized`, **no trusted key group** — avatars are unsigned by design (`08-media-uploads.md` §11.3).
 - **Price class**: `PriceClass_100` (NA + EU only) for cost.
 - **Domain alias**: `cdn.opennewsletter.example.com` (or `cdn-dev...`).
 - **Certificate**: ACM cert in `us-east-1` (created in `FrontendStack`).
 
 ### 5.3 `lambda-image-process` (Rust, `MediaPipelineStack`)
 
-- **Trigger**: S3 ObjectCreated on originals bucket, prefix `uploads/`
+- **Trigger**: S3 ObjectCreated, prefix `uploads/`, on **both** the media originals bucket and the avatars originals bucket. The handler branches on the source **bucket name** (not key prefix — both buckets use `uploads/`) to choose response-image vs avatar processing.
 - **Memory**: 1024 MB
 - **Timeout**: 60 s
 - **Architecture**: arm64 (cheaper)
 - **Environment**:
   - `TABLE_NAME`
   - `PROCESSED_BUCKET`
+  - `AVATARS_PROCESSED_BUCKET`
 - **IAM**:
-  - `s3:GetObject` on originals bucket
-  - `s3:PutObject` on processed bucket (prefix `img/{groupId}/{yyyymm}/{questionId}/{userId}/{imgId}/*`)
+  - `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete purges oversized uploads — `08-media-uploads.md` §3.2)
+  - `s3:PutObject` on processed bucket (prefix `img/*`) and avatars-processed bucket (prefix `avatar/*`)
   - `dynamodb:UpdateItem` on table (for marking image record `READY` and storing dimensions)
 - Logic detailed in `08-media-uploads.md` §5.
 
@@ -207,6 +216,7 @@ Two buckets, both private (Block Public Access fully on):
 
 - `originals_bucket_name`, `originals_bucket_arn`
 - `processed_bucket_name`, `processed_bucket_arn`
+- `avatars_originals_bucket_name`, `avatars_processed_bucket_name`
 - `cloudfront_distribution_id`
 - `cloudfront_domain` (the alias)
 - `cloudfront_key_group_id`
@@ -234,16 +244,20 @@ Two buckets, both private (Block Public Access fully on):
 
 All Rust, runtime `provided.al2023`, architecture `arm64`, memory 256 MB (512 for `lambda-responses`), timeout 10 s, log retention per config. Built with `cargo lambda build --release --arm64`.
 
-| Lambda | Routes (see `03-api-contract.md`) | DynamoDB | S3 | Other |
+The route column below is a **summary only** — `03-api-contract.md` §13 is the authoritative route ⇄ Lambda ⇄ role table, and when they disagree, §13 wins. CDK code should be written from §13.
+
+| Lambda | Route summary | DynamoDB | S3 | Other |
 |---|---|---|---|---|
-| `lambda-invites` | `POST /admin/invites`, `POST /invites/redeem` | RW | — | — |
-| `lambda-groups` | `GET /me`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}` (admin) | RW | — | — |
-| `lambda-newsletters` | `GET /groups/{g}/newsletters`, `GET /groups/{g}/newsletters/{nl}` | R | — | — |
-| `lambda-questions` | `GET/POST /groups/{g}/candidate-questions`, `POST/DELETE .../{q}/votes`, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
-| `lambda-responses` | response CRUD + autosave + publish + poll vote | RW | — | — |
-| `lambda-engagement` | comments + reactions | RW | — | — |
-| `lambda-media` | `POST /uploads`, `POST /uploads/{id}/complete`, `GET /media-cookie` | RW | PUT presign on originals; CloudFront cookie sign | Secrets:GetSecretValue on signing key |
-| `lambda-push` | subscribe, unsubscribe, list, test | RW | — | Secrets:GetSecretValue on VAPID |
+| `lambda-invites` | invite create / list / revoke / redeem; also compiles the `PreSignUp` trigger binary | RW | — | — |
+| `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | — | — |
+| `lambda-newsletters` | newsletter list + detail | R | — | — |
+| `lambda-questions` | candidate list/create + votes, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
+| `lambda-responses` | my-response get/list/put (drafts, publish, poll votes) | RW | — | — |
+| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | — | — |
+| `lambda-media` | uploads presign/status/caption/delete, `GET /media-cookie`, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; CloudFront signing | Secrets:GetSecretValue on signing key |
+| `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas (`07-notifications.md` §6) | RW | — | Secrets:GetSecretValue on VAPID |
+
+The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, `03-api-contract.md` §11a) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
 All Lambdas share:
 - Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4)

@@ -10,11 +10,11 @@ This document covers Cognito configuration, the OAuth round-trip, invite redempt
 
 (Detailed in `01-infrastructure-cdk.md` §4. Key points reiterated here.)
 
-- **Self sign-up: DISABLED.** All signups happen via federation, gated by the `PreSignUp` Lambda trigger.
-- **Custom attribute**: `custom:pendingInvite` (mutable string).
+- **Self sign-up: DISABLED.** All signups happen via federation; the `PreSignUp` trigger auto-confirms them.
+- **Custom attributes**: none (the invite code travels in the OIDC `state` parameter, §3).
 - **Triggers**:
-  - `PreSignUp` — invite validation + reservation
-  - `PostConfirmation` — User + GroupMembership creation
+  - `PreSignUp` — pure pass-through; auto-confirm only, no invite logic (§3)
+  - No `PostConfirmation` trigger (§5)
 - **App client**: Authorization Code with PKCE, public client (no secret), Cognito disabled-as-IdP for end users.
 - **Bootstrap admin client**: separate app client `admin-bootstrap` that allows USER_PASSWORD_AUTH for the bootstrapped admin (only used by `scripts/bootstrap_admin.py`).
 
@@ -27,47 +27,40 @@ Goal: a person with an invite URL becomes a Cognito user AND is added to a group
 ```
 ┌─────────┐                     ┌──────────┐                   ┌─────────┐                ┌──────────┐
 │ Browser │                     │ GH Pages │                   │ Cognito │                │  Lambda  │
-│         │                     │   SPA    │                   │  Hosted │                │ Triggers │
+│         │                     │   SPA    │                   │  Hosted │                │          │
 │         │                     │          │                   │   UI    │                │          │
 └────┬────┘                     └─────┬────┘                   └────┬────┘                └────┬─────┘
      │                                │                             │                          │
      │  1. visits /join?code=XYZ      │                             │                          │
      │ ──────────────────────────────►│                             │                          │
      │                                │                             │                          │
-     │                                │  2. stash code in sessionStorage                       │
+     │                                │  2. stash code in sessionStorage; also base64-encode   │
+     │                                │     { invite, returnTo } into the OIDC `state` param;  │
      │                                │     redirect to Cognito hosted UI                      │
-     │                                │     (clientMetadata.invite=XYZ via state param echo)   │
      │ ◄──────────────────────────────│                             │                          │
      │                                                              │                          │
      │  3. picks IdP (Google), signs in there, returns to Cognito                              │
      │ ────────────────────────────────────────────────────────────►│                          │
      │                                                              │                          │
      │                                                              │  4. PreSignUp trigger    │
+     │                                                              │     (pass-through:       │
+     │                                                              │      auto-confirm only)  │
      │                                                              │ ────────────────────────►│
-     │                                                              │                          │
-     │                                                              │  5. validate invite,     │
-     │                                                              │     reserve atomically   │
-     │                                                              │     (DDB Update with     │
-     │                                                              │      condition)          │
      │                                                              │ ◄────────────────────────│
      │                                                              │                          │
-     │                                                              │  6. PostConfirmation     │
-     │                                                              │ ────────────────────────►│
-     │                                                              │                          │
-     │                                                              │  7. consume reservation, │
-     │                                                              │     create User +        │
-     │                                                              │     GroupMembership      │
-     │                                                              │     (TransactWriteItems) │
-     │                                                              │ ◄────────────────────────│
-     │                                                              │                          │
-     │  8. redirected back to /auth/callback?code=...               │                          │
+     │  5. redirected back to /auth/callback?code=...&state=...     │                          │
      │ ◄────────────────────────────────────────────────────────────│                          │
      │                                │                             │                          │
-     │  9. SPA exchanges code for tokens                            │                          │
-     │     (PKCE; clientMetadata not needed here)                   │                          │
+     │  6. SPA exchanges code for tokens (PKCE)                     │                          │
      │ ──────────────────────────────►│ ───────────────────────────►│                          │
      │                                │                             │                          │
-     │ 10. tokens; SPA loads /config and renders Home               │                          │
+     │  7. SPA reads invite code back out of `state` (or the        │                          │
+     │     sessionStorage stash) and calls POST /invites/redeem     │                          │
+     │     → lambda-invites creates User (if new) + GroupMembership │                          │
+     │       + consumes the invite in one TransactWriteItems (§4)   │                          │
+     │ ──────────────────────────────►│ ────────────────────────────────────────────────────► │
+     │                                │                             │                          │
+     │  8. SPA refreshes /config, sees the new group, renders Home  │                          │
 ```
 
 ---
@@ -366,7 +359,7 @@ fn enforce(m: GroupMembership, require_admin: bool) -> Result<GroupMembership, A
 - **Reusing invites**: prevented by `TransactWriteItems` condition on `status=pending`.
 - **Privilege escalation**: only admins can call admin routes; admins are scoped to one group at a time. The auth helper enforces this on every handler.
 - **JWT confusion**: API Gateway validates audience and issuer. Backend trusts `sub` only.
-- **Token theft via XSS**: tokens live in `sessionStorage`; CSP set to default-src 'self', script-src 'self', img-src 'self' https://cdn.opennewsletter.example.com data:, etc. (See `04-frontend-architecture.md` build step — set in `index.html` and verified in tests.)
+- **Token theft via XSS**: tokens live in `sessionStorage`; CSP restricts script/connect/img sources. The full policy is specified in `04-frontend-architecture.md` §12.1 — shipped as a `<meta>` tag in `index.html` (GitHub Pages can't set headers) and verified by a Playwright test in Milestone 13.
 - **Replay of CDN cookies**: cookies expire in 1 hour and are scoped to `/img/{groupId}/*`. A leaked cookie grants read access to that group's images for ≤1 hour. Acceptable.
 
 ---

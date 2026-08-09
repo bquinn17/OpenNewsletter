@@ -49,7 +49,7 @@ Editing reopens the markdown body and sets `editedAt`. The UI marks edited comme
 
 `body`: 0–2000 chars, allowed markdown subset (paragraphs, emphasis, code, links to https only — no `![]()` images embedded in the markdown body; instead, comments support a single optional **attached** image via `imageMediaId`).
 
-`imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`. The image is uploaded through the same pipeline as response images (`POST /uploads`) and rendered beneath the comment text.
+`imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`, with `purpose: "comment"`. The image is uploaded through the same pipeline as response images — `POST /uploads` with `purpose: "comment"`, which is valid while the cycle is `published` (matching when comments are writable; see `03-api-contract.md` §9.1 and `08-media-uploads.md` §3.1) — and rendered beneath the comment text. One image per comment.
 
 A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected with `VALIDATION_FAILED`.
 
@@ -58,8 +58,8 @@ A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected 
 Detailed in `03-api-contract.md` §8.1–8.4. Server-side handler highlights:
 
 - `POST` validates cycle status = `published`, validates response exists, inserts new row with `commentId = uuidv7()`, returns the created comment with `authorDisplayName` joined in.
-- `PATCH` checks `claims.sub == row.authorUserId`, updates `body` and `editedAt`. Admins cannot edit other users' comments.
-- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when `claims.sub == row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404.
+- `PATCH` checks the caller's resolved `userId == row.authorUserId` (JWT `sub` → `userId` via the lookup row, `05-auth-flow.md` §6 — never compare `sub` directly), updates `body` and `editedAt`. Admins cannot edit other users' comments.
+- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when the caller's `userId` matches `row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404.
 
 ### 1.5 Author display name resolution
 
@@ -193,7 +193,7 @@ Renders one published answer with:
 - `<ImageGallery>` for attached images (lightbox on click)
 - `<ReactionBar>`
 - `<CommentList>` (collapsible; show 3, "Show all" expands)
-- Edit affordances if `claims.sub == answer.userId` and cycle is still `open` (rare on a published view, but the edit button could appear briefly mid-transition)
+- Edit affordances if the caller's `userId` (from `/config`) matches `answer.userId` and cycle is still `open` (rare on a published view, but the edit button could appear briefly mid-transition)
 
 ### 4.2 `ReactionBar.tsx`
 

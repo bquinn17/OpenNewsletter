@@ -110,6 +110,8 @@ VITE_ENV=dev
 
 A small post-deploy script (`scripts/write_frontend_env.py`) reads `cdk.out/dev-outputs.json` and writes `frontend/.env.dev`. CORS in [`01-infrastructure-cdk.md` §6.1](01-infrastructure-cdk.md) already allows `http://localhost:5173`.
 
+**Images in dev**: with no shared registrable domain, CloudFront signed *cookies* can't flow — the SPA appends the equivalent signed-URL query params (from the `GET /media-cookie` JSON body) to each image URL instead. See [`08-media-uploads.md` §4.5](08-media-uploads.md). Same signing key group, same tenant isolation; only the transport differs.
+
 Daily commands:
 
 ```bash

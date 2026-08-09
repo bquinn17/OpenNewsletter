@@ -82,14 +82,17 @@ E.g., a cycle whose `responseOpenAt` is 2026-06-01T00:00 in `America/New_York` h
 Given group settings `responseWindowDays` (default 4) and `timezone` (default `America/New_York`):
 
 ```
-voteWindowOpenAt   = previous cycle's responseCloseAt
-                     (or "now" for the very first cycle)
+voteWindowOpenAt   = the instant the cycle row is created
+                     (i.e. when the previous cycle transitions to open;
+                      "now" for the very first cycle)
 responseOpenAt     = first day of next month at 00:00 group-local
                      converted to UTC
 voteWindowCloseAt  = responseOpenAt
 responseCloseAt    = responseOpenAt + responseWindowDays days
 nextTransitionAt   = responseOpenAt   (because we're in voting)
 ```
+
+`voteWindowOpenAt` is **informational only** — nothing enforces it. Enforcement is purely status-based: a cycle in `voting` accepts suggestions and votes from the moment its row exists (`CYCLE_NOT_VOTING` otherwise). Members can therefore suggest questions for month N+1 while month N's response window is still open — that is the intended "immediately start suggesting" behavior from §4.
 
 For the very first cycle of a group (created on group creation):
 - If the current month's start has already passed → the *next* month's first becomes `responseOpenAt`.
@@ -209,7 +212,8 @@ put_if_not_exists(Newsletter(
     groupId = group.id,
     cycleId = next_cycle_id,
     status = "voting",
-    voteWindowOpenAt = after,
+    voteWindowOpenAt = utc_now(),   # informational only — see §4.2
+
     voteWindowCloseAt = next_response_open,
     responseOpenAt = next_response_open,
     responseCloseAt = next_response_close,
@@ -298,14 +302,15 @@ In `persistence/newsletters.rs`:
 Specified in detail in `11-testing-ci-cd.md`. The lifecycle-specific integration tests:
 
 1. Tick promotes top-N candidates correctly.
-2. Tick respects admin curation override.
-3. Tick auto-publishes at deadline.
-4. Tick is idempotent across rapid re-runs.
-5. Empty-candidate cycle still opens and publishes.
-6. Settings change mid-cycle applies to N+2 cycle, not the in-flight one.
-7. Membership-cap enforcement at invite redemption.
-8. Concurrent vote casting + admin candidate deletion produces consistent state.
-9. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary.
+2. Tick auto-publishes at deadline.
+3. Tick is idempotent across rapid re-runs.
+4. Empty-candidate cycle still opens and publishes.
+5. Settings change mid-cycle applies to N+2 cycle, not the in-flight one.
+6. Membership-cap enforcement at invite redemption.
+7. Concurrent vote casting + admin candidate deletion produces consistent state.
+8. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary.
+
+(There is deliberately no "admin curation override" test — that feature does not exist; see §7.)
 
 ---
 

@@ -85,21 +85,26 @@ Sequence:
 ### 3.1 `POST /uploads` validation
 
 ```
+- body.purpose ∈ {"response", "comment"}; defaults to "response" when absent
 - caller is member of body.groupId
-- body.cycleId matches a Newsletter for that group with status=open
+- purpose="response": body.cycleId matches a Newsletter for that group with status=open
+- purpose="comment":  body.cycleId matches a Newsletter for that group with status=published
+                      (comments only exist post-publish — this is the upload path for
+                       comment attachments; see 09-engagement.md §1.3)
 - body.questionId is a LockedQuestion for (groupId, cycleId)
 - body.mimeType in allowed set
 - body.byteSize ≤ 15728640
-- caller's image count for (cycleId, questionId) (status != failed) < 10
+- purpose="response": caller's purpose=response image count for (cycleId, questionId)
+                      (status != failed) < 10
 ```
 
-The 10-image cap is enforced via a Query of GSI1 (AP17) filtered to the question; cheaper than scanning the response.
+The 10-image cap is enforced via a Query of GSI1 (AP17) filtered to the question; cheaper than scanning the response. Comment images (`purpose="comment"`) are exempt from that cap — their limit is one image per comment, enforced at comment create/patch time.
 
 ### 3.2 Presign
 
 Use the AWS Rust SDK's `Client::put_object().presigned(PresigningConfig::expires_in(600))`. Set:
 
-- `Content-Length` constraint: signed via `presigning` won't enforce this server-side, so the request includes a returned `headers.Content-Length` directive AND the bucket policy enforces a **maximum size** via a separate `s3:PutObject` policy condition `s3:content-length-range: [1, 15728640]`. Files exceeding the limit are rejected by S3 itself.
+- `Content-Length`: S3 **cannot** enforce a size cap on a presigned PUT (`s3:content-length-range` only exists for presigned **POST** policies, and we deliberately keep the simpler PUT flow). Enforcement is layered instead: (1) the client validates before requesting the presign; (2) `POST /uploads` validates the declared `byteSize`; (3) `lambda-image-process` checks the actual object size (`ContentLength` on the fetched object) before decoding — if it exceeds the 15 MB cap it marks the row `status=failed` (`errorMessage: "IMAGE_TOO_LARGE"`) and **deletes the original**. A dishonest client can land oversized bytes in the originals bucket briefly, but they are never processed or served, and are purged on sight.
 - `Content-Type` matches the requested MIME type (signed).
 - Server-side encryption is on by default (bucket-level), no header needed.
 
@@ -159,8 +164,9 @@ The cookie's policy restricts to a single resource pattern — but we want the c
 ```rust
 fn handle(req) -> Response {
     let claims = extract_claims(req)?;
+    let user_id = resolve_user_id(&repo, &claims.sub).await?;   // sub → userId, 05-auth-flow.md §6
     let group_id = req.query_param("groupId").ok_or(VALIDATION_FAILED)?;
-    require_membership(&repo, &claims.sub, &group_id, false).await?;
+    require_membership(&repo, &user_id, &group_id, false).await?;
 
     let resource = format!("https://cdn.opennewsletter.example.com/img/{}/*", group_id);
     let expires = (Utc::now() + Duration::hours(1)).timestamp();
@@ -204,6 +210,14 @@ await api.media.ensureCookie(groupId);
 ```
 
 Cookies are first-party from the browser's perspective because `cdn.opennewsletter.example.com` shares a registrable domain with the SPA. The fetch must be made with `credentials: "include"` (handled in `api/client.ts`).
+
+### 4.5 Dev environments: signed query params instead of cookies
+
+The cookie scheme requires the SPA, API, and CDN to share a registrable domain. In `dev` there are no custom domains (`13-dev-environments.md` §2) — the API is an `execute-api.amazonaws.com` URL and the CDN a `cloudfront.net` URL — so the browser can neither receive the `Set-Cookie` for the CDN's domain nor send cookies to it.
+
+Dev therefore uses **CloudFront signed URLs built from the same values**: `GET /media-cookie` already returns `{ policy, signature, keyPairId }` in its JSON body, and CloudFront accepts exactly those as query parameters (`?Policy=...&Signature=...&Key-Pair-Id=...`). A helper `utils/media.ts#withMediaAuth(url)` appends them to every image URL when `env.appEnv === "dev"` and is a pass-through in prod (where cookies do the work). Same signing code server-side, same key group, same per-group tenant isolation — only the transport differs.
+
+Trade-off: query-stringed URLs churn the service worker's `CacheFirst` image cache when the signature refreshes hourly. Acceptable — dev doesn't need offline-cache fidelity.
 
 ---
 
@@ -352,7 +366,7 @@ Both buckets transition to `INTELLIGENT_TIERING` after 30 days (configured in CD
 |---|---|
 | Presign expired (user took >10 min) | Server returns presign with `expiresInSeconds`; SPA on PUT 403 retries with a fresh presign automatically (one retry). |
 | MIME mismatch (file changed since presign) | S3 rejects (403). SPA shows "couldn't upload — try again". |
-| Image too large | Caught client-side first; if somehow bypassed, S3 rejects via bucket policy. |
+| Image too large | Caught client-side first; if bypassed, `lambda-image-process` marks the row `failed` and deletes the original (§3.2). SPA polling sees `failed` and shows the error. |
 | Encoder failure | `lambda-image-process` sets `status=failed`. SPA polling sees `failed`, shows error with re-upload button. |
 | CloudFront cookie expired during a long browse session | `<img>` request → 403 → SPA's image error handler refreshes cookie and retries. |
 
@@ -366,7 +380,7 @@ Detailed in `11-testing-ci-cd.md`. Image-pipeline-specific tests:
 2. ObjectCreated trigger produces both variants for JPEG, PNG, WebP, GIF inputs.
 3. Animated GIF round-trip preserves animation.
 4. Image with EXIF orientation is rotated correctly in output (the `image` crate's `image::imageops::orient_from_exif` step).
-5. 16 MB upload is rejected by S3 policy.
+5. A 16 MB object landed in the originals bucket is marked `failed` by `lambda-image-process` and the original is deleted (size-cap enforcement per §3.2).
 6. SVG upload is rejected at the validation step (not in allowed MIME list).
 7. CloudFront signed cookies for group A do not allow access to group B images.
 8. The 10-image cap is enforced (11th `POST /uploads` returns `IMAGE_LIMIT_EXCEEDED`).
@@ -394,7 +408,7 @@ Constraints:
 Same shape as the per-question pipeline:
 1. SPA calls `POST /avatars` → receives presigned PUT URL + `avatarId`.
 2. SPA PUTs binary directly to S3 (originals bucket).
-3. `lambda-image-process` (same Lambda) receives the S3 event, branches on key prefix (`uploads/` → response image, `avatars/uploads/` → avatar), produces the 256×256 WebP, updates the `AvatarMedia` row to `status=ready`.
+3. `lambda-image-process` (same Lambda) receives the S3 event and branches on the source **bucket** (media-originals → response image, avatars-originals → avatar; both buckets use the `uploads/` key prefix internally), produces the 256×256 WebP, updates the `AvatarMedia` row to `status=ready`.
 4. SPA polls `GET /avatars/{avatarId}` until `ready`, then `PATCH /me` with `avatarMediaId`.
 
 ### 11.3 Serving

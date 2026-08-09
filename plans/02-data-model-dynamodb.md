@@ -266,6 +266,7 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `groupId` | UUIDv7 |
 | `cycleId` | string |
 | `questionId` | string \| null (set when attached to a response; null on initial upload) |
+| `purpose` | `response` \| `comment` — what the image is destined to attach to. Set at `POST /uploads` time (`03-api-contract.md` §9.1). The 10-images-per-answer cap counts `purpose=response` rows only; comment images are capped at one per comment at comment-create time. |
 | `mimeType` | `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` |
 | `originalKey` | S3 key in originals bucket |
 | `displayKey` | S3 key in processed bucket (1200px WebP) — null until processed |
@@ -418,7 +419,7 @@ The following operations MUST use `TransactWriteItems`:
 1. **Cast a vote** — Put `CandidateVote` with `attribute_not_exists(sk)` AND Update `CandidateQuestion` with `voteCount += 1` AND `gsi1sk` rewritten with new padded count. Plus a "vote-count check" on the voter partition (see `03-api-contract.md` §6.4).
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `voteCount -= 1` AND new `gsi1sk`.
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `lockedQuestionIds` and transition status from `voting` to `open`. Single transaction (cap 100 items).
-4. **Publish response** — Update response `status` from `draft` to `published`, increment `version`, set `publishedAt`. Must check `Newsletter.status = open`. The transaction also increments `GroupMembership.editionsAnswered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
+4. **Publish response** — Update response `status` from `draft` to `published`, set `publishedAt`. (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open`. The transaction also increments `GroupMembership.editionsAnswered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.memberCount += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.memberCount -= 1`.
 
@@ -434,10 +435,11 @@ Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs are unconditiona
 
 ## 6. Tenant isolation rule
 
-Every Lambda handler that operates on a `groupId`-scoped entity MUST first verify the caller has a `GroupMembership` for that `groupId`. The check is:
+Every Lambda handler that operates on a `groupId`-scoped entity MUST first verify the caller has a `GroupMembership` for that `groupId`. The check is (note: memberships are keyed by our internal `userId`, NOT the Cognito `sub` — the handler first resolves `sub → userId` via the `CognitoSubLookup` row, `05-auth-flow.md` §6):
 
 ```
-GetItem pk=USER#{callerSub} sk=GROUP#{groupId}
+userId = GetItem pk=COGNITO_SUB#{jwt.sub} sk=USER_ID   (cached per cold-start ≤60s)
+GetItem pk=USER#{userId} sk=GROUP#{groupId}
 ```
 
 Cached per cold-start for ≤60s, keyed by `(userId, groupId)`. On miss → 403.

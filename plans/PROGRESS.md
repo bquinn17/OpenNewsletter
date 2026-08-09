@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-07-14. Working document — update as milestones complete or
+Snapshot as of 2026-08-09. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -11,15 +11,15 @@ blockers resolve. Authoritative milestone definitions live in
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
-| M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py`, `infra/keys/`, `cf-signing.key` present as untracked files. Google/Apple/Facebook OAuth apps, Cognito domain, and DNS records still owed by the operator. |
-| **M2** | **Backend foundations (domain + persistence)** | 🟡 **code-complete, unverified** | See "M2 detail" below. |
+| M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py` and `infra/keys/cf-signing.pub.pem` (dev placeholder) are committed. Google/Apple/Facebook OAuth apps, Cognito domain, DNS records, real signing keypair, and `cdk bootstrap` still owed by the operator (B5). |
+| **M2** | **Backend foundations (domain + persistence)** | ✅ **done** | See "M2 detail" below. All 64 tests green (`cargo test -p persistence`), fmt + clippy clean. Small follow-ups from the 2026-08-09 plan reconciliation listed under "M2 follow-ups". |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
-| M4 | Auth + bootstrap | ⬜ | |
-| M5 | Lifecycle engine + cycle CRUD | ⬜ | |
-| M6 | Responses + drafts | ⬜ | |
+| M4 | Auth + bootstrap | ⬜ | Includes **creating `ApiStack`** (per updated `12-build-order.md`). PreSignUp trigger is a pass-through; no PostConfirmation trigger exists. |
+| M5 | Lifecycle engine + cycle CRUD | ⬜ | Includes **creating `NotificationsStack`** and wiring the dev tick routes into `ApiStack`. |
+| M6 | Responses + drafts | ⬜ | Drafts are last-write-wins — no version-conflict handling (`03-api-contract.md` §7.3). |
 | M7 | Frontend skeleton + auth | ⬜ (existing mock UI predates real API) | Commit `91188ba` shipped a rich mock-only UI; will need rework against real endpoints in M7. |
-| M8 | Media pipeline | ⬜ | |
+| M8 | Media pipeline | ⬜ | Scope grew on 2026-08-09: avatar buckets + `/avatar/*` CloudFront behavior (`01` §5), size-cap enforcement in `lambda-image-process` (`08` §3.2), dev signed-URL query-param mode (`08` §4.5). |
 | M9 | Newsletter UI | ⬜ | |
 | M10 | Engagement | ⬜ | |
 | M11 | Notifications | ⬜ | |
@@ -27,7 +27,22 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-Roughly 2 of 15 milestones complete (~13%); M3's `cdk synth`/`pytest infra/tests/` are now verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 is code-complete and awaiting the same deploy step.
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 is code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+
+---
+
+## Plan-set reconciliation (2026-08-09)
+
+A full consistency pass was made over `plans/00`–`13` so the documents no longer contradict each other. If you last read the plans before this date, re-read the touched sections. Headlines:
+
+- **Invite flow**: `PreSignUp` is a pure pass-through; there is no `PostConfirmation` trigger; `POST /invites/redeem` is the single consumption point for first signup AND additional groups. Stale contrary text removed from `01` §4.1, `03` §3.4, `04` §6/§7.8, and the `05` §2 diagram.
+- **Drafts**: last-write-wins everywhere. `RESPONSE_VERSION_CONFLICT` removed from the `03` error catalog, `12` M6 deliverables, and `11` test lists; the phantom `version` increment removed from `02` §4.
+- **Avatar pipeline**: buckets, CloudFront `/avatar/*` behavior, and `lambda-image-process` wiring added to `01` §5 (handler branches on source **bucket**, not key prefix).
+- **Comment images**: uploaded via `POST /uploads` with `purpose: "comment"` (valid while the cycle is `published`); `ImageMedia.purpose` added to `02` §2.10.
+- **Dev media auth**: signed cookies can't cross raw AWS domains — dev uses signed-URL query params built from the `/media-cookie` JSON body (`08` §4.5).
+- **Upload size cap**: enforced by `lambda-image-process` (mark `failed` + delete original) — `s3:content-length-range` doesn't exist for presigned PUT (`08` §3.2).
+- **Reminder offsets**: capped at 168h (`MAX_REMINDER_OFFSET_HOURS`) so the notify-tick query window always covers them (`03` §4.3, `07` §7.1).
+- Smaller: error catalog gained `LAST_ADMIN`/`CANDIDATE_PROMOTED`; gradient + avatarColor slug sets enumerated in `03` §4.3/§2.3; emoji predicate unified on `09` §2.2; VAPID keys consumed via `from_base64`, no PEM (`07` §2/§10); `lambda-push` direct-invoke envelope specified (`07` §6); `ApiStack`/`NotificationsStack` creation assigned to M4/M5 in `12`; CDK-test Lambda count corrected to 8 in `11` §3; `backend-ci` uses `cargo test --features integration` (no manual DDB-local step); dev uses raw AWS endpoints in `00` §7 and `03` §1; `voteWindowOpenAt` is informational-only (`06` §4.2); dev tick route body takes `groupId` (`03` §11a.1); `sub` vs `userId` confusion fixed in code sketches (`02` §6, `08` §4.3, `09` §1.4/§4.1); CSP concretely specified as a meta tag (`04` §12.1).
 
 ---
 
@@ -65,6 +80,12 @@ All paths relative to `backend/`.
 - ✅ `keys.rs` unit tests in place (15 tests).
 - ✅ **Integration tests written and passing** — 49 tests across 9 files in `backend/crates/persistence/tests/`, run against `testcontainers-modules` / `amazon/dynamodb-local`. All green: `cargo test -p persistence` (49 integration + 15 `keys.rs` unit tests, 64 total). `cargo fmt --check` and `cargo clippy --workspace --tests --all-targets -- -D warnings` both clean.
 
+### M2 follow-ups (from the 2026-08-09 plan reconciliation — fold into M4–M8 work)
+
+- `ImageMedia` entity + `persistence/media.rs`: add the new `purpose: response|comment` attribute (`02` §2.10) — needed by M8/M10.
+- `shared/config.rs`: add `MAX_REMINDER_OFFSET_HOURS = 168` and the gradient/avatarColor slug lists (`03` §2.3/§4.3).
+- `domain/error.rs`: drop `RESPONSE_VERSION_CONFLICT`; add `LAST_ADMIN` and `CANDIDATE_PROMOTED` if not already present.
+
 ---
 
 ## M3 detail — what landed
@@ -76,14 +97,14 @@ All paths relative to `infra/`.
 - **`app.py`** — instantiates all M3 stacks; reads `--context env=<dev|prod>` and passes `EnvConfig` into each stack constructor.
 - **`opennewsletter/config.py`** — `EnvConfig` frozen dataclass; `load_config(env)` reads `.env.local` (dev) or env vars (CI/prod); falls back to placeholder ARNs when M1 values are absent.
 - **`opennewsletter/data_stack.py`** — `DataStack`: DDB table `OpenNewsletter-{env}`, pay-per-request, TTL on `ttl`, two GSIs (`gsi1`, `gsi2`), AWS-managed KMS, PITR in prod only, DESTROY removal in dev.
-- **`opennewsletter/auth_stack.py`** — `AuthStack`: Cognito User Pool, 3 federated IdPs (Google/Apple/Facebook) via CFN dynamic references to Secrets Manager, `frontend` + `admin-bootstrap` app clients, Cognito-managed hosted UI domain. Lambda triggers (PreSignUp/PostConfirmation) wired in M4.
+- **`opennewsletter/auth_stack.py`** — `AuthStack`: Cognito User Pool, 3 federated IdPs (Google/Apple/Facebook) via CFN dynamic references to Secrets Manager, `frontend` + `admin-bootstrap` app clients, Cognito-managed hosted UI domain. The PreSignUp (pass-through) trigger is wired in M4; there is no PostConfirmation trigger (plans reconciled 2026-08-09).
 - **`opennewsletter/frontend_stack.py`** — `FrontendStack`: ACM cert (us-east-1) covering `domain`, `cdn.domain`, and `api_domain`; optional Route53 CNAME if `hosted_zone_id` is set.
 - **`opennewsletter/media_persistent_stack.py`** — `MediaPersistentStack`: S3 originals + processed buckets (both private, Block-Public-Access all-on), CloudFront distribution with OAC, signed-cookie `KeyGroup` reading `infra/keys/cf-signing.pub.pem`.
 - **`opennewsletter/media_pipeline_stack.py`** — `MediaPipelineStack`: `lambda-image-process` (shell stub, arm64, 1024 MB, `provided.al2023`), S3 `ObjectCreated` notification on `uploads/` prefix, least-privilege IAM.
 - **`opennewsletter/monitoring_stack.py`** — `MonitoringStack` skeleton: SNS alarm topic (+ email subscription if `alarm_email` set), empty CloudWatch dashboard, AWS Budgets alarm ($10/mo). Metric widgets + alarms land in M13.
 - **`infra/keys/cf-signing.pub.pem`** — dev placeholder RSA-2048 public key for CloudFront `PublicKey`. In prod, operator generates real keypair: `openssl genrsa 2048 | openssl rsa -pubout > infra/keys/cf-signing.pub.pem`, uploads private key to Secrets Manager.
 - **`backend/lambda-stubs/lambda-image-process/bootstrap`** — shell stub so CDK asset hashing works at synth time; replaced by the real Rust binary in M8.
-- **`infra/tests/test_stacks.py`** — 20 CDK assertion tests covering DDB keys/TTL/GSIs, Cognito user pool settings (2 clients, 3 IdPs, no self-signup), S3 Block-Public-Access, CloudFront KeyGroup attachment, Lambda arm64/1024 MB.
+- **`infra/tests/test_stacks.py`** — 21 CDK assertion tests covering DDB keys/TTL/GSIs, Cognito user pool settings (2 clients, 3 IdPs, no self-signup), S3 Block-Public-Access, CloudFront KeyGroup attachment, Lambda arm64/1024 MB.
 
 ### M3 coverage vs. plan
 
@@ -95,6 +116,7 @@ All paths relative to `infra/`.
 - ✅ `MonitoringStack` skeleton + AWS Budgets alarm ($10/mo).
 - ✅ `infra/tests/test_stacks.py` — 21 assertion tests, all green.
 - ✅ **`cdk synth --context env=dev` and `--context env=prod` both verified** (2026-07-14). `infra/.venv` recreated from `requirements.txt` (it's gitignored, not committed); `cdk` CLI run via `npx aws-cdk@2` since it isn't installed globally.
+- ⚠️ **Venv gotcha**: the system Python is 3.8 and typeguard 4.x breaks jsii's runtime type-checks on it (`check_type() got an unexpected keyword argument 'argname'` — 6 AuthStack tests error at fixture setup). `typeguard~=2.13.3` is now pinned in `requirements.txt`; if a venv predates the pin, `pip install "typeguard~=2.13.3"` fixes it. (A stray duplicate `infra/venv/` existed with the broken 4.2.1 and has been fixed in place; `infra/.venv` is the canonical one.)
 - 🟡 **`cdk deploy` still unverified** — needs an AWS account + `cdk bootstrap`. Blocked on B5 (M1 operator tasks) for a full end-to-end check; see "Suggested next steps."
 
 **Bug found + fixed during verification**: `MediaPersistentStack` and `MediaPipelineStack` had a real circular dependency, not just an ordering issue. `MediaPipelineStack.add_event_notification()` was called directly on the `originals_bucket` object passed in from `MediaPersistentStack`; CDK attaches the `BucketNotifications` custom resource (and its singleton handler Lambda) to the *bucket's own* stack, so that resource ended up needing `MediaPipelineStack`'s Lambda ARN from `MediaPersistentStack` — while the Lambda's IAM grants (`grant_read`, `grant_put`) already needed `MediaPersistentStack`'s bucket ARNs the other way. `cdk synth` failed with `RuntimeError: ... would create a cyclic reference`.
@@ -150,7 +172,7 @@ Commit `91188ba` shipped a rich UI built against in-memory mocks. M7's deliverab
 
 ### B5 — M1 operator tasks outstanding
 
-OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, and DNS records are still owed by the human operator. These are non-blocking for M2/M3/M3.5 code work but block any end-to-end auth verification in M4.
+OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, DNS records, the real CloudFront signing keypair, VAPID keys in Secrets Manager, and `cdk bootstrap` of the dev account are still owed by the human operator. These are non-blocking for code work but block the M3/M3.5 deploy gates and any end-to-end auth verification in M4. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ---
 
@@ -165,7 +187,7 @@ OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, a
    ```
 4. **Deploy and verify M3** (the `cdk deploy` half of the done-when gate) **and M3.5**: `make deploy-dev && make seed && make fe`
    (see `docs/RUNBOOK.md` §M3/M3.5 for what to check).
-5. **Begin M4** (Auth + bootstrap): `lambda-invites` with PreSignUp trigger, `lambda-groups` with `/me` + `/groups`, `ApiStack`.
+5. **Begin M4** (Auth + bootstrap): create `ApiStack`; `lambda-invites` (invite routes + the pass-through PreSignUp trigger binary — no invite logic in the trigger), `lambda-groups` (`/config`, `/me`, `/groups*`), `scripts/bootstrap_admin.py`. Fold in the "M2 follow-ups" listed above while touching those crates.
 
 ---
 

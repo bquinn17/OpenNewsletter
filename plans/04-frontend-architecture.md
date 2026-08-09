@@ -212,7 +212,7 @@ Workbox config (via plugin):
 
 - **Precache**: Vite-built static assets (JS/CSS/HTML).
 - **Runtime caches**:
-  - CDN images (`https://cdn.opennewsletter.example.com/img/*`): `CacheFirst` with `expiration: { maxEntries: 200, maxAgeSeconds: 30 days }`. The signed-cookie URL has the same path regardless of viewer, which makes caching effective. Variant by `Vary: Cookie` not enabled (cookies are auth, not content) so all requests for the same path share one entry.
+  - CDN images (`https://cdn.opennewsletter.example.com/img/*`): `CacheFirst` with `expiration: { maxEntries: 200, maxAgeSeconds: 30 days }`. The signed-cookie URL has the same path regardless of viewer, which makes caching effective. Variant by `Vary: Cookie` not enabled (cookies are auth, not content) so all requests for the same path share one entry. (In dev, image URLs carry signed query params instead of cookies — `08-media-uploads.md` §4.5 — so cache entries churn when the signature refreshes hourly; acceptable, dev doesn't need offline fidelity.)
   - API GETs (`https://api.opennewsletter.example.com/*`): `NetworkFirst` with a 3 s timeout falling back to cache. Used so a freshly-launched PWA without connectivity still shows last-known state. Mutations (POST/PUT/PATCH/DELETE) are NEVER cached.
   - Auth tokens / `/config`: bypass SW entirely (network-only).
 
@@ -277,7 +277,7 @@ Push payloads from backend documented in `07-notifications.md` §5.
 
 See `05-auth-flow.md` for the full sequence. The frontend pieces:
 
-- `auth/login.ts` — initiates Cognito hosted UI redirect with PKCE. If a `?code=` invite param is present in the URL when login starts, it's preserved through `state` and forwarded to Cognito as `clientMetadata.invite` (so the `PreSignUp` trigger sees it).
+- `auth/login.ts` — initiates Cognito hosted UI redirect with PKCE. If a `?code=` invite param is present in the URL when login starts, it's base64-encoded into the OIDC `state` parameter (`{ invite, returnTo }`) so it survives the OAuth round-trip. The `PreSignUp` trigger never sees it — redemption happens after token exchange via `POST /invites/redeem` (`05-auth-flow.md` §3–§4).
 - `auth/callback.tsx` — exchanges `code` for tokens, stores them, redirects to original page.
 - `auth/tokens.ts` — stores tokens in `sessionStorage` (NOT localStorage; clears on tab close — security trade-off worth it for a non-critical app). Refresh token rotation triggers via `oidc-client-ts` silent renew.
 - `auth/AuthProvider.tsx` — Context exposing `{ user, accessToken, login, logout }`. Wraps the app.
@@ -352,7 +352,7 @@ There is no Curate tab in v1 — admins do not override voting outcomes. See `06
 
 ### 7.8 JoinPage `/join?code=...`
 
-If unauthenticated: stash code in sessionStorage and `login.ts` forwards it as `clientMetadata.invite`. After signup, the `PreSignUp` trigger consumes the code automatically. The user lands on the home page and sees their new group.
+If unauthenticated: stash the code in sessionStorage (and in the OIDC `state` param via `login.ts`) and redirect to login. On `/auth/callback`, after token exchange, the SPA pulls the stashed code and calls `POST /invites/redeem` automatically. The user lands on the home page and sees their new group.
 
 If authenticated: call `POST /invites/redeem` with the code.
 
@@ -432,6 +432,29 @@ GitHub Pages deploy:
 - Workflow `frontend-deploy.yml` runs on push to `main`, builds, copies `dist/` → `gh-pages` branch, includes a `CNAME` file with the custom domain.
 - Vite `base` is `/` since custom domain is at root.
 - `404.html` is a copy of `index.html` so SPA deep links work on GitHub Pages.
+
+### 12.1 Content-Security-Policy
+
+GitHub Pages cannot set response headers, so the CSP ships as a `<meta http-equiv="Content-Security-Policy">` tag in `index.html`. Vite's HTML env replacement (`%VITE_*%`) substitutes the per-environment origins at build time:
+
+```html
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: %VITE_CDN_BASE_URL%;
+  connect-src 'self' %VITE_API_BASE_URL% %VITE_CDN_BASE_URL%
+    https://cognito-idp.us-east-1.amazonaws.com https://%VITE_COGNITO_HOSTED_DOMAIN%;
+  font-src 'self';
+  base-uri 'self';
+  form-action 'self' https://%VITE_COGNITO_HOSTED_DOMAIN%">
+```
+
+Notes:
+- `style-src 'unsafe-inline'` is required by Vite-injected styles; accepted trade-off.
+- `blob:`/`data:` in `img-src` cover local previews of not-yet-uploaded images.
+- `frame-ancestors` cannot be expressed in a meta CSP — clickjacking protection is out of scope on a GitHub Pages host.
+- A Playwright test (Milestone 13, `11-testing-ci-cd.md`) asserts the meta tag is present and that `img-src` includes the CDN origin.
 
 ---
 
@@ -535,8 +558,8 @@ Several pieces of display state live entirely in the frontend rather than on the
 - **Reaction total** on the published-edition header: sum of `reactionGroups[].count` across all answers. Inline in `NewsletterPage.tsx`.
 - **"Hype check" banner** (`hypeMessage` in mocks): computed from per-user draft counts in the open-newsletter payload. Helper: `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` returns either a string or `null` (suppress when there's nothing motivating to say).
 - **`helperText` under recurring questions** (Photo Wall / On Your Mind / Check It Out): hard-coded map keyed by prompt slug in `utils/recurring.ts`. The API knows nothing about recurring questions — they're just regular questions that the frontend recognizes by prompt and decorates accordingly.
-- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-grape to-sky`): derived from `Group.gradient` (a slug like `grape-sky`) via a frontend palette table. The slug is the API contract; the class string is a presentation detail.
-- **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table.
+- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-grape to-sky`): derived from `Group.gradient` (a slug like `grape-sky`) via a frontend palette table. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` (`03-api-contract.md` §4.3) — the frontend table must cover exactly that set.
+- **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table, covering exactly the eight slugs enumerated in `03-api-contract.md` §2.3.
 
 These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the OpenAPI spec). They live as computed values in component state or as the return type of utility functions.
 

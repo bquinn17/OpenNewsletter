@@ -164,7 +164,7 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — single shared AWS account with stack suffix `-dev`. Uses `dev.opennewsletter.example.com` and `api-dev.opennewsletter.example.com`. Pre-seeded test users and one test group.
+- `dev` — single shared AWS account with stack suffix `-dev`. **No custom domains** — raw AWS endpoints (`*.execute-api.us-east-1.amazonaws.com`, `*.cloudfront.net`) per `13-dev-environments.md` §2. Seeded via `make seed` (bootstrap admin + one test group).
 - `prod` — same account, stack suffix `-prod`.
 
 Both environments live in one personal AWS account (the account may host unrelated personal projects later; IAM users will remain few). Stronger account-level isolation is out of scope for v1; revisit if the threat model changes.

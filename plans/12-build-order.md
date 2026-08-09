@@ -104,7 +104,7 @@ Read: `05-auth-flow.md`.
 **Deliverables**:
 - `lambda-invites` crate compiled to `bootstrap` binary; supports both API routes (`POST /admin/invites`, `POST /invites/redeem`, `POST /admin/invites/{code}/revoke`, `GET /admin/groups/{g}/invites`) and a `PreSignUp` Cognito trigger (pass-through per §3.3).
 - `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
-- Wire both Lambdas into `ApiStack` with the JWT authorizer.
+- **Create `ApiStack`** (`01-infrastructure-cdk.md` §6 — HTTP API, CORS, JWT authorizer, throttling, access logs; this stack does not exist before M4) and wire both Lambdas' routes into it. The dev-only tick routes stubbed in M3.5 get their API Gateway wiring in M5 when the tick Lambdas land.
 - `scripts/bootstrap_admin.py` per `05-auth-flow.md` §9.1.
 - The `admin-bootstrap` Cognito app client.
 
@@ -119,7 +119,7 @@ Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
 **Deliverables**:
 - `lambda-newsletters` with `GET /groups/{g}/newsletters` and `GET /groups/{g}/newsletters/{c}` (handles all four status branches).
 - `lambda-questions` with candidate question CRUD per `03-api-contract.md` §6. No admin curate/promote surface — voting is the sole source of truth (see `03-api-contract.md` §6.5 and `06-newsletter-lifecycle.md` §7). The only admin mutation is `DELETE /admin/groups/{g}/candidate-questions/{q}` for abusive content.
-- `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5; wired into EventBridge.
+- **Create `NotificationsStack`** (`01-infrastructure-cdk.md` §7 — EventBridge schedules + VAPID secret reference; this stack does not exist before M5) with `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5 on the 5-minute schedule. `lambda-notify-tick` joins the stack in M11. Wire the dev-only `POST /admin/dev/tick/*` routes into `ApiStack` now.
 - The "create-next-voting-cycle" logic that runs on group creation (in `bootstrap_admin.py` or in the group-creation transaction in `lambda-groups`).
 - Lifecycle integration test suite per `06-newsletter-lifecycle.md` §11.
 
@@ -138,9 +138,9 @@ Read: `03-api-contract.md` §7, `04-frontend-architecture.md` §8.
 
 **Deliverables**:
 - `lambda-responses` with all routes from §7.
-- Optimistic-concurrency conflict handling (`RESPONSE_VERSION_CONFLICT`).
-- Validation: cycle status, image-id ownership and `ready` status, body length, image count.
-- Integration tests for: save draft, conflicting save, publish, attempt to publish past deadline.
+- Last-write-wins draft saves — unconditional overwrite, no version tokens or conflict errors (`03-api-contract.md` §7.3, `02-data-model-dynamodb.md` §5).
+- Validation: cycle status, image-id ownership / `ready` status / `purpose=response`, body length, image count.
+- Integration tests for: save draft, interleaved saves resolve last-write-wins, publish, attempt to publish past deadline.
 
 **Done when**: `cargo test -p lambda-responses` green AND a curl-based dance (save → save → publish) produces correct DDB state.
 

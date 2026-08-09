@@ -88,7 +88,7 @@ CI runs `cargo test --features integration` on every backend PR, so coverage of 
 ## 3. CDK tests
 
 `infra/tests/test_stacks.py` using `aws_cdk.assertions`. For each stack, assert:
-- Expected resource counts (e.g. exactly 11 `AWS::Lambda::Function` in `ApiStack`).
+- Expected resource counts (e.g. exactly 8 `AWS::Lambda::Function` in `ApiStack` — the eight request handlers in `01-infrastructure-cdk.md` §6.2; the tick Lambdas live in `NotificationsStack` and `lambda-image-process` in `MediaPipelineStack`).
 - Cognito user pool has exactly two app clients (`frontend` + `admin-bootstrap`).
 - IAM policy templates for each Lambda role match the documented least-privilege scope.
 - API routes match `03-api-contract.md` (auth attached to all but the explicit list of public ones — and there should be ZERO public routes).
@@ -107,7 +107,7 @@ Run via `pytest infra/tests/`.
 ### 4.1 Vitest
 
 Component tests with React Testing Library:
-- `ResponseEditor` save loop (debounce, conflict handling, retry on failure).
+- `ResponseEditor` save loop (debounce, flush on blur/hidden, retry on failure — saves are last-write-wins, there is no conflict UI; see `03-api-contract.md` §7.3).
 - `PollWidget` state transitions (voting → tally on publish).
 - `ReactionBar` toggle.
 - Markdown sanitizer (strip script, allow headers, allow `image:` tokens).
@@ -194,10 +194,9 @@ Triggers: PRs touching `backend/**`.
 Steps:
 1. Setup Rust toolchain (pinned via `rust-toolchain.toml`).
 2. Cache `~/.cargo` and `target/`.
-3. Start DDB-local service container.
-4. `cargo fmt --check && cargo clippy ... && cargo deny check`.
-5. `cargo test --all`.
-6. `cargo lambda build --release --arm64` (sanity: ensures all crates compile to lambda artifacts).
+3. `cargo fmt --check && cargo clippy ... && cargo deny check`.
+4. `cargo test --workspace --features integration` — the `testcontainers` crate starts DynamoDB Local itself (§2.4); the runner just needs Docker, no service-container setup step.
+5. `cargo lambda build --release --arm64` (sanity: ensures all crates compile to lambda artifacts).
 
 ### 6.4 `backend-deploy.yml`
 
