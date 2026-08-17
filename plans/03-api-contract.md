@@ -4,13 +4,15 @@ This is the source-of-truth list of every HTTP endpoint OpenNewsletter exposes. 
 
 A canonical OpenAPI 3.1 document lives at `shared/openapi.yaml`. This Markdown is the human-readable mirror; the YAML is what gets codegen'd into TS types and Rust route stubs.
 
+> **Status**: the YAML does not exist yet — it is an M5 deliverable (`12-build-order.md` M5, "OpenAPI contract"). Until it lands, **this document is the contract**, and the routes shipped in M4 were written from it directly. Once the YAML exists, the relationship inverts: it becomes authoritative and this file becomes the mirror.
+
 ---
 
 ## 1. General conventions
 
 - Base URL: `https://api.opennewsletter.example.com` (prod). Dev has no custom domains — the raw `https://{apiId}.execute-api.us-east-1.amazonaws.com` endpoint is used (see `13-dev-environments.md` §2).
 - Content type: `application/json` (UTF-8) for everything except media uploads (which go directly to S3).
-- Auth: All routes require a Cognito JWT in `Authorization: Bearer {accessToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint.
+- Auth: All routes require a Cognito JWT in `Authorization: Bearer {idToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint. **The ID token, not the access token**: `POST /invites/redeem` creates the caller's `User` row from the `email` and `name` claims, which only the ID token carries (`05-auth-flow.md` §4.2). The JWT authorizer's audience is the frontend client ID, which matches the ID token's `aud`.
 - Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per `02-data-model-dynamodb.md` §6).
 - Correlation: Clients SHOULD send `x-correlation-id: {ulid}`. If absent the API generates one. It is echoed in responses and logged.
 - Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`.
@@ -669,10 +671,12 @@ Both routes are also called by Playwright E2E (`11-testing-ci-cd.md` §4.3) — 
 
 `shared/openapi.yaml` is hand-maintained as the canonical contract; codegen targets:
 
-- TypeScript types → `frontend/src/types/api.ts` via `openapi-typescript`
-- Rust request/response types → `backend/crates/domain/src/api.rs` via `progenitor` (or hand-written serde structs that mirror the YAML — see `11-testing-ci-cd.md` for the contract test).
+- TypeScript types → `frontend/src/types/api.ts` via `openapi-typescript` (driven by `scripts/codegen_types.sh`)
+- Rust request/response types → `backend/crates/domain/src/api.rs`, hand-written serde structs that mirror the YAML. Prefer this over `progenitor`: the structs are small, and generated Rust would fight the newtype IDs in `domain/ids.rs`. `11-testing-ci-cd.md` §2.3 is the contract test that keeps them honest.
 
 A schema validation test in CI rejects any drift between handwritten Rust models and the YAML.
+
+**None of this exists yet.** The YAML, `scripts/codegen_types.sh`, `domain/api.rs`, and the contract test are all M5 deliverables (`12-build-order.md` M5, "OpenAPI contract"). M4's wire types currently live in per-crate `dto.rs` files and move to `domain/api.rs` as part of that work.
 
 ---
 

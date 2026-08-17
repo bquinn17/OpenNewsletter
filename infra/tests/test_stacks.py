@@ -15,6 +15,7 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk import assertions
 
+from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
 from opennewsletter.config import EnvConfig, load_config
 from opennewsletter.data_stack import DataStack
@@ -50,7 +51,9 @@ def media_templates(
 ) -> tuple[assertions.Template, assertions.Template]:
     app = cdk.App()
     data_stack = DataStack(app, "TestDataStack2", config=dev_config, env=AWS_ENV)
-    frontend_stack = FrontendStack(app, "TestFrontendStack", config=dev_config, env=AWS_ENV)
+    frontend_stack = FrontendStack(
+        app, "TestFrontendStack", config=dev_config, env=AWS_ENV
+    )
     persistent_stack = MediaPersistentStack(
         app,
         "TestMediaPersistentStack",
@@ -290,3 +293,202 @@ def test_image_process_lambda_memory(
         "AWS::Lambda::Function",
         {"MemorySize": 1024},
     )
+
+
+# ---------------------------------------------------------------------------
+# ApiStack
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def api_template(dev_config: EnvConfig) -> assertions.Template:
+    app = cdk.App()
+    data_stack = DataStack(app, "TestDataStack3", config=dev_config, env=AWS_ENV)
+    auth_stack = AuthStack(app, "TestAuthStack2", config=dev_config, env=AWS_ENV)
+    frontend_stack = FrontendStack(
+        app, "TestFrontendStack2", config=dev_config, env=AWS_ENV
+    )
+    stack = ApiStack(
+        app,
+        "TestApiStack",
+        config=dev_config,
+        table=data_stack.table,
+        user_pool=auth_stack.user_pool,
+        user_pool_client=auth_stack.frontend_client,
+        certificate=frontend_stack.certificate,
+        env=AWS_ENV,
+    )
+    return assertions.Template.from_stack(stack)
+
+
+@pytest.fixture(scope="module")
+def prod_api_template() -> assertions.Template:
+    app = cdk.App()
+    config = load_config("prod")
+    data_stack = DataStack(app, "ProdDataStack", config=config, env=AWS_ENV)
+    auth_stack = AuthStack(app, "ProdAuthStack", config=config, env=AWS_ENV)
+    frontend_stack = FrontendStack(app, "ProdFrontendStack", config=config, env=AWS_ENV)
+    stack = ApiStack(
+        app,
+        "ProdApiStack",
+        config=config,
+        table=data_stack.table,
+        user_pool=auth_stack.user_pool,
+        user_pool_client=auth_stack.frontend_client,
+        certificate=frontend_stack.certificate,
+        env=AWS_ENV,
+    )
+    return assertions.Template.from_stack(stack)
+
+
+def test_http_api_exists(api_template: assertions.Template) -> None:
+    api_template.has_resource_properties(
+        "AWS::ApiGatewayV2::Api",
+        {"Name": "OpenNewsletter-Api-dev", "ProtocolType": "HTTP"},
+    )
+
+
+def test_http_api_cors_allows_the_dev_origin(api_template: assertions.Template) -> None:
+    api_template.has_resource_properties(
+        "AWS::ApiGatewayV2::Api",
+        {
+            "CorsConfiguration": {
+                "AllowOrigins": assertions.Match.array_with(["http://localhost:5173"]),
+                "AllowHeaders": assertions.Match.array_with(["x-correlation-id"]),
+                "ExposeHeaders": ["x-correlation-id"],
+                "MaxAge": 600,
+            }
+        },
+    )
+
+
+def test_jwt_authorizer_targets_the_user_pool(
+    api_template: assertions.Template,
+) -> None:
+    api_template.resource_count_is("AWS::ApiGatewayV2::Authorizer", 1)
+    api_template.has_resource_properties(
+        "AWS::ApiGatewayV2::Authorizer",
+        {
+            "AuthorizerType": "JWT",
+            "IdentitySource": ["$request.header.Authorization"],
+        },
+    )
+
+
+def test_every_route_requires_the_jwt_authorizer(
+    api_template: assertions.Template,
+) -> None:
+    routes = api_template.find_resources("AWS::ApiGatewayV2::Route")
+    unauthorized = [
+        key
+        for key, route in routes.items()
+        if route["Properties"].get("AuthorizationType") != "JWT"
+    ]
+    assert unauthorized == []
+
+
+def test_all_contract_routes_are_wired(api_template: assertions.Template) -> None:
+    routes = api_template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
+    assert route_keys == {
+        "GET /healthz",
+        "GET /config",
+        "GET /me",
+        "PATCH /me",
+        "GET /groups",
+        "GET /groups/{groupId}",
+        "PATCH /groups/{groupId}",
+        "DELETE /groups/{groupId}/members/{userId}",
+        "PATCH /groups/{groupId}/members/{userId}",
+        "POST /admin/invites",
+        "GET /admin/groups/{groupId}/invites",
+        "POST /admin/invites/{code}/revoke",
+        "POST /invites/redeem",
+    }
+
+
+def test_handler_lambdas_are_arm64_provided_al2023(
+    api_template: assertions.Template,
+) -> None:
+    for function_name in ("OpenNewsletter-Invites-dev", "OpenNewsletter-Groups-dev"):
+        api_template.has_resource_properties(
+            "AWS::Lambda::Function",
+            {
+                "FunctionName": function_name,
+                "Architectures": ["arm64"],
+                "Runtime": "provided.al2023",
+                "MemorySize": 256,
+                "Timeout": 10,
+            },
+        )
+
+
+def test_handler_lambdas_receive_the_table_name(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Groups-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"ENV": "dev", "RUST_LOG": "info"},
+                )
+            },
+        },
+    )
+
+
+def test_stage_is_throttled(api_template: assertions.Template) -> None:
+    api_template.has_resource_properties(
+        "AWS::ApiGatewayV2::Stage",
+        {
+            "DefaultRouteSettings": {
+                "ThrottlingBurstLimit": 50,
+                "ThrottlingRateLimit": 25,
+            }
+        },
+    )
+
+
+def test_stage_has_access_logging(api_template: assertions.Template) -> None:
+    api_template.has_resource_properties(
+        "AWS::ApiGatewayV2::Stage",
+        {"AccessLogSettings": assertions.Match.any_value()},
+    )
+
+
+def test_dev_has_no_custom_domain(api_template: assertions.Template) -> None:
+    api_template.resource_count_is("AWS::ApiGatewayV2::DomainName", 0)
+
+
+def test_prod_maps_the_custom_domain(prod_api_template: assertions.Template) -> None:
+    prod_api_template.resource_count_is("AWS::ApiGatewayV2::DomainName", 1)
+    prod_api_template.resource_count_is("AWS::ApiGatewayV2::ApiMapping", 1)
+
+
+# ---------------------------------------------------------------------------
+# PreSignUp trigger (AuthStack — see auth_stack.py for why it lives there)
+# ---------------------------------------------------------------------------
+
+
+def test_presignup_lambda_is_wired_to_the_user_pool(
+    auth_template: assertions.Template,
+) -> None:
+    auth_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"FunctionName": "OpenNewsletter-PreSignUp-dev", "Architectures": ["arm64"]},
+    )
+    auth_template.has_resource_properties(
+        "AWS::Cognito::UserPool",
+        {"LambdaConfig": {"PreSignUp": assertions.Match.any_value()}},
+    )
+
+
+def test_user_pool_has_no_custom_attributes(auth_template: assertions.Template) -> None:
+    pools = auth_template.find_resources("AWS::Cognito::UserPool")
+    for pool in pools.values():
+        assert pool["Properties"].get("Schema", []) == [
+            {"Mutable": True, "Name": "email", "Required": True},
+            {"Mutable": True, "Name": "name", "Required": False},
+        ]

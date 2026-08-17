@@ -2,11 +2,14 @@
 //!
 //! Module map:
 //! - [`keys`] — pure key-builder functions. Single source of truth for `pk`/`sk` shapes.
+//! - [`auth`] — caller resolution and the tenant-isolation gate.
 //! - [`error`] — [`RepoError`] enum.
 //! - one module per entity family (`users`, `groups`, `invites`, `newsletters`,
 //!   `questions`, `responses`, `engagement`, `media`, `push`).
 
+pub mod auth;
 pub mod error;
+pub mod expr;
 pub mod keys;
 pub mod repo;
 

@@ -9,6 +9,21 @@ This file is loaded into every Claude Code conversation in this repo. Keep it sh
 
 A milestone or task is not "done" until its work conforms to those standards. The pre-flight checklist at `coding-standards.md` §8 applies before opening any PR.
 
+## Running the Rust tests (read this before `cargo test`)
+
+The `persistence` integration tests start a DynamoDB Local container via `testcontainers`, so they need a reachable Docker daemon. On this machine Docker runs **rootless under WSL2** and its socket is *not* `/var/run/docker.sock`. `DOCKER_HOST` is set in `~/.profile`, but agent shells are non-login and non-interactive, so they never read it — **every** test command must export it inline:
+
+```bash
+export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
+```
+
+Notes:
+- Env vars do not persist between tool calls — repeat the `export` in each command, don't run it once on its own.
+- Always wrap in `timeout` (the suite pulls an image on a cold cache and can otherwise hang).
+- Sanity-check the daemon first with `export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
+
+See [`plans/13-dev-environments.md`](plans/13-dev-environments.md) §10 for which test layers need Docker at all.
+
 ## What this app is
 
 OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce a monthly newsletter. Members suggest and upvote candidate questions between cycles; on the 1st of each month the top-voted questions promote into an active newsletter and a 4-day response window opens; at close, the edition auto-publishes and comments/reactions become available.

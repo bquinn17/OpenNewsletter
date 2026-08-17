@@ -2,12 +2,13 @@
 
 use crate::error::RepoError;
 use crate::keys::{
-    attr, group_pk, index, invite_gsi1pk, invite_gsi1sk, invite_pk, membership_gsi1pk,
-    membership_gsi1sk, membership_sk, user_pk, GROUP_META_SK, INVITE_SK,
+    attr, cognito_sub_pk, group_pk, index, invite_gsi1pk, invite_gsi1sk, invite_pk,
+    membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk, COGNITO_SUB_SK, GROUP_META_SK,
+    INVITE_SK, USER_PROFILE_SK,
 };
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
-use domain::{GroupId, GroupMembership, Invite, InviteCode, InviteStatus};
+use domain::{CognitoSubLookup, GroupId, GroupMembership, Invite, InviteCode, InviteStatus, User};
 use serde_dynamo::{from_item, to_item};
 
 /// AP5 — get invite by code.
@@ -82,6 +83,8 @@ pub async fn put_invite(
     Ok(())
 }
 
+/// Flip a pending invite to `revoked`. Fails with [`RepoError::ConditionalCheckFailed`]
+/// if the invite was consumed or revoked in the meantime.
 pub async fn revoke(repo: &Repo, code: &InviteCode) -> Result<(), RepoError> {
     let status =
         serde_json::to_string(&InviteStatus::Revoked).unwrap_or_else(|_| "\"revoked\"".to_string());
@@ -92,23 +95,46 @@ pub async fn revoke(repo: &Repo, code: &InviteCode) -> Result<(), RepoError> {
         .key(attr::PK, AttributeValue::S(invite_pk(code)))
         .key(attr::SK, AttributeValue::S(INVITE_SK.into()))
         .update_expression("SET #s = :s")
+        .condition_expression("#s = :pending")
         .expression_attribute_names("#s", "status")
         .expression_attribute_values(":s", AttributeValue::S(trimmed))
+        .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
         .send()
-        .await?;
+        .await
+        .map_err(classify_conditional_failure)?;
     Ok(())
+}
+
+fn classify_conditional_failure<E, R>(err: aws_sdk_dynamodb::error::SdkError<E, R>) -> RepoError
+where
+    E: std::fmt::Debug,
+    R: std::fmt::Debug,
+{
+    let rendered = format!("{err:?}");
+    if rendered.contains("ConditionalCheckFailed") {
+        RepoError::ConditionalCheckFailed
+    } else {
+        RepoError::Dynamo(rendered)
+    }
 }
 
 /// Transaction §4 #5 — join group via invite.
 ///
 /// Atomically:
-/// - flip Invite `pending → consumed` (precondition: status was pending and not expired)
+/// - create the `CognitoSubLookup` + `User` rows when `new_user` is set (first-ever
+///   redemption for this Cognito account — `plans/05-auth-flow.md` §4.2)
+/// - flip Invite `pending → consumed`
 /// - Put GroupMembership
 /// - Update Group.memberCount += 1 with member-cap check
+///
+/// Expiry is enforced by the caller rather than by a condition expression: `expires_at`
+/// is stored as RFC-3339 with a variable-width fractional part, so a lexicographic
+/// comparison against "now" is not reliably ordered at sub-second resolution.
 pub async fn join_via_invite_tx(
     repo: &Repo,
     invite: &Invite,
     membership: &GroupMembership,
+    new_user: Option<&User>,
     consumed_at_iso: &str,
     member_cap: u32,
 ) -> Result<(), RepoError> {
@@ -167,12 +193,53 @@ pub async fn join_via_invite_tx(
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
-    repo.client
-        .transact_write_items()
-        .transact_items(TransactWriteItem::builder().update(consume).build())
+    let mut tx = repo.client.transact_write_items();
+
+    if let Some(user) = new_user {
+        let mut lookup_item: std::collections::HashMap<String, AttributeValue> =
+            to_item(CognitoSubLookup {
+                cognito_sub: user.cognito_sub.clone(),
+                user_id: user.user_id.clone(),
+            })?;
+        lookup_item.insert(
+            attr::PK.into(),
+            AttributeValue::S(cognito_sub_pk(&user.cognito_sub)),
+        );
+        lookup_item.insert(attr::SK.into(), AttributeValue::S(COGNITO_SUB_SK.into()));
+        lookup_item.insert(
+            attr::ENTITY.into(),
+            AttributeValue::S("CognitoSubLookup".into()),
+        );
+
+        let put_lookup = Put::builder()
+            .table_name(&repo.table)
+            .set_item(Some(lookup_item))
+            .condition_expression("attribute_not_exists(#pk)")
+            .expression_attribute_names("#pk", attr::PK)
+            .build()
+            .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+        let mut user_item: std::collections::HashMap<String, AttributeValue> = to_item(user)?;
+        user_item.insert(attr::PK.into(), AttributeValue::S(user_pk(&user.user_id)));
+        user_item.insert(attr::SK.into(), AttributeValue::S(USER_PROFILE_SK.into()));
+        user_item.insert(attr::ENTITY.into(), AttributeValue::S("User".into()));
+
+        let put_user = Put::builder()
+            .table_name(&repo.table)
+            .set_item(Some(user_item))
+            .build()
+            .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+        tx = tx
+            .transact_items(TransactWriteItem::builder().put(put_lookup).build())
+            .transact_items(TransactWriteItem::builder().put(put_user).build());
+    }
+
+    tx.transact_items(TransactWriteItem::builder().update(consume).build())
         .transact_items(TransactWriteItem::builder().put(put_member).build())
         .transact_items(TransactWriteItem::builder().update(bump_count).build())
         .send()
-        .await?;
+        .await
+        .map_err(classify_conditional_failure)?;
     Ok(())
 }

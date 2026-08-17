@@ -8,6 +8,7 @@ Usage:
 
 import aws_cdk as cdk
 
+from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
 from opennewsletter.config import load_config
 from opennewsletter.data_stack import DataStack
@@ -31,7 +32,9 @@ data_stack = DataStack(app, f"DataStack{suffix}", config=config, env=aws_env)
 auth_stack = AuthStack(app, f"AuthStack{suffix}", config=config, env=aws_env)
 
 # FrontendStack creates the ACM cert consumed by MediaPersistentStack and (later) ApiStack.
-frontend_stack = FrontendStack(app, f"FrontendStack{suffix}", config=config, env=aws_env)
+frontend_stack = FrontendStack(
+    app, f"FrontendStack{suffix}", config=config, env=aws_env
+)
 
 media_persistent_stack = MediaPersistentStack(
     app,
@@ -52,6 +55,19 @@ media_pipeline_stack = MediaPipelineStack(
     env=aws_env,
 )
 
-monitoring_stack = MonitoringStack(app, f"MonitoringStack{suffix}", config=config, env=aws_env)
+api_stack = ApiStack(
+    app,
+    f"ApiStack{suffix}",
+    config=config,
+    table=data_stack.table,
+    user_pool=auth_stack.user_pool,
+    user_pool_client=auth_stack.frontend_client,
+    certificate=frontend_stack.certificate,
+    env=aws_env,
+)
+
+monitoring_stack = MonitoringStack(
+    app, f"MonitoringStack{suffix}", config=config, env=aws_env
+)
 
 app.synth()

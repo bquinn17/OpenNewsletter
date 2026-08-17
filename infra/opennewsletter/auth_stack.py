@@ -1,8 +1,12 @@
 """AuthStack — Cognito User Pool with federated IdPs, app clients, hosted UI.
 
-Lambda triggers (PreSignUp, PostConfirmation) are wired in M4 once the
-lambda-invites binary exists. Placeholder ARNs are used for IdP secrets
-until M1 operator tasks are complete.
+The `PreSignUp` trigger Lambda is built here rather than in ApiStack: CDK attaches
+trigger wiring to the user pool's own stack, so defining the function elsewhere
+would make this stack depend on that one while ApiStack already depends on this one
+for the JWT authorizer. There is no `PostConfirmation` trigger
+(`plans/05-auth-flow.md` §5).
+
+Placeholder ARNs are used for IdP secrets until M1 operator tasks are complete.
 """
 
 from __future__ import annotations
@@ -11,9 +15,13 @@ from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_cognito as cognito
+from aws_cdk import aws_lambda as aws_lambda
+from aws_cdk import aws_logs as logs
 from constructs import Construct
 
 from .config import EnvConfig
+from .lambda_assets import lambda_code
+
 
 # CloudFormation dynamic reference; resolves at deploy time, never logged.
 def _sm_ref(secret_arn: str, json_field: str) -> str:
@@ -21,7 +29,9 @@ def _sm_ref(secret_arn: str, json_field: str) -> str:
 
 
 class AuthStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
+    def __init__(
+        self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         self.user_pool = cognito.UserPool(
@@ -44,11 +54,41 @@ class AuthStack(cdk.Stack):
                 email=cognito.StandardAttribute(required=True, mutable=True),
                 fullname=cognito.StandardAttribute(required=False, mutable=True),
             ),
-            custom_attributes={
-                "pendingInvite": cognito.StringAttribute(min_len=0, max_len=64, mutable=True),
-            },
+            # No custom attributes: the invite code rides in the OIDC `state`
+            # parameter, not on the user record (`plans/05-auth-flow.md` §1).
             # Keep the user pool in dev too — recreating it loses all users.
             removal_policy=cdk.RemovalPolicy.RETAIN,
+        )
+
+        # Pass-through that auto-confirms federated accounts. It never sees the
+        # invite code and never touches DynamoDB (`plans/05-auth-flow.md` §3).
+        self.presignup_fn = aws_lambda.Function(
+            self,
+            "PreSignUpFn",
+            function_name=f"OpenNewsletter-PreSignUp-{config.env}",
+            description="Cognito PreSignUp pass-through (auto-confirm)",
+            runtime=aws_lambda.Runtime.PROVIDED_AL2023,
+            architecture=aws_lambda.Architecture.ARM_64,
+            handler="bootstrap",
+            code=lambda_code("invites-presignup"),
+            memory_size=128,
+            timeout=cdk.Duration.seconds(5),
+            environment={"RUST_LOG": "info", "ENV": config.env},
+            log_group=logs.LogGroup(
+                self,
+                "PreSignUpLogs",
+                log_group_name=f"/aws/lambda/OpenNewsletter-PreSignUp-{config.env}",
+                retention=logs.RetentionDays.ONE_MONTH
+                if config.env == "dev"
+                else logs.RetentionDays.THREE_MONTHS,
+                removal_policy=cdk.RemovalPolicy.DESTROY
+                if config.env == "dev"
+                else cdk.RemovalPolicy.RETAIN,
+            ),
+        )
+        self.user_pool.add_trigger(
+            cognito.UserPoolOperation.PRE_SIGN_UP,
+            self.presignup_fn,
         )
 
         # --- Federated IdPs ---
@@ -161,7 +201,9 @@ class AuthStack(cdk.Stack):
 
         cdk.CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
         cdk.CfnOutput(self, "UserPoolArn", value=self.user_pool.user_pool_arn)
-        cdk.CfnOutput(self, "UserPoolClientId", value=self.frontend_client.user_pool_client_id)
+        cdk.CfnOutput(
+            self, "UserPoolClientId", value=self.frontend_client.user_pool_client_id
+        )
         cdk.CfnOutput(
             self,
             "UserPoolBootstrapClientId",

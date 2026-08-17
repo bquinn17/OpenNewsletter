@@ -130,12 +130,16 @@ make fe               # vite dev --mode dev
 deploy-lambda:
 	cd backend && cargo lambda build --release --arm64 --bin $(LAMBDA)
 	aws lambda update-function-code \
-	  --function-name OpenNewsletter-$(LAMBDA)-dev \
+	  --function-name OpenNewsletter-$(FUNCTION_$(LAMBDA))-dev \
 	  --zip-file fileb://target/lambda/$(LAMBDA)/bootstrap.zip \
 	  --no-cli-pager
 ```
 
+`LAMBDA` is the **cargo binary** name, which is not the deployed function name: `lambda-invites` ships two entry points (`invites-api`, `invites-presignup`), so neither can be called `bootstrap`, and the Makefile keeps a `FUNCTION_<binary>` map to the CloudFormation names. Add a line to that map whenever a new handler lands.
+
 ~5s per deploy. Use `cdk deploy` only when CDK config, IAM, or env vars change. Document this distinction in `README.md` so the slow path isn't reached for by reflex.
+
+**`make deploy-dev` builds the binaries first.** `ApiStack` falls back to a shell stub for any binary missing from `backend/target/lambda/`, so a deploy that skips the build silently ships stubs that answer every request with nothing.
 
 ---
 
@@ -169,6 +173,22 @@ The test pyramid in [`11-testing-ci-cd.md`](11-testing-ci-cd.md) stands; this se
 The change vs. the original plan: **integration tests are a CI responsibility, not a per-commit local responsibility.** Devs run unit tests on every save and rely on CI for integration. The DDB-local container is still used in CI by `testcontainers`, so coverage is unchanged — only the developer's local machine is freed from running it.
 
 If a CI integration test fails and you need to debug locally, opt in with `cargo test --features integration` and the same `testcontainers` path runs on your machine.
+
+### 10.1 Docker socket on WSL2 (required for any Docker-backed test)
+
+Docker here runs **rootless** under WSL2 and binds `unix:///mnt/wslg/runtime-dir/docker.sock`, not the conventional `/var/run/docker.sock`. `~/.profile` exports `DOCKER_HOST` for interactive terminals, but non-login/non-interactive shells — which is what CI steps and AI coding agents get — never source it. Export it inline on every command that touches Docker:
+
+```bash
+export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
+```
+
+If the daemon isn't running, start it detached (a plain backgrounded `nohup` dies when the caller's process group is reaped):
+
+```bash
+setsid nohup ~/bin/dockerd-rootless.sh > /tmp/dockerd.log 2>&1 < /dev/null & disown
+```
+
+Symptom of a missing/misdirected socket: `SocketNotFoundError` panics out of `backend/crates/persistence/tests/common/mod.rs`. Verify with `docker info | grep "Server Version"` before blaming the tests.
 
 ---
 

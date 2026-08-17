@@ -194,3 +194,81 @@ async fn leave_group_tx_fails_when_membership_absent() {
     let result = groups::leave_group_tx(&repo, &UserId::new("ghost"), &GroupId::new("g1")).await;
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn update_group_patches_only_the_supplied_fields() {
+    let (_c, repo) = common::make_repo().await;
+    let original = common::group("g1", "u1");
+    groups::put_group(&repo, &original).await.unwrap();
+
+    let patch = groups::GroupPatch {
+        name: Some("Renamed Crew".into()),
+        member_soft_cap: Some(75),
+        ..Default::default()
+    };
+    groups::update_group(&repo, &original.group_id, &patch)
+        .await
+        .unwrap();
+
+    let got = groups::get_group(&repo, &original.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.name, "Renamed Crew");
+    assert_eq!(got.member_soft_cap, 75);
+    assert_eq!(got.timezone, original.timezone);
+    assert_eq!(got.gradient, original.gradient);
+    assert_eq!(got.cycle_settings, original.cycle_settings);
+}
+
+#[tokio::test]
+async fn update_group_leaves_member_count_untouched() {
+    let (_c, repo) = common::make_repo().await;
+    let mut original = common::group("g1", "u1");
+    original.member_count = 7;
+    groups::put_group(&repo, &original).await.unwrap();
+
+    let patch = groups::GroupPatch {
+        timezone: Some("Europe/Dublin".into()),
+        ..Default::default()
+    };
+    groups::update_group(&repo, &original.group_id, &patch)
+        .await
+        .unwrap();
+
+    let got = groups::get_group(&repo, &original.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.member_count, 7);
+}
+
+#[tokio::test]
+async fn update_membership_role_promotes_a_member() {
+    let (_c, repo) = common::make_repo().await;
+    let m = common::membership("u2", "g1", Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    groups::update_membership_role(&repo, &m.user_id, &m.group_id, Role::Admin)
+        .await
+        .unwrap();
+
+    let got = groups::get_membership(&repo, &m.user_id, &m.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.role, Role::Admin);
+}
+
+#[tokio::test]
+async fn update_membership_role_fails_when_membership_absent() {
+    let (_c, repo) = common::make_repo().await;
+    let result = groups::update_membership_role(
+        &repo,
+        &UserId::new("ghost"),
+        &GroupId::new("g1"),
+        Role::Admin,
+    )
+    .await;
+    assert!(result.is_err());
+}

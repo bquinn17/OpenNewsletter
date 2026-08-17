@@ -50,6 +50,15 @@ pub enum QuestionKind {
     Poll,
 }
 
+/// What an uploaded image is destined to attach to. Set at `POST /uploads` time;
+/// the per-answer image cap counts `Response` rows only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImagePurpose {
+    Response,
+    Comment,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImageMimeType {
     #[serde(rename = "image/jpeg")]
@@ -206,6 +215,7 @@ pub struct ImageMedia {
     pub group_id: GroupId,
     pub cycle_id: CycleId,
     pub question_id: Option<QuestionId>,
+    pub purpose: ImagePurpose,
     pub mime_type: ImageMimeType,
     pub original_key: String,
     pub display_key: Option<String>,

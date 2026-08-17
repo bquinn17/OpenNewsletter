@@ -43,7 +43,7 @@ def load_config(env: str) -> EnvConfig:
         # Parse manually to avoid a hard dep on python-dotenv at import time
         # in contexts where only the package is installed without extras.
         try:
-            from dotenv import dotenv_values  # type: ignore[import-untyped]
+            from dotenv import dotenv_values
 
             raw = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
         except ImportError:

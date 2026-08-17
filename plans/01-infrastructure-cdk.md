@@ -259,8 +259,11 @@ The route column below is a **summary only** — `03-api-contract.md` §13 is th
 
 The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, `03-api-contract.md` §11a) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
+The `PreSignUp` trigger binary is compiled from `lambda-invites` but its CDK `Function` is defined in **`AuthStack`**, not here. `user_pool.add_trigger()` attaches the wiring to the user pool's own stack, so building the function in `ApiStack` makes `AuthStack` depend on `ApiStack` while `ApiStack` already depends on `AuthStack` for the JWT authorizer — a cyclic reference that fails at synth. (Same failure mode as the `MediaPersistentStack`/`MediaPipelineStack` notification bug; the rule is: define a resource in the stack that owns the thing it attaches to.)
+
 All Lambdas share:
-- Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4)
+- Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4), `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
+- `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference, echoed by `GET /config` per §7.1)
 - IAM (baseline): write access to its own log group only
 - DynamoDB IAM: scoped to `arn:aws:dynamodb:...:table/OpenNewsletter-{env}` and the two GSIs
 

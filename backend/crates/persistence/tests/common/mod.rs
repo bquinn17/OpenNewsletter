@@ -309,6 +309,7 @@ pub fn image_media(group_id: &str, cycle_id: &str, image_id: &str, user_id: &str
         group_id: GroupId::new(group_id),
         cycle_id: CycleId::new(cycle_id),
         question_id: None,
+        purpose: ImagePurpose::Response,
         mime_type: ImageMimeType::Jpeg,
         original_key: format!("images/{image_id}/orig.jpg"),
         display_key: None,
@@ -364,4 +365,39 @@ pub fn notification_pref(user_id: &str, group_id: &str) -> NotificationPref {
 #[allow(dead_code)]
 pub fn _unused() {
     let _ = Duration::days(1);
+}
+
+/// Write a membership item directly. The persistence crate exposes no bare
+/// `put_membership` — production writes go through the invite transaction.
+pub async fn put_membership(repo: &Repo, m: &GroupMembership) {
+    use aws_sdk_dynamodb::types::AttributeValue;
+    use persistence::keys::{attr, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk};
+
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(m).expect("membership serializes");
+    item.insert(attr::PK.into(), AttributeValue::S(user_pk(&m.user_id)));
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(membership_sk(&m.group_id)),
+    );
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(membership_gsi1pk(&m.group_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(membership_gsi1sk(&m.user_id)),
+    );
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("GroupMembership".into()),
+    );
+
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("membership written");
 }

@@ -72,7 +72,7 @@ async fn join_via_invite_tx_creates_membership_and_bumps_member_count() {
     invites::put_invite(&repo, &inv, 9999999999).await.unwrap();
 
     let membership = common::membership("u2", "g1", Role::Member);
-    invites::join_via_invite_tx(&repo, &inv, &membership, "2026-06-10T00:00:00Z", 20)
+    invites::join_via_invite_tx(&repo, &inv, &membership, None, "2026-06-10T00:00:00Z", 20)
         .await
         .unwrap();
 
@@ -111,12 +111,91 @@ async fn join_via_invite_tx_fails_when_invite_already_consumed() {
 
     // First join succeeds.
     let m1 = common::membership("u2", "g1", Role::Member);
-    invites::join_via_invite_tx(&repo, &inv, &m1, "2026-06-10T00:00:00Z", 20)
+    invites::join_via_invite_tx(&repo, &inv, &m1, None, "2026-06-10T00:00:00Z", 20)
         .await
         .unwrap();
 
     // Second join with same invite code must fail.
     let m2 = common::membership("u3", "g1", Role::Member);
-    let result = invites::join_via_invite_tx(&repo, &inv, &m2, "2026-06-10T01:00:00Z", 20).await;
+    let result =
+        invites::join_via_invite_tx(&repo, &inv, &m2, None, "2026-06-10T01:00:00Z", 20).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn revoking_a_consumed_invite_is_refused() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g1", "u1");
+    g.member_count = 1;
+    persistence::groups::put_group(&repo, &g).await.unwrap();
+
+    let inv = common::invite("REVOKE02", "g1", "u1");
+    invites::put_invite(&repo, &inv, 9999999999).await.unwrap();
+    let membership = common::membership("u2", "g1", Role::Member);
+    invites::join_via_invite_tx(&repo, &inv, &membership, None, "2026-06-10T00:00:00Z", 20)
+        .await
+        .unwrap();
+
+    let result = invites::revoke(&repo, &inv.code).await;
+
+    assert!(matches!(
+        result,
+        Err(persistence::RepoError::ConditionalCheckFailed)
+    ));
+}
+
+#[tokio::test]
+async fn first_redemption_creates_the_user_and_sub_lookup() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g1", "u1");
+    g.member_count = 1;
+    persistence::groups::put_group(&repo, &g).await.unwrap();
+
+    let inv = common::invite("NEWUSER1", "g1", "u1");
+    invites::put_invite(&repo, &inv, 9999999999).await.unwrap();
+
+    let new_user = common::user("u2");
+    let membership = common::membership("u2", "g1", Role::Member);
+    invites::join_via_invite_tx(
+        &repo,
+        &inv,
+        &membership,
+        Some(&new_user),
+        "2026-06-10T00:00:00Z",
+        20,
+    )
+    .await
+    .unwrap();
+
+    let stored = persistence::users::get_user(&repo, &new_user.user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored, new_user);
+
+    let resolved = persistence::users::resolve_cognito_sub(&repo, &new_user.cognito_sub)
+        .await
+        .unwrap();
+    assert_eq!(resolved, Some(new_user.user_id));
+}
+
+#[tokio::test]
+async fn redemption_is_refused_once_the_group_is_at_its_member_cap() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g1", "u1");
+    g.member_count = 20;
+    persistence::groups::put_group(&repo, &g).await.unwrap();
+
+    let inv = common::invite("ATCAP001", "g1", "u1");
+    invites::put_invite(&repo, &inv, 9999999999).await.unwrap();
+
+    let membership = common::membership("u2", "g1", Role::Member);
+    let result =
+        invites::join_via_invite_tx(&repo, &inv, &membership, None, "2026-06-10T00:00:00Z", 20)
+            .await;
+
+    assert!(matches!(
+        result,
+        Err(persistence::RepoError::ConditionalCheckFailed)
+    ));
 }

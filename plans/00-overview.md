@@ -98,8 +98,10 @@ OpenNewsletter/
 │   │   ├── config.py               # env-specific settings (dev/prod)
 │   │   ├── data_stack.py           # DynamoDB
 │   │   ├── auth_stack.py           # Cognito user pool + IdPs + domain
-│   │   ├── media_stack.py          # S3 + CloudFront + image-process Lambda
+│   │   ├── media_persistent_stack.py  # S3 buckets + CloudFront (stable)
+│   │   ├── media_pipeline_stack.py    # image-process Lambda + S3 events (volatile)
 │   │   ├── api_stack.py            # HTTP API, all request Lambdas, routes
+│   │   ├── lambda_assets.py        # locates cargo-lambda build output for CDK assets
 │   │   ├── notifications_stack.py  # EventBridge schedules + tick Lambdas + Secrets
 │   │   ├── frontend_stack.py       # ACM cert + DNS records (Route53 if applicable)
 │   │   └── monitoring_stack.py     # CloudWatch dashboards + alarms + log groups

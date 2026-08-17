@@ -105,6 +105,21 @@ Open the printed `localhost:5173` URL. Navigate to `/admin/bootstrap-login` and 
 
 After M4 code lands:
 
+### Prerequisite: real Lambda binaries
+
+`ApiStack` substitutes a shell stub for any binary missing from
+`backend/target/lambda/`, so confirm the build works before deploying — otherwise
+every route returns nothing and the cause is invisible in CloudWatch:
+
+```sh
+cargo lambda --version || cargo install cargo-lambda
+make build-lambdas
+ls backend/target/lambda/groups-api/bootstrap   # must exist
+```
+
+On Ubuntu 20.04 this build fails inside `aws-lc-sys` under gcc 9
+(see blocker B6 in `plans/PROGRESS.md`). `sudo apt install clang` clears it.
+
 ### Bootstrap the real admin
 
 ```sh

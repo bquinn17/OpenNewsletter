@@ -1,6 +1,6 @@
 mod common;
 
-use domain::{CognitoSub, UserId};
+use domain::{AvatarId, CognitoSub, UserId};
 use persistence::users;
 use pretty_assertions::assert_eq;
 
@@ -90,4 +90,35 @@ async fn it_updates_last_login() {
             .unwrap()
             .with_timezone(&chrono::Utc)
     );
+}
+
+#[tokio::test]
+async fn it_updates_the_display_name_without_touching_other_fields() {
+    let (_c, repo) = common::make_repo().await;
+    let u = common::user("u4");
+    users::put_user(&repo, &u).await.unwrap();
+
+    users::update_profile(&repo, &u.user_id, Some("Quinn"), None, None)
+        .await
+        .unwrap();
+
+    let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
+    assert_eq!(got.display_name, "Quinn");
+    assert_eq!(got.avatar_color, u.avatar_color);
+    assert_eq!(got.email, u.email);
+}
+
+#[tokio::test]
+async fn it_clears_the_avatar_photo() {
+    let (_c, repo) = common::make_repo().await;
+    let mut u = common::user("u5");
+    u.avatar_media_id = Some(AvatarId::new("01HA7"));
+    users::put_user(&repo, &u).await.unwrap();
+
+    users::update_profile(&repo, &u.user_id, None, None, Some(None))
+        .await
+        .unwrap();
+
+    let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
+    assert_eq!(got.avatar_media_id, None);
 }

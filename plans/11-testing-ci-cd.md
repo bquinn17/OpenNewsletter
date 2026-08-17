@@ -59,6 +59,13 @@ Image-pipeline integration suite (matches `08-media-uploads.md` §10) running ag
 
 A test that loads `shared/openapi.yaml`, then for every defined route checks that the corresponding Rust request/response struct in `domain/api.rs` round-trips with example payloads in the YAML. Any drift fails CI.
 
+**Lands in M5**, alongside `shared/openapi.yaml` itself — see `12-build-order.md` M5 "OpenAPI contract". Two prerequisites the test depends on, both part of that milestone:
+
+- The YAML must exist. It does not today, so nothing enforces the mirror and the routes shipped in M4 were written from `03-api-contract.md` prose.
+- The Rust wire types must live in `domain/api.rs`. M4 put them in per-crate `dto.rs` files, which leaves the test no single target to check.
+
+Each route's YAML entry needs at least one `example` per request and response body; the test is only as good as those examples, so treat a missing example as a missing test.
+
 ### 2.4 Running locally
 
 By default, `cargo test` runs **unit tests only** — pure, no IO, no Docker, no AWS. This is the inner loop, intended to run on every save (`cargo watch -x test`).
@@ -88,7 +95,7 @@ CI runs `cargo test --features integration` on every backend PR, so coverage of 
 ## 3. CDK tests
 
 `infra/tests/test_stacks.py` using `aws_cdk.assertions`. For each stack, assert:
-- Expected resource counts (e.g. exactly 8 `AWS::Lambda::Function` in `ApiStack` — the eight request handlers in `01-infrastructure-cdk.md` §6.2; the tick Lambdas live in `NotificationsStack` and `lambda-image-process` in `MediaPipelineStack`).
+- Expected resource counts. `ApiStack` ends up with the eight request handlers from `01-infrastructure-cdk.md` §6.2, but they arrive milestone by milestone (M4 wires two: `lambda-invites` and `lambda-groups`), so assert on each handler's `FunctionName` rather than on a total count that is wrong until M11. Note the `PreSignUp` trigger is **not** in `ApiStack` — it lives in `AuthStack` alongside the user pool it attaches to (§6.2); the tick Lambdas live in `NotificationsStack` and `lambda-image-process` in `MediaPipelineStack`.
 - Cognito user pool has exactly two app clients (`frontend` + `admin-bootstrap`).
 - IAM policy templates for each Lambda role match the documented least-privilege scope.
 - API routes match `03-api-contract.md` (auth attached to all but the explicit list of public ones — and there should be ZERO public routes).

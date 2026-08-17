@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-08-09. Working document — update as milestones complete or
+Snapshot as of 2026-08-16. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -15,7 +15,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M2** | **Backend foundations (domain + persistence)** | ✅ **done** | See "M2 detail" below. All 64 tests green (`cargo test -p persistence`), fmt + clippy clean. Small follow-ups from the 2026-08-09 plan reconciliation listed under "M2 follow-ups". |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
-| M4 | Auth + bootstrap | ⬜ | Includes **creating `ApiStack`** (per updated `12-build-order.md`). PreSignUp trigger is a pass-through; no PostConfirmation trigger exists. |
+| **M4** | **Auth + bootstrap** | 🟡 **code-complete, deploy unverified** | See "M4 detail" below. All 101 backend tests + 34 CDK tests green; fmt/clippy/ruff/mypy clean; `cdk synth` clean for dev + prod. The done-when gate (curl `GET /me` with a real Cognito token) needs an AWS account — blocked on B5. |
 | M5 | Lifecycle engine + cycle CRUD | ⬜ | Includes **creating `NotificationsStack`** and wiring the dev tick routes into `ApiStack`. |
 | M6 | Responses + drafts | ⬜ | Drafts are last-write-wins — no version-conflict handling (`03-api-contract.md` §7.3). |
 | M7 | Frontend skeleton + auth | ⬜ (existing mock UI predates real API) | Commit `91188ba` shipped a rich mock-only UI; will need rework against real endpoints in M7. |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 is code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 and M4 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -80,11 +80,11 @@ All paths relative to `backend/`.
 - ✅ `keys.rs` unit tests in place (15 tests).
 - ✅ **Integration tests written and passing** — 49 tests across 9 files in `backend/crates/persistence/tests/`, run against `testcontainers-modules` / `amazon/dynamodb-local`. All green: `cargo test -p persistence` (49 integration + 15 `keys.rs` unit tests, 64 total). `cargo fmt --check` and `cargo clippy --workspace --tests --all-targets -- -D warnings` both clean.
 
-### M2 follow-ups (from the 2026-08-09 plan reconciliation — fold into M4–M8 work)
+### M2 follow-ups (from the 2026-08-09 plan reconciliation) — ✅ all folded in during M4
 
-- `ImageMedia` entity + `persistence/media.rs`: add the new `purpose: response|comment` attribute (`02` §2.10) — needed by M8/M10.
-- `shared/config.rs`: add `MAX_REMINDER_OFFSET_HOURS = 168` and the gradient/avatarColor slug lists (`03` §2.3/§4.3).
-- `domain/error.rs`: drop `RESPONSE_VERSION_CONFLICT`; add `LAST_ADMIN` and `CANDIDATE_PROMOTED` if not already present.
+- ~~`ImageMedia` entity + `persistence/media.rs`: add the new `purpose: response|comment` attribute~~ — `ImagePurpose` enum added to `domain/entities.rs` and threaded onto `ImageMedia`.
+- ~~`shared/config.rs`: add `MAX_REMINDER_OFFSET_HOURS = 168` and the gradient/avatarColor slug lists~~ — done, and `PATCH /groups/{g}` validates against them.
+- ~~`domain/error.rs`: drop `RESPONSE_VERSION_CONFLICT`~~ — dropped. `LAST_ADMIN` and `CANDIDATE_PROMOTED` were already present.
 
 ---
 
@@ -164,6 +164,60 @@ All paths relative to `infra/`.
 
 ---
 
+## M4 detail — what landed
+
+### Backend
+
+- **`shared` crate** — grew from config-only into the handler-boundary crate the repo layout always described:
+  - [`http.rs`](../backend/crates/shared/src/http.rs) — `AuthClaims` extraction from the API Gateway JWT authorizer, correlation-ID echo/mint, JSON body parsing, and the RFC-7807 problem response from `03` §1.1. 4 unit tests.
+  - [`telemetry.rs`](../backend/crates/shared/src/telemetry.rs) — JSON `tracing` subscriber for Lambda entry points.
+  - [`config.rs`](../backend/crates/shared/src/config.rs) — the three M2 follow-ups plus `INVITE_MAX_TTL_DAYS`, cycle/window bounds, and `derive_avatar_color()`.
+- **`domain`** — `ApiErrorCode` gained `as_str()`, `slug()`, `title()` (the wire fields of the problem body); `RESPONSE_VERSION_CONFLICT` removed; `ImagePurpose` added and threaded onto `ImageMedia`.
+- **`persistence`**
+  - [`auth.rs`](../backend/crates/persistence/src/auth.rs) — `resolve_user_id`, `require_user_id`, and `require_membership` (the tenant-isolation gate from `05` §11), each memoized in a `DashMap` for `MEMBERSHIP_CACHE_TTL_SECONDS`, plus explicit invalidation on role change / removal.
+  - [`expr.rs`](../backend/crates/persistence/src/expr.rs) — `set_fields()`, which binds every patch attribute to a `#f{n}` placeholder. Added after `timezone` (and then `name`) turned out to be DynamoDB reserved words; aliasing everything removes the whole class of bug rather than the two instances found.
+  - `join_via_invite_tx` now takes an optional new `User` and writes the `CognitoSubLookup` + `User` rows inside the same transaction (first-ever redemption, `05` §4.2).
+  - New: `groups::update_group` (targeted patch, so a concurrent join can't have `member_count` clobbered), `groups::update_membership_role`, `users::update_profile`, `users::get_users_batch` (one `BatchGetItem` for a group's member list).
+  - `invites::revoke` is now conditional on `status = pending`, so revoking a consumed invite fails instead of erasing the audit trail.
+- **`lambda-groups`** (binary `groups-api`) — `GET /healthz`, `GET /config`, `GET|PATCH /me`, `GET /groups`, `GET|PATCH /groups/{g}`, `DELETE|PATCH /groups/{g}/members/{u}`. Includes the last-admin guard on both removal and demotion, and full `03` §4.3 validation (IANA timezone via `chrono-tz`, gradient/avatarColor slugs, merged-then-validated cycle settings). 10 unit tests.
+- **`lambda-invites`** (binaries `invites-api` + `invites-presignup`) — `POST /admin/invites`, `GET /admin/groups/{g}/invites`, `POST /admin/invites/{code}/revoke`, `POST /invites/redeem`, plus the pass-through `PreSignUp` trigger. 12 unit tests.
+
+### Infrastructure
+
+- **[`api_stack.py`](../infra/opennewsletter/api_stack.py)** — HTTP API, CORS, Cognito JWT authorizer, 50/25 rps throttling, JSON access logs, the two handler Lambdas (arm64, `provided.al2023`, 256 MB, 10 s), and all 13 M4 routes. `_ROUTES` is the single list to extend as later milestones add handlers. Custom domain + API mapping in prod only.
+- **[`lambda_assets.py`](../infra/opennewsletter/lambda_assets.py)** — resolves `cargo lambda build` output, falling back to the shell stub so synth works on a machine that has never run the Rust build.
+- **`AuthStack`** — now owns the `PreSignUp` Lambda and its trigger, and no longer declares the `pendingInvite` custom attribute (the invite code rides in the OIDC `state` per `05` §1).
+- **[`bootstrap_admin.py`](../scripts/bootstrap_admin.py)** — creates the Cognito user, adds it to an informational `admins` group, and writes User + sub-lookup + Group + admin membership in one `TransactWriteItems`. IDs are UUID5-derived from the Cognito sub, so re-running is idempotent.
+
+### Tooling caught up to M4
+
+Three files still assumed ApiStack didn't exist; all now fixed:
+
+- **`Makefile`** — `deploy-dev` never built the Rust binaries. Now that `ApiStack` exists and silently substitutes the shell stub for a missing binary, that would have deployed stubs that answer every route with nothing. Added a `build-lambdas` target and made `deploy-dev` depend on it.
+- **`Makefile`** — `deploy-lambda LAMBDA=<name>` assumed the cargo binary name equals the CloudFormation function name. It doesn't any more (`groups-api` → `OpenNewsletter-Groups-dev`), so a `FUNCTION_<binary>` map was added. **Add a line to it whenever a new handler lands.**
+- **`write_frontend_env.py`** — dropped the `TODO-wire-in-M4` placeholder for `VITE_API_BASE_URL`; it now reads `ApiStack`'s `ApiEndpoint` output and warns when absent.
+
+Docs corrected alongside: `00` §4 repo layout (the media-stack split and `lambda_assets.py`), `11` §3 (the "exactly 8 Lambdas in `ApiStack`" assertion is wrong until M11, and `PreSignUp` isn't in that stack at all), `13` §8 (binary-vs-function naming), and `docs/RUNBOOK.md` §M4 (verify a real binary exists before deploying).
+
+### M4 coverage vs. plan
+
+- ✅ All 13 routes from `03` §13 wired, each behind the JWT authorizer (asserted by a test that walks every synthesized route).
+- ✅ `PreSignUp` pass-through; no `PostConfirmation` trigger.
+- ✅ `admin-bootstrap` Cognito app client — already existed from M3.
+- ✅ **101 backend tests** (up from 64) and **34 CDK tests** (up from 21), all green. `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `ruff check`, `mypy --strict`, and `cdk synth` for dev + prod all clean.
+- 🟡 **Done-when gate unverified** — needs a deployed stack and a real Cognito token (B5).
+
+### Decisions and deviations worth knowing
+
+- **The bearer token is the ID token, not the access token.** `03` §1 and `05` §4.1 contradicted each other; `05` §4.2's algorithm reads `jwt.email`/`jwt.name`, which only the ID token carries. Both docs now say ID token, and `POST /invites/redeem` returns `VALIDATION_FAILED` if the `email` claim is absent.
+- **Invite expiry is enforced in Rust, not in the transaction's condition expression.** `expires_at` is stored as RFC-3339 with a variable-width fractional part, so a lexicographic `<` against "now" is not reliably ordered at sub-second resolution. The condition keeps the `status = pending` guard (which is what actually prevents double-redemption); the expiry race it leaves open is microseconds wide.
+- **DynamoDB attribute names are snake_case, but `02-data-model-dynamodb.md` documents them as camelCase.** The snake_case naming is baked into M2's writers and its 73 tests. The HTTP contract is camelCase as specified, so the handlers map entities → DTOs explicitly. Worth reconciling `02` to match the code at some point; not worth churning M2 for.
+- **`GET /config` returns `userId: null` with an empty `memberships` array** when the JWT is valid but no `User` row exists — the pre-onboarding state `05` §6 calls for.
+- **Two binaries in `lambda-invites`** required naming them (`invites-api`, `invites-presignup`) rather than the usual `bootstrap`; `lambda-groups`' binary is `groups-api` for symmetry. Other Lambda crates still use `bootstrap`.
+- **Fixed in passing**: `seed_dev_data.py` wrote `avatar_color: "#4A90D9"` and a raw CSS `gradient`, neither of which is a valid slug under the reconciled `03` §2.3/§4.3 enums — both would have failed validation on the first `PATCH`.
+
+---
+
 ## Active blockers
 
 ### B4 — Pre-existing mock-only frontend will need replacement in M7
@@ -172,7 +226,20 @@ Commit `91188ba` shipped a rich UI built against in-memory mocks. M7's deliverab
 
 ### B5 — M1 operator tasks outstanding
 
-OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, DNS records, the real CloudFront signing keypair, VAPID keys in Secrets Manager, and `cdk bootstrap` of the dev account are still owed by the human operator. These are non-blocking for code work but block the M3/M3.5 deploy gates and any end-to-end auth verification in M4. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, DNS records, the real CloudFront signing keypair, VAPID keys in Secrets Manager, and `cdk bootstrap` of the dev account are still owed by the human operator. These are non-blocking for code work but block the M3/M3.5/M4 deploy gates and any end-to-end auth verification. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+
+### B6 — Lambda release builds fail on this machine's toolchain
+
+`cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). This host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the whole test suite are unaffected — the check is optimization-gated.
+
+Also: **`cargo-lambda` is not installed here**, so no Lambda artifact has ever been produced. `ApiStack` falls back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth still passes.
+
+Remediation, cheapest first:
+1. `sudo apt install clang && export CC=clang` — the aws-lc-sys check accepts clang.
+2. Install `cargo-lambda`, whose default zig-based cross-compile brings its own clang and likely sidesteps the host gcc entirely. This is the real production build path, so it is the one that actually needs to work.
+3. Failing both, switch the rustls dependency to the `ring` backend.
+
+Until this is resolved, `make deploy-lambda` and the `cargo lambda build` half of `make deploy-dev` cannot run locally.
 
 ---
 
@@ -185,9 +252,21 @@ OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, D
    ```bash
    source infra/.venv/bin/activate && npx aws-cdk@2 bootstrap aws://ACCOUNT_ID/us-east-1
    ```
-4. **Deploy and verify M3** (the `cdk deploy` half of the done-when gate) **and M3.5**: `make deploy-dev && make seed && make fe`
-   (see `docs/RUNBOOK.md` §M3/M3.5 for what to check).
-5. **Begin M4** (Auth + bootstrap): create `ApiStack`; `lambda-invites` (invite routes + the pass-through PreSignUp trigger binary — no invite logic in the trigger), `lambda-groups` (`/config`, `/me`, `/groups*`), `scripts/bootstrap_admin.py`. Fold in the "M2 follow-ups" listed above while touching those crates.
+4. **Clear B6** so a real Lambda artifact can be built: `sudo apt install clang` and/or install `cargo-lambda`. Until then every deploy would ship the shell stub.
+5. **Deploy and verify M3, M3.5 and M4**: `make deploy-dev && make seed && make fe`
+   (see `docs/RUNBOOK.md` §M3/M3.5 for what to check). For M4's gate specifically:
+   ```bash
+   python scripts/bootstrap_admin.py --env dev --admin-email me@example.com --group-name "Test"
+   # then, with the ID token the script's printed command returns:
+   curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"
+   ```
+6. **Begin M5** (Lifecycle engine + cycle CRUD): create `NotificationsStack`, `lambda-newsletters`, `lambda-questions`, the cycle-tick Lambda, and the "create-next-voting-cycle" logic — a group created by `bootstrap_admin.py` currently has no newsletter row. Wire the dev `POST /admin/dev/tick/*` routes into `ApiStack`'s `_ROUTES`. M5 also now owns **`shared/openapi.yaml`** and its contract test (see below).
+
+### Known gaps carried forward
+
+- **`shared/openapi.yaml` does not exist** — now **assigned to M5** (`12-build-order.md` M5, "OpenAPI contract"). Four docs plus three READMEs named it as the contract's source of truth while nothing created it, so M4's routes and DTOs were written from `03-api-contract.md` prose. M5 creates the YAML for every route through M5, adds `scripts/codegen_types.sh` (also referenced but missing), moves the M4 DTOs from per-crate `dto.rs` files into `domain/api.rs` so the `11` §2.3 contract test has a single target, and turns on that test. Every doc that referenced the file now says where it is and what is authoritative until then. It was deferred to M5 rather than M7 because the route count only grows.
+- **`ruff format` has never been applied repo-wide** — it would reformat 4 infra files untouched since M3. Only the files M4 touched were formatted, so `ruff format --check .` is still red on the others. `ruff check` (lint) is clean.
+- **`GET /config`'s membership list does one `GetItem` per group.** Fine at a handful of groups per user; if that grows, switch it to the `BatchGetItem` helper already added for member profiles.
 
 ---
 

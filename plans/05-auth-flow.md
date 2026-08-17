@@ -101,7 +101,7 @@ The single, canonical place where invites are consumed.
 
 ### 4.1 Inputs
 
-- `Authorization: Bearer {idToken or accessToken}` — caller is authenticated
+- `Authorization: Bearer {idToken}` — caller is authenticated. It must be the **ID token**: the algorithm below reads `jwt.email` and `jwt.name`, which the access token does not carry. A request that reaches this handler without an `email` claim is rejected with `VALIDATION_FAILED`.
 - Body: `{ "code": "ABCD-EFGH-JKMN-PQRS" }`
 
 ### 4.2 Algorithm

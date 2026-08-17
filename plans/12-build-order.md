@@ -122,6 +122,19 @@ Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
 - **Create `NotificationsStack`** (`01-infrastructure-cdk.md` §7 — EventBridge schedules + VAPID secret reference; this stack does not exist before M5) with `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5 on the 5-minute schedule. `lambda-notify-tick` joins the stack in M11. Wire the dev-only `POST /admin/dev/tick/*` routes into `ApiStack` now.
 - The "create-next-voting-cycle" logic that runs on group creation (in `bootstrap_admin.py` or in the group-creation transaction in `lambda-groups`).
 - Lifecycle integration test suite per `06-newsletter-lifecycle.md` §11.
+- **Establish `shared/openapi.yaml`** — see "OpenAPI contract" below.
+
+### OpenAPI contract (deferred from M4, owned here)
+
+`shared/openapi.yaml` is named as the contract's source of truth by `coding-standards.md` §1.12, `03-api-contract.md` §12, `00-overview.md` §4, and the §8 pre-flight checklist — but it was never created, so M4's routes and DTOs were written from `03-api-contract.md` prose directly. M5 is where that debt gets paid, before the route count grows further and the backlog becomes a slog.
+
+Deliverables:
+- **`shared/openapi.yaml`** — OpenAPI 3.1, hand-maintained, covering every route shipped through M5: M4's 13 (`03-api-contract.md` §2–§4) plus M5's newsletter and candidate-question routes (§5–§6). Include the `gradient` and `avatarColor` enums, which §2.3/§4.3 already designate this file as the canonical home for.
+- **Consolidate the Rust wire types into `backend/crates/domain/src/api.rs`.** M4 put them in per-crate `dto.rs` files (`lambda-groups/src/dto.rs`, `lambda-invites/src/dto.rs`), which works but gives the contract test no single target. Move them, re-export per crate, and keep entities (`domain/entities.rs`) separate from wire shapes — they are allowed to differ, and already do (DynamoDB attributes are snake_case, the HTTP contract is camelCase).
+- **`scripts/codegen_types.sh`** — runs `openapi-typescript` into `frontend/src/types/api.ts`. Referenced by `scripts/README.md` and `00-overview.md` §4; also missing. The frontend consumes its output starting in M7, but the script belongs with the YAML.
+- **The contract test from `11-testing-ci-cd.md` §2.3** — loads the YAML and round-trips each route's example payloads through the corresponding `domain/api.rs` struct. This is what makes the YAML authoritative rather than decorative.
+
+**Standing rule from M5 onward**: a milestone that adds or changes a route updates `shared/openapi.yaml` in the same PR. The §8 pre-flight already says this; it only becomes enforceable once the file and its contract test exist.
 
 **Done when**: a manual flow produces:
 1. A group is created with a `voting` cycle.
@@ -129,6 +142,8 @@ Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
 3. Tick is invoked manually with a fast-forwarded `responseOpenAt` → cycle transitions to `open`.
 4. Tick is invoked again with fast-forwarded `responseCloseAt` → cycle transitions to `published`.
 5. The next `voting` cycle was created automatically.
+
+AND `shared/openapi.yaml` describes every route through M5, with the §2.3 contract test green in CI.
 
 ---
 

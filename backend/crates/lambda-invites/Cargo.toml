@@ -4,6 +4,34 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+# Two entry points sharing one persistence module (`plans/05-auth-flow.md` §3):
+# the API routes, and the Cognito PreSignUp trigger.
 [[bin]]
-name = "bootstrap"
-path = "src/main.rs"
+name = "invites-api"
+path = "src/bin/api.rs"
+
+[[bin]]
+name = "invites-presignup"
+path = "src/bin/presignup.rs"
+
+[lib]
+name = "invites"
+path = "src/lib.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+persistence = { path = "../persistence" }
+shared = { path = "../shared" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+chrono.workspace = true
+lambda_http.workspace = true
+lambda_runtime.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

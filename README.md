@@ -7,7 +7,7 @@ A multi-tenant PWA where small groups of friends collaboratively produce a month
 - `frontend/` — React + TypeScript + Vite + Tailwind PWA
 - `backend/` — Rust workspace; one crate per Lambda plus shared libraries
 - `infra/` — AWS CDK in Python
-- `shared/openapi.yaml` — API contract; both sides codegen from it
+- `shared/openapi.yaml` — API contract; both sides codegen from it *(created in M5; until then `plans/03-api-contract.md` is the contract)*
 - `scripts/` — bootstrap, codegen, dev seed
 - `plans/` — design docs and milestone build order
 
