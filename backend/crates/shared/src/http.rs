@@ -70,6 +70,20 @@ pub fn parse_body<T: DeserializeOwned>(req: &Request) -> Result<T, ApiError> {
         .map_err(|e| ApiError::validation(format!("request body is not valid JSON: {e}")))
 }
 
+/// A single query-string parameter, or `None` when absent. Every query param this
+/// API defines (status enums, integers, base64url cursors) is already URL-safe, so
+/// this deliberately skips percent-decoding rather than pull in a dependency for it.
+pub fn query_param(req: &Request, key: &str) -> Option<String> {
+    let query = req.uri().query()?;
+    query.split('&').find_map(|pair| {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next()? != key {
+            return None;
+        }
+        Some(parts.next().unwrap_or("").to_owned())
+    })
+}
+
 pub fn json_response<T: Serialize>(status: u16, body: &T, correlation_id: &str) -> Response<Body> {
     let payload = match serde_json::to_string(body) {
         Ok(payload) => payload,
@@ -160,6 +174,26 @@ mod tests {
             .expect("valid test request");
         let err = auth_claims(&req).expect_err("no authorizer context");
         assert_eq!(err.code, ApiErrorCode::Unauthenticated);
+    }
+
+    #[test]
+    fn query_param_reads_a_matching_key() {
+        let req = HttpRequest::builder()
+            .uri("/groups/g1/newsletters?status=open&limit=10")
+            .body(Body::Empty)
+            .expect("valid test request");
+        assert_eq!(query_param(&req, "status").as_deref(), Some("open"));
+        assert_eq!(query_param(&req, "limit").as_deref(), Some("10"));
+        assert_eq!(query_param(&req, "cursor"), None);
+    }
+
+    #[test]
+    fn query_param_is_none_without_a_query_string() {
+        let req = HttpRequest::builder()
+            .uri("/groups/g1/newsletters")
+            .body(Body::Empty)
+            .expect("valid test request");
+        assert_eq!(query_param(&req, "status"), None);
     }
 
     #[test]

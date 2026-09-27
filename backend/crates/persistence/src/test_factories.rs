@@ -3,6 +3,110 @@
 use chrono::{TimeZone, Utc};
 use domain::*;
 
+/// Starts a fresh DynamoDB Local container and creates a uniquely-named table
+/// shaped like `OpenNewsletter` (base table + `gsi1` + `gsi2`). Mirrors
+/// `persistence/tests/common/mod.rs::make_repo`, exposed here so downstream
+/// crates' integration tests (e.g. `lambda-questions/tests/`) don't duplicate
+/// the table-shape setup. The caller must keep the returned `ContainerAsync`
+/// alive for the duration of the test (prefix it with `_`).
+pub async fn make_test_repo() -> (
+    testcontainers::ContainerAsync<testcontainers_modules::dynamodb_local::DynamoDb>,
+    crate::Repo,
+) {
+    use aws_sdk_dynamodb::{
+        config::{BehaviorVersion, Credentials, Region},
+        types::{
+            AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType,
+            Projection, ProjectionType, ScalarAttributeType,
+        },
+        Client,
+    };
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers_modules::dynamodb_local::DynamoDb;
+
+    let container = DynamoDb::default()
+        .start()
+        .await
+        .expect("DynamoDB local started");
+    let port = container
+        .get_host_port_ipv4(8000)
+        .await
+        .expect("DDB port available");
+
+    let endpoint = format!("http://localhost:{port}");
+    let creds = Credentials::new("fake", "fake", None, None, "test");
+    let config = aws_sdk_dynamodb::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .endpoint_url(&endpoint)
+        .region(Region::new("us-east-1"))
+        .credentials_provider(creds)
+        .build();
+    let client = Client::from_conf(config);
+
+    let table = format!("test-{}", uuid::Uuid::new_v4());
+
+    fn s_attr(name: &str) -> AttributeDefinition {
+        AttributeDefinition::builder()
+            .attribute_name(name)
+            .attribute_type(ScalarAttributeType::S)
+            .build()
+            .unwrap()
+    }
+    fn hash(name: &str) -> KeySchemaElement {
+        KeySchemaElement::builder()
+            .attribute_name(name)
+            .key_type(KeyType::Hash)
+            .build()
+            .unwrap()
+    }
+    fn range(name: &str) -> KeySchemaElement {
+        KeySchemaElement::builder()
+            .attribute_name(name)
+            .key_type(KeyType::Range)
+            .build()
+            .unwrap()
+    }
+    let all = Projection::builder()
+        .projection_type(ProjectionType::All)
+        .build();
+
+    client
+        .create_table()
+        .table_name(&table)
+        .attribute_definitions(s_attr("pk"))
+        .attribute_definitions(s_attr("sk"))
+        .attribute_definitions(s_attr("gsi1pk"))
+        .attribute_definitions(s_attr("gsi1sk"))
+        .attribute_definitions(s_attr("gsi2pk"))
+        .attribute_definitions(s_attr("gsi2sk"))
+        .billing_mode(BillingMode::PayPerRequest)
+        .key_schema(hash("pk"))
+        .key_schema(range("sk"))
+        .global_secondary_indexes(
+            GlobalSecondaryIndex::builder()
+                .index_name("gsi1")
+                .key_schema(hash("gsi1pk"))
+                .key_schema(range("gsi1sk"))
+                .projection(all.clone())
+                .build()
+                .unwrap(),
+        )
+        .global_secondary_indexes(
+            GlobalSecondaryIndex::builder()
+                .index_name("gsi2")
+                .key_schema(hash("gsi2pk"))
+                .key_schema(range("gsi2sk"))
+                .projection(all)
+                .build()
+                .unwrap(),
+        )
+        .send()
+        .await
+        .expect("create table");
+
+    (container, crate::Repo::new(client, table))
+}
+
 pub fn user(user_id: &str) -> User {
     User {
         user_id: UserId::new(user_id),
@@ -86,5 +190,35 @@ pub fn candidate(
         submitted_by: UserId::new(submitter),
         is_anonymous: false,
         submitted_at: Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(),
+    }
+}
+
+pub fn vote(user_id: &str, group_id: &str, cycle_id: &str, question_id: &str) -> CandidateVote {
+    CandidateVote {
+        user_id: UserId::new(user_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        question_id: QuestionId::new(question_id),
+        voted_at: Utc.with_ymd_and_hms(2026, 5, 15, 12, 0, 0).unwrap(),
+    }
+}
+
+pub fn locked_question(
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    submitter: &str,
+) -> LockedQuestion {
+    LockedQuestion {
+        question_id: QuestionId::new(question_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        kind: QuestionKind::Text,
+        prompt: "What's your favorite hike?".into(),
+        poll_options: None,
+        display_order: 0,
+        submitted_by: UserId::new(submitter),
+        is_anonymous: false,
+        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
     }
 }

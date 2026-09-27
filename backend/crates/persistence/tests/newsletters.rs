@@ -67,10 +67,13 @@ async fn it_finds_voting_cycles_due_via_gsi2() {
         .await
         .unwrap();
 
-    let due =
-        newsletters::list_cycles_due(&repo, NewsletterStatus::Voting, "2026-06-01T00:00:00+00:00")
-            .await
-            .unwrap();
+    let due = newsletters::list_cycles_due(
+        &repo,
+        NewsletterStatus::Voting,
+        Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].cycle_id, nl_due.cycle_id);
@@ -93,17 +96,16 @@ async fn write_status_transition_updates_gsi2_keys_on_status_change() {
         .unwrap();
 
     // Old status (Voting) must return empty.
-    let still_voting =
-        newsletters::list_cycles_due(&repo, NewsletterStatus::Voting, "2026-12-31T00:00:00+00:00")
-            .await
-            .unwrap();
+    let far_future = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
+    let still_voting = newsletters::list_cycles_due(&repo, NewsletterStatus::Voting, far_future)
+        .await
+        .unwrap();
     assert_eq!(still_voting.len(), 0);
 
     // New status (Open) must be found.
-    let open_due =
-        newsletters::list_cycles_due(&repo, NewsletterStatus::Open, "2026-12-31T00:00:00+00:00")
-            .await
-            .unwrap();
+    let open_due = newsletters::list_cycles_due(&repo, NewsletterStatus::Open, far_future)
+        .await
+        .unwrap();
     assert_eq!(open_due.len(), 1);
     assert_eq!(open_due[0].status, NewsletterStatus::Open);
 }

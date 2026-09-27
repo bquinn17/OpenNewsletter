@@ -30,14 +30,13 @@ async fn it_soft_deletes_a_comment() {
     let c = common::comment("g1", "202606", "q1", "u1", "u2", "cmt-01");
     engagement::put_comment(&repo, &c).await.unwrap();
 
-    let created_at_iso = c.created_at.to_rfc3339();
     engagement::soft_delete_comment(
         &repo,
         &GroupId::new("g1"),
         &CycleId::new("202606"),
         &QuestionId::new("q1"),
         &UserId::new("u1"),
-        &created_at_iso,
+        c.created_at,
         &c.comment_id,
         "2026-06-07T10:00:00+00:00",
     )

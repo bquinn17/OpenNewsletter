@@ -4,6 +4,33 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+name = "questions"
+path = "src/lib.rs"
+
 [[bin]]
-name = "bootstrap"
+name = "questions-api"
 path = "src/main.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+persistence = { path = "../persistence" }
+shared = { path = "../shared" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+chrono.workspace = true
+lambda_http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+cycle_tick = { path = "../lambda-cycle-tick", package = "lambda-cycle-tick" }
+persistence = { path = "../persistence", features = ["test-utils"] }
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+serde_dynamo.workspace = true

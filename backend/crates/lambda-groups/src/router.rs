@@ -1,8 +1,8 @@
 //! Method + path dispatch for the routes `ApiStack` points at this Lambda.
 
-use crate::dto::MembershipListResponse;
 use crate::state::AppState;
 use crate::{group_routes, me};
+use domain::api::MembershipListResponse;
 use domain::{ApiError, GroupId, UserId};
 use lambda_http::http::Method;
 use lambda_http::{Body, Request, RequestExt, Response};

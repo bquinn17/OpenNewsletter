@@ -6,6 +6,82 @@ This complements [`11-testing-ci-cd.md`](11-testing-ci-cd.md), which covers the 
 
 ---
 
+## 0. Workstation setup
+
+This repo is developed across two machines: the original Windows box (WSL2, Ubuntu 20.04) and, since it was cloned fresh there, an Apple Silicon Mac (macOS). Toolchain provisioning, the Docker backend, and a couple of compiler quirks differ enough between them that they're documented separately below. Everything else in this document (the `make` targets, the dev-stack workflow) is identical on both once setup is done.
+
+### 0.1 macOS (Apple Silicon)
+
+A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `python3` (3.9.6 — too old for `infra/`; use Homebrew's 3.12 instead).
+
+**First-time setup checklist**
+1. Rust:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+   ```
+   Open a new shell (or run `. "$HOME/.cargo/env"`) so `cargo` is on `PATH`; if rustup was installed with `--no-modify-path`, add that line to `~/.zshrc` yourself. `rust-toolchain.toml` then pulls stable + `rustfmt` + `clippy` automatically on first use.
+2. `brew install colima docker node coreutils` — macOS has no native Docker Engine (Colima supplies the daemon) and no `timeout` (coreutils supplies `gtimeout`).
+3. `colima start --cpu 4 --memory 6 --vm-type vz`. Colima points the `docker` CLI at itself automatically, but `testcontainers` (used by the Rust integration tests) needs its own env vars — add both to `~/.zshrc`:
+   ```bash
+   export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+   export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+   ```
+   Colima doesn't survive a reboot on its own — run `colima start` again afterward.
+4. `cargo-lambda` — only needed for deploy builds (`make build-lambdas` / `make deploy-*`), not for running tests. Homebrew refuses the tap unless it's explicitly trusted:
+   ```bash
+   brew tap cargo-lambda/cargo-lambda && brew trust cargo-lambda/cargo-lambda && brew install cargo-lambda
+   ```
+5. infra venv:
+   ```bash
+   cd infra && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   ```
+   The `typeguard~=2.13.3` pin (chosen for older Python compat, see `requirements.txt`) works fine on 3.12. The CDK CLI itself runs via `npx aws-cdk@2`, fetched on first use — no global install. `cdk.json` runs `python3 app.py`, so **activate the venv first** (`source infra/.venv/bin/activate`); otherwise macOS's system `python3` is used and synth fails with `No module named 'aws_cdk'`.
+6. The Apple clang toolchain means the gcc-9/`aws-lc-sys` release-build failure that hits WSL2 (§0.2, blocker B6 in `plans/PROGRESS.md`) does not apply here — nothing to do for it.
+
+**Verify your setup**
+```bash
+cargo --version
+docker info | grep "Server Version"
+node --version
+(cd infra && .venv/bin/pytest tests -q)        # expect all passed
+(cd backend && export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1)
+```
+
+**Fresh-clone gotcha (fixed, but worth knowing about)**: `.gitignore`'s `*.pem` rule used to also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, so a first clone had no signing key and `cdk synth` plus the 9 `MediaPersistentStack` tests failed. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key fixed this — a fresh clone should synth cleanly now.
+
+### 0.2 Windows / WSL2 (Ubuntu 20.04)
+
+This is the machine the repo was originally built on. Docker runs rootless under WSL2 on a non-default socket, and the stock compiler has a known incompatibility with one dependency.
+
+**First-time setup checklist**
+1. Rust via the same rustup one-liner as macOS; `rust-toolchain.toml` pulls the pinned components.
+2. Docker: rootless dockerd under WSL2, socket at `/mnt/wslg/runtime-dir/docker.sock` (not `/var/run/docker.sock`). `~/.profile` exports `DOCKER_HOST` for interactive shells, but non-login/non-interactive shells — CI steps, AI coding agents — never source it. See **"Running the Rust tests"** in `CLAUDE.md` for the authoritative command; the short version is to export it inline on every Docker-touching command:
+   ```bash
+   export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
+   ```
+   If the daemon isn't running, start it detached (a plain backgrounded `nohup` dies when the caller's process group is reaped):
+   ```bash
+   setsid nohup ~/bin/dockerd-rootless.sh > /tmp/dockerd.log 2>&1 < /dev/null & disown
+   ```
+3. Release/Lambda builds abort inside `aws-lc-sys` under this host's gcc 9.4 (no clang installed) — see [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189) and blocker B6 in `plans/PROGRESS.md`. Debug builds and the default test suite are unaffected — only optimized builds hit it. Fix: `sudo apt install clang && export CC=clang`; installing `cargo-lambda` (next step) also sidesteps it, since its zig-based cross-compile brings its own clang and is the actual production build path.
+4. `cargo-lambda`: `cargo install cargo-lambda`.
+5. infra venv: the system `python3` (Ubuntu 20.04 ships 3.8, which is what the `typeguard~=2.13.3` pin was originally chosen for):
+   ```bash
+   cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   ```
+6. Node: install per `.nvmrc` (Node 20) via `nvm`.
+
+**Verify your setup**
+```bash
+cargo --version
+docker info | grep "Server Version"     # SocketNotFoundError means DOCKER_HOST is wrong or the daemon is down, not a test bug
+node --version
+(cd infra && .venv/bin/pytest tests -q)
+(cd backend && export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1)
+```
+
+---
+
 ## 1. Goals & non-goals
 
 **Goals**
@@ -174,9 +250,11 @@ The change vs. the original plan: **integration tests are a CI responsibility, n
 
 If a CI integration test fails and you need to debug locally, opt in with `cargo test --features integration` and the same `testcontainers` path runs on your machine.
 
-### 10.1 Docker socket on WSL2 (required for any Docker-backed test)
+### 10.1 Docker socket by platform (required for any Docker-backed test)
 
-Docker here runs **rootless** under WSL2 and binds `unix:///mnt/wslg/runtime-dir/docker.sock`, not the conventional `/var/run/docker.sock`. `~/.profile` exports `DOCKER_HOST` for interactive terminals, but non-login/non-interactive shells — which is what CI steps and AI coding agents get — never source it. Export it inline on every command that touches Docker:
+Neither machine this repo is developed on uses the conventional `/var/run/docker.sock`, so `testcontainers` needs to be pointed at the right socket explicitly. Full first-time setup for each is in §0.
+
+**Windows/WSL2**: Docker runs **rootless** under WSL2 and binds `unix:///mnt/wslg/runtime-dir/docker.sock`. `~/.profile` exports `DOCKER_HOST` for interactive terminals, but non-login/non-interactive shells — which is what CI steps and AI coding agents get — never source it. Export it inline on every command that touches Docker:
 
 ```bash
 export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
@@ -188,7 +266,15 @@ If the daemon isn't running, start it detached (a plain backgrounded `nohup` die
 setsid nohup ~/bin/dockerd-rootless.sh > /tmp/dockerd.log 2>&1 < /dev/null & disown
 ```
 
-Symptom of a missing/misdirected socket: `SocketNotFoundError` panics out of `backend/crates/persistence/tests/common/mod.rs`. Verify with `docker info | grep "Server Version"` before blaming the tests.
+**macOS**: Docker runs inside Colima. `docker` CLI is pointed there automatically, but `testcontainers` needs both `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set (§0.1 has the one-time `~/.zshrc` addition); macOS also has no `timeout`, so use coreutils' `gtimeout`:
+
+```bash
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
+```
+
+If Colima isn't running: `colima start` (it doesn't survive a reboot on its own).
+
+Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError` panics out of `backend/crates/persistence/tests/common/mod.rs`. Verify with `docker info | grep "Server Version"` before blaming the tests.
 
 ---
 

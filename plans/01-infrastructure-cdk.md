@@ -14,12 +14,14 @@ Region: **us-east-1**. Account: single personal AWS account for both `dev` and `
 | `AuthStack` | Cognito user pool, IdPs, hosted UI domain | — |
 | `MediaPersistentStack` | S3 buckets (originals + processed), CloudFront distribution, KeyGroup | `DataStack` |
 | `MediaPipelineStack` | `lambda-image-process` and its S3 event subscription | `DataStack`, `MediaPersistentStack` |
-| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack` |
-| `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack`, `ApiStack` |
+| `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack`, `NotificationsStack` |
+| `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack` |
 | `FrontendStack` | ACM cert (`us-east-1`) + Route53 records (if Route53) | — |
 | `MonitoringStack` | CloudWatch dashboards + alarms | All others |
 
 CDK app entry point: `infra/app.py`. Uses `--context env=<dev|prod>` to select environment-specific config from `infra/opennewsletter/config.py`.
+
+**Correction (M5)**: this table originally listed `NotificationsStack` as depending on `ApiStack` (presumably for a future `lambda:InvokeFunction` grant onto `lambda-push`). That's backwards for what M5 actually needed: `ApiStack` wires the dev-only `POST /admin/dev/tick/cycle` route (§6, §11a) directly to `NotificationsStack`'s `cycle-tick` Lambda, which requires `ApiStack` to receive that Lambda as a constructor parameter — i.e. `ApiStack` depends on `NotificationsStack`, not the reverse. `app.py` instantiates `NotificationsStack` before `ApiStack` accordingly. When `lambda-notify-tick` needs to invoke `lambda-push` in M11, resolve it the way `MediaPipelineStack` avoids its own cyclic dependency on `MediaPersistentStack` (§5, `media_pipeline_stack.py`): import the target Lambda by ARN/name (`aws_lambda.Function.from_function_attributes`) inside `NotificationsStack` rather than passing the live construct, so no CDK-level cycle is created.
 
 ---
 
@@ -321,6 +323,8 @@ Group settings stored in DynamoDB override these defaults per-group; see `02-dat
 - **Memory**: 512 MB. **Timeout**: 60 s.
 - **Job**: Open / lock / close / publish cycles whose timestamps have passed. Driven by GSI2. See `06-newsletter-lifecycle.md` §3.
 - **IAM**: full RW on table; `lambda:InvokeFunction` on `lambda-push` (or call directly via async invoke).
+
+**M5 status**: the stack, schedule, and table RW grant above are built. The `lambda:InvokeFunction` grant on `lambda-push` isn't — that Lambda doesn't exist until M11, and cycle-tick has no push fan-out to do yet (§7.4's `lambda-notify-tick` owns that). No VAPID secret access is wired to `lambda-cycle-tick` either; only `lambda-notify-tick` needs it (§7.3).
 
 ### 7.3 `lambda-notify-tick`
 

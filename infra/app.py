@@ -16,6 +16,7 @@ from opennewsletter.frontend_stack import FrontendStack
 from opennewsletter.media_persistent_stack import MediaPersistentStack
 from opennewsletter.media_pipeline_stack import MediaPipelineStack
 from opennewsletter.monitoring_stack import MonitoringStack
+from opennewsletter.notifications_stack import NotificationsStack
 
 app = cdk.App()
 
@@ -55,6 +56,14 @@ media_pipeline_stack = MediaPipelineStack(
     env=aws_env,
 )
 
+notifications_stack = NotificationsStack(
+    app,
+    f"NotificationsStack{suffix}",
+    config=config,
+    table=data_stack.table,
+    env=aws_env,
+)
+
 api_stack = ApiStack(
     app,
     f"ApiStack{suffix}",
@@ -63,6 +72,7 @@ api_stack = ApiStack(
     user_pool=auth_stack.user_pool,
     user_pool_client=auth_stack.frontend_client,
     certificate=frontend_stack.certificate,
+    cycle_tick_fn=notifications_stack.cycle_tick_fn,
     env=aws_env,
 )
 

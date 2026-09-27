@@ -44,3 +44,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 once_cell = "1"
 dashmap = "6"
 rand = "0.8"
+base64 = "0.22"

@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-08-16. Working document — update as milestones complete or
+Snapshot as of 2026-09-26. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -16,7 +16,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
 | **M4** | **Auth + bootstrap** | 🟡 **code-complete, deploy unverified** | See "M4 detail" below. All 101 backend tests + 34 CDK tests green; fmt/clippy/ruff/mypy clean; `cdk synth` clean for dev + prod. The done-when gate (curl `GET /me` with a real Cognito token) needs an AWS account — blocked on B5. |
-| M5 | Lifecycle engine + cycle CRUD | ⬜ | Includes **creating `NotificationsStack`** and wiring the dev tick routes into `ApiStack`. |
+| **M5** | **Lifecycle engine + cycle CRUD** | 🟡 **code-complete, deploy unverified** | See "M5 detail" below. The manual done-when flow needs AWS (B5); an end-to-end DynamoDB Local test covers the same sequence. `shared/openapi.yaml` + contract test landed. |
 | M6 | Responses + drafts | ⬜ | Drafts are last-write-wins — no version-conflict handling (`03-api-contract.md` §7.3). |
 | M7 | Frontend skeleton + auth | ⬜ (existing mock UI predates real API) | Commit `91188ba` shipped a rich mock-only UI; will need rework against real endpoints in M7. |
 | M8 | Media pipeline | ⬜ | Scope grew on 2026-08-09: avatar buckets + `/avatar/*` CloudFront behavior (`01` §5), size-cap enforcement in `lambda-image-process` (`08` §3.2), dev signed-URL query-param mode (`08` §4.5). |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 and M4 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5, M4 and M5 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -218,6 +218,50 @@ Docs corrected alongside: `00` §4 repo layout (the media-stack split and `lambd
 
 ---
 
+## M5 detail — what landed (2026-09-26, first work on the macOS machine)
+
+### Backend
+
+- **`shared/src/cycle_time.rs`** — `first_day_of_next_month_local`, `cycle_id_for`, `next_cycle_schedule` (`06` §4/§5.4/§5.5). Ambiguous local midnight (DST fall-back) resolves to the earliest instant; a nonexistent midnight walks forward hour by hour. Tests cover December rollover, the `06` §11 #8 New York spring-forward case, a Southern-hemisphere zone and a fixed-offset zone.
+- **`persistence`**
+  - `newsletters.rs` — `find_voting_cycle`, `find_open_cycle`, `list_recent` (base64url cursor), `create_next_voting_cycle` (put-if-not-exists), `publish_cycle`, `upsert_tick_sentinel`, `rewind_active_cycle_deadline` (dev tick; picks `open` if present, else `voting`).
+  - `error.rs` — `RepoError::is_lost_race()`: condition-check / transaction-cancelled failures are now distinguishable, so the tick logs lost races at INFO and moves on (`06` §8).
+  - **Key-timestamp normalization** — `keys::key_timestamp()` is now the only way a timestamp enters a key attribute (fixed-width `YYYY-MM-DDTHH:MM:SSZ`). Rust writers had been using `to_rfc3339()` (`+00:00`, variable fractional part) while the Python scripts and sentinel used `Z`, so the tick's lexicographic `gsi2sk <= now` comparison was only right by luck at sub-second edges. `newsletter_gsi2sk`, `image_gsi1sk` and `comment_sk` now take `DateTime<Utc>` so a raw string can't be passed. Documented in `02` §1.
+- **`lambda-cycle-tick`** (binary `cycle-tick`) — one binary serves the EventBridge schedule and `POST /admin/dev/tick/cycle` (branches on `requestContext.http`; plain `lambda_runtime`, because `lambda_http` can't deserialize a scheduled-event payload). Dev route: 404 unless `ENV=dev`, admin checks per `03` §11a.1, returns `{ "transitions": [{ groupId, cycleId, from, to }] }` (`from: null` = newly created cycle). Notification fan-out is a no-op hook in `notify.rs` until M11. Has a `lib.rs` so tests can call `tick::run_tick`.
+- **`lambda-newsletters`** (binary `newsletters-api`) — `GET /groups/{g}/newsletters` (paginated, `myDraftCount`/`myPublishedCount`) and `GET /groups/{g}/newsletters/{c}` for all four statuses (`archived` → 410 `NEWSLETTER_ARCHIVED`, a new error code).
+- **`lambda-questions`** (binary `questions-api`) — candidate list/create, vote cast/withdraw (idempotent, vote-cap enforced), admin `DELETE /admin/groups/{g}/candidate-questions/{q}` with vote cascade and `CANDIDATE_PROMOTED`.
+- **`lambda-groups`** — `PATCH /groups/{g}` reschedules the current `voting` cycle when `responseWindowDays`/`timezone` change and the cycle has no candidates (`06` §6; if the recomputed `cycleId` would differ, the row is left alone — documented there).
+- **Scripts** — `bootstrap_admin.py` writes the group's first `voting` Newsletter in the same transaction as the group (Python schedule math verified against the Rust cases). `seed_dev_data.py` had been writing a UUID-hash `cycle_id` instead of `yyyymm` and was missing `published_at`/`next_transition_at`; fixed.
+
+### OpenAPI contract (deferred from M4)
+
+- **`shared/openapi.yaml`** — OpenAPI 3.1 for every route through M5 (M4's 13 + M5's 7). `redocly lint`: 0 errors, 2 intentional warnings (no `info.license`, placeholder server URLs).
+- **`domain/src/api.rs`** — all wire DTOs, moved out of the per-crate `dto.rs` files (deleted).
+- **`domain/tests/openapi_contract.rs`** — round-trips every YAML example through its `domain::api` type via `ROUTE_TABLE`; a YAML example without a table row, or vice versa, fails. Also asserts the `gradient`/`avatarColor` enums match `shared/src/config.rs`.
+- **`scripts/codegen_types.sh`** → `frontend/src/types/api.ts` (generated, committed).
+- **Real bug fixed in passing**: `GroupResponse` embedded the `CycleSettings`/`NotificationSettings` *entities*, which serialize snake_case, so `GET|PATCH /groups/{g}` returned snake_case settings inside a camelCase body. Now mapped through camelCase wire types.
+
+### Infrastructure
+
+- **`NotificationsStack`** (new) — cycle-tick Lambda (512 MB / 60 s) on a `rate(5 minutes)` EventBridge rule. `lambda-notify-tick` joins in M11.
+- **`ApiStack`** — `Newsletters` + `Questions` Lambdas and the 7 M5 routes; `POST /admin/dev/tick/cycle` → cycle-tick, **dev only** (asserted absent from prod). `ApiStack` depends on `NotificationsStack`, never the reverse; `01` §1's dependency table was backwards and is corrected.
+- **Fresh-clone fix** — `.gitignore`'s `*.pem` rule had swallowed `infra/keys/cf-signing.pub.pem`, so it only ever existed on the Windows machine; a fresh clone failed `cdk synth` and 9 CDK tests. Added `!infra/keys/*.pub.pem` and committed a new placeholder public key (private half discarded; the operator still generates the real pair in M1).
+
+### M5 coverage vs. plan
+
+- ✅ All deliverables in `12` M5, including the `06` §11 lifecycle tests (items 1–5, 7, 8 in `persistence/tests/lifecycle.rs`; item 6 is M4's `invites.rs` member-cap test).
+- ✅ **End-to-end lifecycle test** (`lambda-questions/tests/lifecycle.rs`) — candidates + votes through the real handlers → rewind → tick → `open` with top-N locked → rewind → tick → `published` → next `voting` cycle exists. Stands in for the manual done-when flow until AWS is available.
+- ✅ Verified on macOS: `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -D warnings`, `cargo test --workspace --all-features` — **167 tests, 0 failures** (DynamoDB Local via Colima), `pytest infra/tests` (40), `cdk synth` dev + prod.
+- 🟡 **Done-when manual flow unverified** — needs a deployed stack (B5).
+
+### Decisions worth knowing
+
+- Admin candidate delete has no `cycleId` in its path: it checks the current `voting` cycle, then the current `open` cycle's locked questions (→ `CANDIDATE_PROMOTED`). There's no "voters of question X" access pattern, so the vote cascade deletes per group member (bounded by `memberSoftCap`). Both documented in `03` §6.5.
+- `GET /candidate-questions` defaults to `sort=top` and pages in memory (small groups); the `open`-status newsletter shape was unspecified and is now documented in `03` §5.
+- Test pollution: `persistence::auth`'s membership cache is process-wide, so integration tests must use unique group IDs or one test's cached role leaks into another.
+
+---
+
 ## Active blockers
 
 ### B4 — Pre-existing mock-only frontend will need replacement in M7
@@ -228,45 +272,38 @@ Commit `91188ba` shipped a rich UI built against in-memory mocks. M7's deliverab
 
 OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, DNS records, the real CloudFront signing keypair, VAPID keys in Secrets Manager, and `cdk bootstrap` of the dev account are still owed by the human operator. These are non-blocking for code work but block the M3/M3.5/M4 deploy gates and any end-to-end auth verification. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
-### B6 — Lambda release builds fail on this machine's toolchain
+### B6 — Lambda release builds (Windows/WSL2 only) + `cargo-lambda` not installed anywhere
 
-`cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). This host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the whole test suite are unaffected — the check is optimization-gated.
+**Windows/WSL2**: `cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). That host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the test suite are unaffected. Fix: `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain; failing both, switch rustls to the `ring` backend.
 
-Also: **`cargo-lambda` is not installed here**, so no Lambda artifact has ever been produced. `ApiStack` falls back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth still passes.
+**macOS**: the gcc issue doesn't apply (Apple clang). `cargo-lambda` is not installed because Homebrew refuses its third-party tap until the user trusts it — an operator decision: `brew tap cargo-lambda/cargo-lambda && brew trust cargo-lambda/cargo-lambda && brew install cargo-lambda`.
 
-Remediation, cheapest first:
-1. `sudo apt install clang && export CC=clang` — the aws-lc-sys check accepts clang.
-2. Install `cargo-lambda`, whose default zig-based cross-compile brings its own clang and likely sidesteps the host gcc entirely. This is the real production build path, so it is the one that actually needs to work.
-3. Failing both, switch the rustls dependency to the `ring` backend.
-
-Until this is resolved, `make deploy-lambda` and the `cargo lambda build` half of `make deploy-dev` cannot run locally.
+On both machines no Lambda artifact has ever been produced. `ApiStack`/`NotificationsStack` fall back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth passes — deploying before this is cleared would ship stubs.
 
 ---
 
 ## Suggested next steps (in order)
 
-1. ~~Verify CDK synth~~ — done 2026-07-14 (`cdk synth` clean for `dev` and `prod`, `pytest infra/tests/` 21/21, `ruff`/`mypy` clean). Note: `infra/.venv` is gitignored and not committed — recreate with `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`. The `cdk` CLI isn't installed globally in this environment either; invoke it via `npx aws-cdk@2 <command>`.
-2. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS) to clear B5 and enable end-to-end deploy.
-   See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the full step-by-step.
+1. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS, real CloudFront keypair) to clear B5. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+2. **Install `cargo-lambda`** (B6) on whichever machine will deploy.
 3. **Bootstrap CDK** in the dev AWS account:
    ```bash
    source infra/.venv/bin/activate && npx aws-cdk@2 bootstrap aws://ACCOUNT_ID/us-east-1
    ```
-4. **Clear B6** so a real Lambda artifact can be built: `sudo apt install clang` and/or install `cargo-lambda`. Until then every deploy would ship the shell stub.
-5. **Deploy and verify M3, M3.5 and M4**: `make deploy-dev && make seed && make fe`
-   (see `docs/RUNBOOK.md` §M3/M3.5 for what to check). For M4's gate specifically:
-   ```bash
-   python scripts/bootstrap_admin.py --env dev --admin-email me@example.com --group-name "Test"
-   # then, with the ID token the script's printed command returns:
-   curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"
-   ```
-6. **Begin M5** (Lifecycle engine + cycle CRUD): create `NotificationsStack`, `lambda-newsletters`, `lambda-questions`, the cycle-tick Lambda, and the "create-next-voting-cycle" logic — a group created by `bootstrap_admin.py` currently has no newsletter row. Wire the dev `POST /admin/dev/tick/*` routes into `ApiStack`'s `_ROUTES`. M5 also now owns **`shared/openapi.yaml`** and its contract test (see below).
+4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
+5. **Begin M6** (Responses + drafts): `lambda-responses` per `03` §7, last-write-wins drafts. Standing rule from M5: every new/changed route updates `shared/openapi.yaml` + `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-run `scripts/codegen_types.sh`.
+
+Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
-- **`shared/openapi.yaml` does not exist** — now **assigned to M5** (`12-build-order.md` M5, "OpenAPI contract"). Four docs plus three READMEs named it as the contract's source of truth while nothing created it, so M4's routes and DTOs were written from `03-api-contract.md` prose. M5 creates the YAML for every route through M5, adds `scripts/codegen_types.sh` (also referenced but missing), moves the M4 DTOs from per-crate `dto.rs` files into `domain/api.rs` so the `11` §2.3 contract test has a single target, and turns on that test. Every doc that referenced the file now says where it is and what is authoritative until then. It was deferred to M5 rather than M7 because the route count only grows.
-- **`ruff format` has never been applied repo-wide** — it would reformat 4 infra files untouched since M3. Only the files M4 touched were formatted, so `ruff format --check .` is still red on the others. `ruff check` (lint) is clean.
-- **`GET /config`'s membership list does one `GetItem` per group.** Fine at a handful of groups per user; if that grows, switch it to the `BatchGetItem` helper already added for member profiles.
+- **`GET /healthz` returns only `{"status":"ok"}`** — `03` documents `version`/`buildAt` too. The YAML and `HealthResponse` describe what ships today.
+- **Problem responses never populate `fieldErrors`** — `shared::http::problem_response` has a fixed key set; `ProblemDetails.field_errors` exists in `domain::api` per `03` §1.1 but nothing fills it. `VOTE_CAP_REACHED` puts its already-voted list in `detail` for the same reason.
+- **`02-data-model-dynamodb.md` documents attributes as camelCase; the code writes snake_case** (carried from M4).
+- **`ruff format` has never been applied repo-wide** — would reformat 4 infra files untouched since M3. `ruff check` is clean.
+- **`GET /config`'s membership list does one `GetItem` per group.** Switch to the `BatchGetItem` helper if group counts grow.
+- **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`; harmless, but if it creeps up again, box the dispatch futures.
+- **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
 
 ---
 

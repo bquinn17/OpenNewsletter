@@ -12,6 +12,8 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
+No `nvm`? `brew install node` (macOS) gives a current Node 20.x that satisfies `.nvmrc` — skip `nvm use`. See [`../plans/13-dev-environments.md` §0](../plans/13-dev-environments.md#0-workstation-setup) for full first-time setup per OS.
+
 Other scripts:
 
 ```bash

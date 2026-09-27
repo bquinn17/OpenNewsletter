@@ -18,6 +18,8 @@ Two GSIs:
 
 All keys are strings. All ID values are UUIDv7 unless noted.
 
+**Key-timestamp format.** Any timestamp embedded in a key attribute (`pk`/`sk`/`gsi1*`/`gsi2*`) — or compared against one in a key-condition expression, such as the tick's `gsi2sk <= {nowISO}#~~~` bound — MUST use the fixed-width form `YYYY-MM-DDTHH:MM:SSZ` (whole seconds, `Z` suffix, no fractional part), produced by `persistence::keys::key_timestamp` (Rust: `DateTime::to_rfc3339_opts(SecondsFormat::Secs, true)`; Python: `dt.strftime("%Y-%m-%dT%H:%M:%SZ")`). Plain `DateTime::to_rfc3339()` is unsafe here: it emits `+00:00` instead of `Z` and a variable-width fractional part whenever the instant has non-zero nanoseconds, so two timestamps in the same second can sort inconsistently against each other. Elsewhere in this document, "ISO-8601" for a non-key application attribute (serialized via `serde_dynamo`) is unaffected by this rule and may keep the default `to_rfc3339()` form.
+
 ---
 
 ## 2. Entity catalog
@@ -129,7 +131,7 @@ The unit of an edition for one group.
 | `pk` | `GROUP#{groupId}` |
 | `sk` | `NL#{yyyymm}` |
 | `gsi2pk` | `NL_STATUS#{status}` |
-| `gsi2sk` | `{nextTransitionAt}#{groupId}#{yyyymm}` |
+| `gsi2sk` | `{nextTransitionAt}#{groupId}#{yyyymm}` — `nextTransitionAt` in the canonical key-timestamp format (§1), or the sentinel `9999-12-31T00:00:00Z` in a terminal state |
 | `entity` | `Newsletter` |
 | `groupId` | UUIDv7 |
 | `cycleId` | string `yyyymm` (e.g. `202605`) |
@@ -149,7 +151,7 @@ State machine fully specified in `06-newsletter-lifecycle.md`.
 Access patterns:
 - "List newsletters for a group" → `Query pk=GROUP#{groupId} AND begins_with(sk, NL#)` (DESC by sk = most recent first)
 - "Find a specific edition" → `GetItem pk=GROUP#{groupId} sk=NL#{yyyymm}`
-- "Find all cycles whose next transition is due" → `Query GSI2 gsi2pk=NL_STATUS#{status} AND gsi2sk <= {nowISO}#~~~` for each non-terminal status
+- "Find all cycles whose next transition is due" → `Query GSI2 gsi2pk=NL_STATUS#{status} AND gsi2sk <= {nowKeyTimestamp}#~~~` for each non-terminal status, where `nowKeyTimestamp` is `now` formatted per the key-timestamp rule in §1 (truncated to whole seconds — a cycle due at exactly that second still matches, since the comparison is `<=`)
 
 ### 2.6 Candidate question (in voting pool)
 
@@ -259,7 +261,7 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `pk` | `GROUP#{groupId}#NL#{cycleId}` |
 | `sk` | `IMG#{imageId}` |
 | `gsi1pk` | `USER#{userId}#IMG` |
-| `gsi1sk` | `{uploadedAt}#{imageId}` |
+| `gsi1sk` | `{uploadedAt}#{imageId}` — `uploadedAt` in the canonical key-timestamp format (§1) |
 | `entity` | `ImageMedia` |
 | `imageId` | UUIDv7 |
 | `userId` | userId (uploader) |
@@ -285,7 +287,7 @@ Flat reply to a published response.
 | Attr | Value |
 |---|---|
 | `pk` | `GROUP#{groupId}#NL#{cycleId}#Q#{questionId}#A#{answerUserId}` |
-| `sk` | `C#{createdAt}#{commentId}` |
+| `sk` | `C#{createdAt}#{commentId}` — `createdAt` in the canonical key-timestamp format (§1) |
 | `entity` | `Comment` |
 | `commentId` | UUIDv7 |
 | `authorUserId` | UUIDv7 |
@@ -471,13 +473,13 @@ For admin-only operations: the cached membership must have `role=admin`.
 Without GSI2 we'd scan the table. With GSI2:
 
 ```
-Query GSI2 where gsi2pk = "NL_STATUS#voting" AND gsi2sk <= "{nowISO}#~~~"
-Query GSI2 where gsi2pk = "NL_STATUS#open"   AND gsi2sk <= "{nowISO}#~~~"
+Query GSI2 where gsi2pk = "NL_STATUS#voting" AND gsi2sk <= "{nowKeyTimestamp}#~~~"
+Query GSI2 where gsi2pk = "NL_STATUS#open"   AND gsi2sk <= "{nowKeyTimestamp}#~~~"
 ```
 
-Two cheap queries per tick; processes only items whose transition is actually due.
+Two cheap queries per tick; processes only items whose transition is actually due. `{nowKeyTimestamp}` and every `nextTransitionAt` written into `gsi2sk` go through the same formatter (`persistence::keys::key_timestamp`) so the comparison sorts consistently — see the key-timestamp rule in §1.
 
-When a cycle changes status, the writer recomputes `gsi2pk` (new status) and `gsi2sk` (new `nextTransitionAt`). All such writes go through helper `persistence::cycle::write_status_transition` to ensure GSI keys stay in sync.
+When a cycle changes status, the writer recomputes `gsi2pk` (new status) and `gsi2sk` (new `nextTransitionAt`, via `persistence::keys::newsletter_gsi2sk`/`newsletter_gsi2sk_sentinel`). All such writes go through helper `persistence::newsletters::write_status_transition` to ensure GSI keys stay in sync.
 
 ---
 

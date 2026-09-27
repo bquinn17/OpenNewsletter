@@ -2,12 +2,12 @@
 //! (`plans/03-api-contract.md` §3, `plans/05-auth-flow.md` §4).
 
 use crate::code;
-use crate::dto::{
+use crate::state::AppState;
+use chrono::{Duration, Utc};
+use domain::api::{
     CreateInviteRequest, CreateInviteResponse, InviteListResponse, InviteSummary, RedeemRequest,
     RedeemResponse,
 };
-use crate::state::AppState;
-use chrono::{Duration, Utc};
 use domain::{
     ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Invite, InviteCode, InviteStatus,
     User, UserId,

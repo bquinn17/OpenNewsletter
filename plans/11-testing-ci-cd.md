@@ -57,12 +57,9 @@ Image-pipeline integration suite (matches `08-media-uploads.md` §10) running ag
 
 ### 2.3 Contract test
 
-A test that loads `shared/openapi.yaml`, then for every defined route checks that the corresponding Rust request/response struct in `domain/api.rs` round-trips with example payloads in the YAML. Any drift fails CI.
+`backend/crates/domain/tests/openapi_contract.rs` loads `shared/openapi.yaml`, then for every defined route checks that the corresponding Rust request/response struct in `domain/api.rs` round-trips with example payloads in the YAML, via an explicit `ROUTE_TABLE` mapping `(method, path, "request"|status) -> type`. Any drift fails CI, in either direction: a YAML example with no table entry fails, and a table entry with no matching YAML example fails. It also asserts the `GradientSlug`/`AvatarColorSlug` enums in the YAML match `shared::config::GRADIENT_SLUGS`/`AVATAR_COLOR_SLUGS`. Runs under plain `cargo test -p domain` — no Docker.
 
-**Lands in M5**, alongside `shared/openapi.yaml` itself — see `12-build-order.md` M5 "OpenAPI contract". Two prerequisites the test depends on, both part of that milestone:
-
-- The YAML must exist. It does not today, so nothing enforces the mirror and the routes shipped in M4 were written from `03-api-contract.md` prose.
-- The Rust wire types must live in `domain/api.rs`. M4 put them in per-crate `dto.rs` files, which leaves the test no single target to check.
+Landed in M5 alongside `shared/openapi.yaml` itself — see `12-build-order.md` M5 "OpenAPI contract". A route added in a later milestone needs both a YAML example and a `ROUTE_TABLE` row in the same PR, or this test fails.
 
 Each route's YAML entry needs at least one `example` per request and response body; the test is only as good as those examples, so treat a missing example as a missing test.
 

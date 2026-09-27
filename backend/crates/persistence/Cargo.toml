@@ -6,7 +6,10 @@ license.workspace = true
 
 [features]
 default = []
-test-utils = []
+# Also pulls in testcontainers so downstream crates' integration tests can call
+# `test_factories::make_test_repo()` without duplicating the DDB-local table setup
+# (`plans/03-api-contract.md` M5 test guidance — see `lambda-questions/tests/`).
+test-utils = ["dep:testcontainers", "dep:testcontainers-modules"]
 
 [dependencies]
 domain = { path = "../domain" }
@@ -18,10 +21,14 @@ serde_dynamo.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
 async-trait.workspace = true
 uuid.workspace = true
 once_cell.workspace = true
 dashmap.workspace = true
+base64.workspace = true
+testcontainers = { workspace = true, optional = true }
+testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

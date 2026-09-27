@@ -4,7 +4,7 @@ This is the source-of-truth list of every HTTP endpoint OpenNewsletter exposes. 
 
 A canonical OpenAPI 3.1 document lives at `shared/openapi.yaml`. This Markdown is the human-readable mirror; the YAML is what gets codegen'd into TS types and Rust route stubs.
 
-> **Status**: the YAML does not exist yet — it is an M5 deliverable (`12-build-order.md` M5, "OpenAPI contract"). Until it lands, **this document is the contract**, and the routes shipped in M4 were written from it directly. Once the YAML exists, the relationship inverts: it becomes authoritative and this file becomes the mirror.
+> **Status**: `shared/openapi.yaml` now exists (landed in M5, "OpenAPI contract") and covers every route through M4 (§2-§4, §13). **It is now authoritative; this document is the human-readable mirror.** M5's own newsletter and candidate-question routes (§5-§6) are added to the YAML separately — check there for the current source of truth on any drift.
 
 ---
 
@@ -53,6 +53,7 @@ Error code catalog (machine-readable codes; `fieldErrors[].code` is a subset):
 | `CYCLE_NOT_PUBLISHED` | 409 | Action requires cycle in `published` status |
 | `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin |
 | `CANDIDATE_PROMOTED` | 409 | Candidate already locked into a cycle; can no longer be deleted |
+| `NEWSLETTER_ARCHIVED` | 410 | Cycle has transitioned to `archived`; see `10-archival.md` (not reachable until archival ships) |
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
@@ -317,6 +318,10 @@ Response 200 (published):
 
 Image URLs are absolute CloudFront URLs. The frontend MUST first call `/media-cookie` (§9.5) to receive signed cookies before requesting any image.
 
+**M5 implementation note — `open` response shape** (not otherwise pinned down above): each locked question carries `questionId`, `kind`, `prompt`, `displayOrder`, `askedBy` (redacted per the same anonymity rule as candidates), `isAnonymous`, `pollOptions` (poll questions only), and `myResponse` — `null` if the caller has no draft yet, else `{ responseId, status, body, imageMediaIds, pollOptionId, updatedAt, publishedAt }`. See `domain::api::OpenQuestionResponse` for the exact shape; `shared/openapi.yaml` is authoritative.
+
+**M5 implementation note — admin candidate delete and cycle resolution** (§6.5): the route carries no `cycleId`, but a `CandidateQuestion` row is stored under its cycle's key. `lambda-questions` resolves this by checking, in order: (1) the group's current `voting` cycle's candidate pool — if found there, it's still deletable; (2) the group's current `open` cycle's locked questions — a match there means the candidate was promoted between when the admin loaded the list and when the delete arrived, so it returns `CANDIDATE_PROMOTED`; (3) the `open` cycle's own (unpromoted, leftover) candidate rows, still deletable; otherwise `NOT_FOUND`. A group has at most one cycle in each of those two statuses at a time, so this fully covers the promotion race without needing a `cycleId` on the route.
+
 ---
 
 ## 6. Candidate question routes (voting pool)
@@ -364,7 +369,7 @@ Response 200:
 
 `askedBy`, when populated, has shape `{ userId, displayName, avatarColor, avatarUrl }` — mirroring the member-listing avatar fields so the UI can render a small avatar swatch next to the asker. It's populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
-`sort=top` uses AP11 (GSI1, ScanIndexForward=false). `sort=recent` uses AP10 with sort by `submittedAt`.
+`sort=top` uses AP11 (GSI1, ScanIndexForward=false). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. **M5 implementation note:** since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory rather than threading AP11's GSI1 cursor — both sort orders and the `cursor`/`limit` contract behave identically to the client either way.
 
 ### 6.2 `POST /groups/{groupId}/candidate-questions`
 
@@ -405,7 +410,7 @@ Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exi
 
 Casts an upvote. Idempotent (re-POSTing returns 200 with current state).
 
-Implementation: `TransactWriteItems` per `02-data-model-dynamodb.md` §4 transaction #1, with a precondition that counts the caller's existing votes against `votesPerUserPerCycle`. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on.
+Implementation: `TransactWriteItems` per `02-data-model-dynamodb.md` §4 transaction #1, with a precondition that counts the caller's existing votes against `votesPerUserPerCycle`. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on. **M5 implementation note:** that list is carried in the problem body's free-text `detail` field (comma-separated question IDs), not a new structured field — `03-api-contract.md` §1.1's Problem Details shape only has `fieldErrors` for per-field validation issues, which doesn't fit a cap-conflict error.
 
 Response 200:
 ```json
@@ -423,6 +428,8 @@ Response 200: same shape as 6.3.
 There is **no admin curate / promote / override** surface in v1. The cycle tick is the source of truth for which candidates promote, and locked questions are immutable. See `06-newsletter-lifecycle.md` §7. The only admin-side mutation on candidates:
 
 - `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate while it's still in `voting` (e.g., abusive). Removes votes too via batch delete. Returns 409 `CANDIDATE_PROMOTED` if the candidate has already been locked into a cycle.
+
+**M5 implementation note — vote cascade:** `02-data-model-dynamodb.md`'s access-pattern list has no "list voters of question X" pattern (`CandidateVote` is keyed by voter, not by question), so there is no efficient query for "every vote on this candidate." Scanning the whole table for one admin action would be worse. `lambda-questions` instead iterates the group's membership list (AP3, bounded by `memberSoftCap`) and issues one best-effort delete per member against that member's `(cycle, questionId)` vote key — deleting an absent item is a no-op, so no existence check is needed first. This is O(members) requests on a rare, admin-only action, not a hot path.
 
 ---
 
@@ -655,7 +662,9 @@ These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT
 
 Synchronously invokes the cycle-tick handler. Optional body `{ "groupId"?: "01H...", "advanceCycleClosesBy"?: "5m"|"1h"|... }`. When `advanceCycleClosesBy` is present, `groupId` is **required** and the caller must be an admin of that group: the group's active cycle has its `nextTransitionAt` (and the matching `responseOpenAt`/`responseCloseAt` field) rewound by the given duration before the tick runs, making the transition due immediately. With an empty body the tick just runs globally; the role check is "caller is an admin of at least one group."
 
-Response 200: `{ "transitions": [{ "groupId", "cycleId", "from", "to" }] }`.
+"The group's active cycle" means: the `open` cycle if one exists (its `responseCloseAt` is rewound, fast-forwarding toward publication — the common E2E case), else the `voting` cycle (its `responseOpenAt`/`voteWindowCloseAt` is rewound, fast-forwarding toward promotion). A group always has at most one of each, so this is unambiguous.
+
+Response 200: `{ "transitions": [{ "groupId", "cycleId", "from", "to" }] }`. `from`/`to` are one of `voting`/`open`/`published`. A freshly created next-cycle row (§5.4) appears in the same array with `"from": null, "to": "voting"` rather than in a separate list — one array covers every state change a tick made, created-from-nothing included.
 
 ### 11a.2 `POST /admin/dev/tick/notify`
 
@@ -676,7 +685,7 @@ Both routes are also called by Playwright E2E (`11-testing-ci-cd.md` §4.3) — 
 
 A schema validation test in CI rejects any drift between handwritten Rust models and the YAML.
 
-**None of this exists yet.** The YAML, `scripts/codegen_types.sh`, `domain/api.rs`, and the contract test are all M5 deliverables (`12-build-order.md` M5, "OpenAPI contract"). M4's wire types currently live in per-crate `dto.rs` files and move to `domain/api.rs` as part of that work.
+All of this now exists (landed in M5, `12-build-order.md` M5 "OpenAPI contract"). M4's wire types, formerly in per-crate `dto.rs` files, now live in `backend/crates/domain/src/api.rs`; `lambda-groups` and `lambda-invites` import them from there. A route added in a later milestone updates the YAML in the same PR (`coding-standards.md` §8).
 
 ---
 

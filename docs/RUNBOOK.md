@@ -117,8 +117,13 @@ make build-lambdas
 ls backend/target/lambda/groups-api/bootstrap   # must exist
 ```
 
-On Ubuntu 20.04 this build fails inside `aws-lc-sys` under gcc 9
-(see blocker B6 in `plans/PROGRESS.md`). `sudo apt install clang` clears it.
+On macOS, install `cargo-lambda` via `brew tap cargo-lambda/cargo-lambda && brew trust cargo-lambda/cargo-lambda && brew install cargo-lambda` instead (Homebrew refuses the tap otherwise).
+
+On Windows/WSL2 (Ubuntu 20.04) this build fails inside `aws-lc-sys` under gcc 9
+(see blocker B6 in `plans/PROGRESS.md`). `sudo apt install clang` clears it; this
+does not affect macOS, which builds with Apple's clang toolchain. See
+[`plans/13-dev-environments.md` §0](../plans/13-dev-environments.md#0-workstation-setup)
+for full per-OS setup.
 
 ### Bootstrap the real admin
 

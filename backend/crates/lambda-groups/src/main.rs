@@ -1,7 +1,6 @@
 //! `lambda-groups` — `/config`, `/healthz`, `/me`, and the group + member routes
 //! (`plans/03-api-contract.md` §2, §3.5, §3.6, §4).
 
-mod dto;
 mod group_routes;
 mod me;
 mod router;

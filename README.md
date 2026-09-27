@@ -7,7 +7,7 @@ A multi-tenant PWA where small groups of friends collaboratively produce a month
 - `frontend/` — React + TypeScript + Vite + Tailwind PWA
 - `backend/` — Rust workspace; one crate per Lambda plus shared libraries
 - `infra/` — AWS CDK in Python
-- `shared/openapi.yaml` — API contract; both sides codegen from it *(created in M5; until then `plans/03-api-contract.md` is the contract)*
+- `shared/openapi.yaml` — API contract; both sides codegen from it
 - `scripts/` — bootstrap, codegen, dev seed
 - `plans/` — design docs and milestone build order
 
@@ -16,6 +16,8 @@ A multi-tenant PWA where small groups of friends collaboratively produce a month
 Pre-release. See [`plans/12-build-order.md`](plans/12-build-order.md) for the milestone sequence.
 
 ## Local development
+
+This repo is developed on two machines — Windows/WSL2 (Ubuntu 20.04) and macOS (Apple Silicon) — with different first-time toolchain setup on each. See [`plans/13-dev-environments.md` §0](plans/13-dev-environments.md#0-workstation-setup) before running anything below for the first time.
 
 Full local dev instructions land alongside Milestone 3.5 ("Dev environment online"). Until then:
 

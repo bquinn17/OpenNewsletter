@@ -1,0 +1,1596 @@
+openapi: 3.1.0
+
+info:
+  title: OpenNewsletter API
+  version: "1.0.0"
+  description: >
+    Canonical contract for the OpenNewsletter HTTP API. Hand-maintained; see
+    `plans/03-api-contract.md` for the human-readable prose mirror and
+    `plans/11-testing-ci-cd.md` §2.3 for the contract test that round-trips every
+    example below against `backend/crates/domain/src/api.rs`.
+
+    Routes are added here in the same PR that ships them (`plans/coding-standards.md`
+    §8). This file currently covers every route through Milestone 4
+    (`plans/03-api-contract.md` §2-§4, §13); Milestone 5 adds the newsletter and
+    candidate-question routes (§5-§6) as new tags alongside these.
+
+servers:
+  - url: https://api.opennewsletter.example.com
+    description: prod
+  - url: https://{apiId}.execute-api.us-east-1.amazonaws.com
+    description: dev (no custom domain)
+    variables:
+      apiId:
+        default: example
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: bootstrap
+    description: Bootstrap / metadata routes (`03-api-contract.md` §2).
+  - name: invites
+    description: Invite & membership routes (`03-api-contract.md` §3).
+  - name: groups
+    description: Group routes (`03-api-contract.md` §4).
+  - name: newsletters
+    description: Newsletter list + detail routes (`03-api-contract.md` §5).
+  - name: candidate-questions
+    description: Candidate question and vote routes (`03-api-contract.md` §6).
+  - name: health
+    description: Health check (`03-api-contract.md` §11).
+
+paths:
+  /config:
+    get:
+      operationId: getConfig
+      tags: [bootstrap]
+      summary: Bootstrap data the SPA needs after login.
+      responses:
+        "200":
+          description: Bootstrap payload. `userId`/`email`/`displayName` are `null` until the caller redeems their first invite.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigResponse"
+              example:
+                userId: null
+                email: "quinn@example.com"
+                displayName: "Quinn"
+                vapidPublicKey: "BPV_example_vapid_public_key"
+                groupDefaults: {}
+                memberships: []
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /me:
+    get:
+      operationId: getMe
+      tags: [bootstrap]
+      summary: The caller's bare User profile (no memberships).
+      responses:
+        "200":
+          description: The caller's profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+              example:
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                email: "quinn@example.com"
+                displayName: "Quinn"
+                avatarColor: "teal"
+                avatarMediaId: null
+                avatarUrl: null
+                createdAt: "2026-01-15T18:04:00Z"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    patch:
+      operationId: patchMe
+      tags: [bootstrap]
+      summary: Update the caller's profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchMeRequest"
+            example:
+              displayName: "Quinn"
+              avatarColor: "teal"
+              avatarMediaId: null
+      responses:
+        "200":
+          description: The updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+              example:
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                email: "quinn@example.com"
+                displayName: "Quinn"
+                avatarColor: "teal"
+                avatarMediaId: null
+                avatarUrl: null
+                createdAt: "2026-01-15T18:04:00Z"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /admin/invites:
+    post:
+      operationId: createInvite
+      tags: [invites]
+      summary: Create an invite for a group. Caller must be an admin of that group.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInviteRequest"
+            example:
+              groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+              ttlDays: 7
+              roleOnRedeem: "member"
+      responses:
+        "201":
+          description: The created invite.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateInviteResponse"
+              example:
+                code: "ABCD-EFGH-JKMN-PQRS"
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                expiresAt: "2026-02-01T00:00:00Z"
+                roleOnRedeem: "member"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/groups/{groupId}/invites:
+    get:
+      operationId: listInvites
+      tags: [invites]
+      summary: List invites for a group. Admin only.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "200":
+          description: The group's invites.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteListResponse"
+              example:
+                items:
+                  - code: "ABCD-EFGH-JKMN-PQRS"
+                    groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    status: "pending"
+                    roleOnRedeem: "member"
+                    createdBy: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    createdAt: "2026-01-25T00:00:00Z"
+                    expiresAt: "2026-02-01T00:00:00Z"
+                    consumedBy: null
+                    consumedAt: null
+                nextCursor: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/invites/{code}/revoke:
+    post:
+      operationId: revokeInvite
+      tags: [invites]
+      summary: Revoke a pending invite. Idempotent.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "ABCD-EFGH-JKMN-PQRS"
+      responses:
+        "204":
+          description: Revoked (or already revoked).
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /invites/redeem:
+    post:
+      operationId: redeemInvite
+      tags: [invites]
+      summary: >
+        Redeem an invite code. Covers both first signup (lazily creates the
+        caller's User row) and an existing user joining another group.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemRequest"
+            example:
+              code: "ABCD-EFGH-JKMN-PQRS"
+      responses:
+        "200":
+          description: The joined group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedeemResponse"
+              example:
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                groupName: "Trail Crew"
+                role: "member"
+        "400":
+          $ref: "#/components/responses/InviteInvalid"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/InviteExpired"
+
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: The caller's memberships (same join `/config` returns).
+      responses:
+        "200":
+          description: The caller's memberships.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MembershipListResponse"
+              example:
+                memberships:
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    role: "admin"
+                    groupName: "Trail Crew"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /groups/{groupId}:
+    get:
+      operationId: getGroup
+      tags: [groups]
+      summary: Full group detail, including members. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "200":
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupResponse"
+              example:
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                name: "Trail Crew"
+                timezone: "America/New_York"
+                gradient: "grape-sky"
+                cycleSettings:
+                  questionsPerCycle: 5
+                  votesPerUserPerCycle: 3
+                  responseWindowDays: 4
+                notificationSettings:
+                  offsetsHoursBeforeClose: [96, 48, 24]
+                  onCycleOpen: true
+                memberCount: 1
+                memberSoftCap: 50
+                createdAt: "2026-01-01T00:00:00Z"
+                members:
+                  - userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    displayName: "Quinn"
+                    role: "admin"
+                    avatarColor: "teal"
+                    avatarUrl: null
+                    joinedAt: "2026-01-01T00:00:00Z"
+                    editionsAnswered: 0
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchGroup
+      tags: [groups]
+      summary: Update group settings. Admin only.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchGroupRequest"
+            example:
+              gradient: "ocean-dusk"
+              cycleSettings:
+                questionsPerCycle: 5
+                votesPerUserPerCycle: 3
+                responseWindowDays: 4
+      responses:
+        "200":
+          description: The updated group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupResponse"
+              example:
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                name: "Trail Crew"
+                timezone: "America/New_York"
+                gradient: "ocean-dusk"
+                cycleSettings:
+                  questionsPerCycle: 5
+                  votesPerUserPerCycle: 3
+                  responseWindowDays: 4
+                notificationSettings:
+                  offsetsHoursBeforeClose: [96, 48, 24]
+                  onCycleOpen: true
+                memberCount: 1
+                memberSoftCap: 50
+                createdAt: "2026-01-01T00:00:00Z"
+                members:
+                  - userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    displayName: "Quinn"
+                    role: "admin"
+                    avatarColor: "teal"
+                    avatarUrl: null
+                    joinedAt: "2026-01-01T00:00:00Z"
+                    editionsAnswered: 0
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /groups/{groupId}/members/{userId}:
+    delete:
+      operationId: removeMember
+      tags: [groups]
+      summary: Leave (self) or kick (admin) a member. The last admin can't leave.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "204":
+          description: Removed.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchMember
+      tags: [groups]
+      summary: Change a member's role. Admin only.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchMemberRequest"
+            example:
+              role: "admin"
+      responses:
+        "200":
+          description: The member's updated profile within the group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberResponse"
+              example:
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                displayName: "Quinn"
+                role: "admin"
+                avatarColor: "teal"
+                avatarUrl: null
+                joinedAt: "2026-01-01T00:00:00Z"
+                editionsAnswered: 0
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /groups/{groupId}/newsletters:
+    get:
+      operationId: listNewsletters
+      tags: [newsletters]
+      summary: Past + current + upcoming newsletters for the group, newest first. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/NewsletterStatusQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: A page of newsletters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsletterListResponse"
+              example:
+                items:
+                  - cycleId: "202606"
+                    status: "open"
+                    responseOpenAt: "2026-06-01T00:00:00Z"
+                    responseCloseAt: "2026-06-05T00:00:00Z"
+                    publishedAt: null
+                    questionCount: 5
+                    myDraftCount: 2
+                    myPublishedCount: 0
+                nextCursor: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /groups/{groupId}/newsletters/{cycleId}:
+    get:
+      operationId: getNewsletter
+      tags: [newsletters]
+      summary: >
+        The full edition. Shape depends on `status` — see `NewsletterDetailResponse`.
+        `archived` returns 410 instead of a body (`06-newsletter-lifecycle.md` §1;
+        not reachable until archival ships).
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+      responses:
+        "200":
+          description: The edition, shaped per its current `status`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsletterDetailResponse"
+              example:
+                cycleId: "202606"
+                status: "published"
+                responseCloseAt: "2026-06-05T00:00:00Z"
+                publishedAt: "2026-06-05T00:00:01Z"
+                questions:
+                  - questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                    kind: "text"
+                    prompt: "What's your favorite hike of the year?"
+                    displayOrder: 0
+                    askedBy:
+                      userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                      displayName: "Kari"
+                      avatarColor: "teal"
+                      avatarUrl: null
+                    isAnonymous: false
+                    answers:
+                      - responseId: "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                        userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                        displayName: "Quinn"
+                        body: "Lake 22, hands down."
+                        images: []
+                        publishedAt: "2026-06-03T12:00:00Z"
+                        comments: []
+                        reactionGroups:
+                          - emoji: "🔥"
+                            count: 3
+                            reactedByMe: true
+                  - questionId: "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d"
+                    kind: "poll"
+                    prompt: "Which trail had the best views?"
+                    displayOrder: 1
+                    askedBy: null
+                    isAnonymous: true
+                    options:
+                      - optionId: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
+                        label: "Mt Si"
+                        voteCount: 4
+                      - optionId: "018f2b6b-6c1b-7c3a-9d4e-7a8b9c0d1e2f"
+                        label: "Lake 22"
+                        voteCount: 7
+                    myVoteOptionId: "018f2b6b-6c1b-7c3a-9d4e-7a8b9c0d1e2f"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+
+  /groups/{groupId}/candidate-questions:
+    get:
+      operationId: listCandidateQuestions
+      tags: [candidate-questions]
+      summary: The candidate pool for the group's next (currently `voting`) cycle. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CandidateSortQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: The candidate pool.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateListResponse"
+              example:
+                nextCycleId: "202606"
+                votesPerUserPerCycle: 3
+                myVoteCount: 2
+                items:
+                  - questionId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    kind: "text"
+                    prompt: "What's the best trail you hiked this summer?"
+                    askedBy:
+                      userId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                      displayName: "Kari"
+                      avatarColor: "teal"
+                      avatarUrl: null
+                    isAnonymous: false
+                    voteCount: 7
+                    votedByMe: true
+                    submittedAt: "2026-05-20T00:00:00Z"
+                  - questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                    kind: "poll"
+                    prompt: "Which trailhead should we carpool from?"
+                    pollOptions:
+                      - optionId: "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                        label: "North lot"
+                      - optionId: "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d"
+                        label: "South lot"
+                    askedBy: null
+                    isAnonymous: true
+                    voteCount: 5
+                    votedByMe: false
+                    submittedAt: "2026-05-21T00:00:00Z"
+                nextCursor: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    post:
+      operationId: createCandidateQuestion
+      tags: [candidate-questions]
+      summary: Suggest a candidate question for the group's next `voting` cycle. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCandidateRequest"
+            example:
+              kind: "text"
+              prompt: "What's your favorite hike of the year?"
+              isAnonymous: false
+      responses:
+        "201":
+          description: The created candidate, with `askedBy` populated (the submitter always sees their own attribution).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateItemResponse"
+              example:
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                kind: "text"
+                prompt: "What's your favorite hike of the year?"
+                askedBy:
+                  userId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                  displayName: "Quinn"
+                  avatarColor: "teal"
+                  avatarUrl: null
+                isAnonymous: false
+                voteCount: 0
+                votedByMe: false
+                submittedAt: "2026-05-22T00:00:00Z"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /groups/{groupId}/candidate-questions/{questionId}/votes:
+    post:
+      operationId: castCandidateVote
+      tags: [candidate-questions]
+      summary: Cast an upvote. Idempotent — re-posting returns 200 with the current state. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+      responses:
+        "200":
+          description: The candidate's updated vote state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateVoteResponse"
+              example:
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                voteCount: 8
+                votedByMe: true
+                myVoteCount: 3
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      operationId: withdrawCandidateVote
+      tags: [candidate-questions]
+      summary: Withdraw the caller's upvote. Idempotent. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+      responses:
+        "200":
+          description: The candidate's updated vote state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateVoteResponse"
+              example:
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                voteCount: 7
+                votedByMe: false
+                myVoteCount: 2
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/groups/{groupId}/candidate-questions/{questionId}:
+    delete:
+      operationId: adminDeleteCandidateQuestion
+      tags: [candidate-questions]
+      summary: >
+        Delete a candidate while it's still in `voting` (cascades its votes).
+        Admin only. There is no admin curate/promote surface (`06-newsletter-lifecycle.md` §7).
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+      responses:
+        "204":
+          description: Deleted.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [health]
+      summary: Liveness check. Requires auth, per the idle-backend principle.
+      responses:
+        "200":
+          description: >
+            OK. `03-api-contract.md` §11.1 also documents `version`/`buildAt`
+            fields, but the handler doesn't emit them yet — see the note on
+            `HealthResponse` in `domain/src/api.rs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "ok"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Cognito ID token (`Authorization: Bearer {idToken}`), per `03-api-contract.md` §1."
+
+  parameters:
+    GroupIdPath:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+    CycleIdPath:
+      name: cycleId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "202606"
+    QuestionIdPath:
+      name: questionId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+    NewsletterStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Filter to newsletters in this status. Omit for all statuses.
+      schema:
+        type: string
+        enum: [voting, open, published]
+    CandidateSortQuery:
+      name: sort
+      in: query
+      required: false
+      description: "`top` (default) ranks by vote count; `recent` orders by `submittedAt` descending."
+      schema:
+        type: string
+        enum: [top, recent]
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    CursorQuery:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque pagination token from a previous page's `nextCursor`.
+      schema:
+        type: string
+
+  responses:
+    Unauthenticated:
+      description: No/invalid JWT.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Forbidden:
+      description: Authenticated but not authorized for this resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    NotFound:
+      description: Resource missing or not visible to caller.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+          example:
+            type: "https://api.opennewsletter.example.com/errors/not-found"
+            title: "Not found"
+            status: 404
+            detail: "group not found"
+            code: "NOT_FOUND"
+            correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+    ValidationFailed:
+      description: Body/query failed schema validation; see `fieldErrors`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+          example:
+            type: "https://api.opennewsletter.example.com/errors/validation-failed"
+            title: "Validation failed"
+            status: 422
+            detail: "displayName must be at most 40 characters"
+            code: "VALIDATION_FAILED"
+            correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+            fieldErrors:
+              - field: "displayName"
+                code: "TOO_LONG"
+                message: "displayName must be at most 40 characters"
+    Conflict:
+      description: >
+        State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`,
+        `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`,
+        `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, or `CANDIDATE_PROMOTED`
+        (`03-api-contract.md` §1.1).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    InviteInvalid:
+      description: Invite code is unknown.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    InviteExpired:
+      description: Invite code is past its `expiresAt`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    NewsletterArchived:
+      description: >
+        The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see
+        `10-archival.md` for the (deferred) archive-link behavior.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+
+  schemas:
+    # ---- Shared enums (canonical home per 03-api-contract.md §2.3/§4.3) ----
+
+    Role:
+      type: string
+      enum: [admin, member]
+
+    InviteStatus:
+      type: string
+      enum: [pending, consumed, revoked]
+
+    GradientSlug:
+      type: string
+      description: >
+        Preset group gradient palette slugs. Mirrored in
+        `backend/crates/shared/src/config.rs::GRADIENT_SLUGS` and the frontend
+        palette table; the contract test asserts the two stay identical.
+      enum:
+        - grape-sky
+        - ember-rose
+        - forest-mint
+        - ocean-dusk
+        - citrus-blush
+        - slate-lilac
+
+    AvatarColorSlug:
+      type: string
+      description: >
+        Fallback avatar colour slugs. Mirrored in
+        `backend/crates/shared/src/config.rs::AVATAR_COLOR_SLUGS` and the frontend
+        palette table; the contract test asserts the two stay identical.
+      enum:
+        - red
+        - orange
+        - amber
+        - green
+        - teal
+        - blue
+        - violet
+        - pink
+
+    # ---- §1.1 RFC-7807 error shape ----
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail, code, correlationId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          description: Machine-readable code from the `03-api-contract.md` §1.1 catalog.
+        correlationId:
+          type: string
+        fieldErrors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    # ---- §2 Bootstrap / metadata ----
+
+    MembershipSummary:
+      type: object
+      required: [groupId, role, groupName]
+      properties:
+        groupId:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        groupName:
+          type: string
+
+    ConfigResponse:
+      type: object
+      required: [userId, email, displayName, vapidPublicKey, groupDefaults, memberships]
+      properties:
+        userId:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        displayName:
+          type: [string, "null"]
+        vapidPublicKey:
+          type: string
+        groupDefaults:
+          type: object
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/MembershipSummary"
+
+    UserResponse:
+      type: object
+      required: [userId, email, displayName, avatarColor, avatarMediaId, avatarUrl, createdAt]
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+        displayName:
+          type: string
+        avatarColor:
+          $ref: "#/components/schemas/AvatarColorSlug"
+        avatarMediaId:
+          type: [string, "null"]
+        avatarUrl:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    PatchMeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+        avatarColor:
+          $ref: "#/components/schemas/AvatarColorSlug"
+        avatarMediaId:
+          description: Absent leaves the photo alone; an explicit `null` clears it.
+          type: [string, "null"]
+
+    # ---- §3 Invite & membership routes ----
+
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [groupId, roleOnRedeem]
+      properties:
+        groupId:
+          type: string
+        ttlDays:
+          type: integer
+          description: Defaults to the group's invite TTL setting when omitted.
+        roleOnRedeem:
+          $ref: "#/components/schemas/Role"
+
+    CreateInviteResponse:
+      type: object
+      required: [code, groupId, expiresAt, roleOnRedeem]
+      properties:
+        code:
+          type: string
+        groupId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        roleOnRedeem:
+          $ref: "#/components/schemas/Role"
+
+    InviteSummary:
+      type: object
+      required:
+        - code
+        - groupId
+        - status
+        - roleOnRedeem
+        - createdBy
+        - createdAt
+        - expiresAt
+        - consumedBy
+        - consumedAt
+      properties:
+        code:
+          type: string
+        groupId:
+          type: string
+        status:
+          $ref: "#/components/schemas/InviteStatus"
+        roleOnRedeem:
+          $ref: "#/components/schemas/Role"
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        consumedBy:
+          type: [string, "null"]
+        consumedAt:
+          type: [string, "null"]
+          format: date-time
+
+    InviteListResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InviteSummary"
+        nextCursor:
+          type: [string, "null"]
+
+    RedeemRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+
+    RedeemResponse:
+      type: object
+      required: [groupId, groupName, role]
+      properties:
+        groupId:
+          type: string
+        groupName:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+
+    # ---- §4 Group routes ----
+
+    MembershipListResponse:
+      type: object
+      required: [memberships]
+      properties:
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/MembershipSummary"
+
+    MemberResponse:
+      type: object
+      required: [userId, displayName, role, avatarColor, avatarUrl, joinedAt, editionsAnswered]
+      properties:
+        userId:
+          type: string
+        displayName:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        avatarColor:
+          $ref: "#/components/schemas/AvatarColorSlug"
+        avatarUrl:
+          type: [string, "null"]
+        joinedAt:
+          type: string
+          format: date-time
+        editionsAnswered:
+          type: integer
+
+    CycleSettingsResponse:
+      type: object
+      required: [questionsPerCycle, votesPerUserPerCycle, responseWindowDays]
+      properties:
+        questionsPerCycle:
+          type: integer
+        votesPerUserPerCycle:
+          type: integer
+        responseWindowDays:
+          type: integer
+
+    NotificationSettingsResponse:
+      type: object
+      required: [offsetsHoursBeforeClose, onCycleOpen]
+      properties:
+        offsetsHoursBeforeClose:
+          type: array
+          items:
+            type: integer
+        onCycleOpen:
+          type: boolean
+
+    GroupResponse:
+      type: object
+      required:
+        - groupId
+        - name
+        - timezone
+        - gradient
+        - cycleSettings
+        - notificationSettings
+        - memberCount
+        - memberSoftCap
+        - createdAt
+        - members
+      properties:
+        groupId:
+          type: string
+        name:
+          type: string
+        timezone:
+          type: string
+        gradient:
+          $ref: "#/components/schemas/GradientSlug"
+        cycleSettings:
+          $ref: "#/components/schemas/CycleSettingsResponse"
+        notificationSettings:
+          $ref: "#/components/schemas/NotificationSettingsResponse"
+        memberCount:
+          type: integer
+        memberSoftCap:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberResponse"
+
+    CycleSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        questionsPerCycle:
+          type: integer
+        votesPerUserPerCycle:
+          type: integer
+        responseWindowDays:
+          type: integer
+
+    NotificationSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        offsetsHoursBeforeClose:
+          type: array
+          items:
+            type: integer
+        onCycleOpen:
+          type: boolean
+
+    PatchGroupRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        timezone:
+          type: string
+        gradient:
+          $ref: "#/components/schemas/GradientSlug"
+        cycleSettings:
+          $ref: "#/components/schemas/CycleSettingsPatch"
+        notificationSettings:
+          $ref: "#/components/schemas/NotificationSettingsPatch"
+        memberSoftCap:
+          type: integer
+
+    PatchMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+
+    # ---- §5/§6 Newsletter and candidate-question routes ----
+
+    QuestionKind:
+      type: string
+      enum: [text, poll]
+
+    ResponseStatus:
+      type: string
+      enum: [draft, published]
+
+    NewsletterStatus:
+      type: string
+      enum: [voting, open, published, archived]
+
+    AskedBy:
+      type: object
+      required: [userId, displayName, avatarColor, avatarUrl]
+      description: >
+        `null` (at the call site, not here) when `isAnonymous=true` and the
+        caller is neither the submitter nor a group admin.
+      properties:
+        userId:
+          type: string
+        displayName:
+          type: string
+        avatarColor:
+          $ref: "#/components/schemas/AvatarColorSlug"
+        avatarUrl:
+          type: [string, "null"]
+
+    PollOptionResponse:
+      type: object
+      required: [optionId, label]
+      properties:
+        optionId:
+          type: string
+        label:
+          type: string
+
+    CandidateItemResponse:
+      type: object
+      required:
+        - questionId
+        - kind
+        - prompt
+        - askedBy
+        - isAnonymous
+        - voteCount
+        - votedByMe
+        - submittedAt
+      properties:
+        questionId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        prompt:
+          type: string
+        pollOptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PollOptionResponse"
+        askedBy:
+          oneOf:
+            - $ref: "#/components/schemas/AskedBy"
+            - type: "null"
+        isAnonymous:
+          type: boolean
+        voteCount:
+          type: integer
+        votedByMe:
+          type: boolean
+        submittedAt:
+          type: string
+          format: date-time
+
+    CandidateListResponse:
+      type: object
+      required: [nextCycleId, votesPerUserPerCycle, myVoteCount, items, nextCursor]
+      properties:
+        nextCycleId:
+          type: string
+        votesPerUserPerCycle:
+          type: integer
+        myVoteCount:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CandidateItemResponse"
+        nextCursor:
+          type: [string, "null"]
+
+    CreatePollOptionRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+
+    CreateCandidateRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, prompt]
+      properties:
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        prompt:
+          type: string
+        pollOptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreatePollOptionRequest"
+        isAnonymous:
+          type: boolean
+          default: false
+          description: Fixed at creation; hides `askedBy` from non-admin members when `true`.
+
+    CandidateVoteResponse:
+      type: object
+      required: [questionId, voteCount, votedByMe, myVoteCount]
+      properties:
+        questionId:
+          type: string
+        voteCount:
+          type: integer
+        votedByMe:
+          type: boolean
+        myVoteCount:
+          type: integer
+
+    NewsletterSummary:
+      type: object
+      required:
+        - cycleId
+        - status
+        - responseOpenAt
+        - responseCloseAt
+        - publishedAt
+        - questionCount
+        - myDraftCount
+        - myPublishedCount
+      properties:
+        cycleId:
+          type: string
+        status:
+          $ref: "#/components/schemas/NewsletterStatus"
+        responseOpenAt:
+          type: string
+          format: date-time
+        responseCloseAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+        questionCount:
+          type: integer
+        myDraftCount:
+          type: integer
+        myPublishedCount:
+          type: integer
+
+    NewsletterListResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewsletterSummary"
+        nextCursor:
+          type: [string, "null"]
+
+    MyResponseSummary:
+      type: object
+      required: [responseId, status, imageMediaIds, updatedAt, publishedAt]
+      properties:
+        responseId:
+          type: string
+        status:
+          $ref: "#/components/schemas/ResponseStatus"
+        body:
+          type: string
+        imageMediaIds:
+          type: array
+          items:
+            type: string
+        pollOptionId:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+
+    OpenQuestionResponse:
+      type: object
+      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous, myResponse]
+      properties:
+        questionId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        prompt:
+          type: string
+        displayOrder:
+          type: integer
+        askedBy:
+          oneOf:
+            - $ref: "#/components/schemas/AskedBy"
+            - type: "null"
+        isAnonymous:
+          type: boolean
+        pollOptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PollOptionResponse"
+        myResponse:
+          oneOf:
+            - $ref: "#/components/schemas/MyResponseSummary"
+            - type: "null"
+
+    PublishedImageResponse:
+      type: object
+      required: [imageId, displayUrl, thumbUrl, width, height]
+      properties:
+        imageId:
+          type: string
+        displayUrl:
+          type: string
+        thumbUrl:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+
+    PublishedCommentResponse:
+      type: object
+      required: [commentId, authorUserId, displayName, body, createdAt]
+      properties:
+        commentId:
+          type: string
+        authorUserId:
+          type: string
+        displayName:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ReactionGroupResponse:
+      type: object
+      required: [emoji, count, reactedByMe]
+      properties:
+        emoji:
+          type: string
+        count:
+          type: integer
+        reactedByMe:
+          type: boolean
+
+    PublishedAnswerResponse:
+      type: object
+      required: [responseId, userId, displayName, images, publishedAt, comments, reactionGroups]
+      properties:
+        responseId:
+          type: string
+        userId:
+          type: string
+        displayName:
+          type: string
+        body:
+          type: string
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishedImageResponse"
+        publishedAt:
+          type: string
+          format: date-time
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishedCommentResponse"
+        reactionGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReactionGroupResponse"
+
+    PublishedPollOptionResponse:
+      type: object
+      required: [optionId, label, voteCount]
+      properties:
+        optionId:
+          type: string
+        label:
+          type: string
+        voteCount:
+          type: integer
+
+    PublishedQuestionResponse:
+      type: object
+      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous]
+      description: Exactly one of `answers` (text) / `options`+`myVoteOptionId` (poll) is present, matching `kind`.
+      properties:
+        questionId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        prompt:
+          type: string
+        displayOrder:
+          type: integer
+        askedBy:
+          oneOf:
+            - $ref: "#/components/schemas/AskedBy"
+            - type: "null"
+        isAnonymous:
+          type: boolean
+        answers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishedAnswerResponse"
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishedPollOptionResponse"
+        myVoteOptionId:
+          type: string
+
+    NewsletterDetailResponse:
+      description: Shape depends on `status`. `archived` is a bare 410, not modeled here.
+      oneOf:
+        - type: object
+          required: [status, candidates]
+          properties:
+            status:
+              type: string
+              enum: [voting]
+            candidates:
+              type: array
+              items:
+                $ref: "#/components/schemas/CandidateItemResponse"
+        - type: object
+          required: [status, cycleId, responseOpenAt, responseCloseAt, questions]
+          properties:
+            status:
+              type: string
+              enum: [open]
+            cycleId:
+              type: string
+            responseOpenAt:
+              type: string
+              format: date-time
+            responseCloseAt:
+              type: string
+              format: date-time
+            questions:
+              type: array
+              items:
+                $ref: "#/components/schemas/OpenQuestionResponse"
+        - type: object
+          required: [status, cycleId, responseCloseAt, publishedAt, questions]
+          properties:
+            status:
+              type: string
+              enum: [published]
+            cycleId:
+              type: string
+            responseCloseAt:
+              type: string
+              format: date-time
+            publishedAt:
+              type: string
+              format: date-time
+            questions:
+              type: array
+              items:
+                $ref: "#/components/schemas/PublishedQuestionResponse"
+
+    # ---- §11 Health ----
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string

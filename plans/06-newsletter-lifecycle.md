@@ -257,6 +257,10 @@ When admins `PATCH /groups/{g}` to change `responseWindowDays`, `questionsPerCyc
 
 If the timezone changes, the upcoming `voting` cycle's `responseOpenAt` may shift by hours. Acceptable, documented in admin UI ("Timezone changes affect the next cycle's open time").
 
+**Implementation note (M5):** "no candidate activity" is checked with `questions::list_candidates` on the current `voting` cycle. When it's empty, `patch_group` recomputes that cycle's `responseOpenAt`/`voteWindowCloseAt`/`responseCloseAt`/`nextTransitionAt` (and GSI2 keys) in place via `newsletters::write_status_transition`. The "two cycles out" case needs no special-cased code: `create_next_voting_cycle` always reads the group's settings fresh at the moment it runs, so a settings change simply takes effect the next time a `voting` cycle transitions to `open` and the following cycle is created.
+
+`cycleId` is derived from the recomputed `responseOpenAt` and is also the row's partition key (`sk = NL#{cycleId}`). A timezone change can, in principle, shift which local month a given creation instant (`voteWindowOpenAt`) falls into, changing the recomputed `cycleId`. Rather than move the row to a new key — which would orphan anything already referencing the old `cycleId` mid-request — `patch_group` compares the recomputed `cycleId` to the existing one and, if they differ, leaves the cycle's row completely untouched (the setting still applies starting two cycles out, per above). This is a deliberate simplification: it means a timezone change can occasionally take one cycle longer than the "one no-candidates cycle" description above suggests, which is judged less surprising than a cycle's identity changing under a user's feet.
+
 ---
 
 ## 7. Manual admin overrides

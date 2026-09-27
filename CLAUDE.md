@@ -11,7 +11,17 @@ A milestone or task is not "done" until its work conforms to those standards. Th
 
 ## Running the Rust tests (read this before `cargo test`)
 
-The `persistence` integration tests start a DynamoDB Local container via `testcontainers`, so they need a reachable Docker daemon. On this machine Docker runs **rootless under WSL2** and its socket is *not* `/var/run/docker.sock`. `DOCKER_HOST` is set in `~/.profile`, but agent shells are non-login and non-interactive, so they never read it — **every** test command must export it inline:
+The `persistence` integration tests start a DynamoDB Local container via `testcontainers`, so they need a reachable Docker daemon whose socket is *not* `/var/run/docker.sock`. The repo is developed on two machines with different setups — **check `uname` to see which one you're on**. Agent shells are non-login and non-interactive, so they don't read shell profiles: **every** test command must set `PATH`/`DOCKER_HOST` inline.
+
+**macOS (Apple Silicon)** — Rust via rustup (`~/.cargo/bin`), Docker via Colima, Node and Python 3.12 via Homebrew:
+
+```bash
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH" DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
+```
+
+macOS has no `timeout`; use `gtimeout` (Homebrew `coreutils`). If `docker info` fails, the Colima VM is stopped: `colima start`.
+
+**Windows (WSL2, Ubuntu 20.04)** — Docker runs rootless under WSL2:
 
 ```bash
 export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
@@ -20,9 +30,9 @@ export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 carg
 Notes:
 - Env vars do not persist between tool calls — repeat the `export` in each command, don't run it once on its own.
 - Always wrap in `timeout` (the suite pulls an image on a cold cache and can otherwise hang).
-- Sanity-check the daemon first with `export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
+- Sanity-check the daemon first with the same exports plus `docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
 
-See [`plans/13-dev-environments.md`](plans/13-dev-environments.md) §10 for which test layers need Docker at all.
+Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/13-dev-environments.md) (which also covers which test layers need Docker at all).
 
 ## What this app is
 

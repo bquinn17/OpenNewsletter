@@ -1,11 +1,11 @@
 //! `GET /groups/{g}`, `PATCH /groups/{g}`, and the member-management routes
 //! (`plans/03-api-contract.md` §3.5, §3.6, §4).
 
-use crate::dto::{GroupResponse, MemberResponse, PatchGroupRequest, PatchMemberRequest};
 use crate::state::AppState;
 use crate::validation;
+use domain::api::{GroupResponse, MemberResponse, PatchGroupRequest, PatchMemberRequest};
 use domain::{ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Role, UserId};
-use persistence::{auth, groups, users};
+use persistence::{auth, groups, newsletters, questions, users};
 
 pub async fn get_group(
     state: &AppState,
@@ -36,8 +36,97 @@ pub async fn patch_group(
         })?;
 
     let updated = load_group(state, group_id).await?;
+    reschedule_voting_cycle_if_needed(state, group_id, &group, &updated).await;
     let members = hydrate_members(state, group_id).await?;
     Ok(GroupResponse::new(updated, members))
+}
+
+/// `plans/06-newsletter-lifecycle.md` §6 — a `timezone`/`responseWindowDays`
+/// change recomputes the group's current `voting` cycle's schedule, but only
+/// when nobody has suggested a candidate question for it yet; a cycle with
+/// candidate activity keeps its original timestamps (the change instead takes
+/// effect on the cycle created after this one transitions to `open`, since
+/// `create_next_voting_cycle` always reads the group's settings fresh).
+///
+/// `cycleId` is derived from the recomputed `responseOpenAt` and doubles as
+/// the row's partition key. If recomputing would change it (a timezone shift
+/// can push the same creation instant into a different local month), the row
+/// is left untouched rather than moved to a new key — silently renaming an
+/// in-flight cycle out from under anyone looking at its old id would be more
+/// disorienting than deferring the setting by one cycle.
+///
+/// Best-effort: a failure here is logged but does not fail the settings PATCH,
+/// consistent with how `create_next_voting_cycle` is a best-effort step
+/// outside the tick's core transaction (`06-newsletter-lifecycle.md` §5.2).
+async fn reschedule_voting_cycle_if_needed(
+    state: &AppState,
+    group_id: &GroupId,
+    previous: &Group,
+    updated: &Group,
+) {
+    let schedule_changed = previous.timezone != updated.timezone
+        || previous.cycle_settings.response_window_days
+            != updated.cycle_settings.response_window_days;
+    if !schedule_changed {
+        return;
+    }
+
+    let voting = match newsletters::find_voting_cycle(&state.repo, group_id).await {
+        Ok(Some(nl)) => nl,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, "failed to load voting cycle for reschedule");
+            return;
+        }
+    };
+
+    let candidates = match questions::list_candidates(&state.repo, group_id, &voting.cycle_id).await
+    {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %voting.cycle_id, "failed to list candidates for reschedule");
+            return;
+        }
+    };
+    if !candidates.is_empty() {
+        tracing::info!(
+            group_id = %group_id,
+            cycle_id = %voting.cycle_id,
+            "settings changed but the voting cycle already has candidates; leaving its schedule as-is"
+        );
+        return;
+    }
+
+    let Ok(tz) = updated.timezone.parse::<chrono_tz::Tz>() else {
+        tracing::error!(group_id = %group_id, timezone = %updated.timezone, "validated timezone failed to parse during reschedule");
+        return;
+    };
+
+    let schedule = shared::cycle_time::next_cycle_schedule(
+        voting.vote_window_open_at,
+        tz,
+        updated.cycle_settings.response_window_days,
+    );
+
+    if schedule.cycle_id != voting.cycle_id {
+        tracing::info!(
+            group_id = %group_id,
+            old_cycle_id = %voting.cycle_id,
+            new_cycle_id = %schedule.cycle_id,
+            "timezone change would move the voting cycle's id; leaving it unchanged this cycle"
+        );
+        return;
+    }
+
+    let mut rescheduled = voting;
+    rescheduled.response_open_at = schedule.response_open_at;
+    rescheduled.vote_window_close_at = schedule.response_open_at;
+    rescheduled.response_close_at = schedule.response_close_at;
+    rescheduled.next_transition_at = Some(schedule.response_open_at);
+
+    if let Err(e) = newsletters::write_status_transition(&state.repo, &rescheduled).await {
+        tracing::error!(error = ?e, group_id = %group_id, "failed to reschedule voting cycle");
+    }
 }
 
 /// `DELETE /groups/{g}/members/{u}` — a member removing themselves, or an admin

@@ -1,8 +1,8 @@
 //! `GET /config`, `GET /me`, `PATCH /me` (`plans/03-api-contract.md` §2).
 
-use crate::dto::{ConfigResponse, MembershipSummary, PatchMeRequest, UserResponse};
 use crate::state::AppState;
 use crate::validation;
+use domain::api::{ConfigResponse, MembershipSummary, PatchMeRequest, UserResponse};
 use domain::{ApiError, GroupMembership, MediaStatus, User, UserId};
 use persistence::{auth, groups, media, users};
 use shared::http::AuthClaims;

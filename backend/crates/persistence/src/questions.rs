@@ -1,11 +1,11 @@
 //! Candidate questions, candidate votes, locked questions.
 //! AP10, AP11, AP12, AP13 plus transactions §4 #1, #2, #3.
 
-use crate::error::RepoError;
+use crate::error::{self, RepoError};
 use crate::keys::{
     attr, candidate_gsi1pk, candidate_gsi1sk, candidate_pk, candidate_sk, candidate_vote_pk,
     candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
-    newsletter_sk,
+    newsletter_gsi2sk_sentinel, newsletter_sk,
 };
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
@@ -153,6 +153,57 @@ pub async fn put_candidate(repo: &Repo, q: &CandidateQuestion) -> Result<(), Rep
     Ok(())
 }
 
+/// Single-item fetch, for handlers that already know the candidate's cycle
+/// (e.g. resolving a vote or an admin delete) and don't need the whole pool.
+pub async fn get_candidate(
+    repo: &Repo,
+    group_id: &GroupId,
+    next_cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<Option<CandidateQuestion>, RepoError> {
+    let resp = repo
+        .client
+        .get_item()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
+        )
+        .key(attr::SK, AttributeValue::S(candidate_sk(question_id)))
+        .send()
+        .await?;
+    match resp.item {
+        Some(item) => Ok(Some(from_item(item)?)),
+        None => Ok(None),
+    }
+}
+
+/// Cascading part of admin candidate deletion (`03-api-contract.md` §6.5).
+/// `02-data-model-dynamodb.md` has no access pattern for "list voters of
+/// question X" — `CandidateVote` is keyed by voter, not by question — so
+/// callers delete speculatively for every group member (bounded by
+/// `memberSoftCap`) rather than scanning the table. Deleting an absent item is
+/// a harmless no-op.
+pub async fn delete_vote_if_present(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    voter_user_id: &UserId,
+    question_id: &QuestionId,
+) -> Result<(), RepoError> {
+    repo.client
+        .delete_item()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_vote_pk(group_id, cycle_id, voter_user_id)),
+        )
+        .key(attr::SK, AttributeValue::S(candidate_vote_sk(question_id)))
+        .send()
+        .await?;
+    Ok(())
+}
+
 pub async fn delete_candidate(
     repo: &Repo,
     group_id: &GroupId,
@@ -288,8 +339,23 @@ pub async fn withdraw_vote_tx(
     Ok(())
 }
 
+// `questionsPerCycle` is capped at `MAX_QUESTIONS_PER_CYCLE` (20), so a
+// promotion transaction (locked-question puts + 1 status-flip update) never
+// comes close to TransactWriteItems' 100-item limit. If that config bound
+// ever grows past this, `promote_candidates_tx`'s own `locked.len() > 99`
+// guard below still catches it at runtime — this assertion just makes the
+// invariant visible at compile time.
+const _: () = assert!(
+    shared::config::MAX_QUESTIONS_PER_CYCLE < 100,
+    "promote_candidates_tx's TransactWriteItems must stay under DynamoDB's 100-item cap"
+);
+
 /// Transaction §4 #3 — promote candidates into locked questions and flip the
 /// newsletter status `voting → open`.
+///
+/// Returns `Err(RepoError::TransactionCancelled)` when the flip lost a race
+/// against another tick — the caller should log that at INFO and move on
+/// rather than treating it as a failure (`plans/06-newsletter-lifecycle.md` §8).
 pub async fn promote_candidates_tx(
     repo: &Repo,
     locked: &[LockedQuestion],
@@ -328,10 +394,10 @@ pub async fn promote_candidates_tx(
         .iter()
         .map(|id| AttributeValue::S(id.to_string()))
         .collect();
-    let when = newsletter
-        .next_transition_at
-        .map(|d| d.to_rfc3339())
-        .unwrap_or_else(|| "9999-12-31T00:00:00Z".to_owned());
+    let gsi2sk = match newsletter.next_transition_at {
+        Some(d) => newsletter_gsi2sk(d, &newsletter.group_id, &newsletter.cycle_id),
+        None => newsletter_gsi2sk_sentinel(&newsletter.group_id, &newsletter.cycle_id),
+    };
 
     let flip = Update::builder()
         .table_name(&repo.table)
@@ -354,14 +420,7 @@ pub async fn promote_candidates_tx(
             ":g2pk",
             AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Open)),
         )
-        .expression_attribute_values(
-            ":g2sk",
-            AttributeValue::S(newsletter_gsi2sk(
-                &when,
-                &newsletter.group_id,
-                &newsletter.cycle_id,
-            )),
-        )
+        .expression_attribute_values(":g2sk", AttributeValue::S(gsi2sk))
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
@@ -371,6 +430,6 @@ pub async fn promote_candidates_tx(
     for i in items {
         req = req.transact_items(i);
     }
-    req.send().await?;
+    req.send().await.map_err(error::from_transact_write_error)?;
     Ok(())
 }

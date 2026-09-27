@@ -22,6 +22,7 @@ from opennewsletter.data_stack import DataStack
 from opennewsletter.frontend_stack import FrontendStack
 from opennewsletter.media_persistent_stack import MediaPersistentStack
 from opennewsletter.media_pipeline_stack import MediaPipelineStack
+from opennewsletter.notifications_stack import NotificationsStack
 
 AWS_ENV = cdk.Environment(region="us-east-1")
 
@@ -301,12 +302,33 @@ def test_image_process_lambda_memory(
 
 
 @pytest.fixture(scope="module")
+def notifications_template(dev_config: EnvConfig) -> assertions.Template:
+    app = cdk.App()
+    data_stack = DataStack(app, "TestDataStack4", config=dev_config, env=AWS_ENV)
+    stack = NotificationsStack(
+        app,
+        "TestNotificationsStack",
+        config=dev_config,
+        table=data_stack.table,
+        env=AWS_ENV,
+    )
+    return assertions.Template.from_stack(stack)
+
+
+@pytest.fixture(scope="module")
 def api_template(dev_config: EnvConfig) -> assertions.Template:
     app = cdk.App()
     data_stack = DataStack(app, "TestDataStack3", config=dev_config, env=AWS_ENV)
     auth_stack = AuthStack(app, "TestAuthStack2", config=dev_config, env=AWS_ENV)
     frontend_stack = FrontendStack(
         app, "TestFrontendStack2", config=dev_config, env=AWS_ENV
+    )
+    notifications_stack = NotificationsStack(
+        app,
+        "TestNotificationsStack2",
+        config=dev_config,
+        table=data_stack.table,
+        env=AWS_ENV,
     )
     stack = ApiStack(
         app,
@@ -316,6 +338,7 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         user_pool=auth_stack.user_pool,
         user_pool_client=auth_stack.frontend_client,
         certificate=frontend_stack.certificate,
+        cycle_tick_fn=notifications_stack.cycle_tick_fn,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -328,6 +351,13 @@ def prod_api_template() -> assertions.Template:
     data_stack = DataStack(app, "ProdDataStack", config=config, env=AWS_ENV)
     auth_stack = AuthStack(app, "ProdAuthStack", config=config, env=AWS_ENV)
     frontend_stack = FrontendStack(app, "ProdFrontendStack", config=config, env=AWS_ENV)
+    notifications_stack = NotificationsStack(
+        app,
+        "ProdNotificationsStack",
+        config=config,
+        table=data_stack.table,
+        env=AWS_ENV,
+    )
     stack = ApiStack(
         app,
         "ProdApiStack",
@@ -336,6 +366,7 @@ def prod_api_template() -> assertions.Template:
         user_pool=auth_stack.user_pool,
         user_pool_client=auth_stack.frontend_client,
         certificate=frontend_stack.certificate,
+        cycle_tick_fn=notifications_stack.cycle_tick_fn,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -404,13 +435,26 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /admin/groups/{groupId}/invites",
         "POST /admin/invites/{code}/revoke",
         "POST /invites/redeem",
+        "GET /groups/{groupId}/newsletters",
+        "GET /groups/{groupId}/newsletters/{cycleId}",
+        "GET /groups/{groupId}/candidate-questions",
+        "POST /groups/{groupId}/candidate-questions",
+        "POST /groups/{groupId}/candidate-questions/{questionId}/votes",
+        "DELETE /groups/{groupId}/candidate-questions/{questionId}/votes",
+        "DELETE /admin/groups/{groupId}/candidate-questions/{questionId}",
+        "POST /admin/dev/tick/cycle",
     }
 
 
 def test_handler_lambdas_are_arm64_provided_al2023(
     api_template: assertions.Template,
 ) -> None:
-    for function_name in ("OpenNewsletter-Invites-dev", "OpenNewsletter-Groups-dev"):
+    for function_name in (
+        "OpenNewsletter-Invites-dev",
+        "OpenNewsletter-Groups-dev",
+        "OpenNewsletter-Newsletters-dev",
+        "OpenNewsletter-Questions-dev",
+    ):
         api_template.has_resource_properties(
             "AWS::Lambda::Function",
             {
@@ -465,6 +509,72 @@ def test_dev_has_no_custom_domain(api_template: assertions.Template) -> None:
 def test_prod_maps_the_custom_domain(prod_api_template: assertions.Template) -> None:
     prod_api_template.resource_count_is("AWS::ApiGatewayV2::DomainName", 1)
     prod_api_template.resource_count_is("AWS::ApiGatewayV2::ApiMapping", 1)
+
+
+def test_dev_tick_route_present_in_dev(api_template: assertions.Template) -> None:
+    routes = api_template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
+    assert "POST /admin/dev/tick/cycle" in route_keys
+
+
+def test_dev_tick_route_absent_in_prod(prod_api_template: assertions.Template) -> None:
+    routes = prod_api_template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
+    assert "POST /admin/dev/tick/cycle" not in route_keys
+
+
+# ---------------------------------------------------------------------------
+# NotificationsStack
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_tick_lambda_exists(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-CycleTick-dev",
+            "Architectures": ["arm64"],
+            "Runtime": "provided.al2023",
+            "MemorySize": 512,
+            "Timeout": 60,
+        },
+    )
+
+
+def test_cycle_tick_lambda_receives_the_table_name(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-CycleTick-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"ENV": "dev", "RUST_LOG": "info"},
+                )
+            },
+        },
+    )
+
+
+def test_cycle_tick_schedule_runs_every_five_minutes(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Events::Rule",
+        {"ScheduleExpression": "rate(5 minutes)"},
+    )
+
+
+def test_cycle_tick_schedule_targets_the_lambda(
+    notifications_template: assertions.Template,
+) -> None:
+    rules = notifications_template.find_resources("AWS::Events::Rule")
+    assert len(rules) == 1
+    targets = next(iter(rules.values()))["Properties"]["Targets"]
+    assert len(targets) == 1
 
 
 # ---------------------------------------------------------------------------

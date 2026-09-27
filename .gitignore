@@ -18,6 +18,7 @@ build/
 .env.*
 !.env.example
 *.pem
+!infra/keys/*.pub.pem
 *.key
 
 # OS / editor

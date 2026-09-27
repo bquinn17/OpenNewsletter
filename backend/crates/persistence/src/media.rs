@@ -42,7 +42,7 @@ pub async fn put_image(repo: &Repo, img: &ImageMedia) -> Result<(), RepoError> {
     );
     item.insert(
         attr::GSI1SK.into(),
-        AttributeValue::S(image_gsi1sk(&img.uploaded_at.to_rfc3339(), &img.image_id)),
+        AttributeValue::S(image_gsi1sk(img.uploaded_at, &img.image_id)),
     );
     item.insert(attr::ENTITY.into(), AttributeValue::S("ImageMedia".into()));
 

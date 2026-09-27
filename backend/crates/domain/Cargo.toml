@@ -10,3 +10,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+# Dev-dependency cycle (domain -> shared -> domain) is fine: Cargo only resolves
+# dev-dependencies for this crate's own tests, never as part of `shared`'s normal
+# build graph. Used by `tests/openapi_contract.rs` to check the gradient/avatarColor
+# enums against `shared::config`, since `domain` can't take it as a normal dependency
+# (`shared` already depends on `domain`).
+shared = { path = "../shared" }
+serde_yaml = "0.9"
+pretty_assertions.workspace = true

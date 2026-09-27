@@ -66,6 +66,16 @@ pub const MEMBERSHIP_CACHE_TTL_SECONDS: u64 = 60;
 
 pub const VOTE_COUNT_PAD_WIDTH: usize = 6;
 
+/// Default page size for list endpoints when `?limit=` is omitted
+/// (`plans/03-api-contract.md` §1).
+pub const DEFAULT_LIST_LIMIT: u32 = 20;
+/// General upper bound on `?limit=` per `plans/03-api-contract.md` §1.
+pub const MAX_LIST_LIMIT: u32 = 100;
+/// `GET /groups/{groupId}/newsletters` computes `myDraftCount`/`myPublishedCount`
+/// with one extra query per cycle returned, so its page size is capped tighter
+/// than the general list limit (`plans/03-api-contract.md` §5.1).
+pub const MAX_NEWSLETTER_LIST_LIMIT: u32 = 24;
+
 #[cfg(test)]
 mod tests {
     use super::*;

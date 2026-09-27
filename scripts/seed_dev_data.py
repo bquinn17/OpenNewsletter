@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 try:
     import boto3
@@ -74,6 +75,15 @@ def parse_duration(s: str) -> timedelta:
 
 def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
+    """cycleId = yyyymm of responseOpenAt in the group's local time zone
+    (`06-newsletter-lifecycle.md` §4.1; mirrors
+    `backend/crates/shared/src/cycle_time.rs::cycle_id_for`).
+    """
+    local = response_open_at.astimezone(tz)
+    return f"{local.year:04d}{local.month:02d}"
 
 
 def deterministic_id(seed: str) -> str:
@@ -267,6 +277,8 @@ def write_fixture(
             "vote_window_close_at": iso(vote_close),
             "response_open_at": iso(response_open),
             "response_close_at": iso(response_close),
+            "published_at": None,
+            "next_transition_at": iso(response_open),
             "locked_question_ids": [],
             "notified_offsets_hours": [],
             "notified_on_open": False,
@@ -346,7 +358,10 @@ def main() -> None:
     # Derive stable IDs from known seeds so re-running seed gives the same IDs.
     user_id = deterministic_id(f"seed:user:{cognito_sub}")
     group_id = deterministic_id("seed:dev-group")
-    cycle_id = deterministic_id(f"seed:cycle:{now.strftime('%Y%m')}")
+    # cycleId is a real "yyyymm" (it's the Newsletter row's sort key, not an
+    # opaque id) — derived from response_open_at (== vote_close) in the
+    # fixture group's timezone, matching every other Newsletter writer.
+    cycle_id = cycle_id_for(vote_close, ZoneInfo("America/New_York"))
 
     write_fixture(
         table,

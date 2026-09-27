@@ -24,9 +24,10 @@ import getpass
 import json
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 try:
     import boto3
@@ -60,6 +61,37 @@ def derive_avatar_color(user_id: str) -> str:
 
 def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- Cycle schedule math, mirroring backend/crates/shared/src/cycle_time.rs ---
+#
+# Only the "very first cycle" case matters here (`after` is always "now"), so
+# this doesn't need chrono-tz's ambiguous/nonexistent-local-midnight handling:
+# `zoneinfo` never raises for those, it just resolves them per PEP 495, which
+# is close enough for a bootstrap script that only ever runs against today's
+# date in an active IANA zone.
+
+
+def first_day_of_next_month_local(after_utc: datetime, tz: ZoneInfo) -> datetime:
+    local = after_utc.astimezone(tz)
+    year, month = (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
+    local_midnight = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
+    return local_midnight.astimezone(timezone.utc)
+
+
+def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
+    """cycleId = yyyymm of responseOpenAt in the group's local time zone (§4.1)."""
+    local = response_open_at.astimezone(tz)
+    return f"{local.year:04d}{local.month:02d}"
+
+
+def next_cycle_schedule(
+    after: datetime, tz: ZoneInfo, response_window_days: int
+) -> tuple[str, datetime, datetime]:
+    """Returns (cycle_id, response_open_at, response_close_at) per §4.2/§5.4."""
+    response_open_at = first_day_of_next_month_local(after, tz)
+    response_close_at = response_open_at + timedelta(days=response_window_days)
+    return cycle_id_for(response_open_at, tz), response_open_at, response_close_at
 
 
 def deterministic_id(seed: str) -> str:
@@ -157,11 +189,23 @@ def write_group(
     display_name: str,
     group_id: str,
     group_name: str,
-    tz: str,
+    tz_name: str,
     now: datetime,
-) -> None:
-    """Write the User, sub lookup, Group and admin GroupMembership atomically."""
+) -> str:
+    """Write the User, sub lookup, Group, admin GroupMembership, and the
+    group's very first `voting` Newsletter cycle, atomically (§4.2's "very
+    first cycle" case — `after` is always "now" here).
+    """
     timestamp = iso(now)
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        sys.exit(f"`{tz_name}` is not a valid IANA time zone")
+    cycle_id, response_open_at, response_close_at = next_cycle_schedule(
+        now, tz, DEFAULT_CYCLE_SETTINGS["response_window_days"]
+    )
+    response_open_at_iso = iso(response_open_at)
+
     dynamodb.transact_write_items(
         TransactItems=[
             {
@@ -203,7 +247,7 @@ def write_group(
                         "entity": {"S": "Group"},
                         "group_id": {"S": group_id},
                         "name": {"S": group_name},
-                        "timezone": {"S": tz},
+                        "timezone": {"S": tz_name},
                         "cycle_settings": {
                             "M": {
                                 "questions_per_cycle": {
@@ -262,8 +306,33 @@ def write_group(
                     },
                 }
             },
+            {
+                "Put": {
+                    "TableName": table_name,
+                    "Item": {
+                        "pk": {"S": f"GROUP#{group_id}"},
+                        "sk": {"S": f"NL#{cycle_id}"},
+                        "gsi2pk": {"S": "NL_STATUS#voting"},
+                        "gsi2sk": {"S": f"{response_open_at_iso}#{group_id}#{cycle_id}"},
+                        "entity": {"S": "Newsletter"},
+                        "group_id": {"S": group_id},
+                        "cycle_id": {"S": cycle_id},
+                        "status": {"S": "voting"},
+                        "vote_window_open_at": {"S": timestamp},
+                        "vote_window_close_at": {"S": response_open_at_iso},
+                        "response_open_at": {"S": response_open_at_iso},
+                        "response_close_at": {"S": iso(response_close_at)},
+                        "published_at": {"NULL": True},
+                        "next_transition_at": {"S": response_open_at_iso},
+                        "locked_question_ids": {"L": []},
+                        "notified_offsets_hours": {"L": []},
+                        "notified_on_open": {"BOOL": False},
+                    },
+                }
+            },
         ]
     )
+    return cycle_id
 
 
 def main() -> None:
@@ -315,7 +384,7 @@ def main() -> None:
     user_id = deterministic_id(f"user:{cognito_sub}")
     group_id = deterministic_id(f"group:{cognito_sub}:{args.group_name}")
 
-    write_group(
+    cycle_id = write_group(
         dynamodb,
         table_name,
         user_id=user_id,
@@ -324,7 +393,7 @@ def main() -> None:
         display_name=display_name,
         group_id=group_id,
         group_name=args.group_name,
-        tz=args.timezone,
+        tz_name=args.timezone,
         now=datetime.now(timezone.utc),
     )
 
@@ -333,6 +402,7 @@ def main() -> None:
     print("\nDone.")
     print(f"  Group    : {args.group_name} ({group_id})")
     print(f"  Admin    : {args.admin_email} ({user_id})")
+    print(f"  Cycle    : {cycle_id} (voting)")
     print(f"  Table    : {table_name}")
     print("\nSign in for a token:")
     print(
@@ -345,10 +415,6 @@ def main() -> None:
         print(f"\nThen call the API (send the ID token):\n  curl -H \"Authorization: Bearer $TOKEN\" {api_endpoint}/me")
     else:
         print("\nDeploy ApiStack to get an endpoint for the /me smoke test.")
-
-    # The next voting cycle is created by the lifecycle engine in M5; until then a
-    # freshly bootstrapped group has no newsletter.
-    print("\nNote: this group has no newsletter cycle yet — that lands with M5's cycle engine.")
 
 
 if __name__ == "__main__":

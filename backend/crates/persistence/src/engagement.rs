@@ -4,6 +4,7 @@ use crate::error::RepoError;
 use crate::keys::{attr, comment_sk, engagement_pk, reaction_sk};
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::AttributeValue;
+use chrono::{DateTime, Utc};
 use domain::{Comment, CycleId, GroupId, QuestionId, Reaction, UserId};
 use serde_dynamo::{from_item, to_item};
 
@@ -54,7 +55,7 @@ pub async fn put_comment(repo: &Repo, c: &Comment) -> Result<(), RepoError> {
     );
     item.insert(
         attr::SK.into(),
-        AttributeValue::S(comment_sk(&c.created_at.to_rfc3339(), &c.comment_id)),
+        AttributeValue::S(comment_sk(c.created_at, &c.comment_id)),
     );
     item.insert(attr::ENTITY.into(), AttributeValue::S("Comment".into()));
 
@@ -77,7 +78,7 @@ pub async fn soft_delete_comment(
     cycle_id: &CycleId,
     question_id: &QuestionId,
     answer_user_id: &UserId,
-    created_at_iso: &str,
+    created_at: DateTime<Utc>,
     comment_id: &domain::CommentId,
     deleted_at_iso: &str,
 ) -> Result<(), RepoError> {
@@ -95,7 +96,7 @@ pub async fn soft_delete_comment(
         )
         .key(
             attr::SK,
-            AttributeValue::S(comment_sk(created_at_iso, comment_id)),
+            AttributeValue::S(comment_sk(created_at, comment_id)),
         )
         .update_expression("SET deleted_at = :t, body = :empty REMOVE image_media_id")
         .expression_attribute_values(":t", AttributeValue::S(deleted_at_iso.into()))

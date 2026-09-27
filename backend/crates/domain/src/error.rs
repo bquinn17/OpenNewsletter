@@ -23,6 +23,7 @@ pub enum ApiErrorCode {
     ImageTooLarge,
     ImageBadType,
     CandidatePromoted,
+    NewsletterArchived,
     RateLimited,
     Internal,
 }
@@ -49,6 +50,7 @@ impl ApiErrorCode {
             ImageTooLarge => "IMAGE_TOO_LARGE",
             ImageBadType => "IMAGE_BAD_TYPE",
             CandidatePromoted => "CANDIDATE_PROMOTED",
+            NewsletterArchived => "NEWSLETTER_ARCHIVED",
             RateLimited => "RATE_LIMITED",
             Internal => "INTERNAL",
         }
@@ -80,6 +82,7 @@ impl ApiErrorCode {
             ImageTooLarge => "Image is too large",
             ImageBadType => "Unsupported image type",
             CandidatePromoted => "Candidate question is already locked into a cycle",
+            NewsletterArchived => "Newsletter is archived",
             RateLimited => "Too many requests",
             Internal => "Internal server error",
         }
@@ -96,6 +99,7 @@ impl ApiErrorCode {
             InviteExpired => 410,
             InviteConsumed | MemberCapReached | LastAdmin | VoteCapReached | CycleNotVoting
             | CycleNotOpen | CycleNotPublished | ImageLimitExceeded | CandidatePromoted => 409,
+            NewsletterArchived => 410,
             ImageTooLarge => 413,
             ImageBadType => 415,
             RateLimited => 429,

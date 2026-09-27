@@ -78,7 +78,7 @@ These apply regardless of language.
 - One concept per file. A file > 400 lines is a smell; consider splitting.
 
 ### 1.12 Don't write what you can generate
-- TypeScript API types come from `shared/openapi.yaml` via `openapi-typescript`. Don't hand-edit `frontend/src/types/api.ts`. (`shared/openapi.yaml` lands in M5 — see `12-build-order.md`. Before then, `03-api-contract.md` is the contract.)
+- TypeScript API types come from `shared/openapi.yaml` via `openapi-typescript` (run `scripts/codegen_types.sh`). Don't hand-edit `frontend/src/types/api.ts`.
 - Rust API types: hand-written but contract-tested against the YAML (see [`11-testing-ci-cd.md`](11-testing-ci-cd.md) §2.3). Keep them in sync; a failing contract test means the YAML is the truth.
 - Don't duplicate the OpenAPI spec into prose elsewhere. Reference it.
 
@@ -295,6 +295,6 @@ Before opening a PR:
 - [ ] Tests added for new behavior; existing tests still green.
 - [ ] No new dependencies added without justification in the PR description.
 - [ ] No secrets, env-specific values, or local paths in the diff.
-- [ ] OpenAPI YAML updated if any route or schema changed; codegen re-run. (Applies from M5, when `shared/openapi.yaml` is created; before then update `03-api-contract.md` instead.)
+- [ ] OpenAPI YAML (`shared/openapi.yaml`) updated if any route or schema changed; codegen re-run (`scripts/codegen_types.sh`).
 - [ ] Plan documents updated if you discovered a gap or made a non-obvious decision.
 - [ ] PR description follows §6.3.

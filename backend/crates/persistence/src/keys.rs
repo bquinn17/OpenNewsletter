@@ -6,11 +6,36 @@
 //!
 //! Layouts mirror `plans/02-data-model-dynamodb.md` §2.
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{
     AvatarId, CognitoSub, CycleId, GroupId, ImageId, InviteCode, NewsletterStatus, QuestionId,
     UserId,
 };
 use shared::config::VOTE_COUNT_PAD_WIDTH;
+
+// ---------- Canonical key-timestamp formatting ----------
+
+/// The fixed-width sentinel used for a terminal-state `gsi2sk` (no next
+/// transition due). Sorts after any real timestamp `key_timestamp` can
+/// produce, so a `<=` range query never matches it.
+pub const SENTINEL_FAR_FUTURE_TIMESTAMP: &str = "9999-12-31T00:00:00Z";
+
+/// The canonical format for any timestamp embedded in a DynamoDB key
+/// attribute (`pk`/`sk`/`gsi1*`/`gsi2*`) or compared against one in a
+/// key-condition expression: fixed-width `YYYY-MM-DDTHH:MM:SSZ`, whole
+/// seconds, `Z` suffix, no fractional part.
+///
+/// `DateTime::to_rfc3339()` is *not* safe for this: it emits `+00:00` (not
+/// `Z`) and a variable-width fractional part whenever the instant has
+/// non-zero nanoseconds, so two timestamps that fall in the same second can
+/// sort inconsistently against each other lexicographically. Route every
+/// timestamp that ends up in a key attribute — or as a range-query bound
+/// compared against one — through this function instead. Plain (non-key)
+/// data attributes serialized by serde_dynamo are unaffected and may keep
+/// `to_rfc3339()`.
+pub fn key_timestamp(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
 // ---------- User (§2.1) ----------
 
@@ -82,14 +107,26 @@ pub fn newsletter_gsi2pk(status: NewsletterStatus) -> String {
     format!("NL_STATUS#{s}")
 }
 
-/// `{nextTransitionAtIso}#{groupId}#{cycleId}` (or sentinel `9999-...` in a
-/// terminal state — caller chooses the sentinel).
+/// `{nextTransitionAt}#{groupId}#{cycleId}`, with `nextTransitionAt` in the
+/// canonical fixed-width `key_timestamp` format. For a newsletter with no
+/// next transition due (a terminal state), use
+/// [`newsletter_gsi2sk_sentinel`] instead.
 pub fn newsletter_gsi2sk(
-    next_transition_at_iso: &str,
+    next_transition_at: DateTime<Utc>,
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> String {
-    format!("{next_transition_at_iso}#{group_id}#{cycle_id}")
+    format!(
+        "{}#{group_id}#{cycle_id}",
+        key_timestamp(next_transition_at)
+    )
+}
+
+/// `gsi2sk` for a newsletter in a terminal state (no next transition due).
+/// Uses [`SENTINEL_FAR_FUTURE_TIMESTAMP`], which sorts after every real
+/// `key_timestamp` value, so `list_cycles_due`'s `<=` bound never matches it.
+pub fn newsletter_gsi2sk_sentinel(group_id: &GroupId, cycle_id: &CycleId) -> String {
+    format!("{SENTINEL_FAR_FUTURE_TIMESTAMP}#{group_id}#{cycle_id}")
 }
 
 // ---------- Candidate question (§2.6) ----------
@@ -175,8 +212,8 @@ pub fn image_gsi1pk(user_id: &UserId) -> String {
     format!("USER#{}#IMG", user_id)
 }
 
-pub fn image_gsi1sk(uploaded_at_iso: &str, image_id: &ImageId) -> String {
-    format!("{uploaded_at_iso}#{image_id}")
+pub fn image_gsi1sk(uploaded_at: DateTime<Utc>, image_id: &ImageId) -> String {
+    format!("{}#{image_id}", key_timestamp(uploaded_at))
 }
 
 // ---------- Comment / Reaction (§2.11, §2.12) ----------
@@ -193,8 +230,8 @@ pub fn engagement_pk(
     )
 }
 
-pub fn comment_sk(created_at_iso: &str, comment_id: &domain::CommentId) -> String {
-    format!("C#{}#{}", created_at_iso, comment_id)
+pub fn comment_sk(created_at: DateTime<Utc>, comment_id: &domain::CommentId) -> String {
+    format!("C#{}#{}", key_timestamp(created_at), comment_id)
 }
 
 pub fn reaction_sk(reactor_user_id: &UserId, emoji: &str) -> String {
@@ -256,6 +293,7 @@ pub mod index {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Timelike};
     use domain::*;
 
     fn uid() -> UserId {
@@ -320,9 +358,14 @@ mod tests {
             newsletter_gsi2pk(NewsletterStatus::Published),
             "NL_STATUS#published"
         );
+        let ts = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
         assert_eq!(
-            newsletter_gsi2sk("2026-06-01T00:00:00Z", &gid(), &cid()),
+            newsletter_gsi2sk(ts, &gid(), &cid()),
             "2026-06-01T00:00:00Z#01HG2#202606"
+        );
+        assert_eq!(
+            newsletter_gsi2sk_sentinel(&gid(), &cid()),
+            "9999-12-31T00:00:00Z#01HG2#202606"
         );
     }
 
@@ -372,10 +415,8 @@ mod tests {
         assert_eq!(image_pk(&gid(), &cid()), "GROUP#01HG2#NL#202606");
         assert_eq!(image_sk(&iid()), "IMG#01HI4");
         assert_eq!(image_gsi1pk(&uid()), "USER#01HX1#IMG");
-        assert_eq!(
-            image_gsi1sk("2026-06-01T00:00:00Z", &iid()),
-            "2026-06-01T00:00:00Z#01HI4"
-        );
+        let ts = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        assert_eq!(image_gsi1sk(ts, &iid()), "2026-06-01T00:00:00Z#01HI4");
     }
 
     #[test]
@@ -386,10 +427,8 @@ mod tests {
             "GROUP#01HG2#NL#202606#Q#01HQ3#A#01HU5"
         );
         let cmt = CommentId::new("01HC6");
-        assert_eq!(
-            comment_sk("2026-06-04T12:00:00Z", &cmt),
-            "C#2026-06-04T12:00:00Z#01HC6"
-        );
+        let ts = Utc.with_ymd_and_hms(2026, 6, 4, 12, 0, 0).unwrap();
+        assert_eq!(comment_sk(ts, &cmt), "C#2026-06-04T12:00:00Z#01HC6");
         assert_eq!(reaction_sk(&uid(), "🔥"), "R#01HX1#🔥");
     }
 
@@ -413,5 +452,55 @@ mod tests {
     fn avatar_keys() {
         let a = AvatarId::new("01HA7");
         assert_eq!(avatar_sk(&a), "AVATAR#01HA7");
+    }
+
+    #[test]
+    fn key_timestamp_is_fixed_width_with_no_fraction() {
+        // Whole-second input: no fractional part, `Z` suffix, exactly 20 bytes.
+        let whole = Utc.with_ymd_and_hms(2026, 10, 1, 4, 0, 0).unwrap();
+        let formatted = key_timestamp(whole);
+        assert_eq!(formatted, "2026-10-01T04:00:00Z");
+        assert_eq!(formatted.len(), 20);
+
+        // Sub-second input: nanos are truncated, not rounded, and the format
+        // stays fixed-width — this is the exact input shape `Utc::now()`
+        // produces that `to_rfc3339()` would otherwise render with a
+        // variable-width fractional part.
+        let with_nanos = Utc
+            .with_ymd_and_hms(2026, 10, 1, 4, 0, 0)
+            .unwrap()
+            .with_nanosecond(123_456_789)
+            .unwrap();
+        let formatted_nanos = key_timestamp(with_nanos);
+        assert_eq!(formatted_nanos, "2026-10-01T04:00:00Z");
+        assert_eq!(formatted_nanos.len(), 20);
+
+        // Sanity: `to_rfc3339()` is the thing we're avoiding — it would have
+        // produced a longer, `+00:00`-suffixed string here.
+        assert_ne!(with_nanos.to_rfc3339(), formatted_nanos);
+    }
+
+    #[test]
+    fn key_timestamp_with_nanos_sorts_correctly_against_a_same_second_bound() {
+        // A `now` with non-zero nanoseconds, and a query upper bound computed
+        // from the same whole second (as `list_cycles_due` does by truncating
+        // `now` before formatting). The two must compare equal once both go
+        // through `key_timestamp` — with raw `to_rfc3339()`, the fractional
+        // part would make `now` sort *after* the truncated bound and the
+        // due-row would be missed.
+        let now = Utc
+            .with_ymd_and_hms(2026, 10, 1, 4, 0, 0)
+            .unwrap()
+            .with_nanosecond(500_000_000)
+            .unwrap();
+        let bound = key_timestamp(now);
+        let gsi2sk = newsletter_gsi2sk(now, &gid(), &cid());
+        assert!(gsi2sk.as_str() <= format!("{bound}#~~~").as_str());
+
+        // And the naive `to_rfc3339()` form of the same instant does NOT sort
+        // consistently at the same second — demonstrating the bug this fix
+        // closes.
+        let naive_bound = now.to_rfc3339();
+        assert_ne!(naive_bound, bound);
     }
 }

@@ -3,12 +3,18 @@
 Per `plans/01-infrastructure-cdk.md` §6. The route table is driven from
 `plans/03-api-contract.md` §13, which is authoritative when the two disagree.
 
-M4 wires `lambda-invites` and `lambda-groups`. The remaining handler Lambdas join
-this stack as their milestones land; `_ROUTES` is the single place to add them.
+M4 wires `lambda-invites` and `lambda-groups`. M5 adds `lambda-newsletters` and
+`lambda-questions`. The remaining handler Lambdas join this stack as their
+milestones land; `_ROUTES` is the single place to add them.
 
 The `PreSignUp` trigger Lambda lives in AuthStack, not here: `add_trigger` attaches
 the wiring to the user pool's own stack, so building it here would make AuthStack
 depend on ApiStack while ApiStack already depends on AuthStack for the authorizer.
+
+The dev-only `POST /admin/dev/tick/cycle` route (`plans/03-api-contract.md` §11a.1)
+integrates `NotificationsStack`'s cycle-tick Lambda, passed in via constructor
+parameter — see `notifications_stack.py` for why that makes this stack depend on
+`NotificationsStack` rather than the other way around.
 """
 
 from __future__ import annotations
@@ -61,6 +67,13 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("invites", "GET", "/admin/groups/{groupId}/invites"),
     ("invites", "POST", "/admin/invites/{code}/revoke"),
     ("invites", "POST", "/invites/redeem"),
+    ("newsletters", "GET", "/groups/{groupId}/newsletters"),
+    ("newsletters", "GET", "/groups/{groupId}/newsletters/{cycleId}"),
+    ("questions", "GET", "/groups/{groupId}/candidate-questions"),
+    ("questions", "POST", "/groups/{groupId}/candidate-questions"),
+    ("questions", "POST", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
+    ("questions", "DELETE", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
+    ("questions", "DELETE", "/admin/groups/{groupId}/candidate-questions/{questionId}"),
 ]
 
 
@@ -80,6 +93,7 @@ class ApiStack(cdk.Stack):
         user_pool: cognito.IUserPool,
         user_pool_client: cognito.IUserPoolClient,
         certificate: acm.ICertificate,
+        cycle_tick_fn: aws_lambda.IFunction,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -112,6 +126,16 @@ class ApiStack(cdk.Stack):
                 "CDN_BASE_URL": f"https://cdn.{config.domain}",
                 "VAPID_PUBLIC_KEY": _sm_ref(config.vapid_secret_arn, "publicKey"),
             },
+        )
+        self.newsletters_fn = self._handler_lambda(
+            "Newsletters",
+            binary_name="newsletters-api",
+            description="Newsletter list + detail",
+        )
+        self.questions_fn = self._handler_lambda(
+            "Questions",
+            binary_name="questions-api",
+            description="Candidate question CRUD + votes",
         )
 
         # --- HTTP API ---
@@ -148,7 +172,12 @@ class ApiStack(cdk.Stack):
             ),
         )
 
-        handlers = {"invites": self.invites_fn, "groups": self.groups_fn}
+        handlers = {
+            "invites": self.invites_fn,
+            "groups": self.groups_fn,
+            "newsletters": self.newsletters_fn,
+            "questions": self.questions_fn,
+        }
         for handler_key, method, path in _ROUTES:
             handler = handlers[handler_key]
             self.api.add_routes(
@@ -157,6 +186,18 @@ class ApiStack(cdk.Stack):
                 integration=apigw_integrations.HttpLambdaIntegration(
                     f"{handler_key.title()}{method.title()}{_route_id(path)}",
                     handler,
+                ),
+            )
+
+        # Dev-only fast-forward route (`plans/03-api-contract.md` §11a.1); refuses
+        # with 404 in prod simply by not existing there. `POST /admin/dev/tick/notify`
+        # joins once `lambda-notify-tick` lands in M11.
+        if config.env == "dev":
+            self.api.add_routes(
+                path="/admin/dev/tick/cycle",
+                methods=[apigw.HttpMethod.POST],
+                integration=apigw_integrations.HttpLambdaIntegration(
+                    "AdminDevTickCycle", cycle_tick_fn
                 ),
             )
 
