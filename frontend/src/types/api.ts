@@ -247,6 +247,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/groups/{groupId}/newsletters/{cycleId}/my-responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's drafts/publishes for this cycle. Caller must be a member. */
+        get: operations["listMyResponses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's draft/published answer to one question. 404 if none exists yet. Caller must be a member. */
+        get: operations["getMyResponse"];
+        /** Save a draft or publish an answer. Last-write-wins on content — no version tokens, no conflict errors. Publishing is sticky: once published, a later `publish=false` save keeps the new content but cannot unpublish (`03-api-contract.md` §7.3). Caller must be a member. */
+        put: operations["saveMyResponse"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -585,6 +620,39 @@ export interface components {
             /** Format: date-time */
             publishedAt: string;
             questions: components["schemas"]["PublishedQuestionResponse"][];
+        };
+        /** @description The full shape of a saved response, returned by every §7 route. */
+        ResponseDto: {
+            responseId: string;
+            userId: string;
+            questionId: string;
+            groupId: string;
+            cycleId: string;
+            kind: components["schemas"]["QuestionKind"];
+            status: components["schemas"]["ResponseStatus"];
+            body?: string;
+            pollOptionId?: string;
+            imageMediaIds: string[];
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            publishedAt: string | null;
+        };
+        MyResponsesList: {
+            items: components["schemas"]["ResponseDto"][];
+        };
+        /** @description Tagged by `kind`. Image captions are set separately via `PATCH /uploads/{imageId}` (§9.6), not part of this payload. */
+        SaveResponseRequest: {
+            /** @enum {string} */
+            kind: "text";
+            body: string;
+            imageMediaIds: string[];
+            publish: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "poll";
+            pollOptionId: string;
+            publish: boolean;
         };
         HealthResponse: {
             status: string;
@@ -1571,6 +1639,157 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listMyResponses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's responses in this cycle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "responseId": "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a",
+                     *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *           "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *           "cycleId": "202606",
+                     *           "kind": "text",
+                     *           "status": "draft",
+                     *           "body": "Lake 22, hands down.",
+                     *           "imageMediaIds": [],
+                     *           "updatedAt": "2026-06-02T10:00:00Z",
+                     *           "publishedAt": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MyResponsesList"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            410: components["responses"]["NewsletterArchived"];
+        };
+    };
+    getMyResponse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's response to this question. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "responseId": "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "kind": "text",
+                     *       "status": "draft",
+                     *       "body": "Lake 22, hands down.",
+                     *       "imageMediaIds": [],
+                     *       "updatedAt": "2026-06-02T10:00:00Z",
+                     *       "publishedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ResponseDto"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            410: components["responses"]["NewsletterArchived"];
+        };
+    };
+    saveMyResponse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "text",
+                 *       "body": "Lake 22, hands down.",
+                 *       "imageMediaIds": [],
+                 *       "publish": false
+                 *     }
+                 */
+                "application/json": components["schemas"]["SaveResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description The saved response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "responseId": "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "kind": "text",
+                     *       "status": "draft",
+                     *       "body": "Lake 22, hands down.",
+                     *       "imageMediaIds": [],
+                     *       "updatedAt": "2026-06-02T10:00:00Z",
+                     *       "publishedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ResponseDto"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     healthz: {

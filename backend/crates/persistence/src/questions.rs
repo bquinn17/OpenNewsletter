@@ -121,6 +121,29 @@ pub async fn list_locked_questions(
         .collect()
 }
 
+/// Single-item fetch of one locked question, for handlers that already know
+/// which question they need (e.g. validating a response save) and don't need
+/// the whole newsletter's question list.
+pub async fn get_locked_question(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<Option<LockedQuestion>, RepoError> {
+    let resp = repo
+        .client
+        .get_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(locked_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(locked_sk(question_id)))
+        .send()
+        .await?;
+    match resp.item {
+        Some(item) => Ok(Some(from_item(item)?)),
+        None => Ok(None),
+    }
+}
+
 pub async fn put_candidate(repo: &Repo, q: &CandidateQuestion) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(q)?;
     item.insert(

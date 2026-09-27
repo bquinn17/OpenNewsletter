@@ -74,6 +74,9 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("questions", "POST", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
     ("questions", "DELETE", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
     ("questions", "DELETE", "/admin/groups/{groupId}/candidate-questions/{questionId}"),
+    ("responses", "GET", "/groups/{groupId}/newsletters/{cycleId}/my-responses"),
+    ("responses", "GET", "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response"),
+    ("responses", "PUT", "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response"),
 ]
 
 
@@ -137,6 +140,12 @@ class ApiStack(cdk.Stack):
             binary_name="questions-api",
             description="Candidate question CRUD + votes",
         )
+        self.responses_fn = self._handler_lambda(
+            "Responses",
+            binary_name="responses-api",
+            description="My response get/list/put",
+            memory_size=512,
+        )
 
         # --- HTTP API ---
 
@@ -177,6 +186,7 @@ class ApiStack(cdk.Stack):
             "groups": self.groups_fn,
             "newsletters": self.newsletters_fn,
             "questions": self.questions_fn,
+            "responses": self.responses_fn,
         }
         for handler_key, method, path in _ROUTES:
             handler = handlers[handler_key]

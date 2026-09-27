@@ -153,7 +153,7 @@ Read: `03-api-contract.md` §7, `04-frontend-architecture.md` §8.
 
 **Deliverables**:
 - `lambda-responses` with all routes from §7.
-- Last-write-wins draft saves — unconditional overwrite, no version tokens or conflict errors (`03-api-contract.md` §7.3, `02-data-model-dynamodb.md` §5).
+- Last-write-wins draft saves — the response row is overwritten unconditionally, with no version tokens or conflict errors. Only the cycle-open check applies. (`03-api-contract.md` §7.3, `02-data-model-dynamodb.md` §5).
 - Validation: cycle status, image-id ownership / `ready` status / `purpose=response`, body length, image count.
 - Integration tests for: save draft, interleaved saves resolve last-write-wins, publish, attempt to publish past deadline.
 

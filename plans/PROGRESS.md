@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-09-26. Working document — update as milestones complete or
+Snapshot as of 2026-09-27. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -17,7 +17,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
 | **M4** | **Auth + bootstrap** | 🟡 **code-complete, deploy unverified** | See "M4 detail" below. All 101 backend tests + 34 CDK tests green; fmt/clippy/ruff/mypy clean; `cdk synth` clean for dev + prod. The done-when gate (curl `GET /me` with a real Cognito token) needs an AWS account — blocked on B5. |
 | **M5** | **Lifecycle engine + cycle CRUD** | 🟡 **code-complete, deploy unverified** | See "M5 detail" below. The manual done-when flow needs AWS (B5); an end-to-end DynamoDB Local test covers the same sequence. `shared/openapi.yaml` + contract test landed. |
-| M6 | Responses + drafts | ⬜ | Drafts are last-write-wins — no version-conflict handling (`03-api-contract.md` §7.3). |
+| **M6** | **Responses + drafts** | 🟡 **code-complete, deploy unverified** | See "M6 detail" below. 201 backend + 41 CDK tests green. The curl save → save → publish gate needs AWS (B5); DynamoDB Local integration tests cover the same sequence. |
 | M7 | Frontend skeleton + auth | ⬜ (existing mock UI predates real API) | Commit `91188ba` shipped a rich mock-only UI; will need rework against real endpoints in M7. |
 | M8 | Media pipeline | ⬜ | Scope grew on 2026-08-09: avatar buckets + `/avatar/*` CloudFront behavior (`01` §5), size-cap enforcement in `lambda-image-process` (`08` §3.2), dev signed-URL query-param mode (`08` §4.5). |
 | M9 | Newsletter UI | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5, M4 and M5 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5, M4, M5 and M6 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -262,6 +262,41 @@ Docs corrected alongside: `00` §4 repo layout (the media-stack split and `lambd
 
 ---
 
+## M6 detail — what landed (2026-09-27)
+
+- **`lambda-responses`** (binary `responses-api`) — `GET …/my-responses`, `GET|PUT …/questions/{q}/my-response` per `03` §7. Mirrors the `lambda-questions` layout (lib/router/handlers/state/validation).
+- **`persistence::responses::save_response`** replaces `save_draft`/`publish_response_tx`. Every save — draft or publish — is one `TransactWriteItems`: Update the response row + ConditionCheck on the Newsletter (`status = open AND response_close_at > now`) + the `editions_answered` bump on the caller's first publish in the cycle. A lost race maps to 409 `CYCLE_NOT_OPEN`. `persistence::questions::get_locked_question` added.
+- **Decisions (documented in `03` §7.3 and `02` §4 #4):**
+  - Publishing is sticky: `publish=false` after a publish updates content but stays `published`, with the original `publishedAt`.
+  - The deadline is enforced by `responseCloseAt` as well as by status, so the ≤5-minute window before the tick runs is closed.
+  - `responseId` is stable via `if_not_exists`.
+  - Kind mismatch → `VALIDATION_ERROR`.
+  - Image IDs are de-duplicated before the ≤10 check.
+  - Saves don't modify `ImageMedia` rows (question linkage is M8).
+- **OpenAPI** — 3 routes + `ResponseDto`/`MyResponsesList`/`SaveResponseRequest` in `shared/openapi.yaml`, `ROUTE_TABLE` rows, `frontend/src/types/api.ts` regenerated.
+- **Infra** — `Responses` Lambda (512 MB) + 3 JWT routes in `ApiStack`, `FUNCTION_responses-api` in the Makefile, CDK test.
+- **Tests** — 22 handler integration tests + 5 validation unit tests (`lambda-responses`), 12 repo tests (`persistence/tests/responses.rs`). They cover:
+  - saves and publishing:
+    - draft/get
+    - interleaved saves with last-write-wins and a stable ID
+    - publish, with one bump only
+    - sticky publish
+  - cycle state:
+    - past deadline → 409
+    - published cycle → 409
+  - access and validation:
+    - non-member
+    - every image rule
+    - body length
+    - image cap
+    - poll option
+    - kind mismatch
+    - my-responses scoping
+    - 404
+- **Known limitation:** two *concurrent* first publishes by the same user on different questions can both see zero published rows and double-bump `editionsAnswered`. It is cosmetic (a stats counter) and needs same-user parallel publishes in one instant, so it is accepted for v1.
+
+---
+
 ## Active blockers
 
 ### B4 — Pre-existing mock-only frontend will need replacement in M7
@@ -291,7 +326,8 @@ On both machines no Lambda artifact has ever been produced. `ApiStack`/`Notifica
    source infra/.venv/bin/activate && npx aws-cdk@2 bootstrap aws://ACCOUNT_ID/us-east-1
    ```
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
-5. **Begin M6** (Responses + drafts): `lambda-responses` per `03` §7, last-write-wins drafts. Standing rule from M5: every new/changed route updates `shared/openapi.yaml` + `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-run `scripts/codegen_types.sh`.
+5. **M6 gate**: after deploy, the curl save → save → publish dance against `PUT …/my-response` (`12` M6).
+6. **Begin M7** (Frontend skeleton + auth) — see B4; expect partial rewrite of the mock UI against `frontend/src/types/api.ts`. Standing rule from M5: every new/changed route updates `shared/openapi.yaml` + `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-run `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
@@ -307,9 +343,35 @@ Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environm
 
 ---
 
+## Handoff — starting M7 (Frontend skeleton + auth)
+
+For the next agent picking this up cold:
+
+1. **Orient.** Read `CLAUDE.md` (especially "Picking up work" and "Delegating to parallel agents"), then `12` M7, `04-frontend-architecture.md` and `05-auth-flow.md`.
+2. **Check the machine.** Run `uname`, then follow `13` §0 for that machine. On macOS, `frontend/` needs `npm install`; nothing there has been installed or built on the Mac yet.
+3. **Know the M7-specific traps:**
+   - **B4:** `frontend/src/` already contains a mock-driven UI (`mocks/`, `state/`, `pages/`, `components/`). Decide per module whether to keep it and wire it to the real API, or replace it. Don't build a second parallel tree.
+   - **Generated types location:** they live at `frontend/src/types/api.ts` (produced by `scripts/codegen_types.sh`), whereas `12` M7 names `api/generated.ts`. Pick one, update the script and `12` to match, and don't hand-edit the generated file.
+   - **No live backend:** the backend isn't deployed (B5), so M7's done-when (Google sign-in against the dev API) can't be verified yet. Build against the OpenAPI types and, where the existing mocks help, keep a mock mode behind an env flag. Record the unverified gate here, as M4–M6 did.
+4. **Suggested parallel split for M7**, each agent owning disjoint paths. In every prompt, repeat the search-scope rule and "do not commit".
+   - **Agent A (Sonnet), auth and API plumbing:**
+     - `frontend/src/auth/`
+     - `frontend/src/api/client.ts`
+     - the codegen location decision
+   - **Agent B (Sonnet), app shell and routing:**
+     - React Router with every `04` §3 route as a stub
+     - `AppShell`, `BottomNav`, `GroupSwitcher`
+     - `HomePage`, `SettingsPage`
+   - **Agent C (Haiku or Sonnet), `JoinPage`** once A's client exists, or have it code against the client's interface.
+   - **Lead:** reconcile against B4, then run `npm run typecheck`, `npm run lint` and `npm run build`. Then update this file and `frontend/README.md`.
+
+---
+
 ## How to update this file
 
 Each milestone-completion PR should:
 - flip its row in the table from ⬜/🟡 to ✅
 - delete blockers it cleared
 - add new blockers it surfaced
+- add an "Mn detail — what landed" section (backend/infra/tests/decisions), refresh the snapshot date, test counts and "Suggested next steps"
+- rewrite the "Handoff" section for the *next* milestone

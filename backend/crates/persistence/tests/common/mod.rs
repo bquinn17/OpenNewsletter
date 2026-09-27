@@ -367,6 +367,40 @@ pub fn _unused() {
     let _ = Duration::days(1);
 }
 
+/// Write a `Response` row directly, bypassing `responses::save_response`'s
+/// transaction (open-cycle condition check, sticky-publish `if_not_exists`
+/// tricks). For seeding fixtures only — production writes always go through
+/// `save_response`.
+pub async fn put_response(repo: &Repo, r: &Response) {
+    use aws_sdk_dynamodb::types::AttributeValue;
+    use persistence::keys::{attr, response_gsi1pk, response_gsi1sk, response_pk, response_sk};
+
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(r).expect("response serializes");
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)),
+    );
+    item.insert(attr::SK.into(), AttributeValue::S(response_sk(&r.user_id)));
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(response_gsi1pk(&r.user_id, &r.cycle_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(response_gsi1sk(&r.question_id)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("Response".into()));
+
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("response written");
+}
+
 /// Write a membership item directly. The persistence crate exposes no bare
 /// `put_membership` — production writes go through the invite transaction.
 pub async fn put_membership(repo: &Repo, m: &GroupMembership) {

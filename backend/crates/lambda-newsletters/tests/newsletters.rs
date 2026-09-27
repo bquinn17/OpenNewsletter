@@ -10,7 +10,7 @@ use domain::{
 };
 use newsletters::handlers;
 use newsletters::state::AppState;
-use persistence::{engagement, newsletters as nl_repo, questions, responses};
+use persistence::{engagement, newsletters as nl_repo, questions};
 use pretty_assertions::assert_eq;
 
 fn state(repo: persistence::Repo) -> AppState {
@@ -77,7 +77,7 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
         .await
         .unwrap();
 
-    responses::save_draft(
+    common::put_response(
         &repo,
         &Response {
             response_id: ResponseId::new("r1"),
@@ -94,8 +94,7 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
             published_at: None,
         },
     )
-    .await
-    .unwrap();
+    .await;
 
     let state = state(repo);
     let response = handlers::list_newsletters(
@@ -190,7 +189,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
     };
     put_locked_question_directly(&repo, &lq).await;
 
-    responses::save_draft(
+    common::put_response(
         &repo,
         &Response {
             response_id: ResponseId::new("r1"),
@@ -207,8 +206,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
             published_at: None,
         },
     )
-    .await
-    .unwrap();
+    .await;
 
     let state = state(repo);
     let detail_as_u1 = handlers::get_newsletter_detail(
@@ -289,7 +287,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
         put_locked_question_directly(&repo, lq).await;
     }
 
-    responses::save_draft(
+    common::put_response(
         &repo,
         &Response {
             response_id: ResponseId::new("r1"),
@@ -306,9 +304,8 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
         },
     )
-    .await
-    .unwrap();
-    responses::save_draft(
+    .await;
+    common::put_response(
         &repo,
         &Response {
             response_id: ResponseId::new("r2"),
@@ -325,8 +322,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
         },
     )
-    .await
-    .unwrap();
+    .await;
 
     engagement::put_comment(
         &repo,

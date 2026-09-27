@@ -46,12 +46,13 @@ FUNCTION_invites-api       = Invites
 FUNCTION_invites-presignup = PreSignUp
 FUNCTION_newsletters-api   = Newsletters
 FUNCTION_questions-api     = Questions
+FUNCTION_responses-api     = Responses
 FUNCTION_cycle-tick        = CycleTick
 
 deploy-lambda: ## Fast-update one Lambda binary: make deploy-lambda LAMBDA=<binary-name>
 	@test -n "$(LAMBDA)" || { \
 	    echo "Usage: make deploy-lambda LAMBDA=<binary-name>"; \
-	    echo "Known binaries: groups-api invites-api invites-presignup newsletters-api questions-api cycle-tick"; exit 1; }
+	    echo "Known binaries: groups-api invites-api invites-presignup newsletters-api questions-api responses-api cycle-tick"; exit 1; }
 	@test -n "$(FUNCTION_$(LAMBDA))" || { \
 	    echo "Unknown binary '$(LAMBDA)'. Add it to the FUNCTION_* map in the Makefile."; exit 1; }
 	cd backend && cargo lambda build --release --arm64 --bin $(LAMBDA)

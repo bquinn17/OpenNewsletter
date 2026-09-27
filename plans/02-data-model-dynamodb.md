@@ -421,7 +421,7 @@ The following operations MUST use `TransactWriteItems`:
 1. **Cast a vote** — Put `CandidateVote` with `attribute_not_exists(sk)` AND Update `CandidateQuestion` with `voteCount += 1` AND `gsi1sk` rewritten with new padded count. Plus a "vote-count check" on the voter partition (see `03-api-contract.md` §6.4).
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `voteCount -= 1` AND new `gsi1sk`.
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `lockedQuestionIds` and transition status from `voting` to `open`. Single transaction (cap 100 items).
-4. **Publish response** — Update response `status` from `draft` to `published`, set `publishedAt`. (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open`. The transaction also increments `GroupMembership.editionsAnswered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
+4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updatedAt`, `responseId` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `publishedAt` via `if_not_exists`; publishing is sticky (`03-api-contract.md` §7.3). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND responseCloseAt > now`. The transaction also increments `GroupMembership.editionsAnswered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.memberCount += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.memberCount -= 1`.
 
@@ -431,7 +431,7 @@ For all transactions, use a `ClientRequestToken` derived from the request's `x-c
 
 ## 5. Concurrency for drafts
 
-Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs are unconditional `UpdateItem` calls that overwrite `body`, `imageMediaIds`, `pollOptionId`, and `updatedAt`. No `version` attribute, no `ConditionExpression`, no `409 Conflict` reconciliation. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
+Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs overwrite `body`, `imageMediaIds`, `pollOptionId`, and `updatedAt` with no condition on the response row itself. There is no `version` attribute and no `409 Conflict` reconciliation. The only condition is the Newsletter-row check from §4 #4, which requires the cycle to still be open. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
 
 ---
 

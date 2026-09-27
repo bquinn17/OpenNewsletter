@@ -13,7 +13,7 @@ A multi-tenant PWA where small groups of friends collaboratively produce a month
 
 ## Status
 
-Pre-release. See [`plans/12-build-order.md`](plans/12-build-order.md) for the milestone sequence.
+Pre-release. See [`plans/12-build-order.md`](plans/12-build-order.md) for the milestone sequence and [`plans/PROGRESS.md`](plans/PROGRESS.md) for where things stand: M0 and M2–M6 are code-complete, while M1 operator setup and all deploys are pending, and M7 (frontend) is next.
 
 ## Local development
 

@@ -10,8 +10,8 @@
 
 use crate::{
     AvatarId, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, Invite, InviteStatus,
-    NewsletterStatus, NotificationSettings, PollOptionId, QuestionId, QuestionKind, ResponseId,
-    ResponseStatus, Role, User, UserId,
+    NewsletterStatus, NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response,
+    ResponseId, ResponseStatus, Role, User, UserId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -530,6 +530,73 @@ pub enum NewsletterDetailResponse {
     },
 }
 
+// ===== `03-api-contract.md` §7 — Response routes (drafts + publish) =====
+
+/// A saved response — the full shape, returned by every §7 route (§7.1-§7.3).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseDto {
+    pub response_id: ResponseId,
+    pub user_id: UserId,
+    pub question_id: QuestionId,
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub kind: QuestionKind,
+    pub status: ResponseStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll_option_id: Option<PollOptionId>,
+    pub image_media_ids: Vec<ImageId>,
+    pub updated_at: DateTime<Utc>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+impl From<Response> for ResponseDto {
+    fn from(r: Response) -> Self {
+        Self {
+            response_id: r.response_id,
+            user_id: r.user_id,
+            question_id: r.question_id,
+            group_id: r.group_id,
+            cycle_id: r.cycle_id,
+            kind: r.kind,
+            status: r.status,
+            body: r.body,
+            poll_option_id: r.poll_option_id,
+            image_media_ids: r.image_media_ids,
+            updated_at: r.updated_at,
+            published_at: r.published_at,
+        }
+    }
+}
+
+/// `GET /groups/{groupId}/newsletters/{cycleId}/my-responses` response (§7.1).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MyResponsesList {
+    pub items: Vec<ResponseDto>,
+}
+
+/// `PUT .../my-response` request body (§7.3), tagged by `kind`. Image captions
+/// are set separately via `PATCH /uploads/{imageId}` (§9.6) — not part of this
+/// payload.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum SaveResponseRequest {
+    #[serde(rename_all = "camelCase")]
+    Text {
+        body: String,
+        image_media_ids: Vec<ImageId>,
+        publish: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    Poll {
+        poll_option_id: PollOptionId,
+        publish: bool,
+    },
+}
+
 // ===== `03-api-contract.md` §11 — Health =====
 
 /// `GET /healthz` response (§11.1).
@@ -622,6 +689,41 @@ mod tests {
         let value = serde_json::to_value(&published).unwrap();
         assert_eq!(value["status"], "published");
         assert_eq!(value["cycleId"], "202606");
+    }
+
+    #[test]
+    fn save_response_request_tags_text_and_poll_variants_by_kind() {
+        let text_json = serde_json::json!({
+            "kind": "text",
+            "body": "Lake 22, hands down.",
+            "imageMediaIds": ["01H..."],
+            "publish": false,
+        });
+        let parsed: SaveResponseRequest = serde_json::from_value(text_json.clone()).unwrap();
+        assert_eq!(
+            parsed,
+            SaveResponseRequest::Text {
+                body: "Lake 22, hands down.".into(),
+                image_media_ids: vec![ImageId::new("01H...")],
+                publish: false,
+            }
+        );
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), text_json);
+
+        let poll_json = serde_json::json!({
+            "kind": "poll",
+            "pollOptionId": "01H...",
+            "publish": true,
+        });
+        let parsed: SaveResponseRequest = serde_json::from_value(poll_json.clone()).unwrap();
+        assert_eq!(
+            parsed,
+            SaveResponseRequest::Poll {
+                poll_option_id: PollOptionId::new("01H..."),
+                publish: true,
+            }
+        );
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), poll_json);
     }
 
     #[test]

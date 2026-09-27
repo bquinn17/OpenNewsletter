@@ -37,6 +37,8 @@ tags:
     description: Newsletter list + detail routes (`03-api-contract.md` §5).
   - name: candidate-questions
     description: Candidate question and vote routes (`03-api-contract.md` §6).
+  - name: responses
+    description: Response draft/publish routes (`03-api-contract.md` §7).
   - name: health
     description: Health check (`03-api-contract.md` §11).
 
@@ -663,6 +665,130 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /groups/{groupId}/newsletters/{cycleId}/my-responses:
+    get:
+      operationId: listMyResponses
+      tags: [responses]
+      summary: The caller's drafts/publishes for this cycle. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+      responses:
+        "200":
+          description: The caller's responses in this cycle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyResponsesList"
+              example:
+                items:
+                  - responseId: "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a"
+                    userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                    groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202606"
+                    kind: "text"
+                    status: "draft"
+                    body: "Lake 22, hands down."
+                    imageMediaIds: []
+                    updatedAt: "2026-06-02T10:00:00Z"
+                    publishedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+
+  /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response:
+    get:
+      operationId: getMyResponse
+      tags: [responses]
+      summary: >
+        The caller's draft/published answer to one question. 404 if none
+        exists yet. Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+      responses:
+        "200":
+          description: The caller's response to this question.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseDto"
+              example:
+                responseId: "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a"
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                cycleId: "202606"
+                kind: "text"
+                status: "draft"
+                body: "Lake 22, hands down."
+                imageMediaIds: []
+                updatedAt: "2026-06-02T10:00:00Z"
+                publishedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+    put:
+      operationId: saveMyResponse
+      tags: [responses]
+      summary: >
+        Save a draft or publish an answer. Last-write-wins on content — no
+        version tokens, no conflict errors. Publishing is sticky: once
+        published, a later `publish=false` save keeps the new content but
+        cannot unpublish (`03-api-contract.md` §7.3). Caller must be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveResponseRequest"
+            example:
+              kind: "text"
+              body: "Lake 22, hands down."
+              imageMediaIds: []
+              publish: false
+      responses:
+        "200":
+          description: The saved response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseDto"
+              example:
+                responseId: "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a"
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                cycleId: "202606"
+                kind: "text"
+                status: "draft"
+                body: "Lake 22, hands down."
+                imageMediaIds: []
+                updatedAt: "2026-06-02T10:00:00Z"
+                publishedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
   /healthz:
     get:
@@ -1585,6 +1711,91 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PublishedQuestionResponse"
+
+    # ---- §7 Response routes (drafts + publish) ----
+
+    ResponseDto:
+      type: object
+      description: The full shape of a saved response, returned by every §7 route.
+      required:
+        - responseId
+        - userId
+        - questionId
+        - groupId
+        - cycleId
+        - kind
+        - status
+        - imageMediaIds
+        - updatedAt
+        - publishedAt
+      properties:
+        responseId:
+          type: string
+        userId:
+          type: string
+        questionId:
+          type: string
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        status:
+          $ref: "#/components/schemas/ResponseStatus"
+        body:
+          type: string
+        pollOptionId:
+          type: string
+        imageMediaIds:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+
+    MyResponsesList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResponseDto"
+
+    SaveResponseRequest:
+      description: >
+        Tagged by `kind`. Image captions are set separately via
+        `PATCH /uploads/{imageId}` (§9.6), not part of this payload.
+      oneOf:
+        - type: object
+          required: [kind, body, imageMediaIds, publish]
+          properties:
+            kind:
+              type: string
+              enum: [text]
+            body:
+              type: string
+            imageMediaIds:
+              type: array
+              items:
+                type: string
+            publish:
+              type: boolean
+        - type: object
+          required: [kind, pollOptionId, publish]
+          properties:
+            kind:
+              type: string
+              enum: [poll]
+            pollOptionId:
+              type: string
+            publish:
+              type: boolean
 
     # ---- §11 Health ----
 

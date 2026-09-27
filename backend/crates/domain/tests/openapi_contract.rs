@@ -13,9 +13,10 @@
 use domain::api::{
     CandidateItemResponse, CandidateListResponse, CandidateVoteResponse, ConfigResponse,
     CreateCandidateRequest, CreateInviteRequest, CreateInviteResponse, GroupResponse,
-    HealthResponse, InviteListResponse, MemberResponse, MembershipListResponse,
+    HealthResponse, InviteListResponse, MemberResponse, MembershipListResponse, MyResponsesList,
     NewsletterDetailResponse, NewsletterListResponse, PatchGroupRequest, PatchMeRequest,
-    PatchMemberRequest, ProblemDetails, RedeemRequest, RedeemResponse, UserResponse,
+    PatchMemberRequest, ProblemDetails, RedeemRequest, RedeemResponse, ResponseDto,
+    SaveResponseRequest, UserResponse,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -224,6 +225,54 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "DELETE",
         "/admin/groups/{groupId}/candidate-questions/{questionId}",
         "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/my-responses",
+        "200",
+        round_trip::<MyResponsesList>,
+    ),
+    (
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/my-responses",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "200",
+        round_trip::<ResponseDto>,
+    ),
+    (
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "request",
+        round_trip::<SaveResponseRequest>,
+    ),
+    (
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "200",
+        round_trip::<ResponseDto>,
+    ),
+    (
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "422",
         round_trip::<ProblemDetails>,
     ),
 ];

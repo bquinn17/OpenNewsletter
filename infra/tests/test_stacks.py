@@ -442,6 +442,9 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "POST /groups/{groupId}/candidate-questions/{questionId}/votes",
         "DELETE /groups/{groupId}/candidate-questions/{questionId}/votes",
         "DELETE /admin/groups/{groupId}/candidate-questions/{questionId}",
+        "GET /groups/{groupId}/newsletters/{cycleId}/my-responses",
+        "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
         "POST /admin/dev/tick/cycle",
     }
 
@@ -465,6 +468,21 @@ def test_handler_lambdas_are_arm64_provided_al2023(
                 "Timeout": 10,
             },
         )
+
+
+def test_responses_lambda_is_arm64_provided_al2023_with_512_memory(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Responses-dev",
+            "Architectures": ["arm64"],
+            "Runtime": "provided.al2023",
+            "MemorySize": 512,
+            "Timeout": 10,
+        },
+    )
 
 
 def test_handler_lambdas_receive_the_table_name(

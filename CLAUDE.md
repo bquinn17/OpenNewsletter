@@ -65,6 +65,49 @@ Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/A
 
 [`plans/12-build-order.md`](plans/12-build-order.md) is the milestone sequence an executor should follow. Each milestone names the plan docs to consult and the done-when gate.
 
+## Picking up work
+
+**Start with [`plans/PROGRESS.md`](plans/PROGRESS.md).** It records:
+- which milestone is next
+- what each finished milestone landed
+- decisions made along the way
+- active blockers
+- known gaps carried forward
+
+Update it at the end of every milestone; its last section says how.
+
+Standing rules learned the hard way:
+- **API contract changes:** every new or changed route updates [`shared/openapi.yaml`](shared/openapi.yaml) and `ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs` in the same change. Then re-run `scripts/codegen_types.sh` to regenerate `frontend/src/types/api.ts`.
+- **Crate template:** new Lambda crates copy the layout of `lambda-questions` / `lambda-responses`: `lib.rs`, `router.rs`, `handlers.rs`, `state.rs`, `validation.rs`, and DynamoDB Local tests under `tests/`. The binary is named `<name>-api`. Wire it in `infra/opennewsletter/api_stack.py` and add a `FUNCTION_<binary>` entry to the `Makefile`.
+- **Key timestamps:** every timestamp in a key attribute goes through `persistence::keys::key_timestamp`.
+- **Test group IDs:** integration tests use unique group IDs, because the membership cache is process-wide.
+- **Spec gaps:** when you fill a gap in the spec, record the decision in the owning plan doc and in PROGRESS.md's "Decisions" list for that milestone.
+
+## Delegating to parallel agents
+
+The owner prefers that work be delegated to cheaper sub-agents, running in parallel where possible, with the lead agent planning, reviewing and verifying. The pattern that has worked (M5, M6):
+
+1. **Lead reads the spec first.** Read the milestone's plan sections and settle ambiguities *before* spawning agents. Write the decided semantics into the agent prompt verbatim, and put them into the plan docs yourself while the agents run.
+2. **Split by directory so agents never edit the same files.** Typically:
+   - a **backend agent** (Sonnet) covering `backend/`, `shared/openapi.yaml` and the generated `frontend/src/types/api.ts`
+   - an **infra agent** (Haiku is enough) covering `infra/` and the `Makefile`
+   - a **docs agent** if plan docs need sweeping
+
+   Run them in the background, in parallel. Tell each one which paths it may *not* touch, and that others are working concurrently, so it doesn't "fix" their changes.
+3. **Every agent prompt must include:**
+   - **Search scope:** "Stay inside this repo directory (or below) for every search, grep, find, ls and read — never `$HOME` or `/`." An earlier agent searched far too widely.
+   - **A template to mirror:** point at an existing crate or stack as the pattern.
+   - **The platform-correct verify command:** copied from the section above, with env vars inline.
+   - **The baseline test count** to compare against.
+   - **"Do not commit."**
+   - **What to report back:** files changed, test counts, spec contradictions hit, and anything unfinished.
+4. **Lead verifies; don't take an agent's word for it.**
+   - Read the diff of the risky core, such as a transaction or a state transition.
+   - Re-run `cargo fmt --check`, clippy with `-D warnings`, the full workspace tests, `pytest infra/tests` and `cdk synth`.
+   - Then update PROGRESS.md.
+
+Commit only when the owner asks.
+
 ## When something is ambiguous
 
 If a plan document seems wrong or contradicts another, **stop and surface it** rather than guessing. Plan docs are intended to be edited as we learn. For low-stakes gaps: pick the simplest default, document it in the appropriate plan file in the same PR, and continue.

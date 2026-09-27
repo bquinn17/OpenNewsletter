@@ -1853,6 +1853,23 @@ dependencies = [
 [[package]]
 name = "lambda-responses"
 version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "chrono",
+ "domain",
+ "lambda_http",
+ "persistence",
+ "pretty_assertions",
+ "serde",
+ "serde_dynamo",
+ "serde_json",
+ "shared",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "lambda_http"
