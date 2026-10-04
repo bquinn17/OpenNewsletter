@@ -13,6 +13,7 @@ interface EmojiClickDetail {
 // React doesn't know about <emoji-picker>; declare it for JSX. We only ever
 // attach an event listener via ref, so an empty prop set is enough.
 declare module "react" {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- augmenting React's JSX namespace requires `namespace` syntax
   namespace JSX {
     interface IntrinsicElements {
       "emoji-picker": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
@@ -102,12 +103,15 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
   return createPortal(
     <div
       ref={popRef}
-      className="fixed z-50 rounded-2xl shadow-pop border border-line bg-white overflow-hidden animate-pop"
+      className="fixed z-50 animate-pop overflow-hidden rounded-2xl border border-line bg-white shadow-pop"
       style={{ height: 400 }}
       role="dialog"
       aria-label="Choose an emoji"
     >
-      <emoji-picker ref={pickerRef as unknown as RefObject<HTMLElement>} class="block w-full h-full" />
+      <emoji-picker
+        ref={pickerRef as unknown as RefObject<HTMLElement>}
+        class="block h-full w-full"
+      />
     </div>,
     document.body,
   );

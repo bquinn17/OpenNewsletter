@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { useNewsletter } from "../api/queries";
+import { useNewsletter } from "../mocks/legacyQueries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
@@ -7,7 +7,7 @@ import { AskedBy } from "../components/newsletter/AskedBy";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { CandidatesPage } from "./CandidatesPage";
 import { shortCountdown } from "../utils/dates";
-import type { LockedQuestion, MyResponse, PublishedQuestion } from "../api/types";
+import type { LockedQuestion, MyResponse, PublishedQuestion } from "../mocks/types";
 
 type RecurringKind = "photo" | "mind" | "link";
 
@@ -54,10 +54,17 @@ export function NewsletterPage() {
   const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
 
   if (isLoading) return <LoadingShell />;
-  if (isError || !data) return <ErrorState message={error instanceof Error ? error.message : "Couldn't load this edition."} onRetry={() => refetch()} />;
+  if (isError || !data)
+    return (
+      <ErrorState
+        message={error instanceof Error ? error.message : "Couldn't load this edition."}
+        onRetry={() => refetch()}
+      />
+    );
   if (data.status === "voting") return <CandidatesPage />;
   if (data.status === "open") return <OpenLayout data={data} />;
-  if (data.status === "published") return <PublishedLayout data={data} groupId={groupId} cycleId={cycleId} />;
+  if (data.status === "published")
+    return <PublishedLayout data={data} groupId={groupId} cycleId={cycleId} />;
   return null;
 }
 
@@ -66,9 +73,12 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
     <div className="bg-cream pb-12">
       <PageHeader title="Edition" eyebrow="Couldn't load" back="/" />
       <div className="px-5 pt-8 text-center">
-        <div className="text-5xl mb-3">😬</div>
-        <p className="text-ink font-semibold">{message}</p>
-        <button onClick={onRetry} className="mt-5 px-5 py-3 rounded-full bg-ink text-cream font-semibold">
+        <div className="mb-3 text-5xl">😬</div>
+        <p className="font-semibold text-ink">{message}</p>
+        <button
+          onClick={onRetry}
+          className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
+        >
           Try again
         </button>
       </div>
@@ -80,9 +90,9 @@ function LoadingShell() {
   return (
     <div className="bg-cream pb-12">
       <PageHeader title="Loading…" eyebrow="Edition" back="/" />
-      <div className="px-5 pt-6 space-y-3">
+      <div className="space-y-3 px-5 pt-6">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-32 rounded-3xl bg-white border border-line animate-pulse" />
+          <div key={i} className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
         ))}
       </div>
     </div>
@@ -109,24 +119,26 @@ function PublishedLayout({
       />
 
       <div className="px-5 pt-5">
-        <div className="bg-white rounded-3xl border border-line p-4">
-          <div className="text-xs uppercase tracking-widest text-inkmuted font-semibold mb-2">In this edition</div>
+        <div className="rounded-3xl border border-line bg-white p-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-inkmuted">
+            In this edition
+          </div>
           <ul className="text-sm">
             {data.questions.map((q) => {
-              const asker = recurringKind(q.prompt) ? null : q.askedBy?.displayName ?? null;
+              const asker = recurringKind(q.prompt) ? null : (q.askedBy?.displayName ?? null);
               return (
                 <li key={q.questionId}>
                   <a
                     href={`#q-${q.questionId}`}
-                    className="group flex gap-3 items-start -mx-2 px-2 py-2 rounded-xl hover:bg-cream transition-colors"
+                    className="group -mx-2 flex items-start gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-cream"
                   >
-                    <span className="text-base leading-6 select-none flex-shrink-0" aria-hidden>
+                    <span className="flex-shrink-0 select-none text-base leading-6" aria-hidden>
                       {summaryIcon(q)}
                     </span>
-                    <span className="flex-1 min-w-0 text-ink line-clamp-2 group-hover:text-grape">
+                    <span className="line-clamp-2 min-w-0 flex-1 text-ink group-hover:text-grape">
                       {summaryTitle(q)}
                     </span>
-                    <span className="text-xs text-inkmuted whitespace-nowrap mt-0.5 flex-shrink-0">
+                    <span className="mt-0.5 flex-shrink-0 whitespace-nowrap text-xs text-inkmuted">
                       {asker && (
                         <>
                           <span>{asker}</span>
@@ -140,7 +152,7 @@ function PublishedLayout({
               );
             })}
           </ul>
-          <div className="text-xs text-inkmuted mt-3">
+          <div className="mt-3 text-xs text-inkmuted">
             Published {data.publishedAt ? new Date(data.publishedAt).toLocaleDateString() : ""} ·{" "}
             {data.questions.length} questions · {data.reactionTotal} reactions
           </div>
@@ -148,12 +160,14 @@ function PublishedLayout({
       </div>
 
       {data.questions.map((q) => (
-        <section key={q.questionId} id={`q-${q.questionId}`} className="px-5 mt-8 scroll-mt-20">
-          <div className="flex items-baseline gap-3 mb-3">
-            <span className="text-2xl leading-none flex-shrink-0" aria-hidden>{summaryIcon(q)}</span>
+        <section key={q.questionId} id={`q-${q.questionId}`} className="mt-8 scroll-mt-20 px-5">
+          <div className="mb-3 flex items-baseline gap-3">
+            <span className="flex-shrink-0 text-2xl leading-none" aria-hidden>
+              {summaryIcon(q)}
+            </span>
             <div>
               {q.kind === "poll" && (
-                <div className="text-xs uppercase tracking-widest text-grape font-bold">Poll</div>
+                <div className="text-xs font-bold uppercase tracking-widest text-grape">Poll</div>
               )}
               <AskedBy askedBy={q.askedBy} isAnonymous={q.isAnonymous} />
               <h2 className="font-display text-2xl font-bold leading-tight">{q.prompt}</h2>
@@ -162,10 +176,16 @@ function PublishedLayout({
           {q.kind === "text" ? (
             <>
               {q.answers.map((a) => (
-                <AnswerCard key={a.responseId} answer={a} groupId={groupId} cycleId={cycleId} questionId={q.questionId} />
+                <AnswerCard
+                  key={a.responseId}
+                  answer={a}
+                  groupId={groupId}
+                  cycleId={cycleId}
+                  questionId={q.questionId}
+                />
               ))}
               {q.answers.length === 0 && (
-                <div className="bg-white border border-dashed border-line rounded-3xl p-6 text-center text-inkmuted text-sm">
+                <div className="rounded-3xl border border-dashed border-line bg-white p-6 text-center text-sm text-inkmuted">
                   Nobody answered this one. Maybe next month.
                 </div>
               )}
@@ -176,11 +196,13 @@ function PublishedLayout({
         </section>
       ))}
 
-      <div className="px-5 mt-12 text-center text-inkmuted text-sm">
-        <div className="font-display text-2xl text-ink mb-1">That's a wrap on {data.monthLabel} 🎈</div>
+      <div className="mt-12 px-5 text-center text-sm text-inkmuted">
+        <div className="mb-1 font-display text-2xl text-ink">
+          That&apos;s a wrap on {data.monthLabel} 🎈
+        </div>
         <p>
           The next edition opens soon.{" "}
-          <Link to={`/g/${groupId}/upcoming`} className="text-grape font-semibold">
+          <Link to={`/g/${groupId}/upcoming`} className="font-semibold text-grape">
             Suggest a question
           </Link>{" "}
           anytime.
@@ -196,7 +218,9 @@ function OpenLayout({
   data: Extract<ReturnType<typeof useNewsletter>["data"], { status: "open" }>;
 }) {
   if (!data) return null;
-  const responsesByQuestion = new Map<string, MyResponse>(data.myResponses.map((r) => [r.questionId, r]));
+  const responsesByQuestion = new Map<string, MyResponse>(
+    data.myResponses.map((r) => [r.questionId, r]),
+  );
   const totalQs = data.questions.length;
   const publishedCount = data.myResponses.filter((r) => r.status === "published").length;
 
@@ -210,12 +234,14 @@ function OpenLayout({
       />
 
       <div className="px-5 pt-5">
-        <div className="bg-coral/10 border border-coral/40 rounded-3xl p-4">
-          <div className="text-xs uppercase tracking-widest font-bold text-coral">Open for responses</div>
-          <div className="font-semibold mt-1">
+        <div className="rounded-3xl border border-coral/40 bg-coral/10 p-4">
+          <div className="text-xs font-bold uppercase tracking-widest text-coral">
+            Open for responses
+          </div>
+          <div className="mt-1 font-semibold">
             {totalQs} questions · publishes in {shortCountdown(data.responseCloseAt)}
           </div>
-          <div className="flex items-center justify-between text-xs text-inkmuted mt-3 mb-1.5">
+          <div className="mb-1.5 mt-3 flex items-center justify-between text-xs text-inkmuted">
             <span>Your progress</span>
             <span>
               {publishedCount} of {totalQs} published
@@ -230,23 +256,29 @@ function OpenLayout({
                   : r?.status === "draft"
                     ? "bg-coral/50"
                     : "bg-coral/15";
-              return <div key={q.questionId} className={`flex-1 h-2 rounded-full ${tone}`} />;
+              return <div key={q.questionId} className={`h-2 flex-1 rounded-full ${tone}`} />;
             })}
           </div>
         </div>
       </div>
 
-      <div className="px-5 mt-5 space-y-3">
+      <div className="mt-5 space-y-3 px-5">
         {data.questions.map((q) => (
-          <QuestionRow key={q.questionId} q={q} response={responsesByQuestion.get(q.questionId)} groupId={data.groupId} cycleId={data.cycleId} />
+          <QuestionRow
+            key={q.questionId}
+            q={q}
+            response={responsesByQuestion.get(q.questionId)}
+            groupId={data.groupId}
+            cycleId={data.cycleId}
+          />
         ))}
       </div>
 
       {data.hypeMessage && (
-        <div className="px-5 mt-6">
-          <div className="rounded-3xl bg-grape/10 border border-grape/40 p-4">
-            <div className="text-xs uppercase tracking-widest text-grape font-bold">Hype check</div>
-            <div className="font-semibold mt-1 text-ink">{data.hypeMessage}</div>
+        <div className="mt-6 px-5">
+          <div className="rounded-3xl border border-grape/40 bg-grape/10 p-4">
+            <div className="text-xs font-bold uppercase tracking-widest text-grape">Hype check</div>
+            <div className="mt-1 font-semibold text-ink">{data.hypeMessage}</div>
           </div>
         </div>
       )}
@@ -275,22 +307,24 @@ function QuestionRow({
   return (
     <Link
       to={`/g/${groupId}/n/${cycleId}/respond/${q.questionId}`}
-      className="w-full text-left bg-white rounded-3xl border border-line shadow-soft p-5 flex items-start gap-4 block"
+      className="block flex w-full items-start gap-4 rounded-3xl border border-line bg-white p-5 text-left shadow-soft"
     >
-      <div className={`w-9 h-9 rounded-2xl ${meta.iconBg} grid place-items-center font-bold`}>{meta.icon}</div>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs uppercase tracking-widest font-bold text-coral">{meta.tone}</div>
+      <div className={`h-9 w-9 rounded-2xl ${meta.iconBg} grid place-items-center font-bold`}>
+        {meta.icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-bold uppercase tracking-widest text-coral">{meta.tone}</div>
         {(q.askedBy || q.isAnonymous) && (
-          <div className="text-[11px] uppercase tracking-widest text-inkmuted font-bold mt-0.5">
+          <div className="mt-0.5 text-[11px] font-bold uppercase tracking-widest text-inkmuted">
             {q.askedBy ? `${q.askedBy.displayName} asked` : "Asked anonymously"}
           </div>
         )}
-        <div className="font-semibold mt-0.5">
+        <div className="mt-0.5 font-semibold">
           {q.kind === "poll" && <span className="text-grape">Poll · </span>}
           {q.prompt}
         </div>
         {response && (
-          <div className="text-sm text-inkmuted mt-1">
+          <div className="mt-1 text-sm text-inkmuted">
             {response.wordCount ? `${response.wordCount} words · ` : ""}
             {response.imageMediaIds?.length ? `${response.imageMediaIds.length} photos · ` : ""}
             saved just now

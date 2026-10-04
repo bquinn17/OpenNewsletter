@@ -7,9 +7,9 @@ import {
   useDeleteComment,
   useEditComment,
   useGroup,
-} from "../../api/queries";
+} from "../../mocks/legacyQueries";
 import { formatRelative } from "../../utils/dates";
-import type { Comment } from "../../api/types";
+import type { Comment } from "../../mocks/types";
 
 interface Props {
   comments: Comment[];
@@ -49,7 +49,7 @@ export function CommentList({
   };
 
   return (
-    <div className="mt-4 pt-4 border-t border-line space-y-3 text-sm">
+    <div className="mt-4 space-y-3 border-t border-line pt-4 text-sm">
       {comments.map((c) => (
         <CommentRow
           key={c.commentId}
@@ -65,11 +65,11 @@ export function CommentList({
         />
       ))}
       {hidden > 0 && (
-        <button onClick={onShowAll} className="text-grape font-semibold text-sm">
+        <button onClick={onShowAll} className="text-sm font-semibold text-grape">
           Show {hidden} more comment{hidden === 1 ? "" : "s"}
         </button>
       )}
-      <div className="flex items-center gap-2 mt-2">
+      <div className="mt-2 flex items-center gap-2">
         <Avatar
           name={config?.user.displayName ?? "?"}
           color={config?.user.avatarColor}
@@ -85,14 +85,14 @@ export function CommentList({
               submit();
             }
           }}
-          className="flex-1 min-w-0 bg-cream border border-line rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="min-w-0 flex-1 rounded-full border border-line bg-cream px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
           placeholder="Add a comment…"
         />
         <button
           type="button"
           onClick={submit}
           disabled={!draft.trim() || addComment.isPending}
-          className="rounded-full bg-grape text-white text-xs font-bold px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-full bg-grape px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Post comment"
         >
           {addComment.isPending ? "…" : "Post"}
@@ -161,19 +161,19 @@ function CommentRow({
       <div className="flex items-baseline gap-2">
         <span className="font-semibold">{comment.authorDisplayName}</span>
         <span className="text-xs text-inkmuted">{formatRelative(comment.createdAt)}</span>
-        {comment.editedAt && <span className="text-xs text-inkmuted italic">(edited)</span>}
+        {comment.editedAt && <span className="text-xs italic text-inkmuted">(edited)</span>}
         {(isMine || canDelete) && (
-          <div ref={menuRef} className="ml-auto relative">
+          <div ref={menuRef} className="relative ml-auto">
             <button
               onClick={() => setMenuOpen((s) => !s)}
               disabled={busy}
-              className="text-inkmuted hover:text-ink px-1.5 leading-none disabled:opacity-50"
+              className="px-1.5 leading-none text-inkmuted hover:text-ink disabled:opacity-50"
               aria-label="Comment options"
             >
               ⋯
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-6 z-30 w-36 bg-white rounded-2xl shadow-pop border border-line p-1 animate-pop">
+              <div className="absolute right-0 top-6 z-30 w-36 animate-pop rounded-2xl border border-line bg-white p-1 shadow-pop">
                 {isMine && (
                   <button
                     onClick={() => {
@@ -181,7 +181,7 @@ function CommentRow({
                       setEditing(true);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold hover:bg-cream"
+                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-cream"
                   >
                     Edit
                   </button>
@@ -192,7 +192,7 @@ function CommentRow({
                       setMenuOpen(false);
                       setConfirmDelete(true);
                     }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-coral hover:bg-cream"
+                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-coral hover:bg-cream"
                   >
                     Delete
                   </button>
@@ -209,14 +209,14 @@ function CommentRow({
             onChange={(e) => setDraft(e.target.value)}
             disabled={busy}
             maxLength={2000}
-            className="w-full bg-cream border border-line rounded-2xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30 min-h-[60px]"
+            className="min-h-[60px] w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
           />
-          <div className="flex justify-end gap-2 mt-1.5">
+          <div className="mt-1.5 flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setEditing(false)}
               disabled={busy}
-              className="text-xs text-inkmuted font-semibold disabled:opacity-50"
+              className="text-xs font-semibold text-inkmuted disabled:opacity-50"
             >
               Cancel
             </button>
@@ -224,7 +224,7 @@ function CommentRow({
               type="button"
               onClick={save}
               disabled={busy || !draft.trim()}
-              className="text-xs text-grape font-bold disabled:opacity-50"
+              className="text-xs font-bold text-grape disabled:opacity-50"
             >
               {busy ? "Saving…" : "Save"}
             </button>
@@ -237,7 +237,7 @@ function CommentRow({
             <img
               src={comment.image.displayUrl}
               alt={comment.image.alt ?? ""}
-              className="mt-1.5 rounded-2xl max-h-72 object-contain bg-cream"
+              className="mt-1.5 max-h-72 rounded-2xl bg-cream object-contain"
             />
           )}
         </>

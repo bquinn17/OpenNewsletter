@@ -238,7 +238,7 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
   - Expose headers: `x-correlation-id`
   - Max age: 600
 - **Custom domain**: `{api_domain}` with ACM cert from `FrontendStack`
-- **Default authorizer**: `HttpJwtAuthorizer` against the Cognito user pool (issuer URL `https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}`, audience: `[user_pool_client_id]`)
+- **Default authorizer**: `HttpJwtAuthorizer` against the Cognito user pool (issuer URL `https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}`, audience: `[frontend_client_id, bootstrap_client_id]`). The `admin-bootstrap` client is included so password-auth tokens from `/admin/bootstrap-login` and `scripts/bootstrap_admin.py` pass the same authorizer (`13-dev-environments.md` §6); added in M7, after it was found missing.
 - **Throttling**: 50 rps burst, 25 rps steady on default stage
 - **Access logs**: JSON to a CloudWatch log group `/aws/http-api/OpenNewsletter-{env}`, 30/90 day retention
 
@@ -274,7 +274,7 @@ Each Lambda has its own CloudWatch log group with retention from config.
 ### 6.3 Routes and integrations
 
 For each route in `03-api-contract.md`, CDK creates:
-- An `HttpRoute` with the Cognito JWT authorizer attached (except `POST /invites/redeem` — see §6.5)
+- An `HttpRoute` with the Cognito JWT authorizer attached — every route, including `POST /invites/redeem` (§6.5)
 - An `HttpLambdaIntegration` pointing to the appropriate Lambda
 
 ### 6.4 Group-default config JSON

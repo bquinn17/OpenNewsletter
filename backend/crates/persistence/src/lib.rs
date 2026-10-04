@@ -8,6 +8,7 @@
 //!   `questions`, `responses`, `engagement`, `media`, `push`).
 
 pub mod auth;
+mod batch;
 pub mod error;
 pub mod expr;
 pub mod keys;

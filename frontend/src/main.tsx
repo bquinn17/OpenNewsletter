@@ -4,10 +4,12 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@ta
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { App } from "./App";
 import { AuthProvider } from "./auth/AuthProvider";
+import { ApiError } from "./api/client";
 import { useToasts } from "./state/toast";
 import "./styles/tailwind.css";
 
 function messageFor(error: unknown): string {
+  if (error instanceof ApiError) return error.problem?.detail ?? error.message;
   if (error instanceof Error && error.message) return error.message;
   return "Something went wrong.";
 }
@@ -44,7 +46,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <App />
       </AuthProvider>
-      <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+      {import.meta.env.DEV && (
+        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+      )}
     </QueryClientProvider>
   </React.StrictMode>,
 );

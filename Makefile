@@ -9,7 +9,8 @@ help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build-lambdas: ## Cross-compile every Lambda binary for arm64
-	cd backend && cargo lambda build --release --arm64
+	cd backend && BUILD_SHA=$$(git rev-parse --short HEAD) BUILD_AT=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+	    cargo lambda build --release --arm64
 
 # CDK falls back to a shell stub for any binary it can't find in
 # backend/target/lambda, so skipping the build here would deploy stubs silently.

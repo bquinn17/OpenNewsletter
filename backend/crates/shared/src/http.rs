@@ -104,7 +104,7 @@ pub fn no_content(correlation_id: &str) -> Response<Body> {
 
 /// RFC-7807 Problem Details body (`plans/03-api-contract.md` §1.1).
 pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> {
-    let problem = serde_json::json!({
+    let mut problem = serde_json::json!({
         "type": error_type_uri(err.code),
         "title": err.code.title(),
         "status": err.http_status(),
@@ -112,6 +112,9 @@ pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> 
         "code": err.code.as_str(),
         "correlationId": correlation_id,
     });
+    if !err.field_errors.is_empty() {
+        problem["fieldErrors"] = serde_json::json!(err.field_errors);
+    }
     let payload = serde_json::to_string(&problem).unwrap_or_else(|_| "{}".to_owned());
     build(
         err.http_status(),
@@ -210,5 +213,28 @@ mod tests {
         assert_eq!(parsed["code"], "FORBIDDEN");
         assert_eq!(parsed["correlationId"], "01HXCORRELATION");
         assert_eq!(parsed["detail"], "not a member of group 01HG2");
+        assert!(parsed.get("fieldErrors").is_none());
+    }
+
+    #[test]
+    fn field_validation_errors_carry_field_errors() {
+        let err = ApiError::invalid_field("displayName", "displayName must not be blank");
+        let response = problem_response(&err, "01HXCORRELATION");
+        assert_eq!(response.status(), 422);
+
+        let Body::Text(body) = response.body() else {
+            panic!("expected a text body");
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(body).expect("problem body is valid JSON");
+        assert_eq!(parsed["code"], "VALIDATION_FAILED");
+        assert_eq!(
+            parsed["fieldErrors"],
+            serde_json::json!([{
+                "field": "displayName",
+                "code": "INVALID",
+                "message": "displayName must not be blank",
+            }])
+        );
     }
 }

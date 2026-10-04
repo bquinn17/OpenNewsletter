@@ -12,6 +12,7 @@ Usage:
 Requires: `pip install py-vapid`. The keys are uncompressed P-256 EC keys
 encoded as URL-safe base64 (unpadded), per RFC 8292.
 """
+
 from __future__ import annotations
 
 import argparse

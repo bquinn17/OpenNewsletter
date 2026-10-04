@@ -169,7 +169,7 @@ Read: `04-frontend-architecture.md`, `05-auth-flow.md`.
 - Vite project initialized, Tailwind configured, React Router set up with all routes from `04-frontend-architecture.md` §3 as stubs.
 - `auth/` module: OIDC client, callback page, token storage, `AuthProvider`, `useAuth`.
 - `api/client.ts` with auth + correlation header.
-- `api/generated.ts` from `openapi-typescript` against `shared/openapi.yaml`.
+- `types/api.ts` from `openapi-typescript` against `shared/openapi.yaml` (via `scripts/codegen_types.sh`; decided in M7 — `coding-standards.md` §3.3 already named this path).
 - `pages/HomePage` rendering memberships.
 - `pages/JoinPage` implementing the invite-redemption flow.
 - `pages/SettingsPage` rendering basic profile.

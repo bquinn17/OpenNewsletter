@@ -160,7 +160,8 @@ async fn validate_content(
             publish,
         } => {
             if question.kind != QuestionKind::Text {
-                return Err(ApiError::validation(
+                return Err(ApiError::invalid_field(
+                    "kind",
                     "kind must be `text` to match this question",
                 ));
             }
@@ -182,7 +183,8 @@ async fn validate_content(
             publish,
         } => {
             if question.kind != QuestionKind::Poll {
-                return Err(ApiError::validation(
+                return Err(ApiError::invalid_field(
+                    "kind",
                     "kind must be `poll` to match this question",
                 ));
             }
@@ -215,7 +217,7 @@ async fn validate_response_image(
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "image lookup failed");
             ApiError::internal("failed to load image")
         })?
-        .ok_or_else(|| ApiError::validation(format!("image `{image_id}` does not exist")))?;
+        .ok_or_else(|| ApiError::invalid_field("imageMediaIds", format!("image `{image_id}` does not exist")))?;
 
     let valid = image.user_id == *caller
         && image.status == MediaStatus::Ready
@@ -223,9 +225,10 @@ async fn validate_response_image(
     if valid {
         Ok(())
     } else {
-        Err(ApiError::validation(format!(
-            "image `{image_id}` is not a ready response image owned by you in this cycle"
-        )))
+        Err(ApiError::invalid_field(
+            "imageMediaIds",
+            format!("image `{image_id}` is not a ready response image owned by you in this cycle"),
+        ))
     }
 }
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import clsx from "clsx";
-import type { PublishedPollQuestion } from "../../api/types";
+import type { PublishedPollQuestion } from "../../mocks/types";
 import { CommentList } from "./CommentList";
 
 interface Props {
@@ -18,8 +18,8 @@ export function PollWidget({ question, groupId, cycleId }: Props) {
   const [showAllComments, setShowAllComments] = useState(false);
   const visibleComments = showAllComments ? question.comments : question.comments.slice(0, 2);
   return (
-    <div className="bg-white rounded-3xl border border-line shadow-soft p-5">
-      <div className="text-xs text-inkmuted mb-3">
+    <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
+      <div className="mb-3 text-xs text-inkmuted">
         {question.totalVotes} vote{question.totalVotes === 1 ? "" : "s"}
       </div>
       <ul className="space-y-3">
@@ -28,10 +28,12 @@ export function PollWidget({ question, groupId, cycleId }: Props) {
           const mine = question.myVoteOptionId === opt.optionId;
           return (
             <li key={opt.optionId}>
-              <div className="text-sm font-semibold leading-snug mb-1">{opt.label}</div>
-              <div className="flex items-center gap-2 text-xs text-inkmuted mb-1.5">
+              <div className="mb-1 text-sm font-semibold leading-snug">{opt.label}</div>
+              <div className="mb-1.5 flex items-center gap-2 text-xs text-inkmuted">
                 {mine && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-grape text-white font-semibold">your pick</span>
+                  <span className="rounded-full bg-grape px-1.5 py-0.5 font-semibold text-white">
+                    your pick
+                  </span>
                 )}
                 <span className="ml-auto tabular-nums">
                   {opt.voteCount} · {pct}%
@@ -39,7 +41,7 @@ export function PollWidget({ question, groupId, cycleId }: Props) {
               </div>
               <div
                 className={clsx(
-                  "h-3 rounded-full bg-cream overflow-hidden",
+                  "h-3 overflow-hidden rounded-full bg-cream",
                   mine && "ring-2 ring-grape/40",
                 )}
               >

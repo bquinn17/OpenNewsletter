@@ -20,7 +20,9 @@ from .config import EnvConfig
 
 
 class MonitoringStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
+    def __init__(
+        self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         self.alarm_topic = sns.Topic(

@@ -73,12 +73,16 @@ pub async fn patch_me(
                 ApiError::internal("failed to load avatar")
             })?
             .ok_or_else(|| {
-                ApiError::validation(format!("avatarMediaId {avatar_id} is not owned by you"))
+                ApiError::invalid_field(
+                    "avatarMediaId",
+                    format!("avatarMediaId {avatar_id} is not owned by you"),
+                )
             })?;
         if avatar.status != MediaStatus::Ready {
-            return Err(ApiError::validation(format!(
-                "avatarMediaId {avatar_id} is still processing"
-            )));
+            return Err(ApiError::invalid_field(
+                "avatarMediaId",
+                format!("avatarMediaId {avatar_id} is still processing"),
+            ));
         }
     }
 
@@ -115,8 +119,8 @@ async fn load_user(state: &AppState, user_id: &UserId) -> Result<User, ApiError>
         .ok_or_else(|| ApiError::not_found("user profile not found"))
 }
 
-/// The denormalized join `GET /config` and `GET /groups` both return. The group
-/// count per user is small enough that a fetch per membership stays cheap.
+/// The denormalized join `GET /config` and `GET /groups` both return: one query
+/// for the caller's memberships, then one batched read for the group rows.
 async fn membership_summaries(
     state: &AppState,
     user_id: &UserId,
@@ -128,23 +132,27 @@ async fn membership_summaries(
             ApiError::internal("failed to list memberships")
         })?;
 
-    let mut summaries = Vec::with_capacity(memberships.len());
-    for membership in memberships {
-        let group = groups::get_group(&state.repo, &membership.group_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %membership.group_id, "group lookup failed");
-                ApiError::internal("failed to load group")
-            })?;
-        // A membership pointing at a deleted group is skipped rather than fatal —
-        // the caller's other groups should still render.
-        if let Some(group) = group {
-            summaries.push(MembershipSummary {
+    let group_ids: Vec<_> = memberships.iter().map(|m| m.group_id.clone()).collect();
+    let mut groups_by_id = groups::get_groups_batch(&state.repo, &group_ids)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, user_id = %user_id, "group batch lookup failed");
+            ApiError::internal("failed to load groups")
+        })?;
+
+    // A membership pointing at a deleted group is skipped rather than fatal —
+    // the caller's other groups should still render.
+    Ok(memberships
+        .into_iter()
+        .filter_map(|membership| {
+            let group = groups_by_id.remove(&membership.group_id)?;
+            Some(MembershipSummary {
                 group_id: membership.group_id,
                 role: membership.role,
                 group_name: group.name,
-            });
-        }
-    }
-    Ok(summaries)
+                timezone: group.timezone,
+                gradient: group.gradient,
+            })
+        })
+        .collect())
 }

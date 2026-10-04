@@ -1,4 +1,4 @@
-import type { QuestionAuthor } from "../../api/types";
+import type { QuestionAuthor } from "../../mocks/types";
 
 /**
  * Renders the "asked by" attribution line for a question. Falls back to
@@ -17,14 +17,10 @@ export function AskedBy({
   isAnonymous: boolean;
   className?: string;
 }) {
-  const label = askedBy
-    ? `${askedBy.displayName} asked`
-    : isAnonymous
-      ? "Asked anonymously"
-      : null;
+  const label = askedBy ? `${askedBy.displayName} asked` : isAnonymous ? "Asked anonymously" : null;
   if (!label) return null;
   return (
-    <div className={`text-xs uppercase tracking-widest text-inkmuted font-bold ${className}`}>
+    <div className={`text-xs font-bold uppercase tracking-widest text-inkmuted ${className}`}>
       {label}
     </div>
   );

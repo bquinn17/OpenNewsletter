@@ -4,6 +4,8 @@ import { avatarClasses, initial } from "../../utils/avatar";
 interface Props {
   name: string;
   color?: string;
+  /** Pre-resolved Tailwind classes (e.g. from `utils/avatarColor.ts`), takes precedence over `color`. */
+  colorClassName?: string;
   url?: string | null;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   className?: string;
@@ -18,14 +20,22 @@ const sizes: Record<NonNullable<Props["size"]>, string> = {
   xl: "w-16 h-16 text-2xl rounded-3xl",
 };
 
-export function Avatar({ name, color, url, size = "md", className, ringed }: Props) {
+export function Avatar({
+  name,
+  color,
+  colorClassName,
+  url,
+  size = "md",
+  className,
+  ringed,
+}: Props) {
   if (url) {
     return (
       <img
         src={url}
         alt={name}
         className={clsx(
-          "object-cover rounded-full select-none",
+          "select-none rounded-full object-cover",
           sizes[size],
           ringed && "ring-2 ring-white",
           className,
@@ -36,9 +46,9 @@ export function Avatar({ name, color, url, size = "md", className, ringed }: Pro
   return (
     <div
       className={clsx(
-        "rounded-full font-bold grid place-items-center select-none",
+        "grid select-none place-items-center rounded-full font-bold",
         sizes[size],
-        avatarClasses(color),
+        colorClassName ?? avatarClasses(color),
         ringed && "ring-2 ring-white",
         className,
       )}

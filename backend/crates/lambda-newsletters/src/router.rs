@@ -75,9 +75,10 @@ fn parse_status(req: &Request) -> Result<Option<NewsletterStatus>, ApiError> {
         Some("voting") => Ok(Some(NewsletterStatus::Voting)),
         Some("open") => Ok(Some(NewsletterStatus::Open)),
         Some("published") => Ok(Some(NewsletterStatus::Published)),
-        Some(other) => Err(ApiError::validation(format!(
-            "status must be one of voting, open, published; got `{other}`"
-        ))),
+        Some(other) => Err(ApiError::invalid_field(
+            "status",
+            format!("status must be one of voting, open, published; got `{other}`"),
+        )),
     }
 }
 
@@ -85,7 +86,10 @@ fn parse_limit(req: &Request) -> Result<u32, ApiError> {
     match http::query_param(req, "limit") {
         None => Ok(DEFAULT_LIST_LIMIT),
         Some(raw) => raw.parse::<u32>().map_err(|_| {
-            ApiError::validation(format!("limit must be a positive integer, got `{raw}`"))
+            ApiError::invalid_field(
+                "limit",
+                format!("limit must be a positive integer, got `{raw}`"),
+            )
         }),
     }
 }

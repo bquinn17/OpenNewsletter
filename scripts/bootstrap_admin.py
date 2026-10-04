@@ -39,7 +39,16 @@ REPO_ROOT = Path(__file__).parent.parent
 # Mirrors AVATAR_COLOR_SLUGS + derive_avatar_color in
 # backend/crates/shared/src/config.rs. Both sides must agree so a bootstrapped
 # admin renders the same colour the API would have given them.
-AVATAR_COLOR_SLUGS = ["red", "orange", "amber", "green", "teal", "blue", "violet", "pink"]
+AVATAR_COLOR_SLUGS = [
+    "red",
+    "orange",
+    "amber",
+    "green",
+    "teal",
+    "blue",
+    "violet",
+    "pink",
+]
 DEFAULT_GRADIENT = "grape-sky"
 DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_CYCLE_SETTINGS = {
@@ -74,7 +83,9 @@ def iso(dt: datetime) -> str:
 
 def first_day_of_next_month_local(after_utc: datetime, tz: ZoneInfo) -> datetime:
     local = after_utc.astimezone(tz)
-    year, month = (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
+    year, month = (
+        (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
+    )
     local_midnight = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
     return local_midnight.astimezone(timezone.utc)
 
@@ -115,7 +126,9 @@ def load_outputs(env: str) -> dict[str, Any]:
 def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
     value = outputs.get(f"{stack}-{env}", {}).get(key, "")
     if not value:
-        sys.exit(f"Missing CDK output {stack}-{env}.{key} — redeploy the {stack} stack.")
+        sys.exit(
+            f"Missing CDK output {stack}-{env}.{key} — redeploy the {stack} stack."
+        )
     return str(value)
 
 
@@ -251,13 +264,21 @@ def write_group(
                         "cycle_settings": {
                             "M": {
                                 "questions_per_cycle": {
-                                    "N": str(DEFAULT_CYCLE_SETTINGS["questions_per_cycle"])
+                                    "N": str(
+                                        DEFAULT_CYCLE_SETTINGS["questions_per_cycle"]
+                                    )
                                 },
                                 "votes_per_user_per_cycle": {
-                                    "N": str(DEFAULT_CYCLE_SETTINGS["votes_per_user_per_cycle"])
+                                    "N": str(
+                                        DEFAULT_CYCLE_SETTINGS[
+                                            "votes_per_user_per_cycle"
+                                        ]
+                                    )
                                 },
                                 "response_window_days": {
-                                    "N": str(DEFAULT_CYCLE_SETTINGS["response_window_days"])
+                                    "N": str(
+                                        DEFAULT_CYCLE_SETTINGS["response_window_days"]
+                                    )
                                 },
                                 "auto_publish": {
                                     "BOOL": bool(DEFAULT_CYCLE_SETTINGS["auto_publish"])
@@ -313,7 +334,9 @@ def write_group(
                         "pk": {"S": f"GROUP#{group_id}"},
                         "sk": {"S": f"NL#{cycle_id}"},
                         "gsi2pk": {"S": "NL_STATUS#voting"},
-                        "gsi2sk": {"S": f"{response_open_at_iso}#{group_id}#{cycle_id}"},
+                        "gsi2sk": {
+                            "S": f"{response_open_at_iso}#{group_id}#{cycle_id}"
+                        },
                         "entity": {"S": "Newsletter"},
                         "group_id": {"S": group_id},
                         "cycle_id": {"S": cycle_id},
@@ -339,7 +362,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--env", default="dev", help="CDK environment name (default: dev)")
+    parser.add_argument(
+        "--env", default="dev", help="CDK environment name (default: dev)"
+    )
     parser.add_argument("--admin-email", required=True, help="Bootstrap admin email")
     parser.add_argument(
         "--admin-display-name",
@@ -412,7 +437,9 @@ def main() -> None:
         f"    --query 'AuthenticationResult.IdToken' --output text"
     )
     if api_endpoint:
-        print(f"\nThen call the API (send the ID token):\n  curl -H \"Authorization: Bearer $TOKEN\" {api_endpoint}/me")
+        print(
+            f'\nThen call the API (send the ID token):\n  curl -H "Authorization: Bearer $TOKEN" {api_endpoint}/me'
+        )
     else:
         print("\nDeploy ApiStack to get an endpoint for the /me smoke test.")
 

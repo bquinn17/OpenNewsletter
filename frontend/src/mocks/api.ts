@@ -33,7 +33,7 @@ import type {
   PushDevice,
   Role,
   VotingNewsletter,
-} from "../api/types";
+} from "./types";
 
 function delay<T>(value: T, ms = 250): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -127,7 +127,10 @@ export const mockApi = {
     return delay(structuredClone(nl));
   },
 
-  async suggestCandidate(groupId: string, payload: NewCandidatePayload): Promise<CandidateQuestion> {
+  async suggestCandidate(
+    groupId: string,
+    payload: NewCandidatePayload,
+  ): Promise<CandidateQuestion> {
     const nl = Object.values(newsletters).find(
       (n) => n.groupId === groupId && n.status === "voting",
     ) as VotingNewsletter | undefined;
@@ -247,7 +250,8 @@ export const mockApi = {
     if (q.kind === "poll") {
       // Poll comments hang off the question itself; the client passes
       // responseId === questionId as a sentinel.
-      if (responseId !== q.questionId) throw new Error("poll comment responseId must match questionId");
+      if (responseId !== q.questionId)
+        throw new Error("poll comment responseId must match questionId");
       q.comments.push(newComment);
     } else {
       const ans = q.answers.find((a) => a.responseId === responseId);
@@ -269,11 +273,13 @@ export const mockApi = {
     if (!nl || nl.status !== "published") throw new Error("not published");
     const q = nl.questions.find((x) => x.questionId === questionId);
     if (!q) throw new Error("question not found");
-    const list = q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
+    const list =
+      q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
     if (!list) throw new Error("comments not found");
     const c = list.find((cc) => cc.commentId === commentId);
     if (!c) throw new Error("comment not found");
-    if (c.authorUserId !== mockConfig.user.userId) throw new Error("only the author can edit this comment");
+    if (c.authorUserId !== mockConfig.user.userId)
+      throw new Error("only the author can edit this comment");
     c.body = body;
     c.editedAt = new Date().toISOString();
     return delay(structuredClone(nl));
@@ -290,14 +296,17 @@ export const mockApi = {
     if (!nl || nl.status !== "published") throw new Error("not published");
     const q = nl.questions.find((x) => x.questionId === questionId);
     if (!q) throw new Error("question not found");
-    const list = q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
+    const list =
+      q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
     if (!list) throw new Error("comments not found");
     const idx = list.findIndex((cc) => cc.commentId === commentId);
     if (idx < 0) throw new Error("comment not found");
     const c = list[idx]!;
     const isAuthor = c.authorUserId === mockConfig.user.userId;
-    const isAdmin = (groups[groupId]?.members.find((m) => m.userId === mockConfig.user.userId)?.role === "admin");
-    if (!isAuthor && !isAdmin) throw new Error("only the author or a group admin can delete this comment");
+    const isAdmin =
+      groups[groupId]?.members.find((m) => m.userId === mockConfig.user.userId)?.role === "admin";
+    if (!isAuthor && !isAdmin)
+      throw new Error("only the author or a group admin can delete this comment");
     // Hard delete — no soft-delete tombstones in v1.
     list.splice(idx, 1);
     return delay(structuredClone(nl));
@@ -309,7 +318,9 @@ export const mockApi = {
   },
 
   async createInvite(groupId: string, role: Role): Promise<Invite> {
-    const code = chunked(crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase(), 4).join("-");
+    const code = chunked(crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase(), 4).join(
+      "-",
+    );
     const inv: Invite = {
       code,
       groupId,
@@ -334,7 +345,9 @@ export const mockApi = {
     return delay(inv ? structuredClone(inv) : null, 400);
   },
 
-  async redeemInvite(code: string): Promise<{ groupId: string; role: Role; groupName: string; gradient: GroupGradient }> {
+  async redeemInvite(
+    code: string,
+  ): Promise<{ groupId: string; role: Role; groupName: string; gradient: GroupGradient }> {
     const inv = invites.find((i) => i.code === code && i.status === "pending");
     if (!inv) throw new Error("invite invalid");
     inv.status = "consumed";
@@ -349,11 +362,18 @@ export const mockApi = {
         gradient: trailCrewGradient,
       });
     }
-    return delay({ groupId: inv.groupId, role: inv.roleOnRedeem, groupName: inv.groupName, gradient: trailCrewGradient });
+    return delay({
+      groupId: inv.groupId,
+      role: inv.roleOnRedeem,
+      groupName: inv.groupName,
+      gradient: trailCrewGradient,
+    });
   },
 
   // --- Current user --------------------------------------------------------
-  async patchUser(patch: Partial<Pick<AppConfig["user"], "displayName" | "avatarColor">>): Promise<AppConfig["user"]> {
+  async patchUser(
+    patch: Partial<Pick<AppConfig["user"], "displayName" | "avatarColor">>,
+  ): Promise<AppConfig["user"]> {
     Object.assign(mockConfig.user, patch);
     // Mirror display name + avatar color into the user's row inside each group
     // so the admin/member views see the rename immediately.
@@ -384,7 +404,8 @@ export const mockApi = {
   async removeMember(groupId: string, userId: string): Promise<Group> {
     const g = groups[groupId];
     if (!g) throw new Error("group not found");
-    if (userId === mockConfig.user.userId) throw new Error("can't remove yourself — leave the group from settings instead");
+    if (userId === mockConfig.user.userId)
+      throw new Error("can't remove yourself — leave the group from settings instead");
     const idx = g.members.findIndex((mem) => mem.userId === userId);
     if (idx < 0) throw new Error("member not found");
     g.members.splice(idx, 1);
@@ -397,7 +418,9 @@ export const mockApi = {
     const me = g.members.find((m) => m.userId === mockConfig.user.userId);
     if (!me) throw new Error("you aren't in this group");
     if (me.role === "admin") {
-      const otherAdmins = g.members.filter((m) => m.userId !== mockConfig.user.userId && m.role === "admin");
+      const otherAdmins = g.members.filter(
+        (m) => m.userId !== mockConfig.user.userId && m.role === "admin",
+      );
       if (otherAdmins.length === 0) {
         throw new Error("you're the only admin — promote someone else first");
       }
@@ -441,7 +464,10 @@ export const mockApi = {
     tick({ progress: 0.25 }, 200);
     tick({ progress: 0.6 }, 500);
     tick({ progress: 1, status: "processing" }, 900);
-    tick({ status: "ready", progress: 1, thumbUrl: _input.dataUrl, displayUrl: _input.dataUrl }, 1600);
+    tick(
+      { status: "ready", progress: 1, thumbUrl: _input.dataUrl, displayUrl: _input.dataUrl },
+      1600,
+    );
 
     return delay({ imageId }, 200);
   },
@@ -507,7 +533,10 @@ export const mockApi = {
     return delay(structuredClone(notificationPrefs));
   },
 
-  async updateNotificationPref(groupId: string, patch: Partial<NotificationPref>): Promise<NotificationPref> {
+  async updateNotificationPref(
+    groupId: string,
+    patch: Partial<NotificationPref>,
+  ): Promise<NotificationPref> {
     let pref = notificationPrefs.find((p) => p.groupId === groupId);
     if (!pref) {
       pref = { groupId, cycleOpen: true, deadlineReminders: true, publication: true };

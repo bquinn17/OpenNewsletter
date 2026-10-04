@@ -15,7 +15,7 @@ from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_cognito as cognito
-from aws_cdk import aws_lambda as aws_lambda
+from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 

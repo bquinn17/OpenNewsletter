@@ -13,12 +13,16 @@ use shared::config::{
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(ApiError::validation("displayName must not be blank"));
+        return Err(ApiError::invalid_field(
+            "displayName",
+            "displayName must not be blank",
+        ));
     }
     if trimmed.chars().count() > MAX_DISPLAY_NAME_CHARS {
-        return Err(ApiError::validation(format!(
-            "displayName must be at most {MAX_DISPLAY_NAME_CHARS} characters"
-        )));
+        return Err(ApiError::invalid_field(
+            "displayName",
+            format!("displayName must be at most {MAX_DISPLAY_NAME_CHARS} characters"),
+        ));
     }
     Ok(trimmed.to_owned())
 }
@@ -27,29 +31,33 @@ pub fn avatar_color(raw: &str) -> Result<(), ApiError> {
     if AVATAR_COLOR_SLUGS.contains(&raw) {
         return Ok(());
     }
-    Err(ApiError::validation(format!(
-        "avatarColor must be one of: {}",
-        AVATAR_COLOR_SLUGS.join(", ")
-    )))
+    Err(ApiError::invalid_field(
+        "avatarColor",
+        format!(
+            "avatarColor must be one of: {}",
+            AVATAR_COLOR_SLUGS.join(", ")
+        ),
+    ))
 }
 
 fn gradient(raw: &str) -> Result<(), ApiError> {
     if GRADIENT_SLUGS.contains(&raw) {
         return Ok(());
     }
-    Err(ApiError::validation(format!(
-        "gradient must be one of: {}",
-        GRADIENT_SLUGS.join(", ")
-    )))
+    Err(ApiError::invalid_field(
+        "gradient",
+        format!("gradient must be one of: {}", GRADIENT_SLUGS.join(", ")),
+    ))
 }
 
 fn timezone(raw: &str) -> Result<(), ApiError> {
     if raw.parse::<chrono_tz::Tz>().is_ok() {
         return Ok(());
     }
-    Err(ApiError::validation(format!(
-        "timezone `{raw}` is not a valid IANA time zone"
-    )))
+    Err(ApiError::invalid_field(
+        "timezone",
+        format!("timezone `{raw}` is not a valid IANA time zone"),
+    ))
 }
 
 /// Merge a patch onto the group's current settings and validate the result, so a
@@ -73,20 +81,21 @@ fn cycle_settings(
     };
 
     if !(MIN_QUESTIONS_PER_CYCLE..=MAX_QUESTIONS_PER_CYCLE).contains(&merged.questions_per_cycle) {
-        return Err(ApiError::validation(format!(
+        return Err(ApiError::invalid_field("questionsPerCycle", format!(
             "questionsPerCycle must be between {MIN_QUESTIONS_PER_CYCLE} and {MAX_QUESTIONS_PER_CYCLE}"
         )));
     }
     if !(MIN_RESPONSE_WINDOW_DAYS..=MAX_RESPONSE_WINDOW_DAYS).contains(&merged.response_window_days)
     {
-        return Err(ApiError::validation(format!(
+        return Err(ApiError::invalid_field("responseWindowDays", format!(
             "responseWindowDays must be between {MIN_RESPONSE_WINDOW_DAYS} and {MAX_RESPONSE_WINDOW_DAYS}"
         )));
     }
     // Each (voter, question) pair is unique, so a member can never cast more
     // upvotes than there are candidate questions to spend them on.
     if !(1..=merged.questions_per_cycle).contains(&merged.votes_per_user_per_cycle) {
-        return Err(ApiError::validation(
+        return Err(ApiError::invalid_field(
+            "votesPerUserPerCycle",
             "votesPerUserPerCycle must be between 1 and questionsPerCycle",
         ));
     }
@@ -107,7 +116,8 @@ fn notification_settings(
 
     let offsets = &merged.offsets_hours_before_close;
     if offsets.is_empty() {
-        return Err(ApiError::validation(
+        return Err(ApiError::invalid_field(
+            "offsetsHoursBeforeClose",
             "offsetsHoursBeforeClose must not be empty",
         ));
     }
@@ -115,12 +125,16 @@ fn notification_settings(
         .iter()
         .any(|h| *h < 1 || *h > MAX_REMINDER_OFFSET_HOURS)
     {
-        return Err(ApiError::validation(format!(
-            "offsetsHoursBeforeClose entries must be between 1 and {MAX_REMINDER_OFFSET_HOURS}"
-        )));
+        return Err(ApiError::invalid_field(
+            "offsetsHoursBeforeClose",
+            format!(
+                "offsetsHoursBeforeClose entries must be between 1 and {MAX_REMINDER_OFFSET_HOURS}"
+            ),
+        ));
     }
     if offsets.windows(2).any(|pair| pair[0] <= pair[1]) {
-        return Err(ApiError::validation(
+        return Err(ApiError::invalid_field(
+            "offsetsHoursBeforeClose",
             "offsetsHoursBeforeClose must be strictly descending",
         ));
     }
@@ -152,10 +166,13 @@ pub fn group_patch(current: &Group, request: PatchGroupRequest) -> Result<GroupP
     }
     if let Some(cap) = request.member_soft_cap {
         if cap < current.member_count {
-            return Err(ApiError::validation(format!(
-                "memberSoftCap cannot be below the current member count of {}",
-                current.member_count
-            )));
+            return Err(ApiError::invalid_field(
+                "memberSoftCap",
+                format!(
+                    "memberSoftCap cannot be below the current member count of {}",
+                    current.member_count
+                ),
+            ));
         }
         patch.member_soft_cap = Some(cap);
     }

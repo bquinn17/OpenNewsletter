@@ -2,11 +2,13 @@ import { Link } from "react-router-dom";
 
 export function NotFoundPage() {
   return (
-    <div className="bg-cream min-h-screen flex flex-col items-center justify-center text-center px-6">
-      <div className="text-6xl mb-3">🌫️</div>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-cream px-6 text-center">
+      <div className="mb-3 text-6xl">🌫️</div>
       <h1 className="font-display text-3xl font-bold">Lost in the fog</h1>
-      <p className="text-inkmuted mt-2">That page doesn't exist (or hasn't been built yet).</p>
-      <Link to="/" className="mt-6 px-5 py-3 rounded-full bg-ink text-cream font-semibold">
+      <p className="mt-2 text-inkmuted">
+        That page doesn&apos;t exist (or hasn&apos;t been built yet).
+      </p>
+      <Link to="/" className="mt-6 rounded-full bg-ink px-5 py-3 font-semibold text-cream">
         Take me home
       </Link>
     </div>

@@ -250,17 +250,17 @@ Defense-in-depth for local development: the Rust shared crate has a `JwtVerifier
 - ID token: 60 min
 - Refresh token: 30 days
 
-Frontend uses `oidc-client-ts` `automaticSilentRenew: true`. Silent renew uses the `prompt=none` Cognito flow. If silent renew fails (refresh token expired or revoked), the user is bounced to login.
+The frontend renews in `auth/renewSession.ts` (decided in M7), shortly before expiry (`accessTokenExpiring`), on a reload with an expired ID token, and after a 401. Cognito has no `prompt=none` iframe flow, so federated sessions use the **refresh-token grant** against `/oauth2/token`. Bootstrap-login sessions (§9.2) hold a refresh token for the `admin-bootstrap` client, so they renew with Cognito `InitiateAuth` `REFRESH_TOKEN_AUTH` against that client. If renewal fails (refresh token expired or revoked), the stored user is dropped and protected routes bounce to login.
 
 ---
 
 ## 8. Logout
 
-`logout()` in `auth/login.ts`:
+`logout()` in `auth/AuthProvider.tsx`:
 1. Clears tokens from sessionStorage.
 2. Clears React Query cache.
 3. Clears Zustand persisted stores.
-4. Redirects to Cognito's `/logout` endpoint with `client_id` and `logout_uri=https://opennewsletter.example.com/`.
+4. Redirects to Cognito's `/logout` endpoint with `client_id` and `logout_uri=https://opennewsletter.example.com/`. Cognito's OIDC discovery document has no `end_session_endpoint`, so the SPA builds this URL from `VITE_COGNITO_HOSTED_DOMAIN` itself.
 
 Cognito invalidates the SSO session. The user lands back at the SPA logged out.
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import clsx from "clsx";
 import {
   useConfig,
@@ -10,16 +10,16 @@ import {
   useRevokeInvite,
   useUpdateGroup,
   useUpdateMemberRole,
-} from "../api/queries";
+} from "../mocks/legacyQueries";
 import { useToasts } from "../state/toast";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Avatar } from "../components/ui/Avatar";
 import { Button } from "../components/ui/Button";
 import { Pill } from "../components/ui/Pill";
 import { formatRelative } from "../utils/dates";
-import type { Group } from "../api/types";
+import type { Group } from "../mocks/types";
 
-type Tab = "members" | "invites" | "curate" | "settings";
+type Tab = "members" | "invites" | "settings";
 
 export function GroupAdminPage() {
   const { groupId = "" } = useParams();
@@ -31,14 +31,14 @@ export function GroupAdminPage() {
   return (
     <div className="bg-cream pb-12">
       <PageHeader eyebrow="Admin" title={group.name} back="/settings" />
-      <div className="px-4 pb-2 flex gap-1 overflow-x-auto no-scrollbar text-sm">
-        {(["members", "invites", "curate", "settings"] as Tab[]).map((t) => (
+      <div className="no-scrollbar flex gap-1 overflow-x-auto px-4 pb-2 text-sm">
+        {(["members", "invites", "settings"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={clsx(
-              "px-3 py-1.5 rounded-full font-semibold capitalize",
-              tab === t ? "bg-ink text-cream" : "bg-white border border-line",
+              "rounded-full px-3 py-1.5 font-semibold capitalize",
+              tab === t ? "bg-ink text-cream" : "border border-line bg-white",
             )}
           >
             {t}
@@ -48,7 +48,6 @@ export function GroupAdminPage() {
 
       {tab === "members" && <MembersTab group={group} groupId={groupId} />}
       {tab === "invites" && <InvitesTab groupId={groupId} />}
-      {tab === "curate" && <CurateTab groupId={groupId} />}
       {tab === "settings" && <SettingsTab group={group} groupId={groupId} />}
     </div>
   );
@@ -63,19 +62,19 @@ function MembersTab({ group, groupId }: { group: Group; groupId: string }) {
 
   return (
     <div className="px-5 pt-4">
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="text-xs uppercase tracking-widest text-inkmuted font-bold">
+      <div className="mb-2 flex items-baseline justify-between">
+        <div className="text-xs font-bold uppercase tracking-widest text-inkmuted">
           {group.members.length} of {group.memberSoftCap} members
         </div>
       </div>
-      <div className="bg-white rounded-3xl border border-line shadow-soft divide-y divide-line">
+      <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
         {group.members.map((m) => {
           const isMe = config?.user.userId === m.userId;
           return (
-            <div key={m.userId} className="p-4 flex items-center gap-3 relative">
+            <div key={m.userId} className="relative flex items-center gap-3 p-4">
               <Avatar name={m.displayName} color={m.avatarColor} />
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-semibold">
                   {m.displayName}
                   {isMe && <span className="text-[10px] text-inkmuted">(you)</span>}
                   {m.role === "admin" && (
@@ -163,19 +162,15 @@ function MemberMenu({
       <button
         onClick={() => hasActions && onOpenChange(!open)}
         disabled={disabled || !hasActions}
-        className="w-8 h-8 rounded-full hover:bg-cream text-inkmuted disabled:opacity-30"
+        className="h-8 w-8 rounded-full text-inkmuted hover:bg-cream disabled:opacity-30"
         aria-label="Member options"
       >
         ⋯
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-48 bg-white rounded-2xl shadow-pop border border-line p-1 animate-pop">
-          {onMakeAdmin && (
-            <MenuItem onClick={onMakeAdmin}>Make admin</MenuItem>
-          )}
-          {onMakeMember && (
-            <MenuItem onClick={onMakeMember}>Make member</MenuItem>
-          )}
+        <div className="absolute right-0 top-9 z-30 w-48 animate-pop rounded-2xl border border-line bg-white p-1 shadow-pop">
+          {onMakeAdmin && <MenuItem onClick={onMakeAdmin}>Make admin</MenuItem>}
+          {onMakeMember && <MenuItem onClick={onMakeMember}>Make member</MenuItem>}
           {onRemove && (
             <MenuItem onClick={onRemove} danger>
               Remove from group
@@ -200,7 +195,7 @@ function MenuItem({
     <button
       onClick={onClick}
       className={clsx(
-        "w-full text-left px-3 py-2 rounded-xl text-sm font-semibold hover:bg-cream",
+        "w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-cream",
         danger && "text-coral",
       )}
     >
@@ -226,13 +221,23 @@ function InvitesTab({ groupId }: { groupId: string }) {
 
   return (
     <div className="px-5 pt-4">
-      <div className="text-xs uppercase tracking-widest text-inkmuted font-bold mb-2 ml-1">Open invites</div>
-      <div className="bg-white rounded-3xl border border-line shadow-soft divide-y divide-line">
+      <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">
+        Open invites
+      </div>
+      <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
         {invites.map((inv) => {
           const used = inv.status === "consumed";
           return (
-            <div key={inv.code} className={clsx("p-4 flex items-center gap-3", used && "opacity-60")}>
-              <div className={clsx("font-mono text-sm bg-cream rounded-lg px-2 py-1", used && "line-through")}>
+            <div
+              key={inv.code}
+              className={clsx("flex items-center gap-3 p-4", used && "opacity-60")}
+            >
+              <div
+                className={clsx(
+                  "rounded-lg bg-cream px-2 py-1 font-mono text-sm",
+                  used && "line-through",
+                )}
+              >
                 {inv.code}
               </div>
               <div className="flex-1 text-xs text-inkmuted">
@@ -248,13 +253,13 @@ function InvitesTab({ groupId }: { groupId: string }) {
                 <>
                   <button
                     onClick={() => handleCopy(inv.code)}
-                    className="text-xs text-grape font-semibold"
+                    className="text-xs font-semibold text-grape"
                   >
                     Copy
                   </button>
                   <button
                     onClick={() => revoke.mutate(inv.code)}
-                    className="text-xs text-coral font-semibold"
+                    className="text-xs font-semibold text-coral"
                   >
                     Revoke
                   </button>
@@ -263,9 +268,7 @@ function InvitesTab({ groupId }: { groupId: string }) {
             </div>
           );
         })}
-        {invites.length === 0 && (
-          <div className="p-4 text-sm text-inkmuted">No invites yet.</div>
-        )}
+        {invites.length === 0 && <div className="p-4 text-sm text-inkmuted">No invites yet.</div>}
       </div>
       <div className="mt-3 flex gap-2">
         <Button onClick={() => create.mutate("member")} disabled={create.isPending}>
@@ -273,28 +276,6 @@ function InvitesTab({ groupId }: { groupId: string }) {
         </Button>
         <Button variant="ghost" onClick={() => create.mutate("admin")} disabled={create.isPending}>
           ＋ Admin invite
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function CurateTab({ groupId }: { groupId: string }) {
-  const navigate = useNavigate();
-  return (
-    <div className="px-5 pt-4">
-      <div className="bg-gradient-to-br from-grape to-sky text-white rounded-3xl p-5">
-        <div className="text-xs uppercase tracking-widest opacity-90 font-bold">Curate · June</div>
-        <div className="font-display text-xl mt-1">Auto-promote in 12 days</div>
-        <p className="text-sm opacity-90 mt-1">
-          Top 5 voted will lock in. You can override anytime before then.
-        </p>
-        <Button
-          variant="ghost"
-          className="mt-3 !bg-white"
-          onClick={() => navigate(`/g/${groupId}/upcoming`)}
-        >
-          Review picks →
         </Button>
       </div>
     </div>
@@ -311,7 +292,7 @@ function SettingsTab({ group, groupId }: { group: Group; groupId: string }) {
     update.mutate({ notificationSettings: { ...group.notificationSettings, ...patch } });
 
   return (
-    <div className="px-5 pt-4 space-y-4">
+    <div className="space-y-4 px-5 pt-4">
       <Section title="Cycle">
         <NumberField
           label="Questions per cycle"
@@ -357,15 +338,19 @@ function SettingsTab({ group, groupId }: { group: Group; groupId: string }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-xs uppercase tracking-widest text-inkmuted font-bold mb-2 ml-1">{title}</div>
-      <div className="bg-white rounded-3xl border border-line shadow-soft divide-y divide-line">{children}</div>
+      <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">
+        {title}
+      </div>
+      <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
+        {children}
+      </div>
     </div>
   );
 }
 
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="p-4 flex items-center gap-3">
+    <div className="flex items-center gap-3 p-4">
       <div className="flex-1 text-sm">{label}</div>
       <div className="text-sm font-semibold text-inkmuted">{value}</div>
     </div>
@@ -400,7 +385,7 @@ function NumberField({
   }
 
   return (
-    <div className="p-4 flex items-center gap-3">
+    <div className="flex items-center gap-3 p-4">
       <div className="flex-1 text-sm">{label}</div>
       <input
         type="number"
@@ -412,7 +397,7 @@ function NumberField({
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
-        className="w-20 bg-cream border border-line rounded-xl px-3 py-1.5 text-sm font-semibold text-right focus:outline-none focus:ring-2 focus:ring-coral/30"
+        className="w-20 rounded-xl border border-line bg-cream px-3 py-1.5 text-right text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-coral/30"
       />
     </div>
   );
@@ -428,7 +413,7 @@ function ToggleField({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="p-4 flex items-center gap-3">
+    <div className="flex items-center gap-3 p-4">
       <div className="flex-1 text-sm">{label}</div>
       <button
         onClick={() => onChange(!value)}
@@ -438,4 +423,3 @@ function ToggleField({
     </div>
   );
 }
-

@@ -12,4 +12,6 @@ dist-ssr
 *.sln
 *.sw?
 .env*
+!.env.development
 public/sample/**
+tsconfig.tsbuildinfo

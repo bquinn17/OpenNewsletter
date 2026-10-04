@@ -23,7 +23,7 @@ export function Pill({ tone = "muted", children, className }: Props) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold",
         tones[tone],
         className,
       )}

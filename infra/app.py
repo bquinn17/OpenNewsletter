@@ -71,6 +71,7 @@ api_stack = ApiStack(
     table=data_stack.table,
     user_pool=auth_stack.user_pool,
     user_pool_client=auth_stack.frontend_client,
+    bootstrap_client=auth_stack.bootstrap_client,
     certificate=frontend_stack.certificate,
     cycle_tick_fn=notifications_stack.cycle_tick_fn,
     env=aws_env,

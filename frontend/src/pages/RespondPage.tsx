@@ -3,14 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
-import { api } from "../api/client";
-import { useNewsletter, useSaveResponse } from "../api/queries";
+import { mockApi as api } from "../mocks/api";
+import { useNewsletter, useSaveResponse } from "../mocks/legacyQueries";
 import { useToasts } from "../state/toast";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Button } from "../components/ui/Button";
 import { Pill } from "../components/ui/Pill";
 import { formatRelative } from "../utils/dates";
-import type { LockedQuestion, MyResponse } from "../api/types";
+import type { LockedQuestion, MyResponse } from "../mocks/types";
 
 const AUTOSAVE_MS = 1500;
 
@@ -81,11 +81,18 @@ export function RespondPage() {
         questionId: question.questionId,
         body:
           question.kind === "text"
-            ? { kind: "text", body, imageMediaIds: imageIds, imageCaptions: cleanedCaptions, publish }
+            ? {
+                kind: "text",
+                body,
+                imageMediaIds: imageIds,
+                imageCaptions: cleanedCaptions,
+                publish,
+              }
             : { kind: "poll", pollOptionId: pollOptionId ?? "", publish },
       });
       setSavedAt(result.updatedAt);
-      if (publish) pushToast("Published — friends can see this when the edition publishes.", "success");
+      if (publish)
+        pushToast("Published — friends can see this when the edition publishes.", "success");
       return true;
     } catch (e) {
       pushToast((e as Error).message ?? "Save failed", "error");
@@ -100,7 +107,9 @@ export function RespondPage() {
     return (
       <div className="bg-cream pb-32">
         <PageHeader title="Not open for responses" back="/" />
-        <div className="px-5 pt-6 text-inkmuted">This question isn't accepting responses right now.</div>
+        <div className="px-5 pt-6 text-inkmuted">
+          This question isn&apos;t accepting responses right now.
+        </div>
       </div>
     );
   }
@@ -114,22 +123,22 @@ export function RespondPage() {
         eyebrow={`Question · ${data.monthLabel} ${data.yearLabel}`}
         title={question.prompt}
         back={`/g/${groupId}/n/${cycleId}`}
-        rightSlot={
-          <Pill tone={saving ? "grape" : "mint"}>● {saving ? "saving" : "saved"}</Pill>
-        }
+        rightSlot={<Pill tone={saving ? "grape" : "mint"}>● {saving ? "saving" : "saved"}</Pill>}
       />
 
       <div className="px-5 pt-5">
-        <div className="bg-white rounded-3xl border border-line shadow-soft p-5">
-          <div className="text-xs uppercase tracking-widest text-grape font-bold">
+        <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
+          <div className="text-xs font-bold uppercase tracking-widest text-grape">
             {question.askedBy
               ? `${question.askedBy.displayName} asked`
               : question.isAnonymous
                 ? "Asked anonymously"
                 : "Question"}
           </div>
-          <h1 className="font-display text-2xl font-bold leading-tight mt-1">{question.prompt}</h1>
-          {question.helperText && <p className="text-sm text-inkmuted mt-2">{question.helperText}</p>}
+          <h1 className="mt-1 font-display text-2xl font-bold leading-tight">{question.prompt}</h1>
+          {question.helperText && (
+            <p className="mt-2 text-sm text-inkmuted">{question.helperText}</p>
+          )}
         </div>
       </div>
 
@@ -146,30 +155,29 @@ export function RespondPage() {
           setImageCaptions={setImageCaptions}
         />
       ) : (
-        <PollPicker
-          question={question}
-          selected={pollOptionId}
-          onSelect={setPollOptionId}
-        />
+        <PollPicker question={question} selected={pollOptionId} onSelect={setPollOptionId} />
       )}
 
-      <div className="px-5 mt-4">
-        <div className="bg-grape/5 border border-grape/20 rounded-3xl p-4 text-sm text-grape flex gap-3">
+      <div className="mt-4 px-5">
+        <div className="flex gap-3 rounded-3xl border border-grape/20 bg-grape/5 p-4 text-sm text-grape">
           <span className="text-lg">💡</span>
           <div>
-            <strong className="font-semibold">Drafts autosave every couple seconds.</strong> Your friends won't see this
-            until the edition publishes, and you can edit anytime before then.
+            <strong className="font-semibold">Drafts autosave every couple seconds.</strong> Your
+            friends won&apos;t see this until the edition publishes, and you can edit anytime before
+            then.
           </div>
         </div>
       </div>
 
       <div className="absolute bottom-3 left-3 right-3 z-40">
-        <div className="bg-ink text-cream rounded-3xl shadow-pop p-3 flex items-center gap-3">
+        <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
           <div className="text-xs leading-tight">
             <div className="font-semibold">
               {isPublished ? "Published" : "Draft"} · {wordCount} words
             </div>
-            <div className="opacity-70">{savedAt ? `Last saved ${formatRelative(savedAt)}` : "Saving…"}</div>
+            <div className="opacity-70">
+              {savedAt ? `Last saved ${formatRelative(savedAt)}` : "Saving…"}
+            </div>
           </div>
           <span className="flex-1" />
           <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
@@ -222,8 +230,11 @@ function TextEditor({
 
   // Cancel any in-flight uploads on unmount.
   useEffect(() => {
+    // The Set itself never changes identity, so capturing it here still sees
+    // every ID added later.
+    const active = pollers.current;
     return () => {
-      for (const id of pollers.current) {
+      for (const id of active) {
         void api.cancelImageUpload(id).catch(() => undefined);
       }
     };
@@ -266,7 +277,10 @@ function TextEditor({
           setPending((prev) => {
             const cur = prev[imageId];
             if (!cur) return prev;
-            return { ...prev, [imageId]: { ...cur, status: "failed", error: s.error ?? "Upload failed" } };
+            return {
+              ...prev,
+              [imageId]: { ...cur, status: "failed", error: s.error ?? "Upload failed" },
+            };
           });
           return;
         }
@@ -374,7 +388,10 @@ function TextEditor({
       const trailMatch = raw.match(/\s*$/);
       const lead = leadMatch ? leadMatch[0] : "";
       const trail = trailMatch ? trailMatch[0] : "";
-      const inner = raw.slice(lead.length, raw.length - trail.length) || raw.trim() || (kind === "bold" ? "bold text" : "italic text");
+      const inner =
+        raw.slice(lead.length, raw.length - trail.length) ||
+        raw.trim() ||
+        (kind === "bold" ? "bold text" : "italic text");
       // If trimming consumed everything (selection was pure whitespace), fall
       // back to wrapping a placeholder and drop the would-be empty padding.
       const padLead = inner === raw.trim() && raw.trim() === "" ? "" : lead;
@@ -385,7 +402,10 @@ function TextEditor({
     } else {
       const prefix = kind === "list" ? "- " : "> ";
       const target = selected || (kind === "list" ? "item" : "quote");
-      const lines = target.split("\n").map((l) => `${prefix}${l}`).join("\n");
+      const lines = target
+        .split("\n")
+        .map((l) => `${prefix}${l}`)
+        .join("\n");
       // Ensure leading newline if not at start of a line
       const leading = before.length === 0 || before.endsWith("\n") ? "" : "\n";
       next = `${before}${leading}${lines}${after}`;
@@ -401,14 +421,14 @@ function TextEditor({
   }
 
   return (
-    <div className="px-5 mt-4">
-      <div className="bg-white rounded-3xl border border-line shadow-soft overflow-hidden">
-        <div className="flex items-center gap-1 px-3 py-2 border-b border-line text-inkmuted text-sm">
+    <div className="mt-4 px-5">
+      <div className="overflow-hidden rounded-3xl border border-line bg-white shadow-soft">
+        <div className="flex items-center gap-1 border-b border-line px-3 py-2 text-sm text-inkmuted">
           <button
             type="button"
             onClick={() => applyMarkdown("bold")}
             disabled={preview}
-            className="w-8 h-8 grid place-items-center rounded-lg hover:bg-cream font-bold disabled:opacity-40"
+            className="grid h-8 w-8 place-items-center rounded-lg font-bold hover:bg-cream disabled:opacity-40"
             aria-label="Bold"
           >
             B
@@ -417,7 +437,7 @@ function TextEditor({
             type="button"
             onClick={() => applyMarkdown("italic")}
             disabled={preview}
-            className="w-8 h-8 grid place-items-center rounded-lg hover:bg-cream italic disabled:opacity-40"
+            className="grid h-8 w-8 place-items-center rounded-lg italic hover:bg-cream disabled:opacity-40"
             aria-label="Italic"
           >
             I
@@ -426,7 +446,7 @@ function TextEditor({
             type="button"
             onClick={() => applyMarkdown("list")}
             disabled={preview}
-            className="w-8 h-8 grid place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
+            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
             aria-label="Bulleted list"
           >
             •
@@ -435,16 +455,16 @@ function TextEditor({
             type="button"
             onClick={() => applyMarkdown("quote")}
             disabled={preview}
-            className="w-8 h-8 grid place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
+            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
             aria-label="Quote"
           >
-            "
+            &quot;
           </button>
           <span className="flex-1" />
           <button
             type="button"
             onClick={() => setPreview((p) => !p)}
-            className={`text-xs px-2 py-1 rounded-md font-medium ${
+            className={`rounded-md px-2 py-1 text-xs font-medium ${
               preview ? "bg-ink text-cream" : "hover:bg-cream"
             }`}
           >
@@ -452,13 +472,13 @@ function TextEditor({
           </button>
         </div>
         {preview ? (
-          <div className="px-4 py-4 min-h-[200px] text-[15px] leading-relaxed markdown-preview">
+          <div className="markdown-preview min-h-[200px] px-4 py-4 text-[15px] leading-relaxed">
             {body.trim() ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
                 {body}
               </ReactMarkdown>
             ) : (
-              <p className="text-inkmuted italic">Nothing to preview yet.</p>
+              <p className="italic text-inkmuted">Nothing to preview yet.</p>
             )}
           </div>
         ) : (
@@ -466,22 +486,22 @@ function TextEditor({
             ref={textareaRef}
             value={body}
             onChange={(e) => onBodyChange(e.target.value)}
-            className="w-full px-4 py-4 min-h-[200px] resize-none focus:outline-none text-[15px] leading-relaxed bg-transparent"
+            className="min-h-[200px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-relaxed focus:outline-none"
             placeholder="Tell us about it…"
           />
         )}
         <div className="border-t border-line p-3">
           <div className="space-y-3">
             {imageIds.map((id) => (
-              <div key={id} className="flex gap-3 items-start">
-                <div className="w-20 h-20 rounded-2xl relative flex-shrink-0 overflow-hidden ph-img">
+              <div key={id} className="flex items-start gap-3">
+                <div className="ph-img relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl">
                   {previews[id] && (
-                    <img src={previews[id]} alt="" className="w-full h-full object-cover" />
+                    <img src={previews[id]} alt="" className="h-full w-full object-cover" />
                   )}
                   <button
                     type="button"
                     onClick={() => removeCommitted(id)}
-                    className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-ink/80 text-white text-[10px] grid place-items-center"
+                    className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink/80 text-[10px] text-white"
                     aria-label="Remove"
                   >
                     ×
@@ -492,18 +512,18 @@ function TextEditor({
                   onChange={(e) => setImageCaptions({ ...imageCaptions, [id]: e.target.value })}
                   maxLength={140}
                   placeholder="Caption (optional)"
-                  className="flex-1 mt-1 bg-cream border border-line rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                  className="mt-1 flex-1 rounded-xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
                 />
               </div>
             ))}
             {Object.values(pending).map((p) => (
-              <div key={p.imageId} className="flex gap-3 items-start">
-                <div className="w-20 h-20 rounded-2xl relative flex-shrink-0 overflow-hidden bg-cream border border-line">
-                  <img src={p.dataUrl} alt="" className="w-full h-full object-cover opacity-70" />
+              <div key={p.imageId} className="flex items-start gap-3">
+                <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl border border-line bg-cream">
+                  <img src={p.dataUrl} alt="" className="h-full w-full object-cover opacity-70" />
                   {p.status !== "failed" && (
                     <div className="absolute inset-x-0 bottom-0 h-1.5 bg-black/30">
                       <div
-                        className={`h-full ${p.status === "processing" ? "bg-grape animate-pulse" : "bg-coral"}`}
+                        className={`h-full ${p.status === "processing" ? "animate-pulse bg-grape" : "bg-coral"}`}
                         style={{ width: `${Math.max(5, Math.round(p.progress * 100))}%` }}
                       />
                     </div>
@@ -511,19 +531,21 @@ function TextEditor({
                   <button
                     type="button"
                     onClick={() => cancelPending(p.imageId)}
-                    className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-ink/80 text-white text-[10px] grid place-items-center"
+                    className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink/80 text-[10px] text-white"
                     aria-label={p.status === "failed" ? "Dismiss" : "Cancel upload"}
                   >
                     ×
                   </button>
                 </div>
-                <div className="flex-1 mt-1 text-xs">
-                  <div className="font-semibold text-inkmuted truncate">{p.fileName}</div>
+                <div className="mt-1 flex-1 text-xs">
+                  <div className="truncate font-semibold text-inkmuted">{p.fileName}</div>
                   <div className="mt-0.5 text-inkmuted">
                     {p.status === "uploading" && `Uploading… ${Math.round(p.progress * 100)}%`}
                     {p.status === "processing" && "Processing image…"}
                     {p.status === "failed" && (
-                      <span className="text-coral">Upload failed{p.error ? ` — ${p.error}` : ""}</span>
+                      <span className="text-coral">
+                        Upload failed{p.error ? ` — ${p.error}` : ""}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -542,7 +564,7 @@ function TextEditor({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full rounded-2xl border-2 border-dashed border-line text-inkmuted text-sm hover:border-grape hover:text-grape transition flex items-center justify-center gap-2 py-3"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3 text-sm text-inkmuted transition hover:border-grape hover:text-grape"
                 >
                   <span className="text-xl leading-none">＋</span>
                   <span>Add photo</span>
@@ -550,7 +572,7 @@ function TextEditor({
               </>
             )}
           </div>
-          <div className="text-xs text-inkmuted mt-2">{totalCount} of 10 photos</div>
+          <div className="mt-2 text-xs text-inkmuted">{totalCount} of 10 photos</div>
         </div>
       </div>
     </div>
@@ -568,24 +590,26 @@ function PollPicker({
 }) {
   if (!question.pollOptions) return null;
   return (
-    <div className="px-5 mt-4">
-      <div className="bg-white rounded-3xl border border-line shadow-soft p-5 space-y-2">
+    <div className="mt-4 px-5">
+      <div className="space-y-2 rounded-3xl border border-line bg-white p-5 shadow-soft">
         {question.pollOptions.map((opt) => {
           const mine = selected === opt.optionId;
           return (
             <button
               key={opt.optionId}
               onClick={() => onSelect(opt.optionId)}
-              className={`w-full text-left rounded-2xl px-4 py-3 border transition flex items-center gap-3 ${
-                mine ? "bg-grape/5 border-grape ring-2 ring-grape/30" : "border-line hover:border-ink"
+              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+                mine
+                  ? "border-grape bg-grape/5 ring-2 ring-grape/30"
+                  : "border-line hover:border-ink"
               }`}
             >
               <span
-                className={`w-5 h-5 rounded-full border-2 grid place-items-center ${
+                className={`grid h-5 w-5 place-items-center rounded-full border-2 ${
                   mine ? "border-grape" : "border-line"
                 }`}
               >
-                {mine && <span className="w-2.5 h-2.5 rounded-full bg-grape" />}
+                {mine && <span className="h-2.5 w-2.5 rounded-full bg-grape" />}
               </span>
               <span className="font-semibold">{opt.label}</span>
             </button>

@@ -32,6 +32,12 @@ Notes:
 - Always wrap in `timeout` (the suite pulls an image on a cold cache and can otherwise hang).
 - Sanity-check the daemon first with the same exports plus `docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
 
+**Frontend checks** (from `frontend/`; no Docker needed; on macOS prefix `export PATH="/opt/homebrew/bin:$PATH" &&`):
+
+```bash
+npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
+```
+
 Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/13-dev-environments.md) (which also covers which test layers need Docker at all).
 
 ## What this app is
@@ -103,7 +109,7 @@ The owner prefers that work be delegated to cheaper sub-agents, running in paral
    - **What to report back:** files changed, test counts, spec contradictions hit, and anything unfinished.
 4. **Lead verifies; don't take an agent's word for it.**
    - Read the diff of the risky core, such as a transaction or a state transition.
-   - Re-run `cargo fmt --check`, clippy with `-D warnings`, the full workspace tests, `pytest infra/tests` and `cdk synth`.
+   - Re-run `cargo fmt --check`, clippy with `-D warnings`, the full workspace tests, `pytest infra/tests`, `ruff check`/`ruff format --check` and `cdk synth`, plus the frontend checks above when `frontend/` changed.
    - Then update PROGRESS.md.
 
 Commit only when the owner asks.

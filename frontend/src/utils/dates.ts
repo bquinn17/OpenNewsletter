@@ -31,3 +31,26 @@ export function shortCountdown(iso: string): string {
   if (c.hours > 0) return `${c.hours}h ${c.minutes.toString().padStart(2, "0")}m`;
   return `${c.minutes}m`;
 }
+
+export interface CycleLabels {
+  monthLabel: string;
+  yearLabel: string;
+}
+
+/**
+ * Month/year labels for a cycle, computed client-side from `responseOpenAt`
+ * in the given IANA timezone (`04-frontend-architecture.md` §14a — the
+ * server never sends a display label). Uses `Intl.DateTimeFormat` directly
+ * rather than `date-fns-tz` (not an installed dependency).
+ */
+export function cycleLabels(responseOpenAt: string, timezone: string): CycleLabels {
+  const date = new Date(responseOpenAt);
+  const monthLabel = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: timezone }).format(
+    date,
+  );
+  const yearLabel = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    timeZone: timezone,
+  }).format(date);
+  return { monthLabel, yearLabel };
+}

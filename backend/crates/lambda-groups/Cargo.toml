@@ -4,6 +4,10 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+name = "groups"
+path = "src/lib.rs"
+
 [[bin]]
 name = "groups-api"
 path = "src/main.rs"
@@ -24,3 +28,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
+persistence = { path = "../persistence", features = ["test-utils"] }
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+serde_dynamo.workspace = true

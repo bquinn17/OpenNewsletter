@@ -5,10 +5,12 @@ use crate::error::{self, RepoError};
 use crate::keys::{
     attr, candidate_gsi1pk, candidate_gsi1sk, candidate_pk, candidate_sk, candidate_vote_pk,
     candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
-    newsletter_gsi2sk_sentinel, newsletter_sk,
+    newsletter_gsi2sk_sentinel, newsletter_sk, CANDIDATE_VOTE_SK_PREFIX, VOTER_TALLY_SK,
 };
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
+use aws_sdk_dynamodb::error::SdkError;
+use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
+use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem, Update};
 use domain::{
     CandidateQuestion, CandidateVote, CycleId, GroupId, LockedQuestion, Newsletter,
     NewsletterStatus, QuestionId, UserId,
@@ -82,11 +84,16 @@ pub async fn list_my_votes(
         .client
         .query()
         .table_name(&repo.table)
-        .key_condition_expression("#pk = :pk")
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :vote)")
         .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(
             ":pk",
             AttributeValue::S(candidate_vote_pk(group_id, next_cycle_id, user_id)),
+        )
+        .expression_attribute_values(
+            ":vote",
+            AttributeValue::S(CANDIDATE_VOTE_SK_PREFIX.to_owned()),
         )
         .send()
         .await?;
@@ -214,17 +221,29 @@ pub async fn delete_vote_if_present(
     voter_user_id: &UserId,
     question_id: &QuestionId,
 ) -> Result<(), RepoError> {
-    repo.client
-        .delete_item()
-        .table_name(&repo.table)
-        .key(
-            attr::PK,
-            AttributeValue::S(candidate_vote_pk(group_id, cycle_id, voter_user_id)),
-        )
-        .key(attr::SK, AttributeValue::S(candidate_vote_sk(question_id)))
+    // The vote and the voter's tally move together, so deleting a vote hands
+    // the voter their slot back.
+    let delete = vote_delete(repo, group_id, cycle_id, voter_user_id, question_id)?;
+    let tally = tally_update(
+        repo,
+        group_id,
+        cycle_id,
+        voter_user_id,
+        TallyChange::Release,
+    )?;
+    let result = repo
+        .client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().delete(delete).build())
+        .transact_items(TransactWriteItem::builder().update(tally).build())
         .send()
-        .await?;
-    Ok(())
+        .await;
+    match result.map_err(|e| classify_vote_tx_error(e, [VoteTxError::VoteRow, VoteTxError::Tally]))
+    {
+        Ok(_) | Err(VoteTxError::VoteRow) => Ok(()),
+        Err(VoteTxError::Repo(e)) => Err(e),
+        Err(other) => Err(RepoError::TransactionCancelled(format!("{other:?}"))),
+    }
 }
 
 pub async fn delete_candidate(
@@ -246,16 +265,38 @@ pub async fn delete_candidate(
     Ok(())
 }
 
+/// Why a vote transaction (§4 #1, #2) was cancelled, by which item's condition
+/// failed. Callers turn each into a distinct API outcome.
+#[derive(Debug)]
+pub enum VoteTxError {
+    /// The `CandidateVote` row: already present on cast, already gone on
+    /// withdraw. A concurrent duplicate request won, so callers treat this as
+    /// idempotent success.
+    VoteRow,
+    /// The candidate's `vote_count` changed since it was read, or the
+    /// transaction conflicted with another. Retry against a fresh read.
+    CountRace,
+    /// The voter's tally: at `votesPerUserPerCycle` on cast (`VOTE_CAP_REACHED`),
+    /// already zero on withdraw.
+    Tally,
+    Repo(RepoError),
+}
+
 /// Transaction §4 #1 — cast a vote.
 ///
 /// - Put `CandidateVote` (must not already exist)
-/// - Update `CandidateQuestion`: voteCount += 1 and refresh GSI1 sort key
+/// - Update `CandidateQuestion`: `vote_count += 1` and refresh the GSI1 sort key
+/// - Update the voter's `VoterTally`: `votes_cast += 1`, conditioned on
+///   `votes_cast < votes_cap`. This is the cap check `02` §4 #1 requires; a
+///   pre-read alone lets concurrent votes on different candidates exceed it.
 pub async fn cast_vote_tx(
     repo: &Repo,
     vote: &CandidateVote,
     new_vote_count: u32,
-) -> Result<(), RepoError> {
-    let mut vote_item: std::collections::HashMap<String, AttributeValue> = to_item(vote)?;
+    votes_cap: u32,
+) -> Result<(), VoteTxError> {
+    let mut vote_item: std::collections::HashMap<String, AttributeValue> =
+        to_item(vote).map_err(|e| VoteTxError::Repo(e.into()))?;
     vote_item.insert(
         attr::PK.into(),
         AttributeValue::S(candidate_vote_pk(
@@ -279,87 +320,201 @@ pub async fn cast_vote_tx(
         .condition_expression("attribute_not_exists(#sk)")
         .expression_attribute_names("#sk", attr::SK)
         .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
-
-    let new_gsi1sk = candidate_gsi1sk(new_vote_count, &vote.question_id);
-    let bump = Update::builder()
-        .table_name(&repo.table)
-        .key(
-            attr::PK,
-            AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)),
-        )
-        .key(attr::SK, AttributeValue::S(candidate_sk(&vote.question_id)))
-        .update_expression("SET vote_count = vote_count + :one, #g1sk = :sk")
-        .condition_expression("vote_count = :prev")
-        .expression_attribute_names("#g1sk", attr::GSI1SK)
-        .expression_attribute_values(":one", AttributeValue::N("1".into()))
-        .expression_attribute_values(
-            ":prev",
-            AttributeValue::N((new_vote_count.saturating_sub(1)).to_string()),
-        )
-        .expression_attribute_values(":sk", AttributeValue::S(new_gsi1sk))
-        .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        .map_err(|e| VoteTxError::Repo(RepoError::Dynamo(format!("{e:?}"))))?;
+    let bump = count_update(repo, vote, new_vote_count, 1).map_err(VoteTxError::Repo)?;
+    let tally = tally_update(
+        repo,
+        &vote.group_id,
+        &vote.cycle_id,
+        &vote.user_id,
+        TallyChange::Take { cap: votes_cap },
+    )
+    .map_err(VoteTxError::Repo)?;
 
     repo.client
         .transact_write_items()
         .transact_items(TransactWriteItem::builder().put(put_vote).build())
         .transact_items(TransactWriteItem::builder().update(bump).build())
+        .transact_items(TransactWriteItem::builder().update(tally).build())
         .send()
-        .await?;
+        .await
+        .map_err(|e| {
+            classify_vote_tx_error(
+                e,
+                [
+                    VoteTxError::VoteRow,
+                    VoteTxError::CountRace,
+                    VoteTxError::Tally,
+                ],
+            )
+        })?;
     Ok(())
 }
 
-/// Transaction §4 #2 — withdraw a vote.
+/// Transaction §4 #2 — withdraw a vote: delete the `CandidateVote`, decrement
+/// the candidate's `vote_count`, and give the voter's tally slot back.
 pub async fn withdraw_vote_tx(
     repo: &Repo,
     vote: &CandidateVote,
     new_vote_count: u32,
-) -> Result<(), RepoError> {
-    use aws_sdk_dynamodb::types::Delete;
-    let delete = Delete::builder()
+) -> Result<(), VoteTxError> {
+    let delete = vote_delete(
+        repo,
+        &vote.group_id,
+        &vote.cycle_id,
+        &vote.user_id,
+        &vote.question_id,
+    )
+    .map_err(VoteTxError::Repo)?;
+    let dec = count_update(repo, vote, new_vote_count, -1).map_err(VoteTxError::Repo)?;
+    let tally = tally_update(
+        repo,
+        &vote.group_id,
+        &vote.cycle_id,
+        &vote.user_id,
+        TallyChange::Release,
+    )
+    .map_err(VoteTxError::Repo)?;
+
+    repo.client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().delete(delete).build())
+        .transact_items(TransactWriteItem::builder().update(dec).build())
+        .transact_items(TransactWriteItem::builder().update(tally).build())
+        .send()
+        .await
+        .map_err(|e| {
+            classify_vote_tx_error(
+                e,
+                [
+                    VoteTxError::VoteRow,
+                    VoteTxError::CountRace,
+                    VoteTxError::Tally,
+                ],
+            )
+        })?;
+    Ok(())
+}
+
+/// `Delete` of one `CandidateVote`, conditioned on it existing.
+fn vote_delete(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    voter_user_id: &UserId,
+    question_id: &QuestionId,
+) -> Result<Delete, RepoError> {
+    Delete::builder()
         .table_name(&repo.table)
         .key(
             attr::PK,
-            AttributeValue::S(candidate_vote_pk(
-                &vote.group_id,
-                &vote.cycle_id,
-                &vote.user_id,
-            )),
+            AttributeValue::S(candidate_vote_pk(group_id, cycle_id, voter_user_id)),
         )
-        .key(
-            attr::SK,
-            AttributeValue::S(candidate_vote_sk(&vote.question_id)),
-        )
+        .key(attr::SK, AttributeValue::S(candidate_vote_sk(question_id)))
         .condition_expression("attribute_exists(#sk)")
         .expression_attribute_names("#sk", attr::SK)
         .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
 
-    let new_gsi1sk = candidate_gsi1sk(new_vote_count, &vote.question_id);
-    let dec = Update::builder()
+/// Optimistic `vote_count` change on the candidate: `delta` is +1 or -1 and
+/// `new_vote_count` the expected result, so the condition is the prior value.
+fn count_update(
+    repo: &Repo,
+    vote: &CandidateVote,
+    new_vote_count: u32,
+    delta: i64,
+) -> Result<Update, RepoError> {
+    let prev = i64::from(new_vote_count) - delta;
+    Update::builder()
         .table_name(&repo.table)
         .key(
             attr::PK,
             AttributeValue::S(candidate_pk(&vote.group_id, &vote.cycle_id)),
         )
         .key(attr::SK, AttributeValue::S(candidate_sk(&vote.question_id)))
-        .update_expression("SET vote_count = vote_count - :one, #g1sk = :sk")
+        .update_expression("SET vote_count = vote_count + :delta, #g1sk = :sk")
         .condition_expression("vote_count = :prev")
         .expression_attribute_names("#g1sk", attr::GSI1SK)
-        .expression_attribute_values(":one", AttributeValue::N("1".into()))
-        .expression_attribute_values(":prev", AttributeValue::N((new_vote_count + 1).to_string()))
-        .expression_attribute_values(":sk", AttributeValue::S(new_gsi1sk))
+        .expression_attribute_values(":delta", AttributeValue::N(delta.to_string()))
+        .expression_attribute_values(":prev", AttributeValue::N(prev.to_string()))
+        .expression_attribute_values(
+            ":sk",
+            AttributeValue::S(candidate_gsi1sk(new_vote_count, &vote.question_id)),
+        )
         .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
 
-    repo.client
-        .transact_write_items()
-        .transact_items(TransactWriteItem::builder().delete(delete).build())
-        .transact_items(TransactWriteItem::builder().update(dec).build())
-        .send()
-        .await?;
-    Ok(())
+enum TallyChange {
+    /// Use one of the voter's `cap` votes.
+    Take { cap: u32 },
+    /// Give one back.
+    Release,
+}
+
+/// `Update` of the voter's `VoterTally` row (created on first vote).
+fn tally_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    voter_user_id: &UserId,
+    change: TallyChange,
+) -> Result<Update, RepoError> {
+    let builder = Update::builder()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(candidate_vote_pk(group_id, cycle_id, voter_user_id)),
+        )
+        .key(attr::SK, AttributeValue::S(VOTER_TALLY_SK.to_owned()))
+        .expression_attribute_names("#entity", attr::ENTITY)
+        .expression_attribute_values(":entity", AttributeValue::S("VoterTally".into()));
+    let builder = match change {
+        TallyChange::Take { cap } => builder
+            .update_expression("SET #entity = :entity ADD votes_cast :one")
+            .condition_expression("attribute_not_exists(votes_cast) OR votes_cast < :cap")
+            .expression_attribute_values(":one", AttributeValue::N("1".into()))
+            .expression_attribute_values(":cap", AttributeValue::N(cap.to_string())),
+        TallyChange::Release => builder
+            .update_expression("SET #entity = :entity ADD votes_cast :minus_one")
+            .condition_expression("votes_cast > :zero")
+            .expression_attribute_values(":minus_one", AttributeValue::N("-1".into()))
+            .expression_attribute_values(":zero", AttributeValue::N("0".into())),
+    };
+    builder
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+/// Map a vote transaction's failure to the item whose condition failed.
+/// `labels[i]` names the outcome for transact item `i`; a transaction
+/// conflict with a concurrent writer counts as a retryable [`VoteTxError::CountRace`].
+fn classify_vote_tx_error<R: std::fmt::Debug, const N: usize>(
+    err: SdkError<TransactWriteItemsError, R>,
+    labels: [VoteTxError; N],
+) -> VoteTxError {
+    let Some(TransactWriteItemsError::TransactionCanceledException(cancel)) =
+        err.as_service_error()
+    else {
+        return VoteTxError::Repo(error::from_transact_write_error(err));
+    };
+    let reasons = cancel.cancellation_reasons();
+    if let Some(i) = reasons
+        .iter()
+        .position(|r| r.code() == Some("ConditionalCheckFailed"))
+    {
+        if let Some(label) = labels.into_iter().nth(i) {
+            return label;
+        }
+    }
+    if reasons
+        .iter()
+        .any(|r| r.code() == Some("TransactionConflict"))
+    {
+        return VoteTxError::CountRace;
+    }
+    VoteTxError::Repo(RepoError::TransactionCancelled(format!("{cancel:?}")))
 }
 
 // `questionsPerCycle` is capped at `MAX_QUESTIONS_PER_CYCLE` (20), so a

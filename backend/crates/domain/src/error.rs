@@ -1,5 +1,6 @@
 //! API error catalog mirroring `plans/03-api-contract.md` §1.1.
 
+use crate::api::FieldError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -113,6 +114,9 @@ impl ApiErrorCode {
 pub struct ApiError {
     pub code: ApiErrorCode,
     pub detail: String,
+    /// Per-field details for `VALIDATION_FAILED` (`03` §1.1 `fieldErrors`). Empty
+    /// for every other error, and for validation errors not tied to one field.
+    pub field_errors: Vec<FieldError>,
 }
 
 impl ApiError {
@@ -120,6 +124,22 @@ impl ApiError {
         Self {
             code,
             detail: detail.into(),
+            field_errors: Vec::new(),
+        }
+    }
+
+    /// `VALIDATION_FAILED` for one named request field (camelCase, as on the
+    /// wire). The detail doubles as the field error's message.
+    pub fn invalid_field(field: &str, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        Self {
+            code: ApiErrorCode::ValidationFailed,
+            field_errors: vec![FieldError {
+                field: field.to_owned(),
+                code: "INVALID".to_owned(),
+                message: detail.clone(),
+            }],
+            detail,
         }
     }
 

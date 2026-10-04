@@ -5,7 +5,7 @@ use crate::state::AppState;
 use crate::validation;
 use domain::api::{GroupResponse, MemberResponse, PatchGroupRequest, PatchMemberRequest};
 use domain::{ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Role, UserId};
-use persistence::{auth, groups, newsletters, questions, users};
+use persistence::{auth, groups, newsletters, questions, users, RepoError};
 
 pub async fn get_group(
     state: &AppState,
@@ -153,19 +153,15 @@ pub async fn remove_member(
             .ok_or_else(|| ApiError::not_found("member not found in this group"))?
     };
 
-    if target_membership.role == Role::Admin && admin_count(state, group_id).await? <= 1 {
-        return Err(ApiError::new(
-            ApiErrorCode::LastAdmin,
-            "a group must keep at least one admin",
-        ));
-    }
+    let witness = if target_membership.role == Role::Admin {
+        Some(admin_witness(state, group_id, caller, target).await?)
+    } else {
+        None
+    };
 
-    groups::leave_group_tx(&state.repo, target, group_id)
+    groups::leave_group_tx(&state.repo, target, group_id, witness.as_ref())
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, user_id = %target, "leave group failed");
-            ApiError::internal("failed to remove member")
-        })?;
+        .map_err(|e| admin_change_error(e, witness.is_some(), group_id, target, "remove member"))?;
     auth::invalidate_membership(target, group_id);
     Ok(())
 }
@@ -189,19 +185,23 @@ pub async fn patch_member(
         .ok_or_else(|| ApiError::not_found("member not found in this group"))?;
 
     let is_demotion = membership.role == Role::Admin && request.role == Role::Member;
-    if is_demotion && admin_count(state, group_id).await? <= 1 {
-        return Err(ApiError::new(
-            ApiErrorCode::LastAdmin,
-            "a group must keep at least one admin",
-        ));
-    }
+    let witness = if is_demotion {
+        Some(admin_witness(state, group_id, caller, target).await?)
+    } else {
+        None
+    };
 
-    groups::update_membership_role(&state.repo, target, group_id, request.role)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, user_id = %target, "role change failed");
-            ApiError::internal("failed to change member role")
-        })?;
+    groups::update_membership_role(
+        &state.repo,
+        target,
+        group_id,
+        request.role,
+        witness.as_ref(),
+    )
+    .await
+    .map_err(|e| {
+        admin_change_error(e, witness.is_some(), group_id, target, "change member role")
+    })?;
     auth::invalidate_membership(target, group_id);
 
     let user = users::get_user(&state.repo, target)
@@ -248,9 +248,52 @@ async fn list_members(
         })
 }
 
-async fn admin_count(state: &AppState, group_id: &GroupId) -> Result<usize, ApiError> {
-    let members = list_members(state, group_id).await?;
-    Ok(members.iter().filter(|m| m.role == Role::Admin).count())
+/// Pick the admin whose role the removal/demotion of admin `target` is
+/// conditioned on, so the group can never commit a state with zero admins
+/// (`02` §4, last-admin guard). An admin acting on someone else is their own
+/// witness, already verified by `require_membership(.., true)`; an admin acting
+/// on themselves needs another admin, or gets `LAST_ADMIN`.
+async fn admin_witness(
+    state: &AppState,
+    group_id: &GroupId,
+    caller: &UserId,
+    target: &UserId,
+) -> Result<UserId, ApiError> {
+    if caller != target {
+        return Ok(caller.clone());
+    }
+    list_members(state, group_id)
+        .await?
+        .into_iter()
+        .find(|m| m.role == Role::Admin && m.user_id != *target)
+        .map(|m| m.user_id)
+        .ok_or_else(|| {
+            ApiError::new(
+                ApiErrorCode::LastAdmin,
+                "a group must keep at least one admin",
+            )
+        })
+}
+
+/// Map a failed membership write. With a witness in the transaction, a
+/// cancellation means a concurrent admin change won the race (e.g. two admins
+/// demoting each other), so it surfaces as `LAST_ADMIN`.
+fn admin_change_error(
+    err: RepoError,
+    had_witness: bool,
+    group_id: &GroupId,
+    target: &UserId,
+    action: &str,
+) -> ApiError {
+    if had_witness && err.is_lost_race() {
+        tracing::info!(error = ?err, group_id = %group_id, user_id = %target, "{action} lost an admin race");
+        return ApiError::new(
+            ApiErrorCode::LastAdmin,
+            "another admin change happened at the same time; reload and try again",
+        );
+    }
+    tracing::error!(error = ?err, group_id = %group_id, user_id = %target, "{action} failed");
+    ApiError::internal(format!("failed to {action}"))
 }
 
 async fn hydrate_members(

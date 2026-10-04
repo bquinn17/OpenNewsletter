@@ -65,15 +65,15 @@ export function ConfirmDialog({
         className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
         tabIndex={-1}
       />
-      <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-pop border border-line p-5 animate-pop">
+      <div className="relative w-full max-w-sm animate-pop rounded-3xl border border-line bg-white p-5 shadow-pop">
         <h2 className="font-display text-xl font-bold leading-tight">{title}</h2>
-        {message && <p className="text-sm text-inkmuted mt-2 leading-relaxed">{message}</p>}
-        <div className="flex justify-end gap-2 mt-5">
+        {message && <p className="mt-2 text-sm leading-relaxed text-inkmuted">{message}</p>}
+        <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="rounded-full px-4 py-2 text-sm font-semibold bg-cream text-ink hover:bg-line/60 disabled:opacity-50"
+            className="rounded-full bg-cream px-4 py-2 text-sm font-semibold text-ink hover:bg-line/60 disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -83,8 +83,10 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={busy}
             className={clsx(
-              "rounded-full px-4 py-2 text-sm font-bold text-white transition disabled:opacity-60 disabled:cursor-not-allowed",
-              tone === "danger" ? "bg-coral shadow-pop hover:brightness-105" : "bg-ink hover:opacity-90",
+              "rounded-full px-4 py-2 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60",
+              tone === "danger"
+                ? "bg-coral shadow-pop hover:brightness-105"
+                : "bg-ink hover:opacity-90",
             )}
           >
             {busy ? "Working…" : confirmLabel}

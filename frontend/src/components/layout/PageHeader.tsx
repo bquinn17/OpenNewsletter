@@ -13,20 +13,25 @@ interface Props {
 export function PageHeader({ eyebrow, title, rightSlot, back, className }: Props) {
   const navigate = useNavigate();
   return (
-    <div className={clsx("sticky top-0 z-30 backdrop-blur bg-cream/85 border-b border-line", className)}>
-      <div className="px-4 py-3 flex items-center gap-3">
+    <div
+      className={clsx(
+        "sticky top-0 z-30 border-b border-line bg-cream/85 backdrop-blur",
+        className,
+      )}
+    >
+      <div className="flex items-center gap-3 px-4 py-3">
         {back && (
           <button
             onClick={() => (typeof back === "string" ? navigate(back) : navigate(-1))}
-            className="w-9 h-9 rounded-full bg-white border border-line grid place-items-center"
+            className="grid h-9 w-9 place-items-center rounded-full border border-line bg-white"
             aria-label="Back"
           >
             ←
           </button>
         )}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           {eyebrow && <div className="text-xs text-inkmuted">{eyebrow}</div>}
-          <div className="font-display font-bold text-lg leading-tight truncate">{title}</div>
+          <div className="truncate font-display text-lg font-bold leading-tight">{title}</div>
         </div>
         {rightSlot}
       </div>

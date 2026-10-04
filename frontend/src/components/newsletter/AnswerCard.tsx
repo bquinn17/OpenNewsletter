@@ -6,7 +6,7 @@ import { Avatar } from "../ui/Avatar";
 import { ReactionBar } from "./ReactionBar";
 import { CommentList } from "./CommentList";
 import { formatRelative } from "../../utils/dates";
-import type { AnswerView, ImageMedia } from "../../api/types";
+import type { AnswerView, ImageMedia } from "../../mocks/types";
 
 interface Props {
   answer: AnswerView;
@@ -20,28 +20,24 @@ export function AnswerCard({ answer, groupId, cycleId, questionId }: Props) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const visibleComments = showAllComments ? answer.comments : answer.comments.slice(0, 2);
   return (
-    <article className="bg-white rounded-3xl border border-line shadow-soft p-5 mb-4">
+    <article className="mb-4 rounded-3xl border border-line bg-white p-5 shadow-soft">
       <header className="flex items-center gap-3">
         <Avatar name={answer.displayName} color={answer.avatarColor} />
         <div className="flex-1">
           <div className="font-semibold">{answer.displayName}</div>
-          <div className="text-xs text-inkmuted">published {formatRelative(answer.publishedAt)}</div>
+          <div className="text-xs text-inkmuted">
+            published {formatRelative(answer.publishedAt)}
+          </div>
         </div>
       </header>
-      <div className="prose prose-sm max-w-none mt-3 text-[15px] leading-relaxed">
+      <div className="prose prose-sm mt-3 max-w-none text-[15px] leading-relaxed">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
           {answer.body}
         </ReactMarkdown>
       </div>
 
       {answer.images.length > 0 && (
-        <div
-          className={
-            answer.images.length === 1
-              ? "mt-3"
-              : "mt-3 grid grid-cols-2 gap-2"
-          }
-        >
+        <div className={answer.images.length === 1 ? "mt-3" : "mt-3 grid grid-cols-2 gap-2"}>
           {answer.images.map((img, i) => (
             <figure
               key={img.imageId}
@@ -51,7 +47,7 @@ export function AnswerCard({ answer, groupId, cycleId, questionId }: Props) {
                 type="button"
                 onClick={() => setLightboxIndex(i)}
                 aria-label={img.alt ?? `Open image ${i + 1}`}
-                className={`ph-img rounded-2xl overflow-hidden block w-full group ${
+                className={`ph-img group block w-full overflow-hidden rounded-2xl ${
                   answer.images.length === 1
                     ? "aspect-[3/2]"
                     : answer.images.length === 3 && i === 2
@@ -63,12 +59,12 @@ export function AnswerCard({ answer, groupId, cycleId, questionId }: Props) {
                   <img
                     src={img.displayUrl}
                     alt={img.alt ?? ""}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                   />
                 )}
               </button>
               {img.caption && (
-                <figcaption className="mt-1.5 text-xs text-inkmuted italic leading-snug">
+                <figcaption className="mt-1.5 text-xs italic leading-snug text-inkmuted">
                   {img.caption}
                 </figcaption>
               )}
@@ -155,13 +151,15 @@ function Lightbox({
 
   const img = images[index]!;
   return (
+    // Backdrop click-to-dismiss is a pointer convenience; keyboard users close via Escape.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <div
       role="dialog"
       aria-modal="true"
       onClick={onClose}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
-      className="fixed inset-0 z-50 bg-ink/85 backdrop-blur-sm flex items-center justify-center p-4 animate-pop"
+      className="fixed inset-0 z-50 flex animate-pop items-center justify-center bg-ink/85 p-4 backdrop-blur-sm"
     >
       <button
         type="button"
@@ -170,9 +168,18 @@ function Lightbox({
           onClose();
         }}
         aria-label="Close"
-        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white grid place-items-center"
+        className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white hover:bg-white/25"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
           <path d="M3 3l10 10M13 3L3 13" />
         </svg>
       </button>
@@ -184,9 +191,19 @@ function Lightbox({
             onChange(index - 1);
           }}
           aria-label="Previous"
-          className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-ink/60 hover:bg-ink/75 text-white hidden sm:grid place-items-center"
+          className="absolute left-4 top-1/2 hidden h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-ink/60 text-white hover:bg-ink/75 sm:grid"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
             <path d="M10 3L5 8l5 5" />
           </svg>
         </button>
@@ -199,29 +216,41 @@ function Lightbox({
             onChange(index + 1);
           }}
           aria-label="Next"
-          className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-ink/60 hover:bg-ink/75 text-white hidden sm:grid place-items-center"
+          className="absolute right-4 top-1/2 hidden h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-ink/60 text-white hover:bg-ink/75 sm:grid"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
             <path d="M6 3l5 5-5 5" />
           </svg>
         </button>
       )}
-      <figure className="max-w-5xl w-full" onClick={(e) => e.stopPropagation()}>
+      {/* Only stops backdrop dismissal from firing; not a real interaction. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
+      <figure className="w-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
         {img.displayUrl ? (
           <img
             src={img.displayUrl}
             alt={img.alt ?? ""}
-            className="w-full max-h-[80vh] object-contain rounded-2xl"
+            className="max-h-[80vh] w-full rounded-2xl object-contain"
           />
         ) : (
-          <div className="ph-img w-full aspect-[3/2] rounded-2xl" />
+          <div className="ph-img aspect-[3/2] w-full rounded-2xl" />
         )}
         {(img.caption || img.alt) && (
-          <figcaption className="text-cream/90 text-sm mt-3 text-center px-6">
+          <figcaption className="mt-3 px-6 text-center text-sm text-cream/90">
             {img.caption ?? img.alt}
           </figcaption>
         )}
-        <div className="text-cream/60 text-xs text-center mt-2">
+        <div className="mt-2 text-center text-xs text-cream/60">
           {index + 1} / {images.length}
         </div>
       </figure>

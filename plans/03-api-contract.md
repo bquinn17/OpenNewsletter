@@ -31,11 +31,13 @@ RFC-7807 Problem Details:
   "detail": "Specific message",
   "code": "MACHINE_READABLE_CODE",
   "correlationId": "01HX...",
-  "fieldErrors": [{"field": "body", "code": "TOO_LONG", "message": "..."}]
+  "fieldErrors": [{"field": "body", "code": "INVALID", "message": "body must be at most 10000 characters"}]
 }
 ```
 
-Error code catalog (machine-readable codes; `fieldErrors[].code` is a subset):
+`fieldErrors` is present only on `VALIDATION_FAILED` responses whose problem is one named request field. `field` is the camelCase wire name (query parameters included, e.g. `limit`, `cursor`). `code` is currently always `INVALID`; `message` repeats `detail`. It is omitted for validation failures not tied to one field, such as malformed JSON or a missing `email` claim. (Implemented 2026-09-27 via `ApiError::invalid_field`.)
+
+Error code catalog (machine-readable codes for the top-level `code`):
 
 | Code | HTTP | Meaning |
 |---|---|---|
@@ -51,7 +53,7 @@ Error code catalog (machine-readable codes; `fieldErrors[].code` is a subset):
 | `CYCLE_NOT_VOTING` | 409 | Action requires cycle in `voting` status |
 | `CYCLE_NOT_OPEN` | 409 | Action requires cycle in `open` status |
 | `CYCLE_NOT_PUBLISHED` | 409 | Action requires cycle in `published` status |
-| `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin |
+| `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin, or a concurrent admin change won the race (reload and retry; `02` §4 #7) |
 | `CANDIDATE_PROMOTED` | 409 | Candidate already locked into a cycle; can no longer be deleted |
 | `NEWSLETTER_ARCHIVED` | 410 | Cycle has transitioned to `archived`; see `10-archival.md` (not reachable until archival ships) |
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
@@ -77,12 +79,13 @@ Response 200:
   "vapidPublicKey": "BPV...",
   "groupDefaults": { "...": "..." },
   "memberships": [
-    { "groupId": "01H...", "role": "admin", "groupName": "Trail Crew" }
+    { "groupId": "01H...", "role": "admin", "groupName": "Trail Crew",
+      "timezone": "America/New_York", "gradient": "grape-sky" }
   ]
 }
 ```
 
-`memberships` is a denormalized join — each entry includes `groupName` so the frontend can render the group switcher without a follow-up query.
+`memberships` is a denormalized join. Each entry includes `groupName`, `timezone`, and `gradient`, so the frontend can render the group switcher (gradient swatch) and label cycles in the group's timezone (`04` §14a) without a follow-up query per group. The handler reads all the group rows in one `BatchGetItem`.
 
 ### 2.2 `GET /me`
 
@@ -410,7 +413,7 @@ Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exi
 
 Casts an upvote. Idempotent (re-POSTing returns 200 with current state).
 
-Implementation: `TransactWriteItems` per `02-data-model-dynamodb.md` §4 transaction #1, with a precondition that counts the caller's existing votes against `votesPerUserPerCycle`. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on. **M5 implementation note:** that list is carried in the problem body's free-text `detail` field (comma-separated question IDs), not a new structured field — `03-api-contract.md` §1.1's Problem Details shape only has `fieldErrors` for per-field validation issues, which doesn't fit a cap-conflict error.
+Implementation: `TransactWriteItems` per `02-data-model-dynamodb.md` §4 transaction #1. The cap is enforced in the transaction by the voter's `VoterTally` counter (`02` §2.7a), so concurrent votes can't exceed `votesPerUserPerCycle`. A pre-read of the caller's votes supplies the error detail. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on. **M5 implementation note:** that list is carried in the problem body's free-text `detail` field (comma-separated question IDs), not a new structured field — `03-api-contract.md` §1.1's Problem Details shape only has `fieldErrors` for per-field validation issues, which doesn't fit a cap-conflict error.
 
 Response 200:
 ```json
@@ -653,7 +656,7 @@ Body: `{ "cycleOpen": true, "deadlineReminders": true }`. Upserts a `Notificatio
 
 **Lambda**: `lambda-groups`. **Auth**: required (so it stays inside the protected stage; idle backend principle).
 
-Response 200: `{ "status": "ok", "version": "git-sha", "buildAt": "..." }`.
+Response 200: `{ "status": "ok", "version": "git-sha", "buildAt": "..." }`. `version` and `buildAt` are baked in at compile time from `BUILD_SHA`/`BUILD_AT`, which `make build-lambdas` sets. A local build reports `"unknown"` and `null`.
 
 ---
 
@@ -665,7 +668,7 @@ These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT
 
 **Lambda**: `lambda-cycle-tick`. **Auth**: required. **Role**: any group admin.
 
-Synchronously invokes the cycle-tick handler. Optional body `{ "groupId"?: "01H...", "advanceCycleClosesBy"?: "5m"|"1h"|... }`. When `advanceCycleClosesBy` is present, `groupId` is **required** and the caller must be an admin of that group: the group's active cycle has its `nextTransitionAt` (and the matching `responseOpenAt`/`responseCloseAt` field) rewound by the given duration before the tick runs, making the transition due immediately. With an empty body the tick just runs globally; the role check is "caller is an admin of at least one group."
+Synchronously invokes the cycle-tick handler. Optional body `{ "groupId"?: "01H...", "advanceCycleClosesBy"?: "5m"|"1h"|... }`. When `advanceCycleClosesBy` is present, `groupId` is **required** and the caller must be an admin of that group: the group's active cycle has its `nextTransitionAt` (and the matching `responseOpenAt`/`responseCloseAt` field) rewound by the given duration before the tick runs, making the transition due immediately. The duration is an integer plus `m`/`h`/`d`, between 0 and 366 days; anything else is `VALIDATION_FAILED` with a `fieldErrors` entry for `advanceCycleClosesBy`. With an empty body the tick just runs globally; the role check is "caller is an admin of at least one group."
 
 "The group's active cycle" means: the `open` cycle if one exists (its `responseCloseAt` is rewound, fast-forwarding toward publication — the common E2E case), else the `voting` cycle (its `responseOpenAt`/`voteWindowCloseAt` is rewound, fast-forwarding toward promotion). A group always has at most one of each, so this is unambiguous.
 

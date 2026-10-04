@@ -1,8 +1,8 @@
 mod common;
 
 use chrono::Utc;
-use domain::{CycleId, GroupId, NewsletterStatus};
-use persistence::questions;
+use domain::{CycleId, GroupId, NewsletterStatus, QuestionId, UserId};
+use persistence::questions::{self, VoteTxError};
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -54,7 +54,7 @@ async fn it_lists_my_votes_for_a_cycle() {
     questions::put_candidate(&repo, &q2).await.unwrap();
 
     let v1 = common::vote("u2", "g1", "202606", "q1");
-    questions::cast_vote_tx(&repo, &v1, 1).await.unwrap();
+    questions::cast_vote_tx(&repo, &v1, 1, 3).await.unwrap();
 
     let votes = questions::list_my_votes(
         &repo,
@@ -102,7 +102,7 @@ async fn cast_vote_tx_increments_vote_count_and_records_vote() {
     questions::put_candidate(&repo, &q).await.unwrap();
 
     let v = common::vote("u2", "g1", "202606", "q1");
-    questions::cast_vote_tx(&repo, &v, 1).await.unwrap();
+    questions::cast_vote_tx(&repo, &v, 1, 3).await.unwrap();
 
     let updated = questions::list_candidates(&repo, &GroupId::new("g1"), &CycleId::new("202606"))
         .await
@@ -128,11 +128,11 @@ async fn cast_vote_tx_fails_on_duplicate_vote() {
     questions::put_candidate(&repo, &q).await.unwrap();
 
     let v = common::vote("u2", "g1", "202606", "q1");
-    questions::cast_vote_tx(&repo, &v, 1).await.unwrap();
+    questions::cast_vote_tx(&repo, &v, 1, 3).await.unwrap();
 
     // Casting the same vote again must fail (put_vote condition: attribute_not_exists).
-    let result = questions::cast_vote_tx(&repo, &v, 2).await;
-    assert!(result.is_err());
+    let result = questions::cast_vote_tx(&repo, &v, 2, 3).await;
+    assert!(matches!(result, Err(VoteTxError::VoteRow)), "{result:?}");
 }
 
 #[tokio::test]
@@ -142,7 +142,7 @@ async fn withdraw_vote_tx_decrements_count_and_removes_vote() {
     questions::put_candidate(&repo, &q).await.unwrap();
 
     let v = common::vote("u2", "g1", "202606", "q1");
-    questions::cast_vote_tx(&repo, &v, 1).await.unwrap();
+    questions::cast_vote_tx(&repo, &v, 1, 3).await.unwrap();
     questions::withdraw_vote_tx(&repo, &v, 0).await.unwrap();
 
     let updated = questions::list_candidates(&repo, &GroupId::new("g1"), &CycleId::new("202606"))
@@ -192,4 +192,90 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     .unwrap()
     .unwrap();
     assert_eq!(updated_nl.status, NewsletterStatus::Open);
+}
+
+#[tokio::test]
+async fn cast_vote_tx_enforces_the_cap_in_the_transaction() {
+    let (_c, repo) = common::make_repo().await;
+    for q in ["q1", "q2", "q3"] {
+        questions::put_candidate(&repo, &common::candidate("gcap", "202606", q, "u1", 0))
+            .await
+            .unwrap();
+    }
+
+    // Called directly, so no handler pre-read stands in front of the cap.
+    for q in ["q1", "q2"] {
+        questions::cast_vote_tx(&repo, &common::vote("u2", "gcap", "202606", q), 1, 2)
+            .await
+            .unwrap();
+    }
+    let third =
+        questions::cast_vote_tx(&repo, &common::vote("u2", "gcap", "202606", "q3"), 1, 2).await;
+    assert!(matches!(third, Err(VoteTxError::Tally)), "{third:?}");
+
+    // The failed vote left nothing behind, and the tally row isn't read as a vote.
+    let mine = questions::list_my_votes(
+        &repo,
+        &GroupId::new("gcap"),
+        &CycleId::new("202606"),
+        &UserId::new("u2"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(mine.len(), 2);
+
+    // Withdrawing frees a slot.
+    questions::withdraw_vote_tx(&repo, &common::vote("u2", "gcap", "202606", "q1"), 0)
+        .await
+        .unwrap();
+    questions::cast_vote_tx(&repo, &common::vote("u2", "gcap", "202606", "q3"), 1, 2)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cast_vote_tx_reports_a_stale_vote_count_as_a_count_race() {
+    let (_c, repo) = common::make_repo().await;
+    questions::put_candidate(&repo, &common::candidate("grace", "202606", "q1", "u1", 0))
+        .await
+        .unwrap();
+    questions::cast_vote_tx(&repo, &common::vote("u2", "grace", "202606", "q1"), 1, 3)
+        .await
+        .unwrap();
+
+    // u3 read vote_count = 0 before u2's vote landed.
+    let result =
+        questions::cast_vote_tx(&repo, &common::vote("u3", "grace", "202606", "q1"), 1, 3).await;
+    assert!(matches!(result, Err(VoteTxError::CountRace)), "{result:?}");
+}
+
+#[tokio::test]
+async fn delete_vote_if_present_releases_the_voters_slot() {
+    let (_c, repo) = common::make_repo().await;
+    for q in ["q1", "q2"] {
+        questions::put_candidate(&repo, &common::candidate("gdel", "202606", q, "u1", 0))
+            .await
+            .unwrap();
+    }
+    questions::cast_vote_tx(&repo, &common::vote("u2", "gdel", "202606", "q1"), 1, 1)
+        .await
+        .unwrap();
+
+    let (g, c, u) = (
+        GroupId::new("gdel"),
+        CycleId::new("202606"),
+        UserId::new("u2"),
+    );
+    questions::delete_vote_if_present(&repo, &g, &c, &u, &QuestionId::new("q1"))
+        .await
+        .unwrap();
+    // Absent vote: still a no-op, and the tally must not go negative.
+    questions::delete_vote_if_present(&repo, &g, &c, &u, &QuestionId::new("q1"))
+        .await
+        .unwrap();
+
+    // Cap is 1, so this only succeeds if the delete gave the slot back.
+    questions::cast_vote_tx(&repo, &common::vote("u2", "gdel", "202606", "q2"), 1, 1)
+        .await
+        .unwrap();
 }

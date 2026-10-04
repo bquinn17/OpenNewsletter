@@ -169,7 +169,7 @@ async fn leave_group_tx_deletes_membership_and_decrements_count() {
         .await
         .unwrap();
 
-    groups::leave_group_tx(&repo, &m.user_id, &m.group_id)
+    groups::leave_group_tx(&repo, &m.user_id, &m.group_id, None)
         .await
         .unwrap();
 
@@ -191,7 +191,8 @@ async fn leave_group_tx_fails_when_membership_absent() {
     let g = common::group("g1", "u1");
     groups::put_group(&repo, &g).await.unwrap();
 
-    let result = groups::leave_group_tx(&repo, &UserId::new("ghost"), &GroupId::new("g1")).await;
+    let result =
+        groups::leave_group_tx(&repo, &UserId::new("ghost"), &GroupId::new("g1"), None).await;
     assert!(result.is_err());
 }
 
@@ -249,7 +250,7 @@ async fn update_membership_role_promotes_a_member() {
     let m = common::membership("u2", "g1", Role::Member);
     common::put_membership(&repo, &m).await;
 
-    groups::update_membership_role(&repo, &m.user_id, &m.group_id, Role::Admin)
+    groups::update_membership_role(&repo, &m.user_id, &m.group_id, Role::Admin, None)
         .await
         .unwrap();
 
@@ -268,7 +269,161 @@ async fn update_membership_role_fails_when_membership_absent() {
         &UserId::new("ghost"),
         &GroupId::new("g1"),
         Role::Admin,
+        None,
     )
     .await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn update_membership_role_fails_when_admin_witness_has_lost_admin() {
+    let (_c, repo) = common::make_repo().await;
+    let target = common::membership("u2", "g1", Role::Admin);
+    common::put_membership(&repo, &target).await;
+    // The named witness is not actually an admin (e.g. demoted moments ago by
+    // another request) — the witness ConditionCheck must fail the whole
+    // transaction rather than let the demotion through.
+    let witness = common::membership("u3", "g1", Role::Member);
+    common::put_membership(&repo, &witness).await;
+
+    let result = groups::update_membership_role(
+        &repo,
+        &target.user_id,
+        &target.group_id,
+        Role::Member,
+        Some(&witness.user_id),
+    )
+    .await;
+    assert!(result.is_err());
+
+    // And the target's role must be unchanged — the transaction rolled back.
+    let got = groups::get_membership(&repo, &target.user_id, &target.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.role, Role::Admin);
+}
+
+#[tokio::test]
+async fn update_membership_role_succeeds_with_a_valid_admin_witness() {
+    let (_c, repo) = common::make_repo().await;
+    let target = common::membership("u2", "g1", Role::Admin);
+    common::put_membership(&repo, &target).await;
+    let witness = common::membership("u3", "g1", Role::Admin);
+    common::put_membership(&repo, &witness).await;
+
+    groups::update_membership_role(
+        &repo,
+        &target.user_id,
+        &target.group_id,
+        Role::Member,
+        Some(&witness.user_id),
+    )
+    .await
+    .unwrap();
+
+    let got = groups::get_membership(&repo, &target.user_id, &target.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.role, Role::Member);
+}
+
+#[tokio::test]
+async fn leave_group_tx_fails_when_admin_witness_has_lost_admin() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g1", "u1");
+    g.member_count = 2;
+    groups::put_group(&repo, &g).await.unwrap();
+
+    let target = common::membership("u2", "g1", Role::Admin);
+    common::put_membership(&repo, &target).await;
+    let witness = common::membership("u3", "g1", Role::Member);
+    common::put_membership(&repo, &witness).await;
+
+    let result = groups::leave_group_tx(
+        &repo,
+        &target.user_id,
+        &target.group_id,
+        Some(&witness.user_id),
+    )
+    .await;
+    assert!(result.is_err());
+
+    // Membership must still be present and member_count untouched — the
+    // transaction rolled back rather than partially applying.
+    let still_there = groups::get_membership(&repo, &target.user_id, &target.group_id)
+        .await
+        .unwrap();
+    assert!(still_there.is_some());
+    let unchanged_group = groups::get_group(&repo, &GroupId::new("g1"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unchanged_group.member_count, 2);
+}
+
+#[tokio::test]
+async fn leave_group_tx_succeeds_with_a_valid_admin_witness() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g1", "u1");
+    g.member_count = 2;
+    groups::put_group(&repo, &g).await.unwrap();
+
+    let target = common::membership("u2", "g1", Role::Admin);
+    common::put_membership(&repo, &target).await;
+    let witness = common::membership("u3", "g1", Role::Admin);
+    common::put_membership(&repo, &witness).await;
+
+    groups::leave_group_tx(
+        &repo,
+        &target.user_id,
+        &target.group_id,
+        Some(&witness.user_id),
+    )
+    .await
+    .unwrap();
+
+    let gone = groups::get_membership(&repo, &target.user_id, &target.group_id)
+        .await
+        .unwrap();
+    assert_eq!(gone, None);
+    let updated_group = groups::get_group(&repo, &GroupId::new("g1"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated_group.member_count, 1);
+}
+
+#[tokio::test]
+async fn it_batch_gets_groups_across_request_chunks() {
+    let (_c, repo) = common::make_repo().await;
+    // More than BatchGetItem's 100-key limit, so the helper must chunk.
+    let ids: Vec<GroupId> = (0..130)
+        .map(|i| GroupId::new(format!("batch-g{i}")))
+        .collect();
+    for id in &ids {
+        groups::put_group(&repo, &common::group(id.as_str(), "creator"))
+            .await
+            .unwrap();
+    }
+    let mut requested = ids.clone();
+    requested.push(GroupId::new("batch-missing"));
+
+    let got = groups::get_groups_batch(&repo, &requested).await.unwrap();
+
+    assert_eq!(got.len(), ids.len());
+    for id in &ids {
+        assert_eq!(&got[id].group_id, id);
+    }
+    assert!(!got.contains_key(&GroupId::new("batch-missing")));
+}
+
+#[tokio::test]
+async fn it_batch_gets_nothing_for_no_ids() {
+    let (_c, repo) = common::make_repo().await;
+    assert!(groups::get_groups_batch(&repo, &[])
+        .await
+        .unwrap()
+        .is_empty());
 }

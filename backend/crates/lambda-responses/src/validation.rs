@@ -7,9 +7,10 @@ use std::collections::HashSet;
 /// Body length, counted in chars (not bytes) — 0 to `MAX_RESPONSE_BODY_CHARS`.
 pub fn body(raw: &str) -> Result<String, ApiError> {
     if raw.chars().count() > MAX_RESPONSE_BODY_CHARS {
-        return Err(ApiError::validation(format!(
-            "body must be at most {MAX_RESPONSE_BODY_CHARS} characters"
-        )));
+        return Err(ApiError::invalid_field(
+            "body",
+            format!("body must be at most {MAX_RESPONSE_BODY_CHARS} characters"),
+        ));
     }
     Ok(raw.to_owned())
 }
@@ -47,9 +48,10 @@ pub fn poll_option_belongs_to_question(
     if belongs {
         Ok(())
     } else {
-        Err(ApiError::validation(format!(
-            "pollOptionId `{poll_option_id}` is not one of this question's options"
-        )))
+        Err(ApiError::invalid_field(
+            "pollOptionId",
+            format!("pollOptionId `{poll_option_id}` is not one of this question's options"),
+        ))
     }
 }
 

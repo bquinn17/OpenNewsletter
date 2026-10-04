@@ -353,7 +353,7 @@ async fn concurrent_vote_and_admin_delete_leave_the_store_consistent() {
 
     let vote = common::vote("u2", "g1", "202606", "q1");
     let (vote_result, delete_result) = tokio::join!(
-        questions::cast_vote_tx(&repo, &vote, 1),
+        questions::cast_vote_tx(&repo, &vote, 1, 3),
         questions::delete_candidate(&repo, &group_id, &cycle_id, &q.question_id),
     );
 

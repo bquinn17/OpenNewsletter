@@ -1,10 +1,11 @@
 //! User and Cognito-sub-lookup access (AP1, plus auth resolution).
 
+use crate::batch::batch_get_items;
 use crate::error::RepoError;
 use crate::expr::set_fields;
 use crate::keys::{attr, cognito_sub_pk, user_pk, COGNITO_SUB_SK, USER_PROFILE_SK};
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
+use aws_sdk_dynamodb::types::AttributeValue;
 use domain::{AvatarId, CognitoSub, CognitoSubLookup, User, UserId};
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
@@ -67,8 +68,7 @@ pub async fn put_user(repo: &Repo, user: &User) -> Result<(), RepoError> {
 
 /// Fetch many user profiles in one round trip, keyed by `UserId`.
 ///
-/// Callers pass a group's member list, which the member soft cap keeps well inside
-/// `BatchGetItem`'s 100-key limit; anything larger would need paging.
+/// Chunking and `UnprocessedKeys` retry are handled by [`batch_get_items`].
 pub async fn get_users_batch(
     repo: &Repo,
     user_ids: &[UserId],
@@ -88,22 +88,7 @@ pub async fn get_users_batch(
         ]));
     }
 
-    let request = KeysAndAttributes::builder()
-        .set_keys(Some(keys))
-        .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
-
-    let resp = repo
-        .client
-        .batch_get_item()
-        .request_items(&repo.table, request)
-        .send()
-        .await?;
-
-    let items = resp
-        .responses
-        .and_then(|mut tables| tables.remove(&repo.table))
-        .unwrap_or_default();
+    let items = batch_get_items(repo, keys).await?;
 
     let mut users = HashMap::with_capacity(items.len());
     for item in items {

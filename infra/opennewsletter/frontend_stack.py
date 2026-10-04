@@ -18,15 +18,19 @@ from .config import EnvConfig
 
 
 class FrontendStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any) -> None:
+    def __init__(
+        self, scope: Construct, id: str, *, config: EnvConfig, **kwargs: Any
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         if config.hosted_zone_id and config.hosted_zone_name:
-            hosted_zone: route53.IHostedZone | None = route53.HostedZone.from_hosted_zone_attributes(
-                self,
-                "HostedZone",
-                hosted_zone_id=config.hosted_zone_id,
-                zone_name=config.hosted_zone_name,
+            hosted_zone: route53.IHostedZone | None = (
+                route53.HostedZone.from_hosted_zone_attributes(
+                    self,
+                    "HostedZone",
+                    hosted_zone_id=config.hosted_zone_id,
+                    zone_name=config.hosted_zone_name,
+                )
             )
         else:
             hosted_zone = None

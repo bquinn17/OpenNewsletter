@@ -170,6 +170,15 @@ pub fn candidate_vote_sk(question_id: &QuestionId) -> String {
     format!("QC#{}", question_id)
 }
 
+/// Every `CandidateVote` sk starts with this; queries of the voter partition
+/// filter on it so the [`VOTER_TALLY_SK`] row isn't read back as a vote.
+pub const CANDIDATE_VOTE_SK_PREFIX: &str = "QC#";
+
+/// The voter's per-cycle `VoterTally` row (§2.7a), in the same partition as
+/// their votes. Its `votes_cast` counter enforces `votesPerUserPerCycle`
+/// inside the vote transactions (§4 #1, #2).
+pub const VOTER_TALLY_SK: &str = "TALLY";
+
 // ---------- Locked question (§2.8) ----------
 
 pub fn locked_pk(group_id: &GroupId, cycle_id: &CycleId) -> String {

@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-09-27. Working document — update as milestones complete or
+Snapshot as of 2026-10-04. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -18,7 +18,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M4** | **Auth + bootstrap** | 🟡 **code-complete, deploy unverified** | See "M4 detail" below. All 101 backend tests + 34 CDK tests green; fmt/clippy/ruff/mypy clean; `cdk synth` clean for dev + prod. The done-when gate (curl `GET /me` with a real Cognito token) needs an AWS account — blocked on B5. |
 | **M5** | **Lifecycle engine + cycle CRUD** | 🟡 **code-complete, deploy unverified** | See "M5 detail" below. The manual done-when flow needs AWS (B5); an end-to-end DynamoDB Local test covers the same sequence. `shared/openapi.yaml` + contract test landed. |
 | **M6** | **Responses + drafts** | 🟡 **code-complete, deploy unverified** | See "M6 detail" below. 201 backend + 41 CDK tests green. The curl save → save → publish gate needs AWS (B5); DynamoDB Local integration tests cover the same sequence. |
-| M7 | Frontend skeleton + auth | ⬜ (existing mock UI predates real API) | Commit `91188ba` shipped a rich mock-only UI; will need rework against real endpoints in M7. |
+| **M7** | **Frontend skeleton + auth** | 🟡 **code-complete, deploy unverified** | See "M7 detail" and "Post-M7 gap pass" below. 28 frontend, 217 backend and 42 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt, clippy, ruff (check + format), mypy and `cdk synth` are all clean. The Google sign-in / redeem / logout gate needs a deployed stack (B5). |
 | M8 | Media pipeline | ⬜ | Scope grew on 2026-08-09: avatar buckets + `/avatar/*` CloudFront behavior (`01` §5), size-cap enforcement in `lambda-image-process` (`08` §3.2), dev signed-URL query-param mode (`08` §4.5). |
 | M9 | Newsletter UI | ⬜ | |
 | M10 | Engagement | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5, M4, M5 and M6 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M7 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -297,11 +297,120 @@ Docs corrected alongside: `00` §4 repo layout (the media-stack split and `lambd
 
 ---
 
+## M7 detail — what landed (2026-09-27)
+
+The work was split across three parallel agents (auth/API, shell/pages, infra); the lead reviewed and verified it. The frontend was installed and built on the Mac for the first time.
+
+### Frontend — auth and API plumbing
+- **`auth/`**:
+  - `userManager.ts`: one `oidc-client-ts` `UserManager` doing PKCE against Cognito, with tokens in `sessionStorage`.
+  - `AuthProvider` + `useAuth()`, exposing `{ status, user, login, logout }`.
+  - `RequireAuth`, the layout-route guard.
+  - `inviteStash.ts`.
+- **`pages/AuthCallbackPage.tsx`** — processes the code exchange exactly once (StrictMode-safe). It then goes to `/join?code=…` if an invite rode along, else to `returnTo`.
+- **`pages/BootstrapLoginPage.tsx`** — `/admin/bootstrap-login`, dev only. It calls Cognito `InitiateAuth` (`USER_PASSWORD_AUTH`) with the `admin-bootstrap` client and stores the result as an OIDC `User`.
+- **`api/client.ts`**:
+  - `apiFetch` sends `Authorization: Bearer <ID token>` and `x-correlation-id` (a ULID from `utils/correlation.ts`).
+  - A 204 returns `undefined`; problem+json becomes `ApiError { status, code, problem }`.
+  - A 401 triggers one silent renew and one retry.
+  - The typed `api` object covers the M7 routes.
+- **`api/mockTransport.ts`** — `VITE_USE_MOCKS=true` serves the M7 routes from in-memory fixtures (`u_quinn`, `g_trail`/`g_game`/`g_meeple`; invite code `DEMO-JOIN-CODE`), so `npm run dev` still runs offline.
+- **Env** — `env.ts` parses `import.meta.env`. `.env.development` is checked in with mocks on; `make fe` → `--mode dev` → the generated `.env.dev` with mocks off.
+- **Tooling** (first time in this repo):
+  - ESLint 9 flat config: typescript-eslint, react, react-hooks, import-x, jsx-a11y.
+  - Prettier with the Tailwind plugin, applied once across the whole frontend.
+  - Vitest + Testing Library + jsdom.
+  - New scripts: `test`, `format`, `format:check`.
+  - `tsconfig.tsbuildinfo` untracked and gitignored.
+
+### Frontend — shell, routing, pages
+- **Router** (`App.tsx`) — every `04` §3 route is registered.
+  - Guards: `RequireAuth` → `RequireMembership` → `RequireGroupAdmin`.
+  - `/auth/callback` renders outside the shell; `/admin/bootstrap-login` is registered only when `VITE_ENV=dev`.
+- **B4 resolved as a policy** (`04` §16):
+  - The M9–M12 pages (Candidates, Suggest, Newsletter, Respond, GroupAdmin) and their data layer moved to `src/mocks/` (`legacyQueries.ts`, `types.ts`).
+  - They render only in mock mode. Against a real API each shows `PendingMilestonePage`.
+  - Each later milestone migrates its pages and deletes the legacy code it replaces.
+- **Real hooks** — `api/queries.ts` (`useConfig`, `useMe`, `useGroup`, `useNewsletters`) and `api/mutations.ts` (`useRedeemInvite`, `useUpdateProfile`, `useLeaveGroup`).
+- **Components** — `AppShell` (group switcher, account menu, defaults `currentGroup` to the first membership), `BottomNav`, `GroupSwitcher`, `JoinForm`, `Spinner`.
+- **`HomePage`** — per-group sections built from parallel `listNewsletters` calls. Signed-out landing; join form when there are no memberships.
+- **`JoinPage`** — stash + login when signed out; redeem-once when signed in. Error copy per `ApiError.code`; lands on `/g/{g}/upcoming` per `05` §4.5.
+- **`SettingsPage`** — display name (1–40 chars, per `03`), avatar colour over the 8 `AvatarColorSlug`s, Your groups (View / Manage / Leave with the `LAST_ADMIN` copy), Sign out.
+
+### Infrastructure
+- **API authorizer audience** — the JWT authorizer now also accepts the `admin-bootstrap` client's audience. Without it, tokens from `/admin/bootstrap-login` and `bootstrap_admin.py` would have been rejected, contradicting `13` §6. There's a new CDK test for it.
+- **`write_frontend_env.py`** — now writes `VITE_COGNITO_HOSTED_DOMAIN` (scheme stripped), `VITE_REDIRECT_URI` and `VITE_USE_MOCKS=false`.
+- **ruff** — cleared the 7 findings that were already there (`as` aliases, `RUF015`, `app.py` exec bit), so `ruff check` is clean on the Mac too.
+
+### Bugs caught in lead review (fixed)
+- **Signed-out deep links bounced home.** `/g/:groupId/*` wasn't under `RequireAuth`, so a signed-out visitor was sent to `/` instead of login. It now nests under `RequireAuth`.
+- **Redeeming an invite landed the user back on Home.** `JoinPage` navigated into the new group before `/config` had refetched, so `RequireMembership` saw the stale membership list and redirected to `/`. That is exactly the M7 done-when path. Two fixes:
+  - `useRedeemInvite` now awaits an `invalidateQueries(…, refetchType: "all")`.
+  - The guard waits while a refetch is in flight.
+  - `JoinPage.test.tsx` covers it and was checked to fail on the old code.
+- **Logout could turn into a login.** `removeUser()` fires `userUnloaded`, and `RequireAuth` then started `signinRedirect()`, whose redirect could override the Cognito `/logout` redirect. Unloaded events are now ignored while a logout is in progress.
+- **An expired ID token forced a full sign-in on reload.** A reload after 60 minutes idle now tries one refresh-token renew first.
+
+### Decisions (recorded in `04` §6/§7.8/§13/§16, `05` §7/§8, `01` §6.1/§6.3, `12` M7)
+- Generated types stay at `frontend/src/types/api.ts`; `12` M7's `api/generated.ts` was corrected.
+- `{ invite, returnTo }` rides in `oidc-client-ts`'s client-side state data, keyed by the opaque OIDC `state` nonce, not base64'd into `state`. There is a `sessionStorage` fallback.
+- The callback hands the invite to `/join?code=…`, so there is one redemption code path.
+- Silent renew uses the refresh-token grant; Cognito has no `prompt=none` flow. `05` §7 was wrong.
+- Logout builds the Cognito `/logout` URL by hand, because the discovery document has no `end_session_endpoint`.
+- The CSP `<meta>` tag is deferred to M13, as a build-only transform: the Vite React preamble is an inline script that `script-src 'self'` would block in dev.
+- Stale `01` §6.3 text claimed `POST /invites/redeem` had no authorizer. §6.5 and the code say every route does; §6.3 is fixed.
+
+### Tests
+20 Vitest tests:
+- `client` (5): auth + correlation headers, problem → `ApiError`, 204, 401 renew-and-retry, 401 renew-fails
+- `RequireAuth` (3)
+- `inviteStash` (3)
+- `correlation` (3)
+- `mockTransport` (3)
+- `JoinPage` (3): the post-redeem landing regression, expired-invite copy, signed-out → login with the invite
+
+`src/test/setup.ts` shims `localStorage`/`sessionStorage`, because Node 25+'s built-in Web Storage globals shadow jsdom's.
+
+---
+
+## Post-M7 gap pass and bug hunt (2026-09-27 → 2026-10-04)
+
+After M7, every known gap was worked through and two read-only review agents (backend; frontend/infra/contract) swept the implemented code. Each finding below was verified against the code before it was fixed. A backend fix agent hit a session limit partway through; the lead finished its work.
+
+### Bugs fixed
+- **Last-admin race (backend).** Removing or demoting an admin checked the admin count with a separate read, so two admins demoting each other at once could leave zero admins. The write now carries a ConditionCheck that a *witness* admin is still an admin (`02` §4 #7); losing the race returns `LAST_ADMIN`. `lambda-groups` gained a `lib.rs` (crate template) and its first integration tests (`tests/members.rs`), including the concurrent mutual-demotion case.
+- **Vote-cap race (backend).** `votesPerUserPerCycle` was only a pre-read, so parallel votes on different candidates could exceed it, contradicting `02` §4 #1 and `03` §6.3. A new `VoterTally` item (`02` §2.7a) with a conditional `ADD` now guards it inside the cast/withdraw transactions, and the admin candidate-delete cascade releases voters' slots.
+- **Vote race-retry was dead code.** `cast_vote_tx`/`withdraw_vote_tx` turned every SDK error into `RepoError::Dynamo`, so `is_lost_race()` never matched, and two simultaneous votes on one question gave one voter a 500. Vote transactions now return a typed `VoteTxError` built from DynamoDB's per-item cancellation reasons: a duplicate vote is idempotent, a count race retries, and a full tally returns `VOTE_CAP_REACHED`.
+- **Panics on dev-tick input.** `advanceCycleClosesBy` panicked in three ways: on a multibyte last char (`split_at`), on an out-of-range amount (`Duration::days`), and when `DateTime - duration` overflowed. It now splits on chars, uses the `try_` constructors, and bounds the input to 0–366 days.
+- **DB errors masked as 404** in the admin candidate delete (`load_candidate(..).is_ok()`). Real lookup failures now propagate as 500.
+- **`get_users_batch` ignored `UnprocessedKeys`**, so members could silently vanish under throttling. A shared `persistence::batch::batch_get_items` now chunks at 100 keys and retries unprocessed keys with backoff.
+- **Home hid the open newsletter for the whole response window, every month.** Next month's voting cycle exists alongside the open one (`06` §5.2), and Home picked only the first. Both now render (test added).
+- **Guards bounced newly granted access.** `/config` never goes stale, so a membership or role granted in another tab or on another device was refused. `RequireMembership`/`RequireGroupAdmin` now refetch once before denying (`routes/useConfirmedAccess.ts`, tests added).
+- **Bootstrap-login sessions were signed out at the 60-minute mark.** `automaticSilentRenew` renewed through the frontend client, failed, and the error handler removed the user. Renewal is now `auth/renewSession.ts`: the refresh-token grant for federated sessions, Cognito `REFRESH_TOKEN_AUTH` for bootstrap sessions (picked by the ID token's `aud`).
+- **ID-token decoding garbled non-ASCII names** (bare `atob`). It now decodes as UTF-8.
+- **Keyboard users couldn't close the account menu or group switcher.** A shared `useDismissableMenu` adds Escape plus focus management (test added).
+- **The group switcher didn't navigate** when you picked a group; it now goes to `/g/:g`.
+
+### Gaps closed
+- **`MembershipSummary` gained `timezone` and `gradient`**, read with one `BatchGetItem` instead of a `GetItem` per group. Home labels cycles in the group's timezone, and the switcher shows gradient swatches (`utils/gradient.ts`).
+- **`fieldErrors` is populated.** `ApiError::invalid_field(field, detail)` covers 35 field-specific validation sites, with `code: "INVALID"`. `03` §1.1 had contradicted itself on field codes and now documents this.
+- **`GET /healthz` returns `version`/`buildAt`**, baked in at compile time from `BUILD_SHA`/`BUILD_AT`, which `make build-lambdas` sets.
+- **Frontend cleanup:**
+  - removed the legacy "Curate" tab
+  - ESLint is at 0 warnings
+  - `.app-container` matches `04` §4.1 widths (48rem at md, 42rem at lg)
+  - Home split into one component per file (`components/home/`)
+- **Python formatting:** `ruff format` applied to `infra/` and `scripts/`, and the scripts' executable bits restored.
+- **Doc reconciliation:**
+  - `02` reconciled to snake_case item attributes, with 5 flagged notes.
+  - `02` §4's `ClientRequestToken` claim removed; it was never implemented, and a reused token breaks the vote retry.
+  - `13` §16 (frontend mocking) rewritten.
+  - The `04` auth file layout now matches the code.
+  - CLAUDE.md gained the frontend check command.
+
+---
+
 ## Active blockers
-
-### B4 — Pre-existing mock-only frontend will need replacement in M7
-
-Commit `91188ba` shipped a rich UI built against in-memory mocks. M7's deliverables (Vite + Tailwind + React Router skeleton wired to the real API + Cognito) overlap heavily with what's already there; expect that work to be partial rewrite, not greenfield.
 
 ### B5 — M1 operator tasks outstanding
 
@@ -327,43 +436,57 @@ On both machines no Lambda artifact has ever been produced. `ApiStack`/`Notifica
    ```
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
 5. **M6 gate**: after deploy, the curl save → save → publish dance against `PUT …/my-response` (`12` M6).
-6. **Begin M7** (Frontend skeleton + auth) — see B4; expect partial rewrite of the mock UI against `frontend/src/types/api.ts`. Standing rule from M5: every new/changed route updates `shared/openapi.yaml` + `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-run `scripts/codegen_types.sh`.
+6. **M7 gate**: `make fe`, then:
+   - sign in with Google
+   - redeem an invite made by `POST /admin/invites` and see the group on Home
+   - log out
+   Also try `/admin/bootstrap-login` with the `bootstrap_admin.py` credentials.
+7. **Begin M8** (Media pipeline) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
-- **`GET /healthz` returns only `{"status":"ok"}`** — `03` documents `version`/`buildAt` too. The YAML and `HealthResponse` describe what ships today.
-- **Problem responses never populate `fieldErrors`** — `shared::http::problem_response` has a fixed key set; `ProblemDetails.field_errors` exists in `domain::api` per `03` §1.1 but nothing fills it. `VOTE_CAP_REACHED` puts its already-voted list in `detail` for the same reason.
-- **`02-data-model-dynamodb.md` documents attributes as camelCase; the code writes snake_case** (carried from M4).
-- **`ruff format` has never been applied repo-wide** — would reformat 4 infra files untouched since M3. `ruff check` is clean.
-- **`GET /config`'s membership list does one `GetItem` per group.** Switch to the `BatchGetItem` helper if group counts grow.
-- **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`; harmless, but if it creeps up again, box the dispatch futures.
+The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What remains:
+
+- **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
+- **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
+- **Future-milestone stub crates all name their binary `bootstrap`**: `lambda-media`, `-engagement`, `-push`, `-notify-tick` and `-image-process`. Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
+- **Component tests use `vi.mock` + TanStack cache seeding, not MSW.** `coding-standards.md` §3.9 and `11` §4.2 specify MSW. Adopt it when component tests grow (M9), or amend the standard; `13` §16 records the current state.
+- **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth: the `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows aren't written until M11.
+- **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
 
 ---
 
-## Handoff — starting M7 (Frontend skeleton + auth)
+## Handoff — starting M8 (Media pipeline)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md` (especially "Picking up work" and "Delegating to parallel agents"), then `12` M7, `04-frontend-architecture.md` and `05-auth-flow.md`.
-2. **Check the machine.** Run `uname`, then follow `13` §0 for that machine. On macOS, `frontend/` needs `npm install`; nothing there has been installed or built on the Mac yet.
-3. **Know the M7-specific traps:**
-   - **B4:** `frontend/src/` already contains a mock-driven UI (`mocks/`, `state/`, `pages/`, `components/`). Decide per module whether to keep it and wire it to the real API, or replace it. Don't build a second parallel tree.
-   - **Generated types location:** they live at `frontend/src/types/api.ts` (produced by `scripts/codegen_types.sh`), whereas `12` M7 names `api/generated.ts`. Pick one, update the script and `12` to match, and don't hand-edit the generated file.
-   - **No live backend:** the backend isn't deployed (B5), so M7's done-when (Google sign-in against the dev API) can't be verified yet. Build against the OpenAPI types and, where the existing mocks help, keep a mock mode behind an env flag. Record the unverified gate here, as M4–M6 did.
-4. **Suggested parallel split for M7**, each agent owning disjoint paths. In every prompt, repeat the search-scope rule and "do not commit".
-   - **Agent A (Sonnet), auth and API plumbing:**
-     - `frontend/src/auth/`
-     - `frontend/src/api/client.ts`
-     - the codegen location decision
-   - **Agent B (Sonnet), app shell and routing:**
-     - React Router with every `04` §3 route as a stub
-     - `AppShell`, `BottomNav`, `GroupSwitcher`
-     - `HomePage`, `SettingsPage`
-   - **Agent C (Haiku or Sonnet), `JoinPage`** once A's client exists, or have it code against the client's interface.
-   - **Lead:** reconcile against B4, then run `npm run typecheck`, `npm run lint` and `npm run build`. Then update this file and `frontend/README.md`.
+1. **Orient.** Read `CLAUDE.md`, then `12` M8 and `08-media-uploads.md` (all of it — §3 upload protocol, §3.2 size caps, §4 signed cookies, §4.5 dev signed-URL query-param mode, §10 tests). `01` §5 covers the avatar buckets and the `/avatar/*` CloudFront behaviour.
+2. **Know the M8 scope:**
+   - **Backend:** a new `lambda-media` crate (copy the `lambda-responses` layout), with the `/uploads*` and `/media-cookie` routes, plus the avatar routes `POST /avatars` / `GET /avatars/{id}` (`04` §7.6).
+   - **Image processing:** the real `lambda-image-process` replaces the M3 stub. It branches on the source **bucket**, not the key prefix.
+   - **Frontend:**
+     - `components/responses/ImageUploader.tsx`
+     - `ensureCookie` with `credentials: include`
+     - the avatar upload on `SettingsPage`, whose profile card already exists
+   - **Contract:** every route goes into `shared/openapi.yaml` and `ROUTE_TABLE`, then re-run `scripts/codegen_types.sh`.
+3. **Know the frontend conventions from M7:**
+   - Add new endpoints to `api` in `frontend/src/api/client.ts` and hooks to `api/queries.ts`/`mutations.ts`.
+   - Add a mock route to `api/mockTransport.ts` so mock mode keeps working.
+   - `RespondPage` is still a legacy mock page (`04` §16) and becomes real in M9. So M8's `ImageUploader` should be a standalone component with its own tests, not wired into the legacy editor.
+4. **Frontend verify command** (macOS, from `frontend/`):
+   ```bash
+   export PATH="/opt/homebrew/bin:$PATH" && npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
+   ```
+   Baseline: 28 tests; ESLint 0 problems. Backend baseline: 217 tests (`cargo test --workspace`).
+5. **Suggested parallel split:**
+   - **Backend agent (Sonnet):** `backend/`, `shared/openapi.yaml`, generated types
+   - **Infra agent (Haiku):** `infra/` + `Makefile`, meaning the media Lambda, routes, and the image-process wiring
+   - **Frontend agent (Sonnet):** `ImageUploader` + the Settings avatar flow, coded against the agreed OpenAPI shapes
+
+   Settle the upload DTOs in `openapi.yaml` yourself before spawning, so the backend and frontend agents share them.
 
 ---
 

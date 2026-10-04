@@ -1757,8 +1757,11 @@ dependencies = [
  "persistence",
  "pretty_assertions",
  "serde",
+ "serde_dynamo",
  "serde_json",
  "shared",
+ "testcontainers",
+ "testcontainers-modules",
  "tokio",
  "tracing",
 ]

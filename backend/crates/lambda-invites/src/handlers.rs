@@ -27,9 +27,10 @@ pub async fn create_invite(
 
     let ttl_days = request.ttl_days.unwrap_or(INVITE_DEFAULT_TTL_DAYS);
     if !(1..=INVITE_MAX_TTL_DAYS).contains(&ttl_days) {
-        return Err(ApiError::validation(format!(
-            "ttlDays must be between 1 and {INVITE_MAX_TTL_DAYS}"
-        )));
+        return Err(ApiError::invalid_field(
+            "ttlDays",
+            format!("ttlDays must be between 1 and {INVITE_MAX_TTL_DAYS}"),
+        ));
     }
 
     let now = Utc::now();

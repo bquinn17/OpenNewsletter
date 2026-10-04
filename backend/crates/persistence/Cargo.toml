@@ -27,6 +27,8 @@ uuid.workspace = true
 once_cell.workspace = true
 dashmap.workspace = true
 base64.workspace = true
+# `time` for the `UnprocessedKeys` backoff in `batch.rs`.
+tokio = { workspace = true, features = ["time"] }
 testcontainers = { workspace = true, optional = true }
 testcontainers-modules = { workspace = true, optional = true }
 

@@ -391,12 +391,11 @@ Manual testing fails. When it does, these are the inspection ladders.
 
 ---
 
-## 16. Frontend mocking (interim)
+## 16. Frontend mocking
 
-[`frontend/src/api/mockData.ts`](../frontend/src/api/mockData.ts) and the MSW handlers in [`frontend/src/mocks/`](../frontend/src/mocks/) are scaffolding for frontend iteration **before** Milestone 3.5 lands a working `dev` stack. They let UI work proceed without an AWS account.
+Two mock layers exist; both are for UI iteration without an AWS account (reconciled after M7 — the MSW/`mockData.ts` setup this section used to describe was never built):
 
-Once `dev` is online:
-- For Vitest component tests, MSW stays — it's how tests stub the API surface, per [`11-testing-ci-cd.md` §4.2](11-testing-ci-cd.md). This is permanent.
-- For browser dev (`npm run dev`), the default mode flips to `--mode dev` (real API). The MSW dev-mode toggle and `mockData.ts` are removed once no page in the app still depends on them.
+- **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each milestone that adds client endpoints adds matching mock routes here. `make fe` (`--mode dev`) talks to the real dev stack instead.
+- **`frontend/src/mocks/`** is the legacy pre-M7 layer (hand-written types). It is transitional and is deleted as M9–M12 migrate their pages (`04-frontend-architecture.md` §16). Don't extend it.
 
-Treat any new `mockData.ts` entry added after Milestone 3.5 as a smell — the right answer at that point is a `make seed` fixture entry plus a `dev`-stack call.
+Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`). `11-testing-ci-cd.md` §4.2's MSW plan is not adopted yet; revisit if handler-level fidelity is needed.

@@ -14,6 +14,7 @@ use domain::{
     ApiError, ApiErrorCode, CandidateQuestion, CandidateVote, CycleId, GroupId, QuestionId, Role,
     User, UserId,
 };
+use persistence::questions::VoteTxError;
 use persistence::{auth, groups, newsletters, questions, users};
 use shared::config::MAX_LIST_LIMIT;
 use std::collections::{HashMap, HashSet};
@@ -30,9 +31,10 @@ impl Sort {
         match raw {
             None | Some("top") => Ok(Sort::Top),
             Some("recent") => Ok(Sort::Recent),
-            Some(other) => Err(ApiError::validation(format!(
-                "sort must be `top` or `recent`, got `{other}`"
-            ))),
+            Some(other) => Err(ApiError::invalid_field(
+                "sort",
+                format!("sort must be `top` or `recent`, got `{other}`"),
+            )),
         }
     }
 }
@@ -166,15 +168,11 @@ pub async fn cast_vote(
         });
     }
 
-    if my_votes.len() as u32 >= group.cycle_settings.votes_per_user_per_cycle {
-        let already: Vec<String> = my_votes.iter().map(|v| v.question_id.to_string()).collect();
-        return Err(ApiError::new(
-            ApiErrorCode::VoteCapReached,
-            format!(
-                "no votes remaining this cycle; already voted for: {}",
-                already.join(", ")
-            ),
-        ));
+    let cap = group.cycle_settings.votes_per_user_per_cycle;
+    // Fast path with a helpful detail. The real guard is the tally condition
+    // inside `cast_vote_tx`, which concurrent requests can't slip past.
+    if my_votes.len() as u32 >= cap {
+        return Err(vote_cap_reached(&my_votes));
     }
 
     let vote = CandidateVote {
@@ -185,14 +183,28 @@ pub async fn cast_vote(
         voted_at: Utc::now(),
     };
     let vote_count =
-        cast_vote_with_retry(state, group_id, &next_cycle.cycle_id, &vote, candidate).await?;
+        cast_vote_with_retry(state, group_id, &next_cycle.cycle_id, &vote, candidate, cap).await?;
+    let my_vote_count = list_my_votes(state, group_id, &next_cycle.cycle_id, caller)
+        .await?
+        .len() as u32;
 
     Ok(CandidateVoteResponse {
         question_id: question_id.clone(),
         vote_count,
         voted_by_me: true,
-        my_vote_count: my_votes.len() as u32 + 1,
+        my_vote_count,
     })
+}
+
+fn vote_cap_reached(my_votes: &[CandidateVote]) -> ApiError {
+    let already: Vec<String> = my_votes.iter().map(|v| v.question_id.to_string()).collect();
+    ApiError::new(
+        ApiErrorCode::VoteCapReached,
+        format!(
+            "no votes remaining this cycle; already voted for: {}",
+            already.join(", ")
+        ),
+    )
 }
 
 /// One retry against a freshly-reloaded vote count: `cast_vote_tx`'s condition
@@ -205,13 +217,24 @@ async fn cast_vote_with_retry(
     cycle_id: &CycleId,
     vote: &CandidateVote,
     mut candidate: CandidateQuestion,
+    cap: u32,
 ) -> Result<u32, ApiError> {
     for attempt in 0..2 {
         let new_count = candidate.vote_count + 1;
-        match questions::cast_vote_tx(&state.repo, vote, new_count).await {
+        match questions::cast_vote_tx(&state.repo, vote, new_count, cap).await {
             Ok(()) => return Ok(new_count),
-            Err(e) if e.is_lost_race() && attempt == 0 => {
+            Err(VoteTxError::CountRace) if attempt == 0 => {
                 candidate = load_candidate(state, group_id, cycle_id, &vote.question_id).await?;
+            }
+            // A concurrent duplicate request already cast this vote.
+            Err(VoteTxError::VoteRow) => {
+                return Ok(load_candidate(state, group_id, cycle_id, &vote.question_id)
+                    .await?
+                    .vote_count);
+            }
+            Err(VoteTxError::Tally) => {
+                let my_votes = list_my_votes(state, group_id, cycle_id, &vote.user_id).await?;
+                return Err(vote_cap_reached(&my_votes));
             }
             Err(e) => {
                 tracing::error!(error = ?e, group_id = %group_id, question_id = %vote.question_id, "cast vote failed");
@@ -253,12 +276,15 @@ pub async fn withdraw_vote(
     };
     let vote_count =
         withdraw_vote_with_retry(state, group_id, &next_cycle.cycle_id, &vote, candidate).await?;
+    let my_vote_count = list_my_votes(state, group_id, &next_cycle.cycle_id, caller)
+        .await?
+        .len() as u32;
 
     Ok(CandidateVoteResponse {
         question_id: question_id.clone(),
         vote_count,
         voted_by_me: false,
-        my_vote_count: my_votes.len() as u32 - 1,
+        my_vote_count,
     })
 }
 
@@ -273,8 +299,14 @@ async fn withdraw_vote_with_retry(
         let new_count = candidate.vote_count.saturating_sub(1);
         match questions::withdraw_vote_tx(&state.repo, vote, new_count).await {
             Ok(()) => return Ok(new_count),
-            Err(e) if e.is_lost_race() && attempt == 0 => {
+            Err(VoteTxError::CountRace) if attempt == 0 => {
                 candidate = load_candidate(state, group_id, cycle_id, &vote.question_id).await?;
+            }
+            // A concurrent duplicate request already withdrew it.
+            Err(VoteTxError::VoteRow) => {
+                return Ok(load_candidate(state, group_id, cycle_id, &vote.question_id)
+                    .await?
+                    .vote_count);
             }
             Err(e) => {
                 tracing::error!(error = ?e, group_id = %group_id, question_id = %vote.question_id, "withdraw vote failed");
@@ -306,10 +338,7 @@ pub async fn admin_delete_candidate(
             ApiError::internal("failed to resolve the voting cycle")
         })?
     {
-        if load_candidate(state, group_id, &voting.cycle_id, question_id)
-            .await
-            .is_ok()
-        {
+        if candidate_exists(state, group_id, &voting.cycle_id, question_id).await? {
             return delete_candidate_and_votes(state, group_id, &voting.cycle_id, question_id)
                 .await;
         }
@@ -335,10 +364,7 @@ pub async fn admin_delete_candidate(
             ));
         }
 
-        if load_candidate(state, group_id, &open.cycle_id, question_id)
-            .await
-            .is_ok()
-        {
+        if candidate_exists(state, group_id, &open.cycle_id, question_id).await? {
             return delete_candidate_and_votes(state, group_id, &open.cycle_id, question_id).await;
         }
     }
@@ -432,6 +458,21 @@ async fn require_voting_cycle(
                 "this group has no cycle currently accepting candidate questions",
             )
         })
+}
+
+/// Whether the candidate exists. Unlike `load_candidate(..).is_ok()`, a real
+/// lookup failure propagates as a 500 instead of reading as "not found".
+async fn candidate_exists(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<bool, ApiError> {
+    match load_candidate(state, group_id, cycle_id, question_id).await {
+        Ok(_) => Ok(true),
+        Err(e) if e.code == ApiErrorCode::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 async fn load_candidate(
@@ -544,12 +585,12 @@ fn encode_offset(offset: usize) -> String {
 fn decode_offset(raw: &str) -> Result<usize, ApiError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(raw)
-        .map_err(|_| ApiError::validation("invalid cursor"))?;
-    let value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| ApiError::validation("invalid cursor"))?;
+        .map_err(|_| ApiError::invalid_field("cursor", "invalid cursor"))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| ApiError::invalid_field("cursor", "invalid cursor"))?;
     value
         .get("offset")
         .and_then(|v| v.as_u64())
         .map(|n| n as usize)
-        .ok_or_else(|| ApiError::validation("invalid cursor"))
+        .ok_or_else(|| ApiError::invalid_field("cursor", "invalid cursor"))
 }

@@ -337,6 +337,9 @@ export interface components {
             groupId: string;
             role: components["schemas"]["Role"];
             groupName: string;
+            /** @description The group's IANA timezone, for labelling cycles client-side (`04` §14a). */
+            timezone: string;
+            gradient: components["schemas"]["GradientSlug"];
         };
         ConfigResponse: {
             userId: string | null;
@@ -656,6 +659,10 @@ export interface components {
         };
         HealthResponse: {
             status: string;
+            /** @description Short git SHA of the build, or `unknown`. */
+            version: string;
+            /** Format: date-time */
+            buildAt: string | null;
         };
     };
     responses: {
@@ -1056,7 +1063,9 @@ export interface operations {
                      *         {
                      *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
                      *           "role": "admin",
-                     *           "groupName": "Trail Crew"
+                     *           "groupName": "Trail Crew",
+                     *           "timezone": "America/New_York",
+                     *           "gradient": "grape-sky"
                      *         }
                      *       ]
                      *     }
@@ -1801,7 +1810,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description OK. `03-api-contract.md` §11.1 also documents `version`/`buildAt` fields, but the handler doesn't emit them yet — see the note on `HealthResponse` in `domain/src/api.rs`. */
+            /** @description OK, with the build's git SHA and timestamp. A locally built binary reports `version: "unknown"` and `buildAt: null`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1809,7 +1818,9 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "status": "ok"
+                     *       "status": "ok",
+                     *       "version": "161cb16",
+                     *       "buildAt": "2026-09-27T18:00:00Z"
                      *     }
                      */
                     "application/json": components["schemas"]["HealthResponse"];

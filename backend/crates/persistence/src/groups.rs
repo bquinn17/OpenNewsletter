@@ -1,14 +1,16 @@
 //! Group, GroupMembership access (AP2, AP3, AP4) and leave transaction (§4 #6).
 
-use crate::error::RepoError;
+use crate::batch::batch_get_items;
+use crate::error::{self, RepoError};
 use crate::expr::set_fields;
 use crate::keys::{
     attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk, GROUP_META_SK,
 };
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, Delete, TransactWriteItem, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Delete, TransactWriteItem, Update};
 use domain::{CycleSettings, Group, GroupId, GroupMembership, NotificationSettings, Role, UserId};
 use serde_dynamo::{from_item, to_attribute_value, to_item};
+use std::collections::HashMap;
 
 /// AP4 — Get group meta.
 pub async fn get_group(repo: &Repo, group_id: &GroupId) -> Result<Option<Group>, RepoError> {
@@ -25,6 +27,33 @@ pub async fn get_group(repo: &Repo, group_id: &GroupId) -> Result<Option<Group>,
         Some(item) => Ok(Some(from_item(item)?)),
         None => Ok(None),
     }
+}
+
+/// AP4, batched — fetch many groups' meta rows in one round trip, keyed by
+/// `GroupId`. Groups that don't exist are absent from the map.
+pub async fn get_groups_batch(
+    repo: &Repo,
+    group_ids: &[GroupId],
+) -> Result<HashMap<GroupId, Group>, RepoError> {
+    let keys = group_ids
+        .iter()
+        .map(|group_id| {
+            HashMap::from([
+                (attr::PK.to_owned(), AttributeValue::S(group_pk(group_id))),
+                (
+                    attr::SK.to_owned(),
+                    AttributeValue::S(GROUP_META_SK.to_owned()),
+                ),
+            ])
+        })
+        .collect();
+
+    let mut groups = HashMap::with_capacity(group_ids.len());
+    for item in batch_get_items(repo, keys).await? {
+        let group: Group = from_item(item)?;
+        groups.insert(group.group_id.clone(), group);
+    }
+    Ok(groups)
 }
 
 pub async fn put_group(repo: &Repo, group: &Group) -> Result<(), RepoError> {
@@ -185,14 +214,42 @@ pub async fn update_group(
 }
 
 /// Change a member's role. Callers enforce the last-admin guard first.
+///
+/// `admin_witness`, when `Some`, names a *different* member who must
+/// currently hold the admin role. The write then runs as a
+/// `TransactWriteItems` with an added `ConditionCheck` on the witness's own
+/// membership row (`role = admin`). DynamoDB transactions are serializable,
+/// so as long as every removal/demotion of an admin names a still-admin
+/// witness, no interleaving of concurrent requests can ever commit a state
+/// with zero admins (`plans/03-api-contract.md` §3.6's `LAST_ADMIN` guard;
+/// see also [`leave_group_tx`]). Pass `None` when `user_id` does not
+/// currently hold the admin role — no witness is needed to protect an
+/// invariant that isn't at stake.
 pub async fn update_membership_role(
     repo: &Repo,
     user_id: &UserId,
     group_id: &GroupId,
     role: Role,
+    admin_witness: Option<&UserId>,
 ) -> Result<(), RepoError> {
-    repo.client
-        .update_item()
+    let Some(witness) = admin_witness else {
+        repo.client
+            .update_item()
+            .table_name(&repo.table)
+            .key(attr::PK, AttributeValue::S(user_pk(user_id)))
+            .key(attr::SK, AttributeValue::S(membership_sk(group_id)))
+            .update_expression("SET #role = :role")
+            .condition_expression("attribute_exists(#sk)")
+            .expression_attribute_names("#role", "role")
+            .expression_attribute_names("#sk", attr::SK)
+            .expression_attribute_values(":role", to_attribute_value(role)?)
+            .send()
+            .await
+            .map_err(error::from_update_item_error)?;
+        return Ok(());
+    };
+
+    let update = Update::builder()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(user_pk(user_id)))
         .key(attr::SK, AttributeValue::S(membership_sk(group_id)))
@@ -201,16 +258,57 @@ pub async fn update_membership_role(
         .expression_attribute_names("#role", "role")
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":role", to_attribute_value(role)?)
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    let witness_check = admin_witness_condition(repo, witness, group_id)?;
+
+    repo.client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().update(update).build())
+        .transact_items(
+            TransactWriteItem::builder()
+                .condition_check(witness_check)
+                .build(),
+        )
         .send()
-        .await?;
+        .await
+        .map_err(error::from_transact_write_error)?;
     Ok(())
 }
 
+/// Build the `ConditionCheck` transact-item asserting that `witness` currently
+/// holds the admin role in `group_id`. Shared by [`update_membership_role`]
+/// and [`leave_group_tx`].
+fn admin_witness_condition(
+    repo: &Repo,
+    witness: &UserId,
+    group_id: &GroupId,
+) -> Result<ConditionCheck, RepoError> {
+    ConditionCheck::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(user_pk(witness)))
+        .key(attr::SK, AttributeValue::S(membership_sk(group_id)))
+        .condition_expression("attribute_exists(#pk) AND #role = :admin")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#role", "role")
+        .expression_attribute_values(":admin", to_attribute_value(Role::Admin)?)
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
 /// Transaction §4 #6 — leave group: delete membership + decrement memberCount.
+///
+/// `admin_witness`, when `Some`, names a *different* member who must
+/// currently hold the admin role, and adds a `ConditionCheck` transact-item
+/// enforcing that — see [`update_membership_role`]'s rustdoc for why this
+/// closes the last-admin TOCTOU race. Pass `None` when the member being
+/// removed does not currently hold the admin role.
 pub async fn leave_group_tx(
     repo: &Repo,
     user_id: &UserId,
     group_id: &GroupId,
+    admin_witness: Option<&UserId>,
 ) -> Result<(), RepoError> {
     let delete = Delete::builder()
         .table_name(&repo.table)
@@ -230,11 +328,24 @@ pub async fn leave_group_tx(
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
-    repo.client
+    let mut request = repo
+        .client
         .transact_write_items()
         .transact_items(TransactWriteItem::builder().delete(delete).build())
-        .transact_items(TransactWriteItem::builder().update(update).build())
+        .transact_items(TransactWriteItem::builder().update(update).build());
+
+    if let Some(witness) = admin_witness {
+        let witness_check = admin_witness_condition(repo, witness, group_id)?;
+        request = request.transact_items(
+            TransactWriteItem::builder()
+                .condition_check(witness_check)
+                .build(),
+        );
+    }
+
+    request
         .send()
-        .await?;
+        .await
+        .map_err(error::from_transact_write_error)?;
     Ok(())
 }

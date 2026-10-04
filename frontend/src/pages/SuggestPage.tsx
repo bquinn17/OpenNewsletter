@@ -2,7 +2,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useSuggestCandidate } from "../api/queries";
+import { useSuggestCandidate } from "../mocks/legacyQueries";
 import { useToasts } from "../state/toast";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Button } from "../components/ui/Button";
@@ -19,9 +19,7 @@ const schema = z
     kind: z.enum(["text", "poll"]),
     prompt: z.string().min(5, "Add a bit more").max(500, "500 characters max"),
     isAnonymous: z.boolean(),
-    options: z
-      .array(z.object({ label: z.string().min(1).max(80) }))
-      .max(6, "6 options max"),
+    options: z.array(z.object({ label: z.string().min(1).max(80) })).max(6, "6 options max"),
   })
   .superRefine((val, ctx) => {
     if (val.kind === "poll") {
@@ -86,42 +84,40 @@ export function SuggestPage() {
 
   return (
     <div className="bg-cream pb-12">
-      <PageHeader eyebrow="For next month" title="Suggest a question" back={`/g/${groupId}/upcoming`} />
+      <PageHeader
+        eyebrow="For next month"
+        title="Suggest a question"
+        back={`/g/${groupId}/upcoming`}
+      />
 
       <form onSubmit={onSubmit}>
         <div className="px-5 pt-5">
           <label
-            className={`block rounded-3xl p-4 text-sm flex gap-3 cursor-pointer transition border ${
+            className={`block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition ${
               isAnonymous
-                ? "bg-grape/5 border-grape/40 text-grape"
-                : "bg-white border-line text-ink"
+                ? "border-grape/40 bg-grape/5 text-grape"
+                : "border-line bg-white text-ink"
             }`}
           >
             <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
             <div className="flex-1">
               <div className="flex items-center justify-between gap-3">
-                <strong>
-                  {isAnonymous ? "Anonymous to the group" : "Asked by you"}
-                </strong>
-                <input
-                  type="checkbox"
-                  className="sr-only peer"
-                  {...register("isAnonymous")}
-                />
+                <strong>{isAnonymous ? "Anonymous to the group" : "Asked by you"}</strong>
+                <input type="checkbox" className="peer sr-only" {...register("isAnonymous")} />
                 <span
                   aria-hidden
-                  className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${
+                  className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${
                     isAnonymous ? "bg-grape" : "bg-line"
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                    className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
                       isAnonymous ? "translate-x-4" : ""
                     }`}
                   />
                 </span>
               </div>
-              <div className="text-xs mt-1 opacity-90">
+              <div className="mt-1 text-xs opacity-90">
                 {isAnonymous
                   ? "Your friends see the question, but not who suggested it."
                   : "Your friends see “You asked: …” next to this question."}
@@ -130,8 +126,8 @@ export function SuggestPage() {
           </label>
         </div>
 
-        <div className="px-5 mt-5">
-          <div className="text-xs uppercase tracking-widest text-inkmuted font-bold mb-2">Type</div>
+        <div className="mt-5 px-5">
+          <div className="mb-2 text-xs font-bold uppercase tracking-widest text-inkmuted">Type</div>
           <div className="grid grid-cols-2 gap-3">
             <KindButton
               active={kind === "text"}
@@ -150,15 +146,21 @@ export function SuggestPage() {
           </div>
         </div>
 
-        <div className="px-5 mt-5">
-          <label className="block text-xs uppercase tracking-widest text-inkmuted font-bold mb-2">Your question</label>
+        <div className="mt-5 px-5">
+          <label
+            htmlFor="suggest-prompt"
+            className="mb-2 block text-xs font-bold uppercase tracking-widest text-inkmuted"
+          >
+            Your question
+          </label>
           <textarea
+            id="suggest-prompt"
             {...register("prompt")}
-            className="w-full bg-white border border-line rounded-2xl px-4 py-3 text-[15px] min-h-[100px] focus:outline-none focus:ring-2 focus:ring-coral/30"
+            className="min-h-[100px] w-full rounded-2xl border border-line bg-white px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-coral/30"
             placeholder="Try something specific. The best questions invite stories."
           />
-          <div className="flex items-center justify-between text-xs mt-1.5">
-            <span className={errors.prompt ? "text-coral font-semibold" : "text-inkmuted"}>
+          <div className="mt-1.5 flex items-center justify-between text-xs">
+            <span className={errors.prompt ? "font-semibold text-coral" : "text-inkmuted"}>
               {errors.prompt?.message ?? "5–500 characters"}
             </span>
             <span className="text-inkmuted">{prompt.length} / 500</span>
@@ -166,21 +168,23 @@ export function SuggestPage() {
         </div>
 
         {kind === "poll" && (
-          <div className="px-5 mt-5">
-            <label className="block text-xs uppercase tracking-widest text-inkmuted font-bold mb-2">Options</label>
+          <div className="mt-5 px-5">
+            <p className="mb-2 block text-xs font-bold uppercase tracking-widest text-inkmuted">
+              Options
+            </p>
             <div className="space-y-2">
               {fields.map((field, i) => (
                 <div key={field.id} className="flex items-center gap-2">
                   <input
                     {...register(`options.${i}.label` as const)}
                     placeholder={`Option ${i + 1}`}
-                    className="flex-1 bg-white border border-line rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                    className="flex-1 rounded-2xl border border-line bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
                   />
                   {fields.length > 2 && (
                     <button
                       type="button"
                       onClick={() => remove(i)}
-                      className="w-9 h-9 rounded-full border border-line text-inkmuted hover:border-coral hover:text-coral"
+                      className="h-9 w-9 rounded-full border border-line text-inkmuted hover:border-coral hover:text-coral"
                       aria-label={`Remove option ${i + 1}`}
                     >
                       ×
@@ -193,26 +197,30 @@ export function SuggestPage() {
               <button
                 type="button"
                 onClick={() => append({ label: "" })}
-                className="mt-2 text-grape font-semibold text-sm"
+                className="mt-2 text-sm font-semibold text-grape"
               >
                 ＋ Add option
               </button>
             )}
             {errors.options && (
-              <div className="text-coral text-xs font-semibold mt-2">{errors.options.message ?? "Check options"}</div>
+              <div className="mt-2 text-xs font-semibold text-coral">
+                {errors.options.message ?? "Check options"}
+              </div>
             )}
           </div>
         )}
 
-        <div className="px-5 mt-5">
-          <div className="text-xs uppercase tracking-widest text-inkmuted font-bold mb-2">A few sparks if you're stuck</div>
+        <div className="mt-5 px-5">
+          <div className="mb-2 text-xs font-bold uppercase tracking-widest text-inkmuted">
+            A few sparks if you&apos;re stuck
+          </div>
           <div className="flex flex-wrap gap-2">
             {sparks.map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setValue("prompt", s, { shouldValidate: true })}
-                className="px-3 py-1.5 rounded-full bg-white border border-line text-sm hover:border-ink"
+                className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:border-ink"
               >
                 {s}
               </button>
@@ -221,15 +229,11 @@ export function SuggestPage() {
         </div>
 
         <div className="absolute bottom-3 left-3 right-3 z-40">
-          <div className="bg-ink text-cream rounded-3xl shadow-pop p-3 flex items-center gap-3">
+          <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
             <span className="text-sm opacity-70">Voting opens immediately</span>
             <span className="flex-1" />
             <Button type="submit" disabled={!isValid || suggest.isPending}>
-              {suggest.isPending
-                ? "Submitting…"
-                : isAnonymous
-                  ? "Submit anonymously"
-                  : "Submit"}
+              {suggest.isPending ? "Submitting…" : isAnonymous ? "Submit anonymously" : "Submit"}
             </Button>
           </div>
         </div>
@@ -255,11 +259,11 @@ function KindButton({
     <button
       type="button"
       onClick={onClick}
-      className={`p-4 rounded-2xl bg-white text-left transition ${
+      className={`rounded-2xl bg-white p-4 text-left transition ${
         active ? "border-2 border-coral ring-2 ring-coral/20" : "border border-line"
       }`}
     >
-      <div className="text-2xl mb-1">{icon}</div>
+      <div className="mb-1 text-2xl">{icon}</div>
       <div className="font-semibold">{label}</div>
       <div className="text-xs text-inkmuted">{hint}</div>
     </button>

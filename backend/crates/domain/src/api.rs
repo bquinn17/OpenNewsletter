@@ -24,6 +24,10 @@ pub struct MembershipSummary {
     pub group_id: GroupId,
     pub role: Role,
     pub group_name: String,
+    /// IANA timezone, so clients can label cycles without a `GET /groups/{g}` per group.
+    pub timezone: String,
+    /// `GradientSlug` for the group's switcher swatch.
+    pub gradient: String,
 }
 
 /// `GET /config` response (§2.1).
@@ -601,15 +605,15 @@ pub enum SaveResponseRequest {
 
 /// `GET /healthz` response (§11.1).
 ///
-/// `03-api-contract.md` also documents `version` and `buildAt` fields, but
-/// `lambda-groups/src/router.rs` currently only ever emits `{"status": "ok"}` via an
-/// ad hoc `serde_json::json!` — no build metadata is wired up yet. This type mirrors
-/// what the handler actually returns today; widen it (and the handler) together in a
-/// follow-up rather than let the contract claim fields the wire never sends.
+/// `version`/`build_at` come from the `BUILD_SHA`/`BUILD_AT` environment variables
+/// at compile time (`make build-lambdas` sets both). A local `cargo build` has
+/// neither, so `version` is `"unknown"` and `build_at` is `None`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     pub status: String,
+    pub version: String,
+    pub build_at: Option<String>,
 }
 
 // ===== `03-api-contract.md` §1.1 — RFC-7807 error shape =====

@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::{group_routes, me};
-use domain::api::MembershipListResponse;
+use domain::api::{HealthResponse, MembershipListResponse};
 use domain::{ApiError, GroupId, UserId};
 use lambda_http::http::Method;
 use lambda_http::{Body, Request, RequestExt, Response};
@@ -32,7 +32,11 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
     match (req.method(), segments.as_slice()) {
         (&Method::GET, ["healthz"]) => Ok(http::json_response(
             200,
-            &serde_json::json!({ "status": "ok" }),
+            &HealthResponse {
+                status: "ok".to_owned(),
+                version: option_env!("BUILD_SHA").unwrap_or("unknown").to_owned(),
+                build_at: option_env!("BUILD_AT").map(str::to_owned),
+            },
             &correlation_id,
         )),
 

@@ -1,15 +1,10 @@
 //! `lambda-groups` — `/config`, `/healthz`, `/me`, and the group + member routes
 //! (`plans/03-api-contract.md` §2, §3.5, §3.6, §4).
 
-mod group_routes;
-mod me;
-mod router;
-mod state;
-mod validation;
-
+use groups::router;
+use groups::state::AppState;
 use lambda_http::{service_fn, Error};
 use persistence::Repo;
-use state::AppState;
 use std::sync::Arc;
 
 #[tokio::main]

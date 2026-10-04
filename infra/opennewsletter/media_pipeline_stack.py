@@ -13,7 +13,7 @@ from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_dynamodb as dynamodb
-from aws_cdk import aws_lambda as aws_lambda
+from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_notifications as s3_notifications
@@ -22,7 +22,10 @@ from constructs import Construct
 from .config import EnvConfig
 
 _STUB_PATH = str(
-    Path(__file__).parent.parent.parent / "backend" / "lambda-stubs" / "lambda-image-process"
+    Path(__file__).parent.parent.parent
+    / "backend"
+    / "lambda-stubs"
+    / "lambda-image-process"
 )
 
 

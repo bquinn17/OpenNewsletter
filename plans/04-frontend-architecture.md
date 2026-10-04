@@ -46,13 +46,15 @@ frontend/
 │   │   ├── client.ts                 # fetch wrapper with auth + correlation id
 │   │   ├── queries.ts                # TanStack Query hooks (useGroups, useNewsletter, etc.)
 │   │   ├── mutations.ts              # mutation hooks (useSaveDraft, useCastVote, etc.)
-│   │   └── generated.ts              # types from openapi-typescript (do not edit)
+│   │   └── mockTransport.ts          # in-memory API for VITE_USE_MOCKS=true (§13)
 │   ├── auth/
-│   │   ├── AuthProvider.tsx
+│   │   ├── userManager.ts            # the one oidc-client-ts UserManager (PKCE, sessionStorage)
+│   │   ├── AuthProvider.tsx          # { status, user, login, logout } context; logout clears caches
 │   │   ├── useAuth.ts
-│   │   ├── login.ts                  # initiate OIDC + invite flow
-│   │   ├── callback.tsx              # /auth/callback route handler
-│   │   └── tokens.ts                 # token storage + refresh
+│   │   ├── RequireAuth.tsx           # layout-route guard → login with returnTo
+│   │   ├── renewSession.ts           # refresh-token renewal (federated + bootstrap sessions)
+│   │   ├── cognitoPasswordAuth.ts    # InitiateAuth for the admin-bootstrap client
+│   │   └── inviteStash.ts            # sessionStorage fallback for the invite code
 │   ├── pwa/
 │   │   ├── registerSW.ts
 │   │   ├── pushSetup.ts              # subscribe + send to backend
@@ -145,8 +147,9 @@ React Router v6 data routers, with route-level loaders for the `useNewsletter`-s
 
 Route guards:
 - All routes except `/auth/callback`, `/join`, and `/` redirect to OIDC login if no valid token.
-- `/g/:groupId/*` checks membership in the loader; 403 → redirect to `/`.
-- `/g/:groupId/admin` checks `role === 'admin'`; 403 → redirect to group home.
+- `/g/:groupId/*` checks membership (`RequireMembership`); not a member → redirect to `/`.
+- `/g/:groupId/admin` checks `role === 'admin'` (`RequireGroupAdmin`); otherwise → redirect to group home.
+- Both guards read the cached `/config` (`staleTime: Infinity`). Before denying, they refetch once (`routes/useConfirmedAccess.ts`), so a membership or role granted elsewhere, such as another tab or a just-redeemed invite, isn't bounced.
 
 ---
 
@@ -277,11 +280,13 @@ Push payloads from backend documented in `07-notifications.md` §5.
 
 See `05-auth-flow.md` for the full sequence. The frontend pieces:
 
-- `auth/login.ts` — initiates Cognito hosted UI redirect with PKCE. If a `?code=` invite param is present in the URL when login starts, it's base64-encoded into the OIDC `state` parameter (`{ invite, returnTo }`) so it survives the OAuth round-trip. The `PreSignUp` trigger never sees it — redemption happens after token exchange via `POST /invites/redeem` (`05-auth-flow.md` §3–§4).
-- `auth/callback.tsx` — exchanges `code` for tokens, stores them, redirects to original page.
-- `auth/tokens.ts` — stores tokens in `sessionStorage` (NOT localStorage; clears on tab close — security trade-off worth it for a non-critical app). Refresh token rotation triggers via `oidc-client-ts` silent renew.
-- `auth/AuthProvider.tsx` — Context exposing `{ user, accessToken, login, logout }`. Wraps the app.
-- `api/client.ts` — adds `Authorization: Bearer ${accessToken}` and triggers silent renew on 401.
+- `auth/AuthProvider.tsx` `login()` — initiates the Cognito hosted UI redirect with PKCE. If a `?code=` invite param is present in the URL when login starts, `{ invite, returnTo }` rides along as `oidc-client-ts`'s `signinRedirect({ state })` data so it survives the OAuth round-trip. (Decided in M7: the library keeps that data in its client-side state store keyed by the opaque OIDC `state` value, which stays a pure CSRF nonce. It is equivalent to base64-encoding it into `state`, but nothing user-controlled travels through Cognito.) The code is also stashed in `sessionStorage` as a fallback. The `PreSignUp` trigger never sees it — redemption happens after token exchange via `POST /invites/redeem` (`05-auth-flow.md` §3–§4).
+- `pages/AuthCallbackPage.tsx` — exchanges `code` for tokens (once, StrictMode-safe), stores them, and redirects to the original page, or to `/join?code=…` when an invite rode along.
+- `auth/userManager.ts` — stores tokens in `sessionStorage` (NOT localStorage; clears on tab close — security trade-off worth it for a non-critical app). Renewal is `auth/renewSession.ts`, run on `accessTokenExpiring`, on a reload with an expired ID token, and on a 401. Federated sessions use `oidc-client-ts`'s **refresh-token grant**; Cognito has no `prompt=none` iframe flow. Bootstrap-login sessions, recognised by the ID token's `aud`, use Cognito `REFRESH_TOKEN_AUTH` against the `admin-bootstrap` client instead. `automaticSilentRenew` is off, because it would route bootstrap sessions through the wrong client and sign them out.
+- `auth/AuthProvider.tsx` — Context exposing `{ status, user, login, logout }` via `useAuth()`. Wraps the app, inside `QueryClientProvider` (logout clears the query cache).
+- `auth/RequireAuth.tsx` — layout-route guard for §3's protected routes.
+- `api/client.ts` — adds `Authorization: Bearer ${idToken}` (the **ID token**, `03` §1) and `x-correlation-id`; on a 401 it tries one silent renew and retries once.
+- `pages/BootstrapLoginPage.tsx` — `/admin/bootstrap-login` (dev only) calls Cognito `InitiateAuth` (`USER_PASSWORD_AUTH`) with the `admin-bootstrap` client and stores the result as an `oidc-client-ts` `User`. The API's JWT authorizer accepts both clients' audiences (`01` §6.1).
 
 ---
 
@@ -290,7 +295,7 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
 ### 7.1 HomePage `/`
 
 - Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for each membership in parallel via TanStack `useQueries`.
-- Renders one section per group: latest published, then current cycle (open/voting), then 3 most recent past editions.
+- Renders one section per group: the open cycle, then the voting cycle (both exist at once during the response window, `06` §5.2), then the latest published, then up to 3 more past editions.
 - Empty state when no memberships: "You haven't joined a group yet — paste your invite code below" with a `<JoinForm/>`.
 
 ### 7.2 NewsletterPage `/g/:g/n/:c`
@@ -352,9 +357,9 @@ There is no Curate tab in v1 — admins do not override voting outcomes. See `06
 
 ### 7.8 JoinPage `/join?code=...`
 
-If unauthenticated: stash the code in sessionStorage (and in the OIDC `state` param via `login.ts`) and redirect to login. On `/auth/callback`, after token exchange, the SPA pulls the stashed code and calls `POST /invites/redeem` automatically. The user lands on the home page and sees their new group.
+If unauthenticated: stash the code in sessionStorage (and in the OIDC `state` data via `login()`) and redirect to login. On `/auth/callback`, after token exchange, the SPA pulls the code back out and navigates to `/join?code=…`, which is now authenticated and redeems it — one redemption code path, not two.
 
-If authenticated: call `POST /invites/redeem` with the code.
+If authenticated: call `POST /invites/redeem` with the code (once, even under StrictMode), then follow `05-auth-flow.md` §4.5: set `currentGroup` and navigate to `/g/{groupId}/upcoming`.
 
 ---
 
@@ -479,7 +484,15 @@ export const env = {
 //   `https://cognito-idp.us-east-1.amazonaws.com/${env.cognitoUserPoolId}`
 ```
 
-`.env.development`, `.env.production` checked in (with public-only values; no secrets in the SPA).
+Plus `useMocks: import.meta.env.VITE_USE_MOCKS === "true"`. When set, `AuthProvider` reports a fake signed-in user and `api/client.ts` dispatches to `api/mockTransport.ts` instead of `fetch`. The legacy mock-only pages (§16) render only in this mode.
+
+Env files (decided in M7):
+- `.env.development` is checked in with `VITE_USE_MOCKS=true` and placeholders, so plain `npm run dev` runs fully offline.
+- `make fe` runs `vite --mode dev`, which reads the gitignored `.env.dev` that `scripts/write_frontend_env.py` writes from CDK outputs, with `VITE_USE_MOCKS=false`.
+- `.env.production` is M14's to decide.
+- `redirectUri` may be empty; the SPA then derives `${origin}/auth/callback`.
+
+The CSP `<meta>` tag from §12.1 is not in `index.html` yet. In dev, `@vitejs/plugin-react` injects an inline preamble script that `script-src 'self'` would block, so the tag must apply to production builds only (e.g. via a small Vite `transformIndexHtml` plugin gated on `command === "build"`). It lands with M13, alongside the Playwright test.
 
 ---
 
@@ -553,12 +566,12 @@ Public key flows from `GET /config` (no `.env` needed for the SPA). Generation +
 
 Several pieces of display state live entirely in the frontend rather than on the API. They are derived from primitive API fields. Keep the derivation in `utils/`, not scattered through components.
 
-- **Month / year labels** (`"June"`, `"2026"`): derived from `responseOpenAt` using the group's `timezone`. Helper: `utils/dates.ts#cycleLabels(responseOpenAt, timezone)`. Never accept a server-supplied label.
+- **Month / year labels** (`"June"`, `"2026"`): derived from `responseOpenAt` using the group's `timezone`, which every `/config` membership carries (`03` §2.1). Helper: `utils/dates.ts#cycleLabels(responseOpenAt, timezone)`. Never accept a server-supplied label.
 - **Word count** on the respond page footer: derived from the local `body` string. Trivial — no helper needed beyond `body.trim().split(/\s+/).length` (zero when empty).
 - **Reaction total** on the published-edition header: sum of `reactionGroups[].count` across all answers. Inline in `NewsletterPage.tsx`.
 - **"Hype check" banner** (`hypeMessage` in mocks): computed from per-user draft counts in the open-newsletter payload. Helper: `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` returns either a string or `null` (suppress when there's nothing motivating to say).
 - **`helperText` under recurring questions** (Photo Wall / On Your Mind / Check It Out): hard-coded map keyed by prompt slug in `utils/recurring.ts`. The API knows nothing about recurring questions — they're just regular questions that the frontend recognizes by prompt and decorates accordingly.
-- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-grape to-sky`): derived from `Group.gradient` (a slug like `grape-sky`) via a frontend palette table. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` (`03-api-contract.md` §4.3) — the frontend table must cover exactly that set.
+- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-violet-500 to-sky-400`): derived from `Group.gradient` / `MembershipSummary.gradient` (a slug like `grape-sky`) via the frontend palette table in `utils/gradient.ts`. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` (`03-api-contract.md` §4.3) — the frontend table must cover exactly that set.
 - **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table, covering exactly the eight slugs enumerated in `03-api-contract.md` §2.3.
 
 These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the OpenAPI spec). They live as computed values in component state or as the return type of utility functions.
@@ -574,3 +587,14 @@ These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the O
 - Email digests.
 - Per-user theme override.
 - Multi-account switcher.
+
+---
+
+## 16. Legacy mock pages (transitional, decided in M7)
+
+Commit `91188ba` shipped a full mock-only UI on hand-written types before the real API existed. M7 rewired the shell, Home, Join, and Settings to the real API. The pages owned by later milestones were kept as the design reference rather than deleted:
+
+- `CandidatesPage`, `SuggestPage`, `NewsletterPage`, `RespondPage`, `GroupAdminPage`, and `components/newsletter/*`
+- their data layer, moved to `src/mocks/` (`legacyQueries.ts`, `types.ts`, `api.ts`, `data.ts`)
+
+The router renders a legacy page only when `VITE_USE_MOCKS=true`. Against a real API, each of those routes renders `PendingMilestonePage`. Each later milestone (M9 newsletter/candidates, M10 engagement, M12 admin) migrates its pages onto `api/queries.ts` + `types/api.ts` and deletes the legacy code it replaces. `src/mocks/` is deleted when it is empty.

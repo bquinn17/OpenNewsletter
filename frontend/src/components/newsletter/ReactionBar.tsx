@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { lazy, Suspense, useRef, useState } from "react";
-import { useToggleReaction } from "../../api/queries";
-import type { ReactionGroup } from "../../api/types";
+import { useToggleReaction } from "../../mocks/legacyQueries";
+import type { ReactionGroup } from "../../mocks/types";
 
 interface Props {
   reactions: ReactionGroup[];
@@ -37,16 +37,16 @@ export function ReactionBar({ reactions, groupId, cycleId, questionId, responseI
   };
 
   return (
-    <div className="flex flex-wrap gap-1.5 mt-4 items-center">
+    <div className="mt-4 flex flex-wrap items-center gap-1.5">
       {reactions.map((r) => (
         <button
           key={r.emoji}
           onClick={() => handleToggle(r.emoji)}
           className={clsx(
-            "px-2.5 py-1 rounded-full border text-sm font-semibold transition",
+            "rounded-full border px-2.5 py-1 text-sm font-semibold transition",
             r.reactedByMe
-              ? "bg-coral/10 text-coral border-coral/30"
-              : "bg-cream border-line text-inkmuted hover:border-ink",
+              ? "border-coral/30 bg-coral/10 text-coral"
+              : "border-line bg-cream text-inkmuted hover:border-ink",
           )}
         >
           {r.emoji} {r.count}
@@ -56,12 +56,12 @@ export function ReactionBar({ reactions, groupId, cycleId, questionId, responseI
         onClick={() => setQuickOpen((s) => !s)}
         aria-label="Add reaction"
         aria-expanded={quickOpen}
-        className="px-2.5 py-1 rounded-full bg-cream border border-line text-inkmuted text-sm"
+        className="rounded-full border border-line bg-cream px-2.5 py-1 text-sm text-inkmuted"
       >
         ＋
       </button>
       {quickOpen && (
-        <div className="w-full mt-2 flex flex-wrap items-center gap-1.5 animate-pop">
+        <div className="mt-2 flex w-full animate-pop flex-wrap items-center gap-1.5">
           {DEFAULTS.map((d) => (
             <button
               key={d.emoji}
@@ -70,7 +70,7 @@ export function ReactionBar({ reactions, groupId, cycleId, questionId, responseI
                 setQuickOpen(false);
               }}
               aria-label={`React with ${d.label}`}
-              className="px-2.5 py-1 rounded-full bg-white border border-line text-sm hover:border-coral"
+              className="rounded-full border border-line bg-white px-2.5 py-1 text-sm hover:border-coral"
             >
               {d.emoji}
             </button>
@@ -80,7 +80,7 @@ export function ReactionBar({ reactions, groupId, cycleId, questionId, responseI
             onClick={() => setPickerOpen(true)}
             aria-label="More emoji"
             aria-expanded={pickerOpen}
-            className="px-2.5 py-1 rounded-full bg-white border border-line text-xs text-inkmuted hover:border-ink"
+            className="rounded-full border border-line bg-white px-2.5 py-1 text-xs text-inkmuted hover:border-ink"
           >
             More…
           </button>

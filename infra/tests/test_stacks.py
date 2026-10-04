@@ -116,7 +116,7 @@ def test_dynamodb_table_ttl(data_template: assertions.Template) -> None:
 def test_dynamodb_table_two_gsis(data_template: assertions.Template) -> None:
     resources = data_template.find_resources("AWS::DynamoDB::Table")
     assert len(resources) == 1
-    table = list(resources.values())[0]
+    table = next(iter(resources.values()))
     gsis = table["Properties"]["GlobalSecondaryIndexes"]
     assert len(gsis) == 2
     index_names = {g["IndexName"] for g in gsis}
@@ -125,7 +125,7 @@ def test_dynamodb_table_two_gsis(data_template: assertions.Template) -> None:
 
 def test_dynamodb_gsi_projections(data_template: assertions.Template) -> None:
     resources = data_template.find_resources("AWS::DynamoDB::Table")
-    table = list(resources.values())[0]
+    table = next(iter(resources.values()))
     for gsi in table["Properties"]["GlobalSecondaryIndexes"]:
         assert gsi["Projection"]["ProjectionType"] == "ALL"
 
@@ -234,7 +234,7 @@ def test_cloudfront_distribution_references_key_group(
     persistent, _ = media_templates
     resources = persistent.find_resources("AWS::CloudFront::Distribution")
     assert len(resources) == 1
-    dist = list(resources.values())[0]
+    dist = next(iter(resources.values()))
     behaviors = dist["Properties"]["DistributionConfig"]["DefaultCacheBehavior"]
     assert "TrustedKeyGroups" in behaviors
     assert len(behaviors["TrustedKeyGroups"]) == 1
@@ -337,6 +337,7 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         table=data_stack.table,
         user_pool=auth_stack.user_pool,
         user_pool_client=auth_stack.frontend_client,
+        bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
         env=AWS_ENV,
@@ -365,6 +366,7 @@ def prod_api_template() -> assertions.Template:
         table=data_stack.table,
         user_pool=auth_stack.user_pool,
         user_pool_client=auth_stack.frontend_client,
+        bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
         env=AWS_ENV,
@@ -404,6 +406,16 @@ def test_jwt_authorizer_targets_the_user_pool(
             "IdentitySource": ["$request.header.Authorization"],
         },
     )
+
+
+def test_jwt_authorizer_accepts_both_frontend_and_bootstrap_audiences(
+    api_template: assertions.Template,
+) -> None:
+    authorizers = api_template.find_resources("AWS::ApiGatewayV2::Authorizer")
+    assert len(authorizers) == 1
+    authorizer = next(iter(authorizers.values()))
+    audiences = authorizer["Properties"]["JwtConfiguration"]["Audience"]
+    assert len(audiences) == 2
 
 
 def test_every_route_requires_the_jwt_authorizer(

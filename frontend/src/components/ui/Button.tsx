@@ -28,7 +28,7 @@ export function Button({ variant = "primary", size = "md", className, children, 
     <button
       {...rest}
       className={clsx(
-        "rounded-full font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-1.5 rounded-full font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
         sizes[size],
         variants[variant],
         className,

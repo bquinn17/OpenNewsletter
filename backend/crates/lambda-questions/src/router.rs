@@ -106,7 +106,10 @@ fn parse_limit(req: &Request) -> Result<u32, ApiError> {
     match http::query_param(req, "limit") {
         None => Ok(DEFAULT_LIST_LIMIT),
         Some(raw) => raw.parse::<u32>().map_err(|_| {
-            ApiError::validation(format!("limit must be a positive integer, got `{raw}`"))
+            ApiError::invalid_field(
+                "limit",
+                format!("limit must be a positive integer, got `{raw}`"),
+            )
         }),
     }
 }

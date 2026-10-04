@@ -29,7 +29,7 @@ from aws_cdk import aws_apigatewayv2_integrations as apigw_integrations
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
-from aws_cdk import aws_lambda as aws_lambda
+from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 
@@ -75,8 +75,16 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("questions", "DELETE", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
     ("questions", "DELETE", "/admin/groups/{groupId}/candidate-questions/{questionId}"),
     ("responses", "GET", "/groups/{groupId}/newsletters/{cycleId}/my-responses"),
-    ("responses", "GET", "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response"),
-    ("responses", "PUT", "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response"),
+    (
+        "responses",
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+    ),
+    (
+        "responses",
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+    ),
 ]
 
 
@@ -95,6 +103,7 @@ class ApiStack(cdk.Stack):
         table: dynamodb.Table,
         user_pool: cognito.IUserPool,
         user_pool_client: cognito.IUserPoolClient,
+        bootstrap_client: cognito.IUserPoolClient,
         certificate: acm.ICertificate,
         cycle_tick_fn: aws_lambda.IFunction,
         **kwargs: Any,
@@ -157,7 +166,12 @@ class ApiStack(cdk.Stack):
             "CognitoJwtAuthorizer",
             f"https://cognito-idp.{self.region}.amazonaws.com/{user_pool.user_pool_id}",
             identity_source=["$request.header.Authorization"],
-            jwt_audience=[user_pool_client.user_pool_client_id],
+            # The bootstrap client is included so password-auth tokens from
+            # /admin/bootstrap-login pass the same authorizer (13 §6).
+            jwt_audience=[
+                user_pool_client.user_pool_client_id,
+                bootstrap_client.user_pool_client_id,
+            ],
         )
 
         self.api = apigw.HttpApi(

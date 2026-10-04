@@ -55,9 +55,7 @@ def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
     full_name = f"{stack}-{env}"
     val = outputs.get(full_name, {}).get(key, "")
     if not val:
-        sys.exit(
-            f"Missing CDK output {full_name}.{key} — run 'make deploy-dev' first."
-        )
+        sys.exit(f"Missing CDK output {full_name}.{key} — run 'make deploy-dev' first.")
     return val
 
 
@@ -65,7 +63,9 @@ def parse_duration(s: str) -> timedelta:
     """Parse a compact duration string like '5m', '2h', '4d' into a timedelta."""
     unit_map = {"m": "minutes", "h": "hours", "d": "days"}
     if not s or s[-1] not in unit_map:
-        sys.exit(f"Invalid duration '{s}': expected a number followed by m/h/d (e.g. '5m', '2h', '4d')")
+        sys.exit(
+            f"Invalid duration '{s}': expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+        )
     try:
         n = int(s[:-1])
     except ValueError:
@@ -95,6 +95,7 @@ def deterministic_id(seed: str) -> str:
 # ---------------------------------------------------------------------------
 # Data clearing
 # ---------------------------------------------------------------------------
+
 
 def clear_table(table: Any) -> int:
     """Scan + batch-delete every item in the DynamoDB table. Returns count deleted."""
@@ -129,16 +130,16 @@ def clear_bucket(s3_resource: Any, bucket_name: str) -> int:
         versions = list(bucket.object_versions.all())
         if versions:
             bucket.delete_objects(
-                Delete={"Objects": [{"Key": v.key, "VersionId": v.id} for v in versions]}
+                Delete={
+                    "Objects": [{"Key": v.key, "VersionId": v.id} for v in versions]
+                }
             )
             deleted += len(versions)
     except ClientError:
         # Non-versioned bucket
         objects = list(bucket.objects.all())
         if objects:
-            bucket.delete_objects(
-                Delete={"Objects": [{"Key": o.key} for o in objects]}
-            )
+            bucket.delete_objects(Delete={"Objects": [{"Key": o.key} for o in objects]})
             deleted += len(objects)
     return deleted
 
@@ -147,7 +148,10 @@ def clear_bucket(s3_resource: Any, bucket_name: str) -> int:
 # Cognito bootstrap
 # ---------------------------------------------------------------------------
 
-def ensure_cognito_user(cognito: Any, user_pool_id: str, email: str, password: str) -> str:
+
+def ensure_cognito_user(
+    cognito: Any, user_pool_id: str, email: str, password: str
+) -> str:
     """Idempotently create the bootstrap admin in the Cognito user pool.
 
     Returns the Cognito sub (used to derive the internal user_id).
@@ -189,6 +193,7 @@ def ensure_cognito_user(cognito: Any, user_pool_id: str, email: str, password: s
 # ---------------------------------------------------------------------------
 # DynamoDB fixture
 # ---------------------------------------------------------------------------
+
 
 def write_fixture(
     table: Any,
@@ -294,11 +299,20 @@ def write_fixture(
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--env", default="dev", help="CDK environment name (default: dev)")
-    parser.add_argument("--admin-email", default="dev-admin@example.com", help="Bootstrap admin email")
-    parser.add_argument("--admin-password", default="DevAdmin123!", help="Bootstrap admin password")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--env", default="dev", help="CDK environment name (default: dev)"
+    )
+    parser.add_argument(
+        "--admin-email", default="dev-admin@example.com", help="Bootstrap admin email"
+    )
+    parser.add_argument(
+        "--admin-password", default="DevAdmin123!", help="Bootstrap admin password"
+    )
     parser.add_argument(
         "--admin-sub",
         help="Cognito sub to use directly (skip Cognito user creation/lookup)",
@@ -314,9 +328,15 @@ def main() -> None:
     outputs = load_outputs(args.env)
     table_name = get_output(outputs, "DataStack", "TableName", args.env)
     user_pool_id = get_output(outputs, "AuthStack", "UserPoolId", args.env)
-    user_pool_bootstrap_client = get_output(outputs, "AuthStack", "UserPoolBootstrapClientId", args.env)
-    originals_bucket = get_output(outputs, "MediaPersistentStack", "OriginalsBucketName", args.env)
-    processed_bucket = get_output(outputs, "MediaPersistentStack", "ProcessedBucketName", args.env)
+    user_pool_bootstrap_client = get_output(
+        outputs, "AuthStack", "UserPoolBootstrapClientId", args.env
+    )
+    originals_bucket = get_output(
+        outputs, "MediaPersistentStack", "OriginalsBucketName", args.env
+    )
+    processed_bucket = get_output(
+        outputs, "MediaPersistentStack", "ProcessedBucketName", args.env
+    )
 
     region = "us-east-1"
     ddb = boto3.resource("dynamodb", region_name=region)
@@ -352,7 +372,7 @@ def main() -> None:
 
     print("[5/5] Writing fixture data…")
     now = datetime.now(timezone.utc)
-    vote_close = now + timedelta(days=27)          # ~1-month voting window
+    vote_close = now + timedelta(days=27)  # ~1-month voting window
     response_close = vote_close + parse_duration(args.cycle_close_in)
 
     # Derive stable IDs from known seeds so re-running seed gives the same IDs.

@@ -1,33 +1,95 @@
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { env } from "./env";
 import { AppShell } from "./components/layout/AppShell";
+import { RequireAuth } from "./auth/RequireAuth";
+import { AuthCallbackPage } from "./pages/AuthCallbackPage";
+import { BootstrapLoginPage } from "./pages/BootstrapLoginPage";
 import { HomePage } from "./pages/HomePage";
-import { NewsletterPage } from "./pages/NewsletterPage";
-import { RespondPage } from "./pages/RespondPage";
-import { CandidatesPage } from "./pages/CandidatesPage";
-import { SuggestPage } from "./pages/SuggestPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { GroupAdminPage } from "./pages/GroupAdminPage";
 import { JoinPage } from "./pages/JoinPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { GroupRedirect } from "./pages/GroupRedirect";
+import { PendingMilestonePage } from "./pages/PendingMilestonePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ErrorPage } from "./pages/ErrorPage";
-import { GroupRedirect } from "./pages/GroupRedirect";
+import { RequireMembership } from "./routes/RequireMembership";
+import { RequireGroupAdmin } from "./routes/RequireGroupAdmin";
+import { CandidatesPage } from "./pages/CandidatesPage";
+import { SuggestPage } from "./pages/SuggestPage";
+import { NewsletterPage } from "./pages/NewsletterPage";
+import { RespondPage } from "./pages/RespondPage";
+import { GroupAdminPage } from "./pages/GroupAdminPage";
 
 const router = createBrowserRouter([
+  { path: "/auth/callback", element: <AuthCallbackPage /> },
   {
     path: "/",
     element: <AppShell />,
     errorElement: <ErrorPage />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: "g/:groupId", element: <GroupRedirect /> },
-      { path: "g/:groupId/upcoming", element: <CandidatesPage /> },
-      { path: "g/:groupId/upcoming/suggest", element: <SuggestPage /> },
-      { path: "g/:groupId/n/:cycleId", element: <NewsletterPage /> },
-      { path: "g/:groupId/n/:cycleId/respond/:questionId", element: <RespondPage /> },
-      { path: "g/:groupId/n/:cycleId/respond", element: <Navigate to=".." replace /> },
-      { path: "g/:groupId/admin", element: <GroupAdminPage /> },
-      { path: "settings", element: <SettingsPage /> },
       { path: "join", element: <JoinPage /> },
+      ...(env.appEnv === "dev"
+        ? [{ path: "admin/bootstrap-login", element: <BootstrapLoginPage /> }]
+        : []),
+      {
+        element: <RequireAuth />,
+        children: [
+          { path: "settings", element: <SettingsPage /> },
+          {
+            path: "g/:groupId",
+            element: <RequireMembership />,
+            children: [
+              { index: true, element: <GroupRedirect /> },
+              {
+                path: "upcoming",
+                element: env.useMocks ? (
+                  <CandidatesPage />
+                ) : (
+                  <PendingMilestonePage message="Candidate voting arrives in a later release." />
+                ),
+              },
+              {
+                path: "upcoming/suggest",
+                element: env.useMocks ? (
+                  <SuggestPage />
+                ) : (
+                  <PendingMilestonePage message="Suggesting questions arrives in a later release." />
+                ),
+              },
+              {
+                path: "n/:cycleId",
+                element: env.useMocks ? (
+                  <NewsletterPage />
+                ) : (
+                  <PendingMilestonePage message="Newsletter editions arrive in a later release." />
+                ),
+              },
+              {
+                path: "n/:cycleId/respond/:questionId",
+                element: env.useMocks ? (
+                  <RespondPage />
+                ) : (
+                  <PendingMilestonePage message="Responding to questions arrives in a later release." />
+                ),
+              },
+              { path: "n/:cycleId/respond", element: <Navigate to=".." replace /> },
+              {
+                element: <RequireGroupAdmin />,
+                children: [
+                  {
+                    path: "admin",
+                    element: env.useMocks ? (
+                      <GroupAdminPage />
+                    ) : (
+                      <PendingMilestonePage message="Group administration arrives in a later release." />
+                    ),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

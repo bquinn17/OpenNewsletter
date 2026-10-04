@@ -12,9 +12,10 @@ pub fn prompt(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     let len = trimmed.chars().count();
     if !(MIN_PROMPT_CHARS..=MAX_PROMPT_CHARS).contains(&len) {
-        return Err(ApiError::validation(format!(
-            "prompt must be between {MIN_PROMPT_CHARS} and {MAX_PROMPT_CHARS} characters"
-        )));
+        return Err(ApiError::invalid_field(
+            "prompt",
+            format!("prompt must be between {MIN_PROMPT_CHARS} and {MAX_PROMPT_CHARS} characters"),
+        ));
     }
     Ok(trimmed.to_owned())
 }
@@ -28,18 +29,19 @@ pub fn poll_options(
     match kind {
         QuestionKind::Text => {
             if raw.is_some_and(|opts| !opts.is_empty()) {
-                return Err(ApiError::validation(
+                return Err(ApiError::invalid_field(
+                    "pollOptions",
                     "pollOptions must be omitted for kind=text",
                 ));
             }
             Ok(None)
         }
         QuestionKind::Poll => {
-            let opts = raw
-                .filter(|opts| !opts.is_empty())
-                .ok_or_else(|| ApiError::validation("pollOptions is required for kind=poll"))?;
+            let opts = raw.filter(|opts| !opts.is_empty()).ok_or_else(|| {
+                ApiError::invalid_field("pollOptions", "pollOptions is required for kind=poll")
+            })?;
             if !(MIN_POLL_OPTIONS..=MAX_POLL_OPTIONS).contains(&opts.len()) {
-                return Err(ApiError::validation(format!(
+                return Err(ApiError::invalid_field("pollOptions", format!(
                     "pollOptions must have between {MIN_POLL_OPTIONS} and {MAX_POLL_OPTIONS} options"
                 )));
             }
@@ -49,14 +51,18 @@ pub fn poll_options(
             for opt in opts {
                 let label = opt.label.trim();
                 if label.is_empty() || label.chars().count() > MAX_POLL_OPTION_LABEL_CHARS {
-                    return Err(ApiError::validation(format!(
+                    return Err(ApiError::invalid_field(
+                        "pollOptions",
+                        format!(
                         "pollOptions labels must be 1 to {MAX_POLL_OPTION_LABEL_CHARS} characters"
-                    )));
+                    ),
+                    ));
                 }
                 if !seen.insert(label.to_owned()) {
-                    return Err(ApiError::validation(format!(
-                        "pollOptions labels must be unique; \"{label}\" is duplicated"
-                    )));
+                    return Err(ApiError::invalid_field(
+                        "pollOptions",
+                        format!("pollOptions labels must be unique; \"{label}\" is duplicated"),
+                    ));
                 }
                 result.push(PollOption {
                     option_id: PollOptionId::generate(),

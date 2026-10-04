@@ -122,11 +122,15 @@ async fn handle_http_inner(
     match &body.advance_cycle_closes_by {
         Some(duration_raw) => {
             let group_id = body.group_id.as_deref().map(GroupId::new).ok_or_else(|| {
-                ApiError::validation("groupId is required when advanceCycleClosesBy is set")
+                ApiError::invalid_field(
+                    "groupId",
+                    "groupId is required when advanceCycleClosesBy is set",
+                )
             })?;
             auth::require_membership(&state.repo, &user_id, &group_id, true).await?;
 
-            let duration = parse_duration(duration_raw).map_err(ApiError::validation)?;
+            let duration = parse_duration(duration_raw)
+                .map_err(|detail| ApiError::invalid_field("advanceCycleClosesBy", detail))?;
             match newsletters::rewind_active_cycle_deadline(&state.repo, &group_id, duration).await
             {
                 Ok(_) => {}

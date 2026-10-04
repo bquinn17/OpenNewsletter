@@ -37,7 +37,9 @@ class MediaPersistentStack(cdk.Stack):
         super().__init__(scope, id, **kwargs)
 
         is_dev = config.env == "dev"
-        removal_policy = cdk.RemovalPolicy.DESTROY if is_dev else cdk.RemovalPolicy.RETAIN
+        removal_policy = (
+            cdk.RemovalPolicy.DESTROY if is_dev else cdk.RemovalPolicy.RETAIN
+        )
 
         cors_rules = [
             s3.CorsRule(
@@ -145,10 +147,18 @@ class MediaPersistentStack(cdk.Stack):
         )
 
         # --- Outputs ---
-        cdk.CfnOutput(self, "OriginalsBucketName", value=self.originals_bucket.bucket_name)
-        cdk.CfnOutput(self, "OriginalsBucketArn", value=self.originals_bucket.bucket_arn)
-        cdk.CfnOutput(self, "ProcessedBucketName", value=self.processed_bucket.bucket_name)
-        cdk.CfnOutput(self, "ProcessedBucketArn", value=self.processed_bucket.bucket_arn)
+        cdk.CfnOutput(
+            self, "OriginalsBucketName", value=self.originals_bucket.bucket_name
+        )
+        cdk.CfnOutput(
+            self, "OriginalsBucketArn", value=self.originals_bucket.bucket_arn
+        )
+        cdk.CfnOutput(
+            self, "ProcessedBucketName", value=self.processed_bucket.bucket_name
+        )
+        cdk.CfnOutput(
+            self, "ProcessedBucketArn", value=self.processed_bucket.bucket_arn
+        )
         cdk.CfnOutput(
             self, "CloudFrontDistributionId", value=self.distribution.distribution_id
         )

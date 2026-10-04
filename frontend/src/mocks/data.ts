@@ -13,7 +13,7 @@ import type {
   PublishedNewsletter,
   PushDevice,
   VotingNewsletter,
-} from "../api/types";
+} from "./types";
 
 // MOCK in-memory store. Mutations write back here so the UI feels live across
 // navigations within a session. Reload to reset. Replace with a real backend
@@ -132,17 +132,94 @@ const meepleMembers = [
     editionsAnswered: 9,
     joinedAt: "2024-08-01T00:00:00Z",
   },
-  { userId: "u_m_tara", displayName: "Tara", role: "admin" as const, avatarColor: "coral", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_kaavya", displayName: "Kaavya", role: "member" as const, avatarColor: "sun", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_maria", displayName: "Maria", role: "member" as const, avatarColor: "mint", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_christian", displayName: "Christian", role: "member" as const, avatarColor: "sky", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_meha", displayName: "Meha", role: "admin" as const, avatarColor: "peach", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_rohan", displayName: "Rohan", role: "member" as const, avatarColor: "grape", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_brigid", displayName: "Brigid", role: "member" as const, avatarColor: "mint", editionsAnswered: 7, joinedAt: "2024-09-15T00:00:00Z" },
-  { userId: "u_m_gordon", displayName: "Gordon", role: "member" as const, avatarColor: "sky", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_walt", displayName: "Walt", role: "member" as const, avatarColor: "coral", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_calvin", displayName: "Calvin", role: "member" as const, avatarColor: "sun", editionsAnswered: 9, joinedAt: "2024-08-01T00:00:00Z" },
-  { userId: "u_m_kari", displayName: "Kari", role: "member" as const, avatarColor: "peach", editionsAnswered: 6, joinedAt: "2024-11-01T00:00:00Z" },
+  {
+    userId: "u_m_tara",
+    displayName: "Tara",
+    role: "admin" as const,
+    avatarColor: "coral",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_kaavya",
+    displayName: "Kaavya",
+    role: "member" as const,
+    avatarColor: "sun",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_maria",
+    displayName: "Maria",
+    role: "member" as const,
+    avatarColor: "mint",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_christian",
+    displayName: "Christian",
+    role: "member" as const,
+    avatarColor: "sky",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_meha",
+    displayName: "Meha",
+    role: "admin" as const,
+    avatarColor: "peach",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_rohan",
+    displayName: "Rohan",
+    role: "member" as const,
+    avatarColor: "grape",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_brigid",
+    displayName: "Brigid",
+    role: "member" as const,
+    avatarColor: "mint",
+    editionsAnswered: 7,
+    joinedAt: "2024-09-15T00:00:00Z",
+  },
+  {
+    userId: "u_m_gordon",
+    displayName: "Gordon",
+    role: "member" as const,
+    avatarColor: "sky",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_walt",
+    displayName: "Walt",
+    role: "member" as const,
+    avatarColor: "coral",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_calvin",
+    displayName: "Calvin",
+    role: "member" as const,
+    avatarColor: "sun",
+    editionsAnswered: 9,
+    joinedAt: "2024-08-01T00:00:00Z",
+  },
+  {
+    userId: "u_m_kari",
+    displayName: "Kari",
+    role: "member" as const,
+    avatarColor: "peach",
+    editionsAnswered: 6,
+    joinedAt: "2024-11-01T00:00:00Z",
+  },
 ];
 
 export const meepleMailbox: Group = {
@@ -191,8 +268,7 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         userId: "u_sam",
         displayName: "Sam",
         avatarColor: "coral",
-        body:
-          "We finally hit the **Lake 22** trail. Five miles in, snow up to our knees, and a thermos of cocoa that didn't last past mile 2. Worth every step. I think Riley fell over six times — she's keeping score.",
+        body: "We finally hit the **Lake 22** trail. Five miles in, snow up to our knees, and a thermos of cocoa that didn't last past mile 2. Worth every step. I think Riley fell over six times — she's keeping score.",
         images: [
           { imageId: "i1", status: "ready", alt: "snowy trail" },
           { imageId: "i2", status: "ready", alt: "thermos of cocoa" },
@@ -230,8 +306,7 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         userId: "u_alex",
         displayName: "Alex",
         avatarColor: "grape",
-        body:
-          "Got the keys to the new place. It's tiny, it's drafty, and there's a window that won't close. I love it. First thing I did was hang the print Quinn made me three years ago.",
+        body: "Got the keys to the new place. It's tiny, it's drafty, and there's a window that won't close. I love it. First thing I did was hang the print Quinn made me three years ago.",
         images: [{ imageId: "i4", status: "ready", alt: "new apartment window" }],
         publishedAt: "2026-04-28T22:31:00Z",
         comments: [
@@ -255,8 +330,7 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         userId: "u_riley",
         displayName: "Riley",
         avatarColor: "mint",
-        body:
-          "Adopted a cat. Her name is Casserole. She knocked over a glass of water within four minutes of arriving home and has not yet apologized.",
+        body: "Adopted a cat. Her name is Casserole. She knocked over a glass of water within four minutes of arriving home and has not yet apologized.",
         images: [
           { imageId: "i5", status: "ready", alt: "cat on a windowsill" },
           { imageId: "i6", status: "ready", alt: "cat asleep" },
@@ -283,8 +357,7 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         userId: "u_quinn",
         displayName: "Quinn",
         avatarColor: "grape",
-        body:
-          "Did a Sunday slow-cook pork shoulder, then turned the leftovers into tacos for lunch all week. Tuesday's tacos > Sunday's roast, fight me.",
+        body: "Did a Sunday slow-cook pork shoulder, then turned the leftovers into tacos for lunch all week. Tuesday's tacos > Sunday's roast, fight me.",
         images: [{ imageId: "i7", status: "ready", alt: "pork tacos" }],
         publishedAt: "2026-04-29T18:00:00Z",
         comments: [],
@@ -325,8 +398,7 @@ const aprilQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         userId: "u_morgan",
         displayName: "Mo",
         avatarColor: "sun",
-        body:
-          "My toddler asked, \"is the moon a friend?\" — and I had to admit I don't know what to do with that question.",
+        body: 'My toddler asked, "is the moon a friend?" — and I had to admit I don\'t know what to do with that question.',
         images: [],
         publishedAt: "2026-04-30T03:18:00Z",
         comments: [
@@ -440,8 +512,7 @@ const myMayResponses: MyResponse[] = [
     questionId: "q_may_1",
     status: "published",
     kind: "text",
-    body:
-      "Took my first solo trip in years — three nights on the Olympic coast. Walked until my feet hurt, slept in the back of the truck, and didn't open my laptop once.",
+    body: "Took my first solo trip in years — three nights on the Olympic coast. Walked until my feet hurt, slept in the back of the truck, and didn't open my laptop once.",
     imageMediaIds: ["i_may_1", "i_may_2", "i_may_3"],
     updatedAt: new Date(Date.now() - 60_000).toISOString(),
     publishedAt: new Date(Date.now() - 60_000).toISOString(),
@@ -452,8 +523,7 @@ const myMayResponses: MyResponse[] = [
     questionId: "q_may_2",
     status: "draft",
     kind: "text",
-    body:
-      "Sam came over Sunday and we tried to make handmade ravioli. We did not succeed. The filling was incredible — brown butter, sage, ricotta, lemon zest — and we ended up just spooning it on top of pappardelle. 10/10, would fail again.",
+    body: "Sam came over Sunday and we tried to make handmade ravioli. We did not succeed. The filling was incredible — brown butter, sage, ricotta, lemon zest — and we ended up just spooning it on top of pappardelle. 10/10, would fail again.",
     imageMediaIds: ["i_may_4", "i_may_5"],
     updatedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
     wordCount: 52,
@@ -466,13 +536,16 @@ const mayNewsletter: OpenNewsletter = {
   cycleId: "202605",
   status: "open",
   responseOpenAt: "2026-05-01T04:00:00Z",
-  responseCloseAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000).toISOString(),
+  responseCloseAt: new Date(
+    Date.now() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000,
+  ).toISOString(),
   questions: mayQuestions,
   myResponses: myMayResponses,
   gradientClass: "hero-may",
   monthLabel: "May",
   yearLabel: "2026",
-  hypeMessage: "Sam, Riley, and Alex have all started writing. Casey hasn't started yet — maybe say hi 👋",
+  hypeMessage:
+    "Sam, Riley, and Alex have all started writing. Casey hasn't started yet — maybe say hi 👋",
 };
 
 const juneCandidates: CandidateQuestion[] = [
@@ -685,13 +758,23 @@ const meepleAnswer = (
         authorAvatarColor: cm.avatarColor,
         body: c.body,
         image: c.image
-          ? { imageId: c.image.imageId, status: "ready" as const, alt: c.image.alt, displayUrl: c.image.displayUrl, thumbUrl: c.image.displayUrl }
+          ? {
+              imageId: c.image.imageId,
+              status: "ready" as const,
+              alt: c.image.alt,
+              displayUrl: c.image.displayUrl,
+              thumbUrl: c.image.displayUrl,
+            }
           : null,
         createdAt: c.createdAt ?? "2026-05-04T18:00:00Z",
         editedAt: null,
       };
     }),
-    reactionGroups: (opts.reactions ?? []).map((r) => ({ emoji: r.emoji, count: r.count, reactedByMe: r.reactedByMe ?? false })),
+    reactionGroups: (opts.reactions ?? []).map((r) => ({
+      emoji: r.emoji,
+      count: r.count,
+      reactedByMe: r.reactedByMe ?? false,
+    })),
   };
 };
 
@@ -707,9 +790,21 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     isAnonymous: false,
     askedBy: askedByMember(meepleMember("Kari")),
     options: [
-      { optionId: "o_pasta_a", label: "A: Throw out the pasta — you don't want them coming back to a rotten fridge", voteCount: 0 },
-      { optionId: "o_pasta_b", label: "B: Leave it alone — you don't know its plans for it", voteCount: 8 },
-      { optionId: "o_pasta_c", label: "C: Eat it — you're hungry, despite living in a major metro", voteCount: 3 },
+      {
+        optionId: "o_pasta_a",
+        label: "A: Throw out the pasta — you don't want them coming back to a rotten fridge",
+        voteCount: 0,
+      },
+      {
+        optionId: "o_pasta_b",
+        label: "B: Leave it alone — you don't know its plans for it",
+        voteCount: 8,
+      },
+      {
+        optionId: "o_pasta_c",
+        label: "C: Eat it — you're hungry, despite living in a major metro",
+        voteCount: 3,
+      },
     ],
     totalVotes: 11,
     myVoteOptionId: "o_pasta_b",
@@ -752,7 +847,10 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "r_meeple_2_bryan",
         "Quinn",
         "Mac Miller. I'm a big fan of so much of his music, and I still listen to it multiple times a week (he died in 2018). I wish he were still around and making music.\n\n*Please skip if you do not want to be super bummed out.*\n\nAlso, not to get too dark in the meeple newsletter, but I had far too many friends from High School and College lose their lives to either drugs or suicide. I wasn't as close to any of them when it happened, but I guess that's how those things tend to go. People get isolated, and you don't know they're struggling until it's too late. A lot of his music towards the end of his life seemed like an obvious cry for help, and it reminds me of those former friends and what they might have been going through.",
-        { displayNameOverride: "Bryan", reactions: [{ emoji: "❤️", count: 3, reactedByMe: false }] },
+        {
+          displayNameOverride: "Bryan",
+          reactions: [{ emoji: "❤️", count: 3, reactedByMe: false }],
+        },
       ),
       meepleAnswer(
         "r_meeple_2_meha",
@@ -785,12 +883,17 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
   {
     questionId: "q_meeple_3",
     kind: "text",
-    prompt: "Do you have ideas for healthy, easy, filling snacks for the work week? I'm okay with some prep/assembly!",
+    prompt:
+      "Do you have ideas for healthy, easy, filling snacks for the work week? I'm okay with some prep/assembly!",
     displayOrder: 2,
     isAnonymous: false,
     askedBy: askedByMember(meepleMember("Meha")),
     answers: [
-      meepleAnswer("r_meeple_3_tara", "Tara", "Unfortunately I don't think most of my regular snacks fall into the particularly healthy category. I almost exclusively source my office snacks from Trader Joe's lol. But I feel like nuts are a classic."),
+      meepleAnswer(
+        "r_meeple_3_tara",
+        "Tara",
+        "Unfortunately I don't think most of my regular snacks fall into the particularly healthy category. I almost exclusively source my office snacks from Trader Joe's lol. But I feel like nuts are a classic.",
+      ),
       meepleAnswer(
         "r_meeple_3_kaavya",
         "Kaavya",
@@ -809,16 +912,32 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "Christian",
         "Not original, but I am a fan of carrots and hummus, or celery and peanut butter. Both are relatively minimal to prep and will get me through the work week.\n\nAlso I like to have mixed nuts or almonds or something at my desk as well.",
       ),
-      meepleAnswer("r_meeple_3_meha", "Meha", "My mom roasts batches of raw cashews and walnuts to just have on hand as a snack for the week and I did really enjoy that the one time I did it at home."),
+      meepleAnswer(
+        "r_meeple_3_meha",
+        "Meha",
+        "My mom roasts batches of raw cashews and walnuts to just have on hand as a snack for the week and I did really enjoy that the one time I did it at home.",
+      ),
       meepleAnswer(
         "r_meeple_3_rohan",
         "Rohan",
         "IDK if this is a faux pas to bring to work but tuna salad and crackers is healthy/high protein and really easy to make. I've been really enjoying tuna salad sandwiches as a lunch because I can meal prep some for a few days but it still feels homemade each day.",
         { reactions: [{ emoji: "❤️", count: 3, reactedByMe: true }] },
       ),
-      meepleAnswer("r_meeple_3_calvin", "Calvin", "I wish I had an answer to this but I currently do not. Also going to be looking at other peoples' responses."),
-      meepleAnswer("r_meeple_3_brigid", "Brigid", "I mostly just have bell peppers and carrots with hummus."),
-      meepleAnswer("r_meeple_3_gordon", "Gordon", "I like a bag of almonds with raisins (about a 50/50 split)."),
+      meepleAnswer(
+        "r_meeple_3_calvin",
+        "Calvin",
+        "I wish I had an answer to this but I currently do not. Also going to be looking at other peoples' responses.",
+      ),
+      meepleAnswer(
+        "r_meeple_3_brigid",
+        "Brigid",
+        "I mostly just have bell peppers and carrots with hummus.",
+      ),
+      meepleAnswer(
+        "r_meeple_3_gordon",
+        "Gordon",
+        "I like a bag of almonds with raisins (about a 50/50 split).",
+      ),
       meepleAnswer(
         "r_meeple_3_walt",
         "Walt",
@@ -852,42 +971,92 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
     isAnonymous: false,
     askedBy: askedByMember(meepleMember("Maria")),
     answers: [
-      meepleAnswer("r_meeple_5_tara", "Tara", "Is Porchfest a cop-out?\n\nThere was also Somerville Open Studios this weekend but I didn't get a chance to check it out."),
+      meepleAnswer(
+        "r_meeple_5_tara",
+        "Tara",
+        "Is Porchfest a cop-out?\n\nThere was also Somerville Open Studios this weekend but I didn't get a chance to check it out.",
+      ),
       meepleAnswer(
         "r_meeple_5_kaavya",
         "Kaavya",
         "This weekend was flower mart in Baltimore! It's surprisingly over a 100 years old and was originally started by the women's civic league to promote better living conditions throughout Baltimore. There's a bunch of local vendors who sell plants/art, but most importantly it is the home of the famous Baltimore lemon stick!",
         {
-          images: [{ imageId: "meep_kaavya_XweoS4YqsAoLqfaVt6KI_0", alt: "Baltimore lemon stick", displayUrl: meepleImg("meep_kaavya_XweoS4YqsAoLqfaVt6KI_0") }],
-          reactions: [{ emoji: "🍋", count: 2 }, { emoji: "❤️", count: 1 }, { emoji: "🤔", count: 1 }],
-        },
-      ),
-      meepleAnswer("r_meeple_5_bryan", "Quinn", "This is probably cheating, but Porchfest is next weekend, and I'm very excited!", { displayNameOverride: "Bryan" }),
-      meepleAnswer(
-        "r_meeple_5_meha",
-        "Meha",
-        "SPRING!",
-        {
           images: [
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_0", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_0") },
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_1", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_1") },
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_2", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_2") },
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_3", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_3") },
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_4", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_4") },
-            { imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_5", alt: "spring blooms", displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_5") },
+            {
+              imageId: "meep_kaavya_XweoS4YqsAoLqfaVt6KI_0",
+              alt: "Baltimore lemon stick",
+              displayUrl: meepleImg("meep_kaavya_XweoS4YqsAoLqfaVt6KI_0"),
+            },
           ],
-          reactions: [{ emoji: "❤️", count: 2 }],
+          reactions: [
+            { emoji: "🍋", count: 2 },
+            { emoji: "❤️", count: 1 },
+            { emoji: "🤔", count: 1 },
+          ],
         },
       ),
+      meepleAnswer(
+        "r_meeple_5_bryan",
+        "Quinn",
+        "This is probably cheating, but Porchfest is next weekend, and I'm very excited!",
+        { displayNameOverride: "Bryan" },
+      ),
+      meepleAnswer("r_meeple_5_meha", "Meha", "SPRING!", {
+        images: [
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_0",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_0"),
+          },
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_1",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_1"),
+          },
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_2",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_2"),
+          },
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_3",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_3"),
+          },
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_4",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_4"),
+          },
+          {
+            imageId: "meep_meha_XweoS4YqsAoLqfaVt6KI_5",
+            alt: "spring blooms",
+            displayUrl: meepleImg("meep_meha_XweoS4YqsAoLqfaVt6KI_5"),
+          },
+        ],
+        reactions: [{ emoji: "❤️", count: 2 }],
+      }),
       meepleAnswer(
         "r_meeple_5_rohan",
         "Rohan",
         "It is spring in Chicago! Still persistently cold, but the flowers and greenery have made for exceptional walks.",
         {
           images: [
-            { imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_0", alt: "Chicago spring", displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_0") },
-            { imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_1", alt: "Chicago spring", displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_1") },
-            { imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_2", alt: "Chicago spring", displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_2") },
+            {
+              imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_0",
+              alt: "Chicago spring",
+              displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_0"),
+            },
+            {
+              imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_1",
+              alt: "Chicago spring",
+              displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_1"),
+            },
+            {
+              imageId: "meep_rohan_XweoS4YqsAoLqfaVt6KI_2",
+              alt: "Chicago spring",
+              displayUrl: meepleImg("meep_rohan_XweoS4YqsAoLqfaVt6KI_2"),
+            },
           ],
           reactions: [{ emoji: "❤️", count: 4, reactedByMe: true }],
           comments: [{ author: "Rohan", body: "The creature? I think a groundhog but who knows" }],
@@ -899,9 +1068,22 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "I guess the big general Cornell news is we got Chainsmokers and Daya for slope day (our spring concert).\n\nAnd some other crazy heated news that made it to the big leagues (NY Times): Cornell's president Michael Kotlikoff('s driver) is caught on video backing a car and hitting a student behind them and running over a student's foot after being confronted about freedom of speech on campus. This came in the aftermath of also after a hosted debate with Norman Finkelstein, who is famous for many reasons. The debate was titled \"Israel Was Not Justified in its Response to Oct. 7\". So yeah, one can imagine how heated this was. The students followed the president and kept pressing him until he got in his car and then the car backing into student happened. Kind of crazy news tbh.\n\n[NYT story](https://www.nytimes.com/2026/05/01/us/cornell-president-student-protester.html)\n\nThere is seemingly a general frustration with Kotlikoff with the suppression of student protests and voices (related to pro-palestine) while other student orgs have literally invited the likes of Ann Coulter, an actual IDF soldier, the federalist society inviting a law professor who has basically said black people aren't smart enough to be lawyers, etc — while revoking Kehlani's slope day performance because people are too uncomfortable with her expression for pro palestine. And also Cornell folding to the Trump administration. (We're no better than Columbia.)",
         { reactions: [{ emoji: "😮", count: 1 }] },
       ),
-      meepleAnswer("r_meeple_5_brigid", "Brigid", "Went to Harvard art festival this weekend, which had some music and dance and was fun in a student project type way but am also excited for porchfest next week."),
-      meepleAnswer("r_meeple_5_gordon", "Gordon", "Medford Porchfest is June 6th! Mark your calendars."),
-      meepleAnswer("r_meeple_5_walt", "Walt", "Porchfest May 9! I am cutting my Hawaii vacation a day shorter than I could've just so that I can be back in time for the best day of the year in Somerville!", { reactions: [{ emoji: "❤️", count: 2 }] }),
+      meepleAnswer(
+        "r_meeple_5_brigid",
+        "Brigid",
+        "Went to Harvard art festival this weekend, which had some music and dance and was fun in a student project type way but am also excited for porchfest next week.",
+      ),
+      meepleAnswer(
+        "r_meeple_5_gordon",
+        "Gordon",
+        "Medford Porchfest is June 6th! Mark your calendars.",
+      ),
+      meepleAnswer(
+        "r_meeple_5_walt",
+        "Walt",
+        "Porchfest May 9! I am cutting my Hawaii vacation a day shorter than I could've just so that I can be back in time for the best day of the year in Somerville!",
+        { reactions: [{ emoji: "❤️", count: 2 }] },
+      ),
     ],
   },
   {
@@ -919,8 +1101,16 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "Idk how many of you know Sophia Yan, but I went to her wedding! Also some cool fog from a 17th floor downtown.",
         {
           images: [
-            { imageId: "meep_tara_photowall_0", alt: "Sophia's wedding", displayUrl: meepleImg("meep_tara_photowall_0") },
-            { imageId: "meep_tara_photowall_1", alt: "downtown fog from the 17th floor", displayUrl: meepleImg("meep_tara_photowall_1") },
+            {
+              imageId: "meep_tara_photowall_0",
+              alt: "Sophia's wedding",
+              displayUrl: meepleImg("meep_tara_photowall_0"),
+            },
+            {
+              imageId: "meep_tara_photowall_1",
+              alt: "downtown fog from the 17th floor",
+              displayUrl: meepleImg("meep_tara_photowall_1"),
+            },
           ],
           reactions: [{ emoji: "❤️", count: 3 }],
         },
@@ -931,12 +1121,37 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "Pics from my brother's wedding! It was the best wedding I've ever been to. Being the sister of the groom was fun and because they had been dating so long, I felt like I knew everyone there. I love how my dress came out so that also felt good. And my speech went well! Highlights include joking around with my cousins (cousin table at a wedding is top tier good times) and seeing my 92 y/o great uncle Eugene on the dance floor the whole time (pictured in conga line).",
         {
           images: [
-            { imageId: "meep_maria_photowall_0", alt: "brother's wedding", displayUrl: meepleImg("meep_maria_photowall_0") },
-            { imageId: "meep_maria_photowall_1", alt: "brother's wedding", displayUrl: meepleImg("meep_maria_photowall_1") },
-            { imageId: "meep_maria_photowall_2", alt: "brother's wedding", displayUrl: meepleImg("meep_maria_photowall_2") },
-            { imageId: "meep_maria_photowall_3", alt: "brother's wedding", displayUrl: meepleImg("meep_maria_photowall_3") },
-            { imageId: "meep_maria_photowall_4", alt: "uncle Eugene on the dance floor", displayUrl: meepleImg("meep_maria_photowall_4"), caption: "Uncle Eugene (92) running the conga line" },
-            { imageId: "meep_maria_photowall_5", alt: "cousin table at the wedding", displayUrl: meepleImg("meep_maria_photowall_5") },
+            {
+              imageId: "meep_maria_photowall_0",
+              alt: "brother's wedding",
+              displayUrl: meepleImg("meep_maria_photowall_0"),
+            },
+            {
+              imageId: "meep_maria_photowall_1",
+              alt: "brother's wedding",
+              displayUrl: meepleImg("meep_maria_photowall_1"),
+            },
+            {
+              imageId: "meep_maria_photowall_2",
+              alt: "brother's wedding",
+              displayUrl: meepleImg("meep_maria_photowall_2"),
+            },
+            {
+              imageId: "meep_maria_photowall_3",
+              alt: "brother's wedding",
+              displayUrl: meepleImg("meep_maria_photowall_3"),
+            },
+            {
+              imageId: "meep_maria_photowall_4",
+              alt: "uncle Eugene on the dance floor",
+              displayUrl: meepleImg("meep_maria_photowall_4"),
+              caption: "Uncle Eugene (92) running the conga line",
+            },
+            {
+              imageId: "meep_maria_photowall_5",
+              alt: "cousin table at the wedding",
+              displayUrl: meepleImg("meep_maria_photowall_5"),
+            },
           ],
           reactions: [{ emoji: "❤️", count: 4 }],
           comments: [{ author: "Maria", body: "thank you!!" }],
@@ -949,9 +1164,23 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         {
           displayNameOverride: "Bryan",
           images: [
-            { imageId: "meep_bryan_photowall_0", alt: "marathon", displayUrl: meepleImg("meep_bryan_photowall_0"), caption: "Mile 18 — still smiling somehow" },
-            { imageId: "meep_bryan_photowall_1", alt: "marathon", displayUrl: meepleImg("meep_bryan_photowall_1") },
-            { imageId: "meep_bryan_photowall_2", alt: "friendly cat at Prospect Hill", displayUrl: meepleImg("meep_bryan_photowall_2"), caption: "Prospect Hill's unofficial mayor" },
+            {
+              imageId: "meep_bryan_photowall_0",
+              alt: "marathon",
+              displayUrl: meepleImg("meep_bryan_photowall_0"),
+              caption: "Mile 18 — still smiling somehow",
+            },
+            {
+              imageId: "meep_bryan_photowall_1",
+              alt: "marathon",
+              displayUrl: meepleImg("meep_bryan_photowall_1"),
+            },
+            {
+              imageId: "meep_bryan_photowall_2",
+              alt: "friendly cat at Prospect Hill",
+              displayUrl: meepleImg("meep_bryan_photowall_2"),
+              caption: "Prospect Hill's unofficial mayor",
+            },
           ],
           reactions: [{ emoji: "❤️", count: 2 }],
         },
@@ -962,14 +1191,41 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "Hello from day ~1.5 in Japan with Gordon and my parents!! We're in Tokyo for the first 5 days and I'm so excited to explore more of this city and beyond!!!",
         {
           images: [
-            { imageId: "meep_meha_photowall_0", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_0") },
-            { imageId: "meep_meha_photowall_1", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_1") },
-            { imageId: "meep_meha_photowall_2", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_2") },
-            { imageId: "meep_meha_photowall_3", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_3") },
-            { imageId: "meep_meha_photowall_4", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_4") },
-            { imageId: "meep_meha_photowall_5", alt: "Tokyo", displayUrl: meepleImg("meep_meha_photowall_5") },
+            {
+              imageId: "meep_meha_photowall_0",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_0"),
+            },
+            {
+              imageId: "meep_meha_photowall_1",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_1"),
+            },
+            {
+              imageId: "meep_meha_photowall_2",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_2"),
+            },
+            {
+              imageId: "meep_meha_photowall_3",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_3"),
+            },
+            {
+              imageId: "meep_meha_photowall_4",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_4"),
+            },
+            {
+              imageId: "meep_meha_photowall_5",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_meha_photowall_5"),
+            },
           ],
-          reactions: [{ emoji: "❤️", count: 5, reactedByMe: true }, { emoji: "🗾", count: 1 }],
+          reactions: [
+            { emoji: "❤️", count: 5, reactedByMe: true },
+            { emoji: "🗾", count: 1 },
+          ],
         },
       ),
       meepleAnswer(
@@ -978,59 +1234,128 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "We had some crazy tornado warnings, and a tornado touched down about 60ft from my parent's house last weekend. All-in-all lucky that nothing serious was destroyed, but we lost an apple tree, peach tree and the neighbor's roof got pulled up.",
         {
           images: [
-            { imageId: "meep_rohan_photowall_0", alt: "tornado damage", displayUrl: meepleImg("meep_rohan_photowall_0") },
-            { imageId: "meep_rohan_photowall_1", alt: "tornado damage", displayUrl: meepleImg("meep_rohan_photowall_1") },
+            {
+              imageId: "meep_rohan_photowall_0",
+              alt: "tornado damage",
+              displayUrl: meepleImg("meep_rohan_photowall_0"),
+            },
+            {
+              imageId: "meep_rohan_photowall_1",
+              alt: "tornado damage",
+              displayUrl: meepleImg("meep_rohan_photowall_1"),
+            },
           ],
           reactions: [{ emoji: "😮", count: 3 }],
         },
       ),
-      meepleAnswer(
-        "r_meeple_6_brigid",
-        "Brigid",
-        "Trip to AZ.",
-        {
-          images: [
-            { imageId: "meep_brigid_photowall_0", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_0") },
-            { imageId: "meep_brigid_photowall_1", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_1") },
-            { imageId: "meep_brigid_photowall_2", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_2") },
-            { imageId: "meep_brigid_photowall_3", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_3") },
-            { imageId: "meep_brigid_photowall_4", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_4") },
-            { imageId: "meep_brigid_photowall_5", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_5") },
-            { imageId: "meep_brigid_photowall_6", alt: "Arizona", displayUrl: meepleImg("meep_brigid_photowall_6") },
-          ],
-          reactions: [{ emoji: "🌵", count: 3 }],
-        },
-      ),
+      meepleAnswer("r_meeple_6_brigid", "Brigid", "Trip to AZ.", {
+        images: [
+          {
+            imageId: "meep_brigid_photowall_0",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_0"),
+          },
+          {
+            imageId: "meep_brigid_photowall_1",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_1"),
+          },
+          {
+            imageId: "meep_brigid_photowall_2",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_2"),
+          },
+          {
+            imageId: "meep_brigid_photowall_3",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_3"),
+          },
+          {
+            imageId: "meep_brigid_photowall_4",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_4"),
+          },
+          {
+            imageId: "meep_brigid_photowall_5",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_5"),
+          },
+          {
+            imageId: "meep_brigid_photowall_6",
+            alt: "Arizona",
+            displayUrl: meepleImg("meep_brigid_photowall_6"),
+          },
+        ],
+        reactions: [{ emoji: "🌵", count: 3 }],
+      }),
       meepleAnswer(
         "r_meeple_6_gordon",
         "Gordon",
         "Sign-making for Walt running the Boston Marathon, lilac and pear tree in bloom at 19 Vassar St, and first photos from Tokyo where Meha and I now are!",
         {
           images: [
-            { imageId: "meep_gordon_photowall_0", alt: "marathon sign", displayUrl: meepleImg("meep_gordon_photowall_0"), caption: "Walt's official cheer squad signage" },
-            { imageId: "meep_gordon_photowall_1", alt: "lilac in bloom at 19 Vassar", displayUrl: meepleImg("meep_gordon_photowall_1"), caption: "19 Vassar lilac, finally" },
-            { imageId: "meep_gordon_photowall_2", alt: "Tokyo", displayUrl: meepleImg("meep_gordon_photowall_2") },
-            { imageId: "meep_gordon_photowall_3", alt: "Tokyo", displayUrl: meepleImg("meep_gordon_photowall_3"), caption: "First night out in Shinjuku" },
+            {
+              imageId: "meep_gordon_photowall_0",
+              alt: "marathon sign",
+              displayUrl: meepleImg("meep_gordon_photowall_0"),
+              caption: "Walt's official cheer squad signage",
+            },
+            {
+              imageId: "meep_gordon_photowall_1",
+              alt: "lilac in bloom at 19 Vassar",
+              displayUrl: meepleImg("meep_gordon_photowall_1"),
+              caption: "19 Vassar lilac, finally",
+            },
+            {
+              imageId: "meep_gordon_photowall_2",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_gordon_photowall_2"),
+            },
+            {
+              imageId: "meep_gordon_photowall_3",
+              alt: "Tokyo",
+              displayUrl: meepleImg("meep_gordon_photowall_3"),
+              caption: "First night out in Shinjuku",
+            },
           ],
           reactions: [{ emoji: "❤️", count: 4 }],
         },
       ),
-      meepleAnswer(
-        "r_meeple_6_walt",
-        "Walt",
-        "Thanks for all the support during the marathon!",
-        {
-          images: [
-            { imageId: "meep_walt_photowall_0", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_0") },
-            { imageId: "meep_walt_photowall_1", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_1") },
-            { imageId: "meep_walt_photowall_2", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_2") },
-            { imageId: "meep_walt_photowall_3", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_3") },
-            { imageId: "meep_walt_photowall_4", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_4") },
-            { imageId: "meep_walt_photowall_5", alt: "Boston Marathon", displayUrl: meepleImg("meep_walt_photowall_5") },
-          ],
-          reactions: [{ emoji: "❤️", count: 4, reactedByMe: true }],
-        },
-      ),
+      meepleAnswer("r_meeple_6_walt", "Walt", "Thanks for all the support during the marathon!", {
+        images: [
+          {
+            imageId: "meep_walt_photowall_0",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_0"),
+          },
+          {
+            imageId: "meep_walt_photowall_1",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_1"),
+          },
+          {
+            imageId: "meep_walt_photowall_2",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_2"),
+          },
+          {
+            imageId: "meep_walt_photowall_3",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_3"),
+          },
+          {
+            imageId: "meep_walt_photowall_4",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_4"),
+          },
+          {
+            imageId: "meep_walt_photowall_5",
+            alt: "Boston Marathon",
+            displayUrl: meepleImg("meep_walt_photowall_5"),
+          },
+        ],
+        reactions: [{ emoji: "❤️", count: 4, reactedByMe: true }],
+      }),
     ],
   },
   {
@@ -1047,7 +1372,11 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "I stopped by Porter Square Books on Indie Bookstore Day and it was so much fun! I rolled a d20 for this mystery book.\n\nLow key I feel like I've had a lot of things piling up for me recently so I'm feeling kinda stressed :(",
         {
           images: [
-            { imageId: "meep_tara_onyourmind_0", alt: "mystery book from Porter Square Books", displayUrl: meepleImg("meep_tara_onyourmind_0") },
+            {
+              imageId: "meep_tara_onyourmind_0",
+              alt: "mystery book from Porter Square Books",
+              displayUrl: meepleImg("meep_tara_onyourmind_0"),
+            },
           ],
         },
       ),
@@ -1063,18 +1392,40 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "Using this to put more photos. me and becca ran a 50k! here are some pics of me before and after. including the cakes that our friend jane made us post race and me double fisting water afterwards.",
         {
           images: [
-            { imageId: "meep_maria_onyourmind_0", alt: "pre-race", displayUrl: meepleImg("meep_maria_onyourmind_0") },
-            { imageId: "meep_maria_onyourmind_1", alt: "post-race cakes", displayUrl: meepleImg("meep_maria_onyourmind_1") },
-            { imageId: "meep_maria_onyourmind_2", alt: "double-fisting water", displayUrl: meepleImg("meep_maria_onyourmind_2") },
-            { imageId: "meep_maria_onyourmind_3", alt: "50k", displayUrl: meepleImg("meep_maria_onyourmind_3") },
-            { imageId: "meep_maria_onyourmind_4", alt: "50k", displayUrl: meepleImg("meep_maria_onyourmind_4") },
+            {
+              imageId: "meep_maria_onyourmind_0",
+              alt: "pre-race",
+              displayUrl: meepleImg("meep_maria_onyourmind_0"),
+            },
+            {
+              imageId: "meep_maria_onyourmind_1",
+              alt: "post-race cakes",
+              displayUrl: meepleImg("meep_maria_onyourmind_1"),
+            },
+            {
+              imageId: "meep_maria_onyourmind_2",
+              alt: "double-fisting water",
+              displayUrl: meepleImg("meep_maria_onyourmind_2"),
+            },
+            {
+              imageId: "meep_maria_onyourmind_3",
+              alt: "50k",
+              displayUrl: meepleImg("meep_maria_onyourmind_3"),
+            },
+            {
+              imageId: "meep_maria_onyourmind_4",
+              alt: "50k",
+              displayUrl: meepleImg("meep_maria_onyourmind_4"),
+            },
           ],
-          reactions: [{ emoji: "❤️", count: 3 }, { emoji: "😮", count: 1 }],
+          reactions: [
+            { emoji: "❤️", count: 3 },
+            { emoji: "😮", count: 1 },
+          ],
           comments: [
             {
               author: "Maria",
-              body:
-                "honestly i've been feeling lately that my perception of difficulty of tasks has gotten out of hand. like if i am capable of something then that means it's actually not that difficult. so things that seem super impressive are reduced to mundane once i've managed to complete them. i dont think this has affected me negatively, but i realized that it's a bit ridiculous when i finished a 50k and was like well it's obviously possible, so anyone can do it. and then retroactively being like well i did it so it must not have been that hard (even though i wanted to drop out at mile 12 lol)",
+              body: "honestly i've been feeling lately that my perception of difficulty of tasks has gotten out of hand. like if i am capable of something then that means it's actually not that difficult. so things that seem super impressive are reduced to mundane once i've managed to complete them. i dont think this has affected me negatively, but i realized that it's a bit ridiculous when i finished a 50k and was like well it's obviously possible, so anyone can do it. and then retroactively being like well i did it so it must not have been that hard (even though i wanted to drop out at mile 12 lol)",
             },
           ],
         },
@@ -1086,14 +1437,39 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         {
           displayNameOverride: "Bryan",
           images: [
-            { imageId: "meep_bryan_onyourmind_0", alt: "time off", displayUrl: meepleImg("meep_bryan_onyourmind_0") },
-            { imageId: "meep_bryan_onyourmind_1", alt: "time off", displayUrl: meepleImg("meep_bryan_onyourmind_1") },
-            { imageId: "meep_bryan_onyourmind_2", alt: "time off", displayUrl: meepleImg("meep_bryan_onyourmind_2") },
-            { imageId: "meep_bryan_onyourmind_3", alt: "time off", displayUrl: meepleImg("meep_bryan_onyourmind_3") },
-            { imageId: "meep_bryan_onyourmind_4", alt: "time off", displayUrl: meepleImg("meep_bryan_onyourmind_4") },
+            {
+              imageId: "meep_bryan_onyourmind_0",
+              alt: "time off",
+              displayUrl: meepleImg("meep_bryan_onyourmind_0"),
+            },
+            {
+              imageId: "meep_bryan_onyourmind_1",
+              alt: "time off",
+              displayUrl: meepleImg("meep_bryan_onyourmind_1"),
+            },
+            {
+              imageId: "meep_bryan_onyourmind_2",
+              alt: "time off",
+              displayUrl: meepleImg("meep_bryan_onyourmind_2"),
+            },
+            {
+              imageId: "meep_bryan_onyourmind_3",
+              alt: "time off",
+              displayUrl: meepleImg("meep_bryan_onyourmind_3"),
+            },
+            {
+              imageId: "meep_bryan_onyourmind_4",
+              alt: "time off",
+              displayUrl: meepleImg("meep_bryan_onyourmind_4"),
+            },
           ],
           reactions: [{ emoji: "❤️", count: 2, reactedByMe: false }],
-          comments: [{ author: "Meha", body: "congrats Bryan!!! so glad you have some time off to recharge before you start!" }],
+          comments: [
+            {
+              author: "Meha",
+              body: "congrats Bryan!!! so glad you have some time off to recharge before you start!",
+            },
+          ],
         },
       ),
       meepleAnswer(
@@ -1102,19 +1478,64 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "I think my photos are scrambled, so description in no particular order:\n\n- some teishoku style breakfast w/ Rheya\n- some spring pics in GR, the weather is either beautiful or freakin cold again\n- a terrifying figure Rheya and I found on a walk, it looked kinda cute from behind and turned out to very much not be\n- the legendary Alaska license plate I saw on my way to work one day shout out Maria\n- the best cheesecake I've ever had that Rheya mostly made and I somewhat helped\n- Rheya's last performance of the season is today 5/3\n- photos with Wade, another company dancer, in our long coats",
         {
           images: [
-            { imageId: "meep_christian_onyourmind_0", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_0") },
-            { imageId: "meep_christian_onyourmind_1", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_1") },
-            { imageId: "meep_christian_onyourmind_2", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_2") },
-            { imageId: "meep_christian_onyourmind_3", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_3") },
-            { imageId: "meep_christian_onyourmind_4", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_4") },
-            { imageId: "meep_christian_onyourmind_5", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_5") },
-            { imageId: "meep_christian_onyourmind_6", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_6") },
-            { imageId: "meep_christian_onyourmind_7", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_7") },
-            { imageId: "meep_christian_onyourmind_8", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_8") },
-            { imageId: "meep_christian_onyourmind_9", alt: "Christian's photo dump", displayUrl: meepleImg("meep_christian_onyourmind_9") },
+            {
+              imageId: "meep_christian_onyourmind_0",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_0"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_1",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_1"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_2",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_2"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_3",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_3"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_4",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_4"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_5",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_5"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_6",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_6"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_7",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_7"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_8",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_8"),
+            },
+            {
+              imageId: "meep_christian_onyourmind_9",
+              alt: "Christian's photo dump",
+              displayUrl: meepleImg("meep_christian_onyourmind_9"),
+            },
           ],
           reactions: [{ emoji: "❤️", count: 3 }],
-          comments: [{ author: "Christian", body: "I was so hyped! I must know, where are you in your license plate journey?" }],
+          comments: [
+            {
+              author: "Christian",
+              body: "I was so hyped! I must know, where are you in your license plate journey?",
+            },
+          ],
         },
       ),
       meepleAnswer(
@@ -1123,11 +1544,31 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "For all of you on the edge of your seats wondering how my work retreat in San Diego went last month — it was actually very fun and lovely and beachy!!!!\n\nI was reminded that I love 98% of my coworkers — they're literally all so smart and funny and personable and I sometimes forget that working for an impact-oriented org in the progressive political space can mean you have a self-selecting group of kind empathetic people who more or less share your values (not always though, like actual dem campaign workers sound evil). So jumping into the ocean and taking walks on the beach with my coworker friends was nice co-relaxation time. I also gave a (comedic) presentation about the competitive collegiate raas circuit during our all-staff open mic/talent show and I think it's safe to say it was a hit.\n\nThe company is still toxic as hell and Maxtt suck and I don't think I'm growing the skills I want to be growing but I'm glad that that week in San Diego wasn't as miserable as I thought it'd be.",
         {
           images: [
-            { imageId: "meep_meha_onyourmind_0", alt: "San Diego retreat", displayUrl: meepleImg("meep_meha_onyourmind_0") },
-            { imageId: "meep_meha_onyourmind_1", alt: "San Diego retreat", displayUrl: meepleImg("meep_meha_onyourmind_1") },
-            { imageId: "meep_meha_onyourmind_2", alt: "San Diego retreat", displayUrl: meepleImg("meep_meha_onyourmind_2") },
-            { imageId: "meep_meha_onyourmind_3", alt: "San Diego retreat", displayUrl: meepleImg("meep_meha_onyourmind_3") },
-            { imageId: "meep_meha_onyourmind_4", alt: "San Diego retreat", displayUrl: meepleImg("meep_meha_onyourmind_4") },
+            {
+              imageId: "meep_meha_onyourmind_0",
+              alt: "San Diego retreat",
+              displayUrl: meepleImg("meep_meha_onyourmind_0"),
+            },
+            {
+              imageId: "meep_meha_onyourmind_1",
+              alt: "San Diego retreat",
+              displayUrl: meepleImg("meep_meha_onyourmind_1"),
+            },
+            {
+              imageId: "meep_meha_onyourmind_2",
+              alt: "San Diego retreat",
+              displayUrl: meepleImg("meep_meha_onyourmind_2"),
+            },
+            {
+              imageId: "meep_meha_onyourmind_3",
+              alt: "San Diego retreat",
+              displayUrl: meepleImg("meep_meha_onyourmind_3"),
+            },
+            {
+              imageId: "meep_meha_onyourmind_4",
+              alt: "San Diego retreat",
+              displayUrl: meepleImg("meep_meha_onyourmind_4"),
+            },
           ],
         },
       ),
@@ -1165,7 +1606,12 @@ const meepleQuestions: NonNullable<PublishedNewsletter["questions"]> = [
         "As part of my new job announcement, I'll include a fun video of the time Boston Dynamics went on America's Got Talent.\n\nhttps://www.youtube.com/watch?v=ptYDWP9uTis",
         {
           displayNameOverride: "Bryan",
-          comments: [{ author: "Kaavya", body: "Omg who knew Bryan was a small business owner in 8th grade" }],
+          comments: [
+            {
+              author: "Kaavya",
+              body: "Omg who knew Bryan was a small business owner in 8th grade",
+            },
+          ],
         },
       ),
       meepleAnswer(
@@ -1270,8 +1716,18 @@ export const config: AppConfig = {
   user: me,
   memberships: [
     { groupId: "g_trail", role: "admin", groupName: "Trail Crew", gradient: trailCrewGradient },
-    { groupId: "g_game", role: "member", groupName: "Game Night Gang", gradient: gameNightGradient },
-    { groupId: "g_meeple", role: "member", groupName: "Meeple Mailbox", gradient: meepleMailboxGradient },
+    {
+      groupId: "g_game",
+      role: "member",
+      groupName: "Game Night Gang",
+      gradient: gameNightGradient,
+    },
+    {
+      groupId: "g_meeple",
+      role: "member",
+      groupName: "Meeple Mailbox",
+      gradient: meepleMailboxGradient,
+    },
   ],
   vapidPublicKey: "MOCK_PUBLIC_KEY",
   groupDefaults: {
@@ -1287,7 +1743,8 @@ export const config: AppConfig = {
 export function getQuestionPrompt(cycleKey: string, questionId: string): string | undefined {
   const nl = newsletters[cycleKey];
   if (!nl) return undefined;
-  if (nl.status === "published") return nl.questions.find((q) => q.questionId === questionId)?.prompt;
+  if (nl.status === "published")
+    return nl.questions.find((q) => q.questionId === questionId)?.prompt;
   if (nl.status === "open") return nl.questions.find((q) => q.questionId === questionId)?.prompt;
   return undefined;
 }
