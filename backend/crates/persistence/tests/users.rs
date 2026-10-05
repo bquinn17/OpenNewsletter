@@ -122,3 +122,36 @@ async fn it_clears_the_avatar_photo() {
     let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
     assert_eq!(got.avatar_media_id, None);
 }
+
+#[tokio::test]
+async fn it_clears_the_avatar_only_when_it_still_matches() {
+    let (_c, repo) = common::make_repo().await;
+    let mut u = common::user("u6");
+    let avatar_id = AvatarId::new("01HA8");
+    u.avatar_media_id = Some(avatar_id.clone());
+    users::put_user(&repo, &u).await.unwrap();
+
+    users::clear_user_avatar_if(&repo, &u.user_id, &avatar_id)
+        .await
+        .unwrap();
+
+    let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
+    assert_eq!(got.avatar_media_id, None);
+}
+
+#[tokio::test]
+async fn it_does_not_clear_a_different_avatar() {
+    let (_c, repo) = common::make_repo().await;
+    let mut u = common::user("u7");
+    let current = AvatarId::new("01HA9");
+    u.avatar_media_id = Some(current.clone());
+    users::put_user(&repo, &u).await.unwrap();
+
+    // A delete of some other (stale) avatar id must not clobber the current one.
+    users::clear_user_avatar_if(&repo, &u.user_id, &AvatarId::new("01HSTALE"))
+        .await
+        .unwrap();
+
+    let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
+    assert_eq!(got.avatar_media_id, Some(current));
+}

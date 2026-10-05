@@ -59,6 +59,7 @@ Error code catalog (machine-readable codes for the top-level `code`):
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
+| `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references (added M8) |
 | `RATE_LIMITED` | 429 | Throttled |
 | `INTERNAL` | 500 | Generic server error |
 
@@ -544,11 +545,13 @@ Body:
   "purpose": "response",     // "response" (default) | "comment" — see 08-media-uploads.md §3.1
   "mimeType": "image/jpeg",
   "byteSize": 4823920,
-  "sha256": "base64url..."   // optional but recommended; included in the presign condition
+  "sha256": "n4bQgYhM..."    // optional; standard base64 of the SHA-256 digest (44 chars)
 }
 ```
 
-Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`}, `byteSize` ≤ 15728640 (15MB), caller is member of group. Cycle-status check depends on `purpose`: `"response"` requires the cycle to be `open`; `"comment"` requires it to be `published` (comments only exist post-publish — this is the upload path for comment attachments, `09-engagement.md` §1.3). The 10-image cap applies to `purpose=response` uploads only.
+`sha256`, when sent, is signed into the presign as `x-amz-checksum-sha256`, so S3 rejects a body whose digest doesn't match. (Decided in M8: the earlier draft said "base64url" and implied `x-amz-content-sha256`, but presigned PUTs can't use that header for payload integrity; S3's flexible-checksum header needs standard base64.)
+
+Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`} (else 415 `IMAGE_BAD_TYPE` — an unknown type such as SVG is a 415, not a 422), 1 ≤ `byteSize` ≤ 15728640 (over → 413 `IMAGE_TOO_LARGE`), caller is member of group, `questionId` is a locked question of the cycle (else 422). Cycle-status check depends on `purpose`: `"response"` requires the cycle to be `open`; `"comment"` requires it to be `published` (comments only exist post-publish — this is the upload path for comment attachments, `09-engagement.md` §1.3). The 10-image cap applies to `purpose=response` uploads only.
 
 Server creates an `ImageMedia` row with `status=pending` and an S3 key:
 ```
@@ -560,12 +563,18 @@ Response 201:
 {
   "imageId": "01H...",
   "uploadUrl": "https://...s3.amazonaws.com/...",
-  "headers": { "Content-Type": "image/jpeg", "x-amz-content-sha256": "..." },
+  "headers": { "content-type": "image/jpeg", "x-amz-checksum-sha256": "..." },
   "expiresInSeconds": 600
 }
 ```
 
-The frontend then `PUT`s the binary directly to `uploadUrl` with the listed headers.
+The frontend then `PUT`s the binary directly to `uploadUrl` with **every** listed header, verbatim. `headers` is whatever the presigned request was signed with (lower-case names).
+
+### 9.0 Addressing an existing upload (decided M8)
+
+An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` (`02` §2.10), so every `/uploads/{imageId}` route (§9.2–§9.4, §9.6) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
+
+Every one of these routes that returns a body returns `ImageMediaResponse` (`shared/openapi.yaml`): the row's fields in camelCase, minus the S3 keys, plus absolute `displayUrl`/`thumbUrl` (null until `ready`) and `errorMessage` (`IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED` when `failed`).
 
 ### 9.2 `POST /uploads/{imageId}/complete`
 
@@ -577,7 +586,7 @@ The frontend then `PUT`s the binary directly to `uploadUrl` with the listed head
 
 ### 9.4 `DELETE /uploads/{imageId}`
 
-**Lambda**: `lambda-media`. Detach + mark for cleanup. Allowed only when image is not referenced by any published response. Soft-marks the row `failed` and the S3 lifecycle handles real deletion.
+**Lambda**: `lambda-media`. Detach + mark for cleanup. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. Otherwise soft-marks the row `failed` with `errorMessage: "DELETED"` and returns 204; the S3 lifecycle handles real deletion. Idempotent. A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID when it deletes. (Comment-image in-use checks arrive with comments in M10.)
 
 ### 9.5 `GET /media-cookie`
 
@@ -590,9 +599,11 @@ Response 200 sets cookies via `Set-Cookie` headers (`CloudFront-Policy`, `CloudF
   "policy": "...",
   "signature": "...",
   "keyPairId": "...",
-  "expiresAt": "..."
+  "expiresAt": "2026-06-02T11:00:00Z"
 }
 ```
+
+`expiresAt` is an RFC 3339 timestamp like every other API timestamp (the epoch seconds live inside the policy). The `Set-Cookie` headers are emitted only when the Lambda has a cookie domain configured (`MEDIA_COOKIE_DOMAIN`, set in prod to `.{domain}`); dev returns the body alone. Cookies use `Path=/img/{groupId}/` and `Max-Age=3600`, so cookies for several groups coexist in the browser.
 
 For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan). In **dev** there is no shared registrable domain (raw AWS endpoints), so cookies cannot flow — the SPA instead appends the JSON-body values as CloudFront signed-URL query params to each image URL. See `08-media-uploads.md` §4.5.
 
@@ -600,7 +611,7 @@ For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on
 
 **Lambda**: `lambda-media`. **Role**: caller must own the image.
 
-Body: `{ "caption": "Cocoa thermos at mile two." | null }` (≤140 chars; `null` clears it).
+Body: `{ "caption": "Cocoa thermos at mile two." | null }` (≤140 chars after trimming; `null` or an all-whitespace string clears it).
 
 Updates the `ImageMedia.caption` field. Allowed regardless of whether the image is referenced by a draft or published response — the caption is a property of the image, not of a particular usage.
 
@@ -610,9 +621,9 @@ Response 200: updated `ImageMedia`.
 
 Avatars use a separate pipeline (see `08-media-uploads.md` §11) so they can cross group boundaries.
 
-- `POST /avatars` — request a pre-signed PUT URL. Body: `{ "mimeType": "image/jpeg|png|webp", "byteSize": ... }`. Validation: `byteSize` ≤ 5 MB. Server creates an `AvatarMedia` row (`status=pending`) and returns `{ "avatarId", "uploadUrl", "headers", "expiresInSeconds": 600 }`.
-- `GET /avatars/{avatarId}` — returns the row (status, processed URL). Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
-- `DELETE /avatars/{avatarId}` — caller must own. Marks the row for cleanup; if the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering).
+- `POST /avatars` — request a pre-signed PUT URL. Body: `{ "mimeType": "image/jpeg|png|webp", "byteSize": ..., "sha256"?: ... }`. Validation: `byteSize` ≤ 5 MB (else 413), MIME as listed (GIF → 415). Server creates an `AvatarMedia` row (`status=pending`) and returns `{ "avatarId", "uploadUrl", "headers", "expiresInSeconds": 600 }`.
+- `GET /avatars/{avatarId}` — returns `AvatarMediaResponse` (status, `avatarUrl` once ready, `errorMessage`). Looked up under the caller's own user partition, so another user's avatar is a 404. Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
+- `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). Marks the row `failed`/`DELETED`, idempotently; if the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering).
 
 Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see `02-data-model-dynamodb.md` §2.16.
 

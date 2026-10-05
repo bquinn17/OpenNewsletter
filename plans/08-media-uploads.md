@@ -98,7 +98,7 @@ Sequence:
                       (status != failed) < 10
 ```
 
-The 10-image cap is enforced via a Query of GSI1 (AP17) filtered to the question; cheaper than scanning the response. Comment images (`purpose="comment"`) are exempt from that cap — their limit is one image per comment, enforced at comment create/patch time.
+The 10-image cap is enforced via a main-table Query of the cycle's partition (`pk = GROUP#{g}#NL#{c}`, `begins_with(sk, "IMG#")`) filtered to the caller, question, `purpose=response` and `status != failed`. (Decided M8: the original text said GSI1/AP17, but that partition holds every upload the user has ever made; the cycle partition is bounded.) Two simultaneous uploads can briefly exceed the cap; that is acceptable because the response save independently caps `imageMediaIds` at 10. Comment images (`purpose="comment"`) are exempt from that cap — their limit is one image per comment, enforced at comment create/patch time.
 
 ### 3.2 Presign
 
@@ -108,7 +108,7 @@ Use the AWS Rust SDK's `Client::put_object().presigned(PresigningConfig::expires
 - `Content-Type` matches the requested MIME type (signed).
 - Server-side encryption is on by default (bucket-level), no header needed.
 
-If the client sent `sha256` in the body, include `x-amz-content-sha256` header in the signed request — gives object integrity guarantee.
+If the client sent `sha256` in the body (standard base64), sign it as `x-amz-checksum-sha256`; S3 then rejects a body whose digest doesn't match. The S3 client is built with `RequestChecksumCalculation::WhenRequired`, because newer SDKs otherwise sign a CRC32 of the (empty) presign body and every browser PUT fails. The response's `headers` map is every header the presign was signed with, and the client sends them all. Both originals buckets allow any request header in CORS (`*`); the presign is what grants access.
 
 ### 3.3 Frontend uploader (`ImageUploader.tsx`)
 
@@ -129,8 +129,8 @@ type Pending = {
 
 Algorithm:
 1. User drops/picks files. Reject any failing client-side validation (MIME, size).
-2. For each file, compute SHA-256 in a Web Worker (off the main thread) for ~50MB-eligible files.
-3. POST `/uploads` → receive `{ imageId, uploadUrl, headers, expiresInSeconds }`.
+2. For each file, compute SHA-256 with `crypto.subtle.digest` (native and asynchronous, so it doesn't block the main thread; decided M8 in place of a Web Worker). Omit it if `crypto.subtle` is unavailable.
+3. POST `/uploads` → receive `{ imageId, uploadUrl, headers, expiresInSeconds }`. Later calls on the image pass `?groupId=&cycleId=` (`03` §9.0).
 4. PUT to `uploadUrl` using `XMLHttpRequest` (for progress events). On 200 → `status=processing`.
 5. Poll `GET /uploads/{imageId}` every 1.5s (with backoff if still pending after 10s).
 6. When `status=ready`, replace the in-editor token with the final image. Insert markdown token `![alt](image:{imageId})` into the body.
@@ -192,6 +192,8 @@ fn handle(req) -> Response {
         format!("CloudFront-Key-Pair-Id={}; Domain=.opennewsletter.example.com; Path=/img/{}/; HttpOnly; Secure; SameSite=None", KEY_PAIR_ID, group_id),
     ];
 
+    // Set-Cookie is only emitted when MEDIA_COOKIE_DOMAIN is configured (prod);
+    // dev returns the JSON body alone (§4.5).
     Response::ok()
         .header_multi("Set-Cookie", cookies)
         .json(json!({ "policy": policy_b64, "signature": signature_b64, "keyPairId": KEY_PAIR_ID, "expiresAt": expires }))
@@ -225,7 +227,15 @@ Trade-off: query-stringed URLs churn the service worker's `CacheFirst` image cac
 
 ### 5.1 Trigger configuration
 
-S3 event: `s3:ObjectCreated:*` filtered to `prefix: uploads/`. S3 invokes the Lambda once per object (no batching configurable on direct S3→Lambda notifications).
+S3 event: `s3:ObjectCreated:*` filtered to `prefix: uploads/`, on both the media-originals and avatars-originals buckets. S3 invokes the Lambda once per object (no batching configurable on direct S3→Lambda notifications).
+
+Environment: `TABLE_NAME`, `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (to tell the two sources apart), `PROCESSED_BUCKET`, `AVATARS_PROCESSED_BUCKET`.
+
+Implementation notes (decided M8):
+- The ready/failed updates are conditioned on `status = pending`. A lost condition means another invocation already finished, so it is logged and skipped, not retried.
+- Size and decode failures are terminal and recorded on the row (`error_message` = `IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED`). Transient S3/DynamoDB errors return `Err` so Lambda's async retry runs.
+- Variants are never upscaled. Recorded `width`/`height` are the original's after EXIF orientation.
+- Cache-Control on writes: `public, max-age=31536000, immutable` for `img/*`, `public, max-age=86400, immutable` for `avatar/*`.
 
 ### 5.2 Algorithm (Rust)
 
@@ -294,16 +304,16 @@ async fn handle(event: S3Event) -> Result<()> {
 
 ### 5.3 Image library
 
-`image = "0.25"` for non-GIF formats. GIF resize uses `gifski` or `image::codecs::gif::GifEncoder` frame-by-frame to preserve animation. WebP via `image::codecs::webp::WebPEncoder`.
+`image = "0.25"` for decoding, resizing and GIF. GIF resize uses `image::codecs::gif::GifEncoder` frame-by-frame to preserve animation. **Lossy WebP needs the `webp` crate (libwebp)**: `image::codecs::webp::WebPEncoder` is lossless-only and cannot honour the quality settings in §1 (decided M8).
 
 If the encode fails for any reason, set `status = "failed"` with an error message field; the frontend will surface a "couldn't process this image" error and offer re-upload.
 
 ### 5.4 Permissions
 
 The Lambda's role:
-- `s3:GetObject` on originals bucket (prefix `uploads/`)
-- `s3:PutObject` on processed bucket (prefix `img/`)
-- `dynamodb:UpdateItem` on the table
+- `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete purges oversized uploads)
+- `s3:PutObject` on both processed buckets
+- `dynamodb:GetItem` + `dynamodb:UpdateItem` on the table
 
 Memory: 1024 MB (image processing is CPU-bound; arm64 Lambda's 1024 MB gives a full vCPU). Timeout 60s. Largest expected image ~15MB; processing in well under 10s typical.
 
@@ -364,7 +374,7 @@ Both buckets transition to `INTELLIGENT_TIERING` after 30 days (configured in CD
 
 | Failure | UX |
 |---|---|
-| Presign expired (user took >10 min) | Server returns presign with `expiresInSeconds`; SPA on PUT 403 retries with a fresh presign automatically (one retry). |
+| Presign expired (user took >10 min) | Server returns presign with `expiresInSeconds`; SPA on PUT 403 retries with a fresh presign automatically (one retry). There is no re-presign route: the retry calls `POST /uploads` (or `/avatars`) again and gets a new ID, abandoning the old `pending` row, which §8.1 already tolerates (decided M8). |
 | MIME mismatch (file changed since presign) | S3 rejects (403). SPA shows "couldn't upload — try again". |
 | Image too large | Caught client-side first; if bypassed, `lambda-image-process` marks the row `failed` and deletes the original (§3.2). SPA polling sees `failed` and shows the error. |
 | Encoder failure | `lambda-image-process` sets `status=failed`. SPA polling sees `failed`, shows error with re-upload button. |

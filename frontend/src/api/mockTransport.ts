@@ -349,6 +349,140 @@ function handleRedeemInvite(body: unknown): S["RedeemResponse"] {
   return { groupId: NEW_GROUP_ID, groupName: "New Group", role: "member" };
 }
 
+// 1x1 transparent PNG — stands in for a real thumb/display/avatar asset so the
+// uploader can render an <img> without any network request.
+const MOCK_IMAGE_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";
+
+let nextImageId = 1;
+let nextAvatarId = 1;
+const imageRows: Record<string, S["ImageMediaResponse"]> = {};
+const imagePollCounts: Record<string, number> = {};
+const avatarRows: Record<string, S["AvatarMediaResponse"]> = {};
+const avatarPollCounts: Record<string, number> = {};
+
+function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
+  // Trusted internal shape — the only caller is our own typed `api.media.createUpload`.
+  const request = body as S["CreateUploadRequest"];
+  const imageId = `img_${nextImageId++}`;
+  imageRows[imageId] = {
+    imageId,
+    userId: CALLER_ID,
+    groupId: request.groupId,
+    cycleId: request.cycleId,
+    questionId: request.questionId,
+    purpose: request.purpose ?? "response",
+    mimeType: request.mimeType,
+    status: "pending",
+    bytes: request.byteSize,
+    width: null,
+    height: null,
+    caption: null,
+    displayUrl: null,
+    thumbUrl: null,
+    errorMessage: null,
+    uploadedAt: new Date().toISOString(),
+    processedAt: null,
+  };
+  imagePollCounts[imageId] = 0;
+  return {
+    imageId,
+    uploadUrl: `mock://upload/${imageId}`,
+    headers: { "content-type": request.mimeType },
+    expiresInSeconds: 600,
+  };
+}
+
+function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"] {
+  const row = imageRows[imageId];
+  if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
+
+  if (poll && row.status === "pending") {
+    imagePollCounts[imageId] = (imagePollCounts[imageId] ?? 0) + 1;
+    if (imagePollCounts[imageId]! >= 2) {
+      row.status = "ready";
+      row.width = 800;
+      row.height = 600;
+      row.displayUrl = MOCK_IMAGE_DATA_URL;
+      row.thumbUrl = MOCK_IMAGE_DATA_URL;
+      row.processedAt = new Date().toISOString();
+    }
+  }
+  return { ...row };
+}
+
+function handleDeleteUpload(imageId: string): undefined {
+  const row = imageRows[imageId];
+  if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
+  row.status = "failed";
+  row.errorMessage = "DELETED";
+  return undefined;
+}
+
+function handlePatchUpload(imageId: string, body: unknown): S["ImageMediaResponse"] {
+  const row = imageRows[imageId];
+  if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
+  // Trusted internal shape — the only caller is our own typed `api.media.patchUpload`.
+  const patch = body as S["PatchUploadRequest"];
+  row.caption = patch.caption?.trim() ? patch.caption : null;
+  return { ...row };
+}
+
+function handleGetMediaCookie(groupId: string): S["MediaCookieResponse"] {
+  return {
+    policy: `mock-policy-${groupId}`,
+    signature: `mock-signature-${groupId}`,
+    keyPairId: "MOCKKEYPAIR",
+    expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+  };
+}
+
+function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
+  // Trusted internal shape — the only caller is our own typed `api.media.createAvatar`.
+  const request = body as S["CreateAvatarRequest"];
+  const avatarId = `avatar_${nextAvatarId++}`;
+  avatarRows[avatarId] = {
+    avatarId,
+    mimeType: request.mimeType,
+    status: "pending",
+    bytes: request.byteSize,
+    avatarUrl: null,
+    errorMessage: null,
+    uploadedAt: new Date().toISOString(),
+    processedAt: null,
+  };
+  avatarPollCounts[avatarId] = 0;
+  return {
+    avatarId,
+    uploadUrl: `mock://upload/${avatarId}`,
+    headers: { "content-type": request.mimeType },
+    expiresInSeconds: 600,
+  };
+}
+
+function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
+  const row = avatarRows[avatarId];
+  if (!row) fail(404, "NOT_FOUND", `avatar ${avatarId} not found`);
+
+  if (row.status === "pending") {
+    avatarPollCounts[avatarId] = (avatarPollCounts[avatarId] ?? 0) + 1;
+    if (avatarPollCounts[avatarId]! >= 2) {
+      row.status = "ready";
+      row.avatarUrl = MOCK_IMAGE_DATA_URL;
+      row.processedAt = new Date().toISOString();
+    }
+  }
+  return { ...row };
+}
+
+function handleDeleteAvatar(avatarId: string): undefined {
+  const row = avatarRows[avatarId];
+  if (!row) fail(404, "NOT_FOUND", `avatar ${avatarId} not found`);
+  row.status = "failed";
+  row.errorMessage = "DELETED";
+  return undefined;
+}
+
 /** Routes `apiFetch` calls to in-memory fixtures instead of the network (`env.useMocks`). */
 export async function mockFetch(method: Method, path: string, body?: unknown): Promise<unknown> {
   await sleep(LATENCY_MS);
@@ -381,6 +515,37 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
     return handleListNewsletters(decodeURIComponent(segments[1]), query);
   }
   if (method === "POST" && rawPath === "/invites/redeem") return handleRedeemInvite(body);
+
+  if (method === "POST" && rawPath === "/uploads") return handleCreateUpload(body);
+  if (method === "GET" && segments.length === 2 && segments[0] === "uploads") {
+    return handleGetUpload(decodeURIComponent(segments[1]), true);
+  }
+  if (method === "DELETE" && segments.length === 2 && segments[0] === "uploads") {
+    return handleDeleteUpload(decodeURIComponent(segments[1]));
+  }
+  if (method === "PATCH" && segments.length === 2 && segments[0] === "uploads") {
+    return handlePatchUpload(decodeURIComponent(segments[1]), body);
+  }
+  if (
+    method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "uploads" &&
+    segments[2] === "complete"
+  ) {
+    return handleGetUpload(decodeURIComponent(segments[1]), false);
+  }
+  if (method === "GET" && rawPath === "/media-cookie") {
+    const groupId = query.get("groupId");
+    if (!groupId) fail(422, "VALIDATION_FAILED", "groupId is required");
+    return handleGetMediaCookie(groupId);
+  }
+  if (method === "POST" && rawPath === "/avatars") return handleCreateAvatar(body);
+  if (method === "GET" && segments.length === 2 && segments[0] === "avatars") {
+    return handleGetAvatar(decodeURIComponent(segments[1]));
+  }
+  if (method === "DELETE" && segments.length === 2 && segments[0] === "avatars") {
+    return handleDeleteAvatar(decodeURIComponent(segments[1]));
+  }
 
   fail(404, "NOT_FOUND", `no mock route for ${method} ${rawPath}`);
 }

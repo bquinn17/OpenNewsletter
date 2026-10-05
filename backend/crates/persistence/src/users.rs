@@ -1,7 +1,7 @@
 //! User and Cognito-sub-lookup access (AP1, plus auth resolution).
 
 use crate::batch::batch_get_items;
-use crate::error::RepoError;
+use crate::error::{self, RepoError};
 use crate::expr::set_fields;
 use crate::keys::{attr, cognito_sub_pk, user_pk, COGNITO_SUB_SK, USER_PROFILE_SK};
 use crate::repo::Repo;
@@ -141,6 +141,43 @@ pub async fn update_profile(
         .send()
         .await?;
     Ok(())
+}
+
+/// Clears `avatar_media_id` back to `null`, but only if it still points at
+/// `avatar_id` — a conditional update so `DELETE /avatars/{avatarId}`
+/// (`03-api-contract.md` §9.7) can't clobber a concurrent `PATCH /me` that
+/// set a *different* avatar in between. A lost race (the field already
+/// points elsewhere, or the user row is otherwise gone) is not an error:
+/// the delete is still idempotent from the caller's point of view.
+pub async fn clear_user_avatar_if(
+    repo: &Repo,
+    user_id: &UserId,
+    avatar_id: &AvatarId,
+) -> Result<(), RepoError> {
+    let result = repo
+        .client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(user_pk(user_id)))
+        .key(attr::SK, AttributeValue::S(USER_PROFILE_SK.into()))
+        .condition_expression("avatar_media_id = :id")
+        .update_expression("SET avatar_media_id = :null")
+        .expression_attribute_values(":id", AttributeValue::S(avatar_id.to_string()))
+        .expression_attribute_values(":null", AttributeValue::Null(true))
+        .send()
+        .await;
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let err = error::from_update_item_error(e);
+            if err.is_lost_race() {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        }
+    }
 }
 
 pub async fn update_last_login(

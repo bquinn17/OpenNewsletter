@@ -11,11 +11,13 @@
 //! plain `cargo test`.
 
 use domain::api::{
-    CandidateItemResponse, CandidateListResponse, CandidateVoteResponse, ConfigResponse,
-    CreateCandidateRequest, CreateInviteRequest, CreateInviteResponse, GroupResponse,
-    HealthResponse, InviteListResponse, MemberResponse, MembershipListResponse, MyResponsesList,
-    NewsletterDetailResponse, NewsletterListResponse, PatchGroupRequest, PatchMeRequest,
-    PatchMemberRequest, ProblemDetails, RedeemRequest, RedeemResponse, ResponseDto,
+    AvatarMediaResponse, CandidateItemResponse, CandidateListResponse, CandidateVoteResponse,
+    ConfigResponse, CreateAvatarRequest, CreateAvatarResponse, CreateCandidateRequest,
+    CreateInviteRequest, CreateInviteResponse, CreateUploadRequest, CreateUploadResponse,
+    GroupResponse, HealthResponse, ImageMediaResponse, InviteListResponse, MediaCookieResponse,
+    MemberResponse, MembershipListResponse, MyResponsesList, NewsletterDetailResponse,
+    NewsletterListResponse, PatchGroupRequest, PatchMeRequest, PatchMemberRequest,
+    PatchUploadRequest, ProblemDetails, RedeemRequest, RedeemResponse, ResponseDto,
     SaveResponseRequest, UserResponse,
 };
 use serde::de::DeserializeOwned;
@@ -273,6 +275,112 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "PUT",
         "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
         "422",
+        round_trip::<ProblemDetails>,
+    ),
+    // ---- `03-api-contract.md` §9 — Media routes ----
+    (
+        "POST",
+        "/uploads",
+        "request",
+        round_trip::<CreateUploadRequest>,
+    ),
+    (
+        "POST",
+        "/uploads",
+        "201",
+        round_trip::<CreateUploadResponse>,
+    ),
+    ("POST", "/uploads", "422", round_trip::<ProblemDetails>),
+    (
+        "GET",
+        "/uploads/{imageId}",
+        "200",
+        round_trip::<ImageMediaResponse>,
+    ),
+    (
+        "GET",
+        "/uploads/{imageId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PATCH",
+        "/uploads/{imageId}",
+        "request",
+        round_trip::<PatchUploadRequest>,
+    ),
+    (
+        "PATCH",
+        "/uploads/{imageId}",
+        "200",
+        round_trip::<ImageMediaResponse>,
+    ),
+    (
+        "PATCH",
+        "/uploads/{imageId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PATCH",
+        "/uploads/{imageId}",
+        "422",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "DELETE",
+        "/uploads/{imageId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "POST",
+        "/uploads/{imageId}/complete",
+        "200",
+        round_trip::<ImageMediaResponse>,
+    ),
+    (
+        "POST",
+        "/uploads/{imageId}/complete",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/media-cookie",
+        "200",
+        round_trip::<MediaCookieResponse>,
+    ),
+    ("GET", "/media-cookie", "422", round_trip::<ProblemDetails>),
+    (
+        "POST",
+        "/avatars",
+        "request",
+        round_trip::<CreateAvatarRequest>,
+    ),
+    (
+        "POST",
+        "/avatars",
+        "201",
+        round_trip::<CreateAvatarResponse>,
+    ),
+    ("POST", "/avatars", "422", round_trip::<ProblemDetails>),
+    (
+        "GET",
+        "/avatars/{avatarId}",
+        "200",
+        round_trip::<AvatarMediaResponse>,
+    ),
+    (
+        "GET",
+        "/avatars/{avatarId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "DELETE",
+        "/avatars/{avatarId}",
+        "404",
         round_trip::<ProblemDetails>,
     ),
 ];

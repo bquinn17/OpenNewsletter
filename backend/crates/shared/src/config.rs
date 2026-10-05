@@ -48,6 +48,15 @@ pub const MAX_IMAGES_PER_RESPONSE: usize = 10;
 pub const MAX_COMMENT_BODY_CHARS: usize = 2_000;
 pub const MAX_IMAGE_BYTES: u64 = 15 * 1024 * 1024;
 pub const MAX_AVATAR_BYTES: u64 = 5 * 1024 * 1024;
+
+/// `lambda-image-process` variant dimensions and WebP quality
+/// (`plans/08-media-uploads.md` §1, §5.3, §11.1).
+pub const DISPLAY_LONG_EDGE_PX: u32 = 1200;
+pub const DISPLAY_QUALITY: f32 = 82.0;
+pub const THUMB_LONG_EDGE_PX: u32 = 400;
+pub const THUMB_QUALITY: f32 = 75.0;
+pub const AVATAR_SIZE_PX: u32 = 256;
+pub const AVATAR_QUALITY: f32 = 82.0;
 pub const MAX_DISPLAY_NAME_CHARS: usize = 40;
 pub const MAX_IMAGE_CAPTION_CHARS: usize = 140;
 

@@ -10,7 +10,7 @@ vi.mock("../auth/userManager", () => ({
 }));
 
 import { userManager } from "../auth/userManager";
-import { ApiError, apiFetch } from "./client";
+import { api, ApiError, apiFetch } from "./client";
 
 // The real module is mocked above; this narrows the import back to the shape
 // client.ts actually calls, so tests can drive it without a real UserManager.
@@ -132,5 +132,54 @@ describe("apiFetch", () => {
 
     await expect(apiFetch("/me")).rejects.toMatchObject({ status: 401, code: "UNAUTHENTICATED" });
     expect(mockedManager.removeUser).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("api.media", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    mockedManager.getUser.mockResolvedValue(null);
+  });
+
+  it("sends groupId and cycleId as query params for /uploads/{imageId} routes", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+
+    await api.media.getUpload("img1", "g1", "202606");
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/uploads/img1?");
+    expect(url).toContain("groupId=g1");
+    expect(url).toContain("cycleId=202606");
+  });
+
+  it("sends a DELETE with groupId/cycleId query params for deleteUpload", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await api.media.deleteUpload("img1", "g1", "202606");
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("groupId=g1");
+    expect(url).toContain("cycleId=202606");
+    expect(requestInit.method).toBe("DELETE");
+  });
+
+  it("calls getMediaCookie with credentials: include", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        policy: "p",
+        signature: "s",
+        keyPairId: "k",
+        expiresAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    await api.media.getMediaCookie("g1");
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/media-cookie?groupId=g1");
+    expect(requestInit.credentials).toBe("include");
   });
 });

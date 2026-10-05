@@ -298,6 +298,9 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `caption` | string \| null (author-supplied, ≤140 chars; rendered beneath the image in the published view) |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
+| `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED` (added M8; `08` §3.2, `03` §9.4) |
+
+`question_id` is set at `POST /uploads` time (the route requires `questionId`), so in practice it is never null for rows created since M8.
 
 ### 2.11 Comment
 
@@ -406,6 +409,7 @@ User avatars are uploaded via a dedicated pipeline (separate from the per-questi
 | `bytes` | number |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
+| `error_message` | string \| null — same values as `ImageMedia.error_message` (added M8) |
 
 The processed avatar bucket is served via a separate CloudFront behavior (`/avatar/*`) that does NOT require signed cookies — avatars are not tenant-scoped, URLs use the UUIDv7 `avatar_id` (unguessable), and an avatar leak is acceptable. Cache-control: `public, max-age=86400, immutable` so changing avatars produces a new `avatar_id` and never collides with the old one in caches.
 

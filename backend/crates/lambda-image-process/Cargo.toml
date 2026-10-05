@@ -4,6 +4,39 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+name = "image_process"
+path = "src/lib.rs"
+
 [[bin]]
-name = "bootstrap"
+name = "image-process"
 path = "src/main.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+persistence = { path = "../persistence" }
+shared = { path = "../shared" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
+lambda_runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+# `s3` only — this crate is a pure S3-trigger Lambda, no API Gateway shapes.
+aws_lambda_events = { version = "0.15", default-features = false, features = ["s3"] }
+# `image`'s own WebP encoder is lossless-only; `webp` wraps libwebp (via
+# libwebp-sys, which vendors libwebp's C source) for quality-controlled lossy
+# encoding (`plans/08-media-uploads.md` §5.3, decided semantics: lossy WebP).
+image = "0.25"
+webp = "0.3"
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+persistence = { path = "../persistence", features = ["test-utils"] }
+testcontainers.workspace = true
+testcontainers-modules.workspace = true

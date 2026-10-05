@@ -282,6 +282,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request a presigned S3 PUT URL for a response or comment image (`03-api-contract.md` §9.1). Creates a `pending` ImageMedia row. Caller must be a member of `groupId`. `purpose=response` requires the cycle to be `open` and counts toward the 10-images-per-answer cap; `purpose=comment` requires it to be `published`. The client PUTs the bytes to `uploadUrl` with every header in `headers`. */
+        post: operations["createUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/uploads/{imageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status of one uploaded image (`03-api-contract.md` §9.3). The frontend polls this after the PUT until `status` leaves `pending`. Caller must be a member of `groupId`. */
+        get: operations["getUpload"];
+        put?: never;
+        post?: never;
+        /** Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`; the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4). Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it. */
+        delete: operations["deleteUpload"];
+        options?: never;
+        head?: never;
+        /** Set or clear an image's caption (`03-api-contract.md` §9.6). Caller must own the image. */
+        patch: operations["patchUpload"];
+        trace?: never;
+    };
+    "/uploads/{imageId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Optional convenience the client may call after its PUT (`03-api-contract.md` §9.2). Processing is driven by the S3 trigger, so this returns the same body as `GET /uploads/{imageId}`. Caller must be a member of `groupId`. */
+        post: operations["completeUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media-cookie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for one hour (`03-api-contract.md` §9.5, `08-media-uploads.md` §4). When the Lambda has a cookie domain configured (prod) the response also carries three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`, `CloudFront-Key-Pair-Id`); the client must call this with `credentials: "include"`. Dev has no shared registrable domain, so the SPA appends the body values as signed-URL query parameters instead (`08-media-uploads.md` §4.5). Caller must be a member of `groupId`. */
+        get: operations["getMediaCookie"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/avatars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request a presigned S3 PUT URL for a new avatar (`03-api-contract.md` §9.7). JPEG, PNG or WebP, at most 5 MB. Creates a `pending` AvatarMedia row owned by the caller. */
+        post: operations["createAvatar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/avatars/{avatarId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status of one of the caller's avatars. The frontend polls until `status` leaves `pending`, then sends `PATCH /me` with `avatarMediaId`. Another user's avatar is a 404. */
+        get: operations["getAvatar"];
+        put?: never;
+        post?: never;
+        /** Soft-delete one of the caller's avatars (marks it `failed` with `errorMessage: "DELETED"`). If it is the caller's current `avatarMediaId`, that is cleared to `null`. Idempotent. */
+        delete: operations["deleteAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -657,6 +762,100 @@ export interface components {
             pollOptionId: string;
             publish: boolean;
         };
+        /** @enum {string} */
+        ImageMimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+        /** @enum {string} */
+        AvatarMimeType: "image/jpeg" | "image/png" | "image/webp";
+        /** @enum {string} */
+        ImagePurpose: "response" | "comment";
+        /** @enum {string} */
+        MediaStatus: "pending" | "ready" | "failed";
+        CreateUploadRequest: {
+            groupId: string;
+            cycleId: string;
+            questionId: string;
+            /** @description Defaults to `response` when absent. */
+            purpose?: components["schemas"]["ImagePurpose"];
+            mimeType: components["schemas"]["ImageMimeType"];
+            byteSize: number;
+            /** @description Optional standard-base64 SHA-256 of the file (44 chars). When sent, it is signed into the presign as `x-amz-checksum-sha256`, so S3 rejects a body that doesn't match. */
+            sha256?: string;
+        };
+        CreateUploadResponse: {
+            imageId: string;
+            /** Format: uri */
+            uploadUrl: string;
+            /** @description Every header the presigned request was signed with. The client must send all of them on the PUT, verbatim. */
+            headers: {
+                [key: string]: string;
+            };
+            expiresInSeconds: number;
+        };
+        ImageMediaResponse: {
+            imageId: string;
+            userId: string;
+            groupId: string;
+            cycleId: string;
+            questionId: string | null;
+            purpose: components["schemas"]["ImagePurpose"];
+            mimeType: components["schemas"]["ImageMimeType"];
+            status: components["schemas"]["MediaStatus"];
+            bytes: number;
+            width: number | null;
+            height: number | null;
+            caption: string | null;
+            /** @description Absolute CloudFront URL; null until `status=ready`. */
+            displayUrl: string | null;
+            /** @description Absolute CloudFront URL; null until `status=ready`. */
+            thumbUrl: string | null;
+            /** @description Set when `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED`. */
+            errorMessage: string | null;
+            /** Format: date-time */
+            uploadedAt: string;
+            /** Format: date-time */
+            processedAt: string | null;
+        };
+        PatchUploadRequest: {
+            /** @description `null` or an all-whitespace string clears the caption. */
+            caption: string | null;
+        };
+        MediaCookieResponse: {
+            /** @description CloudFront-modified base64 of the custom policy JSON. */
+            policy: string;
+            /** @description CloudFront-modified base64 RSA-SHA1 signature of the policy. */
+            signature: string;
+            keyPairId: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        CreateAvatarRequest: {
+            mimeType: components["schemas"]["AvatarMimeType"];
+            byteSize: number;
+            /** @description Optional standard-base64 SHA-256, as on `CreateUploadRequest`. */
+            sha256?: string;
+        };
+        CreateAvatarResponse: {
+            avatarId: string;
+            /** Format: uri */
+            uploadUrl: string;
+            headers: {
+                [key: string]: string;
+            };
+            expiresInSeconds: number;
+        };
+        AvatarMediaResponse: {
+            avatarId: string;
+            mimeType: components["schemas"]["AvatarMimeType"];
+            status: components["schemas"]["MediaStatus"];
+            bytes: number;
+            /** @description Absolute unsigned CloudFront URL; null until `status=ready`. */
+            avatarUrl: string | null;
+            errorMessage: string | null;
+            /** Format: date-time */
+            uploadedAt: string;
+            /** Format: date-time */
+            processedAt: string | null;
+        };
         HealthResponse: {
             status: string;
             /** @description Short git SHA of the build, or `unknown`. */
@@ -729,7 +928,7 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, or `CANDIDATE_PROMOTED` (`03-api-contract.md` §1.1). */
+        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or `CANDIDATE_PROMOTED` (`03-api-contract.md` §1.1). */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -756,6 +955,24 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
+        /** @description `IMAGE_TOO_LARGE` — declared `byteSize` is over the cap. */
+        ImageTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description `IMAGE_BAD_TYPE` — `mimeType` is not in the allowed set. */
+        ImageBadType: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProblemDetails"];
+            };
+        };
         /** @description The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see `10-archival.md` for the (deferred) archive-link behavior. */
         NewsletterArchived: {
             headers: {
@@ -775,6 +992,17 @@ export interface components {
         CycleIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
         QuestionIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+        ImageIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d */
+        AvatarIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+        GroupIdQuery: string;
+        /**
+         * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+         * @example 202606
+         */
+        CycleIdQuery: string;
         /** @description Filter to newsletters in this status. Omit for all statuses. */
         NewsletterStatusQuery: "voting" | "open" | "published";
         /** @description `top` (default) ranks by vote count; `recent` orders by `submittedAt` descending. */
@@ -1799,6 +2027,395 @@ export interface operations {
             409: components["responses"]["Conflict"];
             410: components["responses"]["NewsletterArchived"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                 *       "cycleId": "202606",
+                 *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                 *       "purpose": "response",
+                 *       "mimeType": "image/jpeg",
+                 *       "byteSize": 4823920,
+                 *       "sha256": "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description The presigned upload. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "imageId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "uploadUrl": "https://opennewsletter-media-originals-dev-123456789012.s3.us-east-1.amazonaws.com/uploads/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc",
+                     *       "headers": {
+                     *         "content-type": "image/jpeg",
+                     *         "x-amz-checksum-sha256": "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                     *       },
+                     *       "expiresInSeconds": 600
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CreateUploadResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["ImageTooLarge"];
+            415: components["responses"]["ImageBadType"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                imageId: components["parameters"]["ImageIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "imageId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "purpose": "response",
+                     *       "mimeType": "image/jpeg",
+                     *       "status": "ready",
+                     *       "bytes": 4823920,
+                     *       "width": 4032,
+                     *       "height": 3024,
+                     *       "caption": null,
+                     *       "displayUrl": "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp",
+                     *       "thumbUrl": "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp",
+                     *       "errorMessage": null,
+                     *       "uploadedAt": "2026-06-02T10:00:00Z",
+                     *       "processedAt": "2026-06-02T10:00:04Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ImageMediaResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                imageId: components["parameters"]["ImageIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    patchUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                imageId: components["parameters"]["ImageIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "caption": "Cocoa thermos at mile two."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PatchUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "imageId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "purpose": "response",
+                     *       "mimeType": "image/png",
+                     *       "status": "pending",
+                     *       "bytes": 1048576,
+                     *       "width": null,
+                     *       "height": null,
+                     *       "caption": "Cocoa thermos at mile two.",
+                     *       "displayUrl": null,
+                     *       "thumbUrl": null,
+                     *       "errorMessage": null,
+                     *       "uploadedAt": "2026-06-02T10:00:00Z",
+                     *       "processedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ImageMediaResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    completeUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                imageId: components["parameters"]["ImageIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "imageId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "purpose": "comment",
+                     *       "mimeType": "image/gif",
+                     *       "status": "failed",
+                     *       "bytes": 16777216,
+                     *       "width": null,
+                     *       "height": null,
+                     *       "caption": null,
+                     *       "displayUrl": null,
+                     *       "thumbUrl": null,
+                     *       "errorMessage": "IMAGE_TOO_LARGE",
+                     *       "uploadedAt": "2026-06-02T10:00:00Z",
+                     *       "processedAt": "2026-06-02T10:00:02Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ImageMediaResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getMediaCookie: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The signed policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "policy": "eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4ub3Blbm5ld3NsZXR0ZXIuZXhhbXBsZS5jb20vaW1nLzAxOGYyYjZiLyoifV19",
+                     *       "signature": "Nql641NHEUkUaXQHZINK1FZ~SYeUSoBJMxjdgqrzIdzV2gyEXPDNv0pYdWJkflDKJ3xIu7lbwRpSkG98NBlgPi4ZJpRRnVX4kXAJK6tdNx6FucDB7OVqzcxkxHsGFd8VCG1BkC-Afh9~lOCMIYHIaiOB6~TF-ZFfi5a4FE9cDZ_",
+                     *       "keyPairId": "K2JCJMDEHXQW5F",
+                     *       "expiresAt": "2026-06-02T11:00:00Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MediaCookieResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "mimeType": "image/png",
+                 *       "byteSize": 204800
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateAvatarRequest"];
+            };
+        };
+        responses: {
+            /** @description The presigned upload. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "avatarId": "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d",
+                     *       "uploadUrl": "https://opennewsletter-avatars-originals-dev-123456789012.s3.us-east-1.amazonaws.com/uploads/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc",
+                     *       "headers": {
+                     *         "content-type": "image/png"
+                     *       },
+                     *       "expiresInSeconds": 600
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CreateAvatarResponse"];
+                };
+            };
+            413: components["responses"]["ImageTooLarge"];
+            415: components["responses"]["ImageBadType"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d */
+                avatarId: components["parameters"]["AvatarIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The avatar. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "avatarId": "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d",
+                     *       "mimeType": "image/png",
+                     *       "status": "ready",
+                     *       "bytes": 204800,
+                     *       "avatarUrl": "https://cdn.opennewsletter.example.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp",
+                     *       "errorMessage": null,
+                     *       "uploadedAt": "2026-06-02T10:00:00Z",
+                     *       "processedAt": "2026-06-02T10:00:01Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AvatarMediaResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d */
+                avatarId: components["parameters"]["AvatarIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     healthz: {

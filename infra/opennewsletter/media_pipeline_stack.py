@@ -8,7 +8,6 @@ The Lambda code is a shell stub at M3; the real Rust implementation lands in M8.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
@@ -20,13 +19,7 @@ from aws_cdk import aws_s3_notifications as s3_notifications
 from constructs import Construct
 
 from .config import EnvConfig
-
-_STUB_PATH = str(
-    Path(__file__).parent.parent.parent
-    / "backend"
-    / "lambda-stubs"
-    / "lambda-image-process"
-)
+from .lambda_assets import lambda_code
 
 
 class MediaPipelineStack(cdk.Stack):
@@ -39,6 +32,8 @@ class MediaPipelineStack(cdk.Stack):
         table: dynamodb.Table,
         originals_bucket: s3.Bucket,
         processed_bucket: s3.Bucket,
+        avatars_originals_bucket: s3.Bucket,
+        avatars_processed_bucket: s3.Bucket,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -62,12 +57,15 @@ class MediaPipelineStack(cdk.Stack):
             runtime=aws_lambda.Runtime.PROVIDED_AL2023,
             architecture=aws_lambda.Architecture.ARM_64,
             handler="bootstrap",
-            code=aws_lambda.Code.from_asset(_STUB_PATH),
+            code=lambda_code("image-process"),
             memory_size=1024,
             timeout=cdk.Duration.seconds(60),
             environment={
                 "TABLE_NAME": table.table_name,
+                "MEDIA_ORIGINALS_BUCKET": originals_bucket.bucket_name,
+                "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
                 "PROCESSED_BUCKET": processed_bucket.bucket_name,
+                "AVATARS_PROCESSED_BUCKET": avatars_processed_bucket.bucket_name,
                 "RUST_LOG": "info",
                 "ENV": config.env,
             },
@@ -77,10 +75,15 @@ class MediaPipelineStack(cdk.Stack):
         # Least-privilege IAM
         table.grant(
             self.image_process_fn,
+            "dynamodb:GetItem",
             "dynamodb:UpdateItem",
         )
         originals_bucket.grant_read(self.image_process_fn)
+        originals_bucket.grant_delete(self.image_process_fn)
         processed_bucket.grant_put(self.image_process_fn)
+        avatars_originals_bucket.grant_read(self.image_process_fn)
+        avatars_originals_bucket.grant_delete(self.image_process_fn)
+        avatars_processed_bucket.grant_put(self.image_process_fn)
 
         # S3 event subscription — fires on every upload to the originals prefix.
         #
@@ -98,6 +101,18 @@ class MediaPipelineStack(cdk.Stack):
             bucket_arn=originals_bucket.bucket_arn,
         )
         notifications_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3_notifications.LambdaDestination(self.image_process_fn),
+            s3.NotificationKeyFilter(prefix="uploads/"),
+        )
+
+        # Avatars-originals bucket notification — same Lambda, triggered by avatar uploads
+        avatars_notifications_bucket = s3.Bucket.from_bucket_attributes(
+            self,
+            "AvatarsOriginalsBucketForNotifications",
+            bucket_arn=avatars_originals_bucket.bucket_arn,
+        )
+        avatars_notifications_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3_notifications.LambdaDestination(self.image_process_fn),
             s3.NotificationKeyFilter(prefix="uploads/"),

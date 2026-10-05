@@ -203,6 +203,7 @@ pub async fn seed_image(
         caption: None,
         uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
         processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 2, 0, 1, 0).unwrap()),
+        error_message: None,
     };
     media::put_image(repo, &img).await.expect("image written");
     img.image_id

@@ -321,6 +321,7 @@ pub fn image_media(group_id: &str, cycle_id: &str, image_id: &str, user_id: &str
         caption: None,
         uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 12, 0, 0).unwrap(),
         processed_at: None,
+        error_message: None,
     }
 }
 
@@ -335,6 +336,7 @@ pub fn avatar_media(user_id: &str, avatar_id: &str) -> AvatarMedia {
         bytes: 5678,
         uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 12, 0, 0).unwrap(),
         processed_at: None,
+        error_message: None,
     }
 }
 

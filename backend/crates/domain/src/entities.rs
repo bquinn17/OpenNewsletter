@@ -227,6 +227,10 @@ pub struct ImageMedia {
     pub caption: Option<String>,
     pub uploaded_at: DateTime<Utc>,
     pub processed_at: Option<DateTime<Utc>>,
+    /// Why `status` is `failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or
+    /// `DELETED` (`plans/08-media-uploads.md` §3.2, §9).
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +244,9 @@ pub struct AvatarMedia {
     pub bytes: u64,
     pub uploaded_at: DateTime<Utc>,
     pub processed_at: Option<DateTime<Utc>>,
+    /// Why `status` is `failed`; same values as `ImageMedia::error_message`.
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import clsx from "clsx";
 import { z } from "zod";
 import { useAuth } from "../auth/useAuth";
-import { ApiError } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { useConfig, useMe } from "../api/queries";
 import { useLeaveGroup, useUpdateProfile } from "../api/mutations";
 import { useToasts } from "../state/toast";
@@ -15,6 +15,31 @@ import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Spinner } from "../components/ui/Spinner";
 import { AVATAR_COLOR_SLUGS, avatarColorClass } from "../utils/avatarColor";
+import { pollMediaStatus, sha256Base64 } from "../utils/media";
+import { uploadToS3 } from "../utils/uploadToS3";
+import type { components } from "../types/api";
+
+type S = components["schemas"];
+
+const AVATAR_ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const AVATAR_MAX_BYTES = 5_242_880;
+
+type AvatarUploadState =
+  | { phase: "idle" }
+  | { phase: "uploading"; progress: number }
+  | { phase: "processing" }
+  | { phase: "error"; message: string };
+
+function friendlyAvatarError(code: string | null | undefined): string {
+  switch (code) {
+    case "IMAGE_TOO_LARGE":
+      return "That image is larger than 5 MB.";
+    case "IMAGE_DECODE_FAILED":
+      return "Couldn't process that image — try a different file.";
+    default:
+      return "Couldn't upload — try again.";
+  }
+}
 
 // Bounds per `03-api-contract.md` §5.2 / `shared/openapi.yaml` (`PatchMeRequest.displayName`).
 const profileSchema = z.object({
@@ -37,6 +62,13 @@ export function SettingsPage() {
   const [leaveTarget, setLeaveTarget] = useState<{ groupId: string; groupName: string } | null>(
     null,
   );
+  const [avatarUpload, setAvatarUpload] = useState<AvatarUploadState>({ phase: "idle" });
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const avatarPollCancelRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => avatarPollCancelRef.current?.();
+  }, []);
 
   const {
     register,
@@ -81,6 +113,107 @@ export function SettingsPage() {
     }
   };
 
+  async function finishAvatarUpload(avatarId: string) {
+    try {
+      await updateProfile.mutateAsync({ avatarMediaId: avatarId });
+      setAvatarUpload({ phase: "idle" });
+      pushToast("Profile photo updated.", "success");
+    } catch {
+      setAvatarUpload({ phase: "error", message: "Couldn't save your new photo — try again." });
+    }
+  }
+
+  async function handleAvatarFile(file: File) {
+    if (!AVATAR_ALLOWED_MIME_TYPES.has(file.type)) {
+      setAvatarUpload({ phase: "error", message: "That file type isn't supported." });
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarUpload({ phase: "error", message: "That image is larger than 5 MB." });
+      return;
+    }
+
+    setAvatarUpload({ phase: "uploading", progress: 0 });
+
+    let sha256: string | undefined;
+    try {
+      sha256 = await sha256Base64(file);
+    } catch {
+      sha256 = undefined;
+    }
+
+    const createPresign = () =>
+      api.media.createAvatar({
+        mimeType: file.type as S["AvatarMimeType"],
+        byteSize: file.size,
+        ...(sha256 ? { sha256 } : {}),
+      });
+
+    let presign: S["CreateAvatarResponse"];
+    try {
+      presign = await createPresign();
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : undefined;
+      setAvatarUpload({ phase: "error", message: friendlyAvatarError(code) });
+      return;
+    }
+
+    let avatarId = presign.avatarId;
+    const onProgress = (progress: number) => setAvatarUpload({ phase: "uploading", progress });
+    let result = await uploadToS3(presign.uploadUrl, file, presign.headers, onProgress).catch(
+      () => ({ status: 0 }),
+    );
+
+    if (result.status === 403) {
+      try {
+        const fresh = await createPresign();
+        avatarId = fresh.avatarId;
+        result = await uploadToS3(fresh.uploadUrl, file, fresh.headers, onProgress).catch(() => ({
+          status: 0,
+        }));
+      } catch {
+        setAvatarUpload({ phase: "error", message: friendlyAvatarError(undefined) });
+        return;
+      }
+    }
+
+    if (result.status < 200 || result.status >= 300) {
+      setAvatarUpload({ phase: "error", message: friendlyAvatarError(undefined) });
+      return;
+    }
+
+    setAvatarUpload({ phase: "processing" });
+    avatarPollCancelRef.current = pollMediaStatus(() => api.media.getAvatar(avatarId), {
+      onReady: () => {
+        avatarPollCancelRef.current = null;
+        void finishAvatarUpload(avatarId);
+      },
+      onFailed: (errorMessage) => {
+        avatarPollCancelRef.current = null;
+        setAvatarUpload({ phase: "error", message: friendlyAvatarError(errorMessage) });
+      },
+      onTimeout: () => {
+        avatarPollCancelRef.current = null;
+        setAvatarUpload({
+          phase: "error",
+          message: "This is taking longer than expected — try again.",
+        });
+      },
+    });
+  }
+
+  async function handleRemovePhoto() {
+    const oldAvatarId = me?.avatarMediaId ?? null;
+    try {
+      await updateProfile.mutateAsync({ avatarMediaId: null });
+    } catch {
+      return;
+    }
+    if (oldAvatarId) {
+      api.media.deleteAvatar(oldAvatarId).catch(() => undefined);
+    }
+  }
+
   if (!me || !config) {
     return (
       <div className="flex justify-center py-20">
@@ -97,24 +230,80 @@ export function SettingsPage() {
         <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
           {!editing ? (
             <div className="flex items-center gap-4">
-              <Avatar
-                name={me.displayName}
-                url={me.avatarUrl}
-                colorClassName={avatarColorClass(me.avatarColor)}
-                size="xl"
-              />
+              <div className="relative">
+                <Avatar
+                  name={me.displayName}
+                  url={me.avatarUrl}
+                  colorClassName={avatarColorClass(me.avatarColor)}
+                  size="xl"
+                />
+                {(avatarUpload.phase === "uploading" || avatarUpload.phase === "processing") && (
+                  <div className="absolute inset-0 grid place-items-center rounded-3xl bg-ink/50">
+                    <Spinner size="sm" />
+                  </div>
+                )}
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="font-display text-xl font-bold">{me.displayName}</div>
                 <div className="truncate text-sm text-inkmuted">{me.email}</div>
-                <button
-                  onClick={() => {
-                    reset({ displayName: me.displayName, avatarColor: me.avatarColor });
-                    setEditing(true);
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => {
+                      reset({ displayName: me.displayName, avatarColor: me.avatarColor });
+                      setEditing(true);
+                    }}
+                    className="text-sm font-semibold text-grape"
+                  >
+                    Edit profile
+                  </button>
+                  <label htmlFor="avatar-file-input" className="sr-only">
+                    Upload a profile photo
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={
+                      avatarUpload.phase === "uploading" || avatarUpload.phase === "processing"
+                    }
+                    className="text-sm font-semibold text-grape disabled:opacity-50"
+                  >
+                    {avatarUpload.phase === "uploading"
+                      ? `Uploading ${Math.round(avatarUpload.progress * 100)}%`
+                      : avatarUpload.phase === "processing"
+                        ? "Processing…"
+                        : "Upload photo"}
+                  </button>
+                  {me.avatarMediaId && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRemovePhoto()}
+                      className="text-sm font-semibold text-coral"
+                    >
+                      Remove photo
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="avatar-file-input"
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void handleAvatarFile(file);
                   }}
-                  className="mt-1 text-sm font-semibold text-grape"
-                >
-                  Edit profile
-                </button>
+                />
+                {avatarUpload.phase === "error" && (
+                  <p
+                    role="alert"
+                    aria-live="polite"
+                    className="mt-1 text-xs font-semibold text-coral"
+                  >
+                    {avatarUpload.message}
+                  </p>
+                )}
               </div>
             </div>
           ) : (

@@ -206,12 +206,13 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
 - **Architecture**: arm64 (cheaper)
 - **Environment**:
   - `TABLE_NAME`
+  - `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (the handler compares the event's bucket against these)
   - `PROCESSED_BUCKET`
   - `AVATARS_PROCESSED_BUCKET`
 - **IAM**:
   - `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete purges oversized uploads — `08-media-uploads.md` §3.2)
   - `s3:PutObject` on processed bucket (prefix `img/*`) and avatars-processed bucket (prefix `avatar/*`)
-  - `dynamodb:UpdateItem` on table (for marking image record `READY` and storing dimensions)
+  - `dynamodb:GetItem` + `dynamodb:UpdateItem` on table (read the row's status, then mark it `ready`/`failed` and store dimensions)
 - Logic detailed in `08-media-uploads.md` §5.
 
 ### 5.4 Outputs
@@ -266,6 +267,9 @@ The `PreSignUp` trigger binary is compiled from `lambda-invites` but its CDK `Fu
 All Lambdas share:
 - Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4), `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
 - `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference, echoed by `GET /config` per §7.1)
+- `CDN_BASE_URL` goes to every Lambda that builds media URLs: `lambda-groups`, `-newsletters`, `-questions` and `-media`. It is `https://cdn.{domain}` in prod and `https://{distribution domain}.cloudfront.net` in dev, which has no custom domains (decided M8).
+- `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET`, `CDN_KEY_PAIR_ID` (the CloudFront public key's ID), `CDN_SIGNING_SECRET_ARN` and `MEDIA_COOKIE_DOMAIN` (`.{domain}` in prod, empty in dev, where no `Set-Cookie` is sent — `08` §4.5)
+- The HTTP API's CORS sets `allowCredentials: true`, because the SPA calls `GET /media-cookie` with `credentials: "include"`
 - IAM (baseline): write access to its own log group only
 - DynamoDB IAM: scoped to `arn:aws:dynamodb:...:table/OpenNewsletter-{env}` and the two GSIs
 

@@ -7,7 +7,6 @@ Usage:
 """
 
 import aws_cdk as cdk
-
 from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
 from opennewsletter.config import load_config
@@ -53,6 +52,8 @@ media_pipeline_stack = MediaPipelineStack(
     table=data_stack.table,
     originals_bucket=media_persistent_stack.originals_bucket,
     processed_bucket=media_persistent_stack.processed_bucket,
+    avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+    avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
     env=aws_env,
 )
 
@@ -74,6 +75,10 @@ api_stack = ApiStack(
     bootstrap_client=auth_stack.bootstrap_client,
     certificate=frontend_stack.certificate,
     cycle_tick_fn=notifications_stack.cycle_tick_fn,
+    media_originals_bucket=media_persistent_stack.originals_bucket,
+    avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+    cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
+    cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
     env=aws_env,
 )
 

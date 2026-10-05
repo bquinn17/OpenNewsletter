@@ -19,7 +19,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M5** | **Lifecycle engine + cycle CRUD** | 🟡 **code-complete, deploy unverified** | See "M5 detail" below. The manual done-when flow needs AWS (B5); an end-to-end DynamoDB Local test covers the same sequence. `shared/openapi.yaml` + contract test landed. |
 | **M6** | **Responses + drafts** | 🟡 **code-complete, deploy unverified** | See "M6 detail" below. 201 backend + 41 CDK tests green. The curl save → save → publish gate needs AWS (B5); DynamoDB Local integration tests cover the same sequence. |
 | **M7** | **Frontend skeleton + auth** | 🟡 **code-complete, deploy unverified** | See "M7 detail" and "Post-M7 gap pass" below. 28 frontend, 217 backend and 42 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt, clippy, ruff (check + format), mypy and `cdk synth` are all clean. The Google sign-in / redeem / logout gate needs a deployed stack (B5). |
-| M8 | Media pipeline | ⬜ | Scope grew on 2026-08-09: avatar buckets + `/avatar/*` CloudFront behavior (`01` §5), size-cap enforcement in `lambda-image-process` (`08` §3.2), dev signed-URL query-param mode (`08` §4.5). |
+| **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
 | M9 | Newsletter UI | ⬜ | |
 | M10 | Engagement | ⬜ | |
 | M11 | Notifications | ⬜ | |
@@ -27,7 +27,7 @@ blockers resolve. Authoritative milestone definitions live in
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M7 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M8 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -441,52 +441,132 @@ On both machines no Lambda artifact has ever been produced. `ApiStack`/`Notifica
    - redeem an invite made by `POST /admin/invites` and see the group on Home
    - log out
    Also try `/admin/bootstrap-login` with the `bootstrap_admin.py` credentials.
-7. **Begin M8** (Media pipeline) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build has only been compiled natively on macOS, never cross-compiled. Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403.
+8. **Begin M9** (Newsletter UI) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
+
+- **Comment-image in-use check:** `DELETE /uploads/{id}` only refuses images referenced by the caller's published *answer*. Add the comment check with comments in M10.
+- **`ImageUploader` doesn't resume polling** for `initialImages` that are still `pending` on mount. M9 should either resume or filter them when it hydrates a draft.
 
 The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What remains:
 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
-- **Future-milestone stub crates all name their binary `bootstrap`**: `lambda-media`, `-engagement`, `-push`, `-notify-tick` and `-image-process`. Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
+- **Future-milestone stub crates all name their binary `bootstrap`**: `lambda-engagement`, `-push` and `-notify-tick` (`-media` and `-image-process` were renamed in M8). Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
 - **Component tests use `vi.mock` + TanStack cache seeding, not MSW.** `coding-standards.md` §3.9 and `11` §4.2 specify MSW. Adopt it when component tests grow (M9), or amend the standard; `13` §16 records the current state.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth: the `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows aren't written until M11.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
 
 ---
 
-## Handoff — starting M8 (Media pipeline)
+## M8 detail — what landed (2026-10-04)
+
+The lead settled the contract first: every media route and DTO went into `shared/openapi.yaml`, and `frontend/src/types/api.ts` was regenerated. Then four agents ran in parallel: lambda-media and image-process (Sonnet), infra (Haiku) and frontend (Sonnet). The lead reviewed the signing, presign, delete and processing cores and fixed two infra omissions.
+
+### Backend — `lambda-media` (binary `media-api`)
+- All nine routes: `POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{imageId}`, `POST /uploads/{imageId}/complete`, `GET /media-cookie`, `POST /avatars`, `GET`/`DELETE /avatars/{avatarId}`.
+- Presigned PUTs are built offline from the S3 client, with `RequestChecksumCalculation::WhenRequired`. The response's `headers` map is every signed header. An optional `sha256` is signed as `x-amz-checksum-sha256`.
+- `src/cloudfront.rs` holds the pure policy, RSA-SHA1 signing and modified-base64 code. The signing key is loaded lazily from Secrets Manager (PKCS#1 or PKCS#8 PEM) and cached for the process.
+- Persistence:
+  - `media::count_active_response_images` (bounded to the cycle partition)
+  - `set_image_caption`
+  - `mark_image_deleted` / `mark_avatar_deleted`
+  - `users::clear_user_avatar_if` (conditional)
+- New error code `IMAGE_IN_USE` (409).
+- 54 crate tests: 23 unit and 31 DynamoDB Local.
+
+### Backend — `lambda-image-process` (binary `image-process`)
+- An S3 trigger that branches on the source bucket name, URL-decodes the key, and skips rows that aren't `pending`.
+- Checks `ContentLength` before downloading. An oversized original is marked `failed`/`IMAGE_TOO_LARGE` and deleted.
+- Decodes with `image` 0.25 and applies EXIF orientation. Non-GIF variants are lossy WebP via the `webp` crate (vendored libwebp); GIFs are resized frame by frame so animation survives. Avatars are center-cropped to 256×256 WebP. Nothing is upscaled.
+- `persistence::media_status` adds `mark_{image,avatar}_{ready,failed}`, each conditioned on `status = pending` and returning `Updated`/`AlreadyFinal`.
+- S3 sits behind an `ObjectStore` trait with an in-memory fake, so the handler tests use DynamoDB Local and no S3.
+- 24 crate tests (17 unit, 7 integration) plus 7 persistence tests.
+
+### Infrastructure
+- `MediaPersistentStack`:
+  - avatar originals and processed buckets
+  - a `/avatar/*` CloudFront behavior with no key group
+  - originals-bucket CORS `allowed_headers=["*"]`
+  - the `cdn_key_pair_id` output
+- `MediaPipelineStack`:
+  - real `image-process` code
+  - a second S3 notification on the avatars bucket (re-imported by ARN, no cycle)
+  - `GetItem`/`UpdateItem` on the table, read+delete on originals, put on processed (`GetItem` added by the lead)
+- `ApiStack`:
+  - the `Media` Lambda and its 9 routes
+  - CORS `allowCredentials`
+  - `CDN_BASE_URL` computed once (the distribution domain in dev, `cdn.{domain}` in prod) and passed to the groups, newsletters, questions and media Lambdas. Newsletters and questions previously had none.
+- Makefile: `FUNCTION_media-api`, `FUNCTION_image-process`.
+
+### Frontend
+- `api.media.*` in `api/client.ts`. Only `getMediaCookie` sends `credentials: "include"`. The `/uploads/{id}*` calls carry `groupId`/`cycleId` query params.
+- `utils/media.ts`:
+  - `ensureCookie` caches per group, refreshes 5 minutes before expiry, and shares in-flight requests
+  - `withMediaAuth` adds dev signed-URL params
+  - `refreshMediaAuth`
+  - `pollMediaStatus`
+  - `sha256Base64`
+- `utils/uploadToS3.ts` does the XHR PUT with progress.
+- `components/ui/CdnImage.tsx` retries a failed image once after refreshing the cookie.
+- `components/responses/ImageUploader.tsx` is standalone and not wired into the legacy `RespondPage`. It covers drag-drop and picker, client validation, presign → PUT (one retry on 403) → poll, thumbnails, alt text, remove and retry.
+- `SettingsPage` has avatar upload and remove.
+- Stateful mocks for all nine routes.
+
+### Decisions (recorded in `03` §1.1/§9, `08` §3–§5/§9, `02` §2.10/§2.16, `01` §5.3/§6)
+- `/uploads/{imageId}*` routes take **required `groupId` + `cycleId` query params**, because the row is keyed by them. `GET`/`complete` are open to any member; `PATCH`/`DELETE` are owner-only.
+- `sha256` is **standard base64** and is signed as `x-amz-checksum-sha256` (the spec had said "base64url" and `x-amz-content-sha256`).
+- The 10-image cap counts within the cycle partition, not GSI1. A brief overshoot under concurrent uploads is accepted, because the response save caps at 10 anyway.
+- `DELETE /uploads` soft-fails the row (`errorMessage: "DELETED"`) and refuses with `IMAGE_IN_USE` when the caller's published answer lists the image.
+- `ImageMedia`/`AvatarMedia` gained `error_message` (`IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED` / `DELETED`).
+- `GET /media-cookie` returns `expiresAt` as RFC 3339. It sends `Set-Cookie` only when `MEDIA_COOKIE_DOMAIN` is set (prod), with `Path=/img/{groupId}/` and `Max-Age=3600`.
+- The client hashes with `crypto.subtle.digest`, not a Web Worker.
+- A PUT-403 retry calls `POST /uploads` again and gets a new ID; the abandoned `pending` row is tolerated per `08` §8.1.
+- Lossy WebP needs `libwebp` (the `webp` crate), because `image`'s own WebP encoder is lossless-only.
+- Processed objects carry `Cache-Control: public, max-age=31536000, immutable` (img) or `max-age=86400` (avatar).
+
+### Tests
+Backend 308 (was 217), CDK 53 (was 42), frontend 52 (was 28). Of the `08` §10 list, the backend covers:
+- the presign shape (1)
+- all four formats (2)
+- GIF animation (3)
+- EXIF orientation (4)
+- the 16 MB failure and delete (5)
+- SVG → 415 (6)
+- group-scoped cookie policy and signature verification (7, at the policy level, not against live CloudFront)
+- the 11th upload → `IMAGE_LIMIT_EXCEEDED` (8)
+
+The live-S3 and live-CloudFront halves of 1 and 7 need a deploy.
+
+**Testcontainers flakiness:** with every DynamoDB Local suite running at full parallelism, Colima intermittently drops container connections (`DispatchFailure … IncompleteMessage`). `cargo test --workspace -- --test-threads=4` is reliable on the Mac.
+
+---
+
+## Handoff — starting M9 (Newsletter UI)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M8 and `08-media-uploads.md` (all of it — §3 upload protocol, §3.2 size caps, §4 signed cookies, §4.5 dev signed-URL query-param mode, §10 tests). `01` §5 covers the avatar buckets and the `/avatar/*` CloudFront behaviour.
-2. **Know the M8 scope:**
-   - **Backend:** a new `lambda-media` crate (copy the `lambda-responses` layout), with the `/uploads*` and `/media-cookie` routes, plus the avatar routes `POST /avatars` / `GET /avatars/{id}` (`04` §7.6).
-   - **Image processing:** the real `lambda-image-process` replaces the M3 stub. It branches on the source **bucket**, not the key prefix.
-   - **Frontend:**
-     - `components/responses/ImageUploader.tsx`
-     - `ensureCookie` with `credentials: include`
-     - the avatar upload on `SettingsPage`, whose profile card already exists
-   - **Contract:** every route goes into `shared/openapi.yaml` and `ROUTE_TABLE`, then re-run `scripts/codegen_types.sh`.
-3. **Know the frontend conventions from M7:**
-   - Add new endpoints to `api` in `frontend/src/api/client.ts` and hooks to `api/queries.ts`/`mutations.ts`.
-   - Add a mock route to `api/mockTransport.ts` so mock mode keeps working.
-   - `RespondPage` is still a legacy mock page (`04` §16) and becomes real in M9. So M8's `ImageUploader` should be a standalone component with its own tests, not wired into the legacy editor.
-4. **Frontend verify command** (macOS, from `frontend/`):
+1. **Orient.** Read `CLAUDE.md`, then `12` M9, `04-frontend-architecture.md` §7 and §16 (the legacy mock pages), `06-newsletter-lifecycle.md` §5, and `08` §7 (`image:{id}` markdown tokens).
+2. **Know the M9 scope.** It is mostly frontend, against routes that already exist:
+   - `CandidatesPage` and `SuggestPage` (candidate questions + votes, M5)
+   - `NewsletterPage` in its three layouts (newsletter list/detail, M5)
+   - `RespondPage`, which becomes real: editor, autosave (≥1500 ms debounce), Publish against `PUT …/my-response` (M6)
+   - `PollWidget`, `AnswerCard`, `ImageGallery`, `QuestionPrompt`
+3. **Reuse M8:**
+   - Mount `components/responses/ImageUploader` in the `RespondPage` editor. Its `onChange` yields image IDs and alt text. Insert `![alt](image:{imageId})` tokens and send `imageMediaIds`; drop the ID from the draft when an image is removed.
+   - Render images through `components/ui/CdnImage` after `ensureCookie(groupId)`.
+   - `ImageGallery` resolves `image:{id}` against the `images` array on published answers (`08` §7).
+4. **Carry-forward decision:** `coding-standards.md` §3.9 / `11` §4.2 say component tests use MSW, but M7–M8 used `vi.mock` + cache seeding. M9 is where component tests grow, so either adopt MSW or amend the standard (see Known gaps).
+5. **Frontend verify** (macOS, from `frontend/`):
    ```bash
    export PATH="/opt/homebrew/bin:$PATH" && npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
    ```
-   Baseline: 28 tests; ESLint 0 problems. Backend baseline: 217 tests (`cargo test --workspace`).
-5. **Suggested parallel split:**
-   - **Backend agent (Sonnet):** `backend/`, `shared/openapi.yaml`, generated types
-   - **Infra agent (Haiku):** `infra/` + `Makefile`, meaning the media Lambda, routes, and the image-process wiring
-   - **Frontend agent (Sonnet):** `ImageUploader` + the Settings avatar flow, coded against the agreed OpenAPI shapes
-
-   Settle the upload DTOs in `openapi.yaml` yourself before spawning, so the backend and frontend agents share them.
+   Baselines: 52 frontend tests and ESLint 0 problems; 308 backend (`cargo test --workspace -- --test-threads=4`); 53 CDK.
+6. **Suggested split:** the work is frontend-heavy, so use two Sonnet frontend agents divided by page (candidates/suggest vs. newsletter/respond) with disjoint files. Add a backend agent only if a contract gap appears.
 
 ---
 

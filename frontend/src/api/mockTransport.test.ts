@@ -40,4 +40,90 @@ describe("mockFetch", () => {
       code: "NOT_FOUND",
     });
   });
+
+  describe("media routes", () => {
+    it("creates a pending upload row and flips to ready after a couple of polls", async () => {
+      const created = (await mockFetch("POST", "/uploads", {
+        groupId: "g1",
+        cycleId: "202606",
+        questionId: "q1",
+        mimeType: "image/jpeg",
+        byteSize: 1000,
+      })) as components["schemas"]["CreateUploadResponse"];
+      expect(created.uploadUrl).toContain("mock://upload/");
+
+      const firstPoll = (await mockFetch(
+        "GET",
+        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
+      )) as components["schemas"]["ImageMediaResponse"];
+      expect(firstPoll.status).toBe("pending");
+
+      const secondPoll = (await mockFetch(
+        "GET",
+        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
+      )) as components["schemas"]["ImageMediaResponse"];
+      expect(secondPoll.status).toBe("ready");
+      expect(secondPoll.thumbUrl).toBeTruthy();
+      expect(secondPoll.displayUrl).toBeTruthy();
+    });
+
+    it("sets a caption via PATCH and soft-deletes via DELETE", async () => {
+      const created = (await mockFetch("POST", "/uploads", {
+        groupId: "g1",
+        cycleId: "202606",
+        questionId: "q1",
+        mimeType: "image/jpeg",
+        byteSize: 1000,
+      })) as components["schemas"]["CreateUploadResponse"];
+
+      const patched = (await mockFetch(
+        "PATCH",
+        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
+        { caption: "Mile two." },
+      )) as components["schemas"]["ImageMediaResponse"];
+      expect(patched.caption).toBe("Mile two.");
+
+      await mockFetch("DELETE", `/uploads/${created.imageId}?groupId=g1&cycleId=202606`);
+      const afterDelete = (await mockFetch(
+        "GET",
+        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
+      )) as components["schemas"]["ImageMediaResponse"];
+      expect(afterDelete.status).toBe("failed");
+      expect(afterDelete.errorMessage).toBe("DELETED");
+    });
+
+    it("returns dummy signed-cookie values for the caller's group", async () => {
+      const cookie = (await mockFetch(
+        "GET",
+        "/media-cookie?groupId=g1",
+      )) as components["schemas"]["MediaCookieResponse"];
+      expect(cookie.policy).toBeTruthy();
+      expect(cookie.signature).toBeTruthy();
+      expect(cookie.keyPairId).toBeTruthy();
+    });
+
+    it("creates a pending avatar and flips to ready after a couple of polls, then deletes it", async () => {
+      const created = (await mockFetch("POST", "/avatars", {
+        mimeType: "image/png",
+        byteSize: 500,
+      })) as components["schemas"]["CreateAvatarResponse"];
+      expect(created.uploadUrl).toContain("mock://upload/");
+
+      await mockFetch("GET", `/avatars/${created.avatarId}`);
+      const ready = (await mockFetch(
+        "GET",
+        `/avatars/${created.avatarId}`,
+      )) as components["schemas"]["AvatarMediaResponse"];
+      expect(ready.status).toBe("ready");
+      expect(ready.avatarUrl).toBeTruthy();
+
+      await mockFetch("DELETE", `/avatars/${created.avatarId}`);
+      const afterDelete = (await mockFetch(
+        "GET",
+        `/avatars/${created.avatarId}`,
+      )) as components["schemas"]["AvatarMediaResponse"];
+      expect(afterDelete.status).toBe("failed");
+      expect(afterDelete.errorMessage).toBe("DELETED");
+    });
+  });
 });

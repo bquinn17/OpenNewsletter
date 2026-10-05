@@ -18,6 +18,7 @@ pub mod engagement;
 pub mod groups;
 pub mod invites;
 pub mod media;
+pub mod media_status;
 pub mod newsletters;
 pub mod push;
 pub mod questions;

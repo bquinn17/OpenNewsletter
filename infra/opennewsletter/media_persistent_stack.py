@@ -49,12 +49,7 @@ class MediaPersistentStack(cdk.Stack):
                     if is_dev
                     else [f"https://{config.domain}"]
                 ),
-                allowed_headers=[
-                    "Content-Type",
-                    "x-amz-content-sha256",
-                    "x-amz-date",
-                    "Authorization",
-                ],
+                allowed_headers=["*"],
                 exposed_headers=["ETag"],
             )
         ]
@@ -108,6 +103,56 @@ class MediaPersistentStack(cdk.Stack):
             removal_policy=removal_policy,
         )
 
+        # --- Avatar buckets (separate pipeline, cross-group) ---
+        self.avatars_originals_bucket = s3.Bucket(
+            self,
+            "AvatarsOriginalsBucket",
+            bucket_name=f"opennewsletter-avatars-originals-{config.env}-{self.account}",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioned=False,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            cors=cors_rules,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
+                ),
+                s3.LifecycleRule(
+                    transitions=[
+                        s3.Transition(
+                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
+                            transition_after=cdk.Duration.days(30),
+                        )
+                    ]
+                ),
+            ],
+            auto_delete_objects=is_dev,
+            removal_policy=removal_policy,
+        )
+
+        self.avatars_processed_bucket = s3.Bucket(
+            self,
+            "AvatarsProcessedBucket",
+            bucket_name=f"opennewsletter-avatars-processed-{config.env}-{self.account}",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioned=False,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
+                ),
+                s3.LifecycleRule(
+                    transitions=[
+                        s3.Transition(
+                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
+                            transition_after=cdk.Duration.days(30),
+                        )
+                    ]
+                ),
+            ],
+            auto_delete_objects=is_dev,
+            removal_policy=removal_policy,
+        )
+
         # --- CloudFront signing KeyGroup ---
         pub_key_path = _KEYS_DIR / "cf-signing.pub.pem"
         pub_key_body = pub_key_path.read_text()
@@ -130,6 +175,9 @@ class MediaPersistentStack(cdk.Stack):
         processed_origin = origins.S3BucketOrigin.with_origin_access_control(
             self.processed_bucket
         )
+        avatars_processed_origin = origins.S3BucketOrigin.with_origin_access_control(
+            self.avatars_processed_bucket
+        )
 
         self.distribution = cloudfront.Distribution(
             self,
@@ -144,7 +192,18 @@ class MediaPersistentStack(cdk.Stack):
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
                 trusted_key_groups=[self.key_group],
             ),
+            additional_behaviors={
+                "/avatar/*": cloudfront.BehaviorOptions(
+                    origin=avatars_processed_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                )
+            },
         )
+
+        # Store the key pair ID from the public key for use by lambda-media
+        self.cdn_key_pair_id = cf_public_key.public_key_id
 
         # --- Outputs ---
         cdk.CfnOutput(
@@ -160,12 +219,27 @@ class MediaPersistentStack(cdk.Stack):
             self, "ProcessedBucketArn", value=self.processed_bucket.bucket_arn
         )
         cdk.CfnOutput(
+            self,
+            "AvatarsOriginalsBucketName",
+            value=self.avatars_originals_bucket.bucket_name,
+        )
+        cdk.CfnOutput(
+            self,
+            "AvatarsProcessedBucketName",
+            value=self.avatars_processed_bucket.bucket_name,
+        )
+        cdk.CfnOutput(
             self, "CloudFrontDistributionId", value=self.distribution.distribution_id
         )
         cdk.CfnOutput(
             self, "CloudFrontDomain", value=self.distribution.distribution_domain_name
         )
         cdk.CfnOutput(self, "CloudFrontKeyGroupId", value=self.key_group.key_group_id)
+        cdk.CfnOutput(
+            self,
+            "CloudFrontKeyPairId",
+            value=self.cdn_key_pair_id,
+        )
         cdk.CfnOutput(
             self,
             "CloudFrontSigningKeySecretArn",

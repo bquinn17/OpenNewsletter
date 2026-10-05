@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import aws_cdk as cdk
 import pytest
 from aws_cdk import assertions
-
 from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
 from opennewsletter.config import EnvConfig, load_config
@@ -70,6 +69,8 @@ def media_templates(
         table=data_stack.table,
         originals_bucket=persistent_stack.originals_bucket,
         processed_bucket=persistent_stack.processed_bucket,
+        avatars_originals_bucket=persistent_stack.avatars_originals_bucket,
+        avatars_processed_bucket=persistent_stack.avatars_processed_bucket,
         env=AWS_ENV,
     )
     return (
@@ -296,6 +297,93 @@ def test_image_process_lambda_memory(
     )
 
 
+def test_avatar_originals_bucket_has_no_versioning(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    resources = persistent.find_resources("AWS::S3::Bucket")
+    # Find the avatars-originals bucket by name pattern
+    for logical_id, bucket in resources.items():
+        if "AvatarsOriginals" in logical_id:
+            # versioning not set or explicitly set to False means no versioning
+            assert (
+                bucket["Properties"].get("VersioningConfiguration", {}).get("Status")
+                != "Enabled"
+            )
+
+
+def test_avatar_originals_bucket_has_cors(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    resources = persistent.find_resources("AWS::S3::Bucket")
+    avatar_originals_buckets = [
+        bucket
+        for logical_id, bucket in resources.items()
+        if "AvatarsOriginals" in logical_id
+    ]
+    assert len(avatar_originals_buckets) == 1
+    bucket = avatar_originals_buckets[0]
+    assert "CorsConfiguration" in bucket["Properties"]
+
+
+def test_cloudfront_has_avatar_behavior(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    resources = persistent.find_resources("AWS::CloudFront::Distribution")
+    assert len(resources) == 1
+    dist = next(iter(resources.values()))
+    behaviors = dist["Properties"]["DistributionConfig"].get("CacheBehaviors", [])
+    # Avatar behavior should be in CacheBehaviors (not DefaultCacheBehavior)
+    avatar_behaviors = [b for b in behaviors if "/avatar/*" in b.get("PathPattern", "")]
+    assert len(avatar_behaviors) == 1
+
+
+def test_avatar_behavior_has_no_trusted_key_group(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    resources = persistent.find_resources("AWS::CloudFront::Distribution")
+    dist = next(iter(resources.values()))
+    behaviors = dist["Properties"]["DistributionConfig"].get("CacheBehaviors", [])
+    avatar_behaviors = [b for b in behaviors if "/avatar/*" in b.get("PathPattern", "")]
+    avatar_behavior = avatar_behaviors[0]
+    # Should not have TrustedKeyGroups
+    assert "TrustedKeyGroups" not in avatar_behavior
+
+
+def test_image_process_has_avatar_bucket_env_vars(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    pipeline.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-ImageProcess-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "AVATARS_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "AVATARS_PROCESSED_BUCKET": assertions.Match.any_value(),
+                        "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_image_process_has_two_s3_notifications(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    # Count S3 notification custom resources
+    resources = pipeline.find_resources("Custom::S3BucketNotifications")
+    # Should have notifications for both media-originals and avatars-originals
+    assert len(resources) >= 2
+
+
 # ---------------------------------------------------------------------------
 # ApiStack
 # ---------------------------------------------------------------------------
@@ -323,6 +411,14 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
     frontend_stack = FrontendStack(
         app, "TestFrontendStack2", config=dev_config, env=AWS_ENV
     )
+    media_persistent_stack = MediaPersistentStack(
+        app,
+        "TestMediaPersistentStack3",
+        config=dev_config,
+        table=data_stack.table,
+        certificate=frontend_stack.certificate,
+        env=AWS_ENV,
+    )
     notifications_stack = NotificationsStack(
         app,
         "TestNotificationsStack2",
@@ -340,6 +436,10 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
+        media_originals_bucket=media_persistent_stack.originals_bucket,
+        avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+        cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
+        cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -352,6 +452,14 @@ def prod_api_template() -> assertions.Template:
     data_stack = DataStack(app, "ProdDataStack", config=config, env=AWS_ENV)
     auth_stack = AuthStack(app, "ProdAuthStack", config=config, env=AWS_ENV)
     frontend_stack = FrontendStack(app, "ProdFrontendStack", config=config, env=AWS_ENV)
+    media_persistent_stack = MediaPersistentStack(
+        app,
+        "ProdMediaPersistentStack",
+        config=config,
+        table=data_stack.table,
+        certificate=frontend_stack.certificate,
+        env=AWS_ENV,
+    )
     notifications_stack = NotificationsStack(
         app,
         "ProdNotificationsStack",
@@ -369,6 +477,10 @@ def prod_api_template() -> assertions.Template:
         bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
+        media_originals_bucket=media_persistent_stack.originals_bucket,
+        avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+        cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
+        cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -389,6 +501,7 @@ def test_http_api_cors_allows_the_dev_origin(api_template: assertions.Template) 
                 "AllowOrigins": assertions.Match.array_with(["http://localhost:5173"]),
                 "AllowHeaders": assertions.Match.array_with(["x-correlation-id"]),
                 "ExposeHeaders": ["x-correlation-id"],
+                "AllowCredentials": True,
                 "MaxAge": 600,
             }
         },
@@ -447,6 +560,15 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /admin/groups/{groupId}/invites",
         "POST /admin/invites/{code}/revoke",
         "POST /invites/redeem",
+        "POST /uploads",
+        "GET /uploads/{imageId}",
+        "PATCH /uploads/{imageId}",
+        "DELETE /uploads/{imageId}",
+        "POST /uploads/{imageId}/complete",
+        "GET /media-cookie",
+        "POST /avatars",
+        "GET /avatars/{avatarId}",
+        "DELETE /avatars/{avatarId}",
         "GET /groups/{groupId}/newsletters",
         "GET /groups/{groupId}/newsletters/{cycleId}",
         "GET /groups/{groupId}/candidate-questions",
@@ -493,6 +615,99 @@ def test_responses_lambda_is_arm64_provided_al2023_with_512_memory(
             "Runtime": "provided.al2023",
             "MemorySize": 512,
             "Timeout": 10,
+        },
+    )
+
+
+def test_media_lambda_is_arm64_provided_al2023_with_512_memory(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Media-dev",
+            "Architectures": ["arm64"],
+            "Runtime": "provided.al2023",
+            "MemorySize": 512,
+            "Timeout": 10,
+        },
+    )
+
+
+def test_media_lambda_has_required_env_vars(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Media-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "AVATARS_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "CDN_BASE_URL": assertions.Match.any_value(),
+                        "CDN_KEY_PAIR_ID": assertions.Match.any_value(),
+                        "CDN_SIGNING_SECRET_ARN": assertions.Match.any_value(),
+                        "MEDIA_COOKIE_DOMAIN": "",
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_media_lambda_cookie_domain_is_prod_form_in_prod(
+    prod_api_template: assertions.Template,
+) -> None:
+    prod_api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": assertions.Match.string_like_regexp(
+                r"OpenNewsletter-Media-prod"
+            ),
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "MEDIA_COOKIE_DOMAIN": assertions.Match.string_like_regexp(
+                            r"\..*"
+                        ),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_media_lambda_cdn_base_url_is_set_in_dev(
+    api_template: assertions.Template,
+) -> None:
+    # In dev, CDN_BASE_URL should be set from the distribution domain
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Media-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"CDN_BASE_URL": assertions.Match.any_value()}
+                )
+            },
+        },
+    )
+
+
+def test_groups_lambda_receives_cdn_base_url(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Groups-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"CDN_BASE_URL": assertions.Match.any_value()}
+                )
+            },
         },
     )
 

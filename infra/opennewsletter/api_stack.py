@@ -29,8 +29,10 @@ from aws_cdk import aws_apigatewayv2_integrations as apigw_integrations
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 from .config import EnvConfig
@@ -67,6 +69,15 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("invites", "GET", "/admin/groups/{groupId}/invites"),
     ("invites", "POST", "/admin/invites/{code}/revoke"),
     ("invites", "POST", "/invites/redeem"),
+    ("media", "POST", "/uploads"),
+    ("media", "GET", "/uploads/{imageId}"),
+    ("media", "PATCH", "/uploads/{imageId}"),
+    ("media", "DELETE", "/uploads/{imageId}"),
+    ("media", "POST", "/uploads/{imageId}/complete"),
+    ("media", "GET", "/media-cookie"),
+    ("media", "POST", "/avatars"),
+    ("media", "GET", "/avatars/{avatarId}"),
+    ("media", "DELETE", "/avatars/{avatarId}"),
     ("newsletters", "GET", "/groups/{groupId}/newsletters"),
     ("newsletters", "GET", "/groups/{groupId}/newsletters/{cycleId}"),
     ("questions", "GET", "/groups/{groupId}/candidate-questions"),
@@ -106,6 +117,10 @@ class ApiStack(cdk.Stack):
         bootstrap_client: cognito.IUserPoolClient,
         certificate: acm.ICertificate,
         cycle_tick_fn: aws_lambda.IFunction,
+        media_originals_bucket: s3.Bucket,
+        avatars_originals_bucket: s3.Bucket,
+        cdn_domain: str,
+        cdn_key_pair_id: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -125,6 +140,13 @@ class ApiStack(cdk.Stack):
             else cdk.RemovalPolicy.RETAIN
         )
 
+        # Dev has no custom domains (`plans/13-dev-environments.md` §2), so media
+        # URLs use the distribution's own `*.cloudfront.net` domain there.
+        if config.env == "dev":
+            cdn_base_url = f"https://{cdn_domain}"
+        else:
+            cdn_base_url = f"https://cdn.{config.domain}"
+
         self.invites_fn = self._handler_lambda(
             "Invites",
             binary_name="invites-api",
@@ -135,7 +157,7 @@ class ApiStack(cdk.Stack):
             binary_name="groups-api",
             description="Config, profile, group and member routes",
             extra_environment={
-                "CDN_BASE_URL": f"https://cdn.{config.domain}",
+                "CDN_BASE_URL": cdn_base_url,
                 "VAPID_PUBLIC_KEY": _sm_ref(config.vapid_secret_arn, "publicKey"),
             },
         )
@@ -143,17 +165,48 @@ class ApiStack(cdk.Stack):
             "Newsletters",
             binary_name="newsletters-api",
             description="Newsletter list + detail",
+            extra_environment={
+                "CDN_BASE_URL": cdn_base_url,
+            },
         )
         self.questions_fn = self._handler_lambda(
             "Questions",
             binary_name="questions-api",
             description="Candidate question CRUD + votes",
+            extra_environment={
+                "CDN_BASE_URL": cdn_base_url,
+            },
         )
         self.responses_fn = self._handler_lambda(
             "Responses",
             binary_name="responses-api",
             description="My response get/list/put",
             memory_size=512,
+        )
+        self.media_fn = self._handler_lambda(
+            "Media",
+            binary_name="media-api",
+            description="Uploads, avatars, media cookie",
+            memory_size=512,
+            extra_environment={
+                "MEDIA_ORIGINALS_BUCKET": media_originals_bucket.bucket_name,
+                "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
+                "CDN_BASE_URL": cdn_base_url,
+                "CDN_KEY_PAIR_ID": cdn_key_pair_id,
+                "CDN_SIGNING_SECRET_ARN": config.cdn_signing_secret_arn,
+                "MEDIA_COOKIE_DOMAIN": (
+                    f".{config.domain}" if config.env != "dev" else ""
+                ),
+            },
+        )
+        # Presigning a PUT needs s3:PutObject on the signer's role.
+        media_originals_bucket.grant_put(self.media_fn)
+        avatars_originals_bucket.grant_put(self.media_fn)
+        self.media_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[config.cdn_signing_secret_arn],
+            )
         )
 
         # --- HTTP API ---
@@ -191,6 +244,7 @@ class ApiStack(cdk.Stack):
                 ],
                 allow_headers=["Authorization", "Content-Type", "x-correlation-id"],
                 expose_headers=["x-correlation-id"],
+                allow_credentials=True,
                 max_age=cdk.Duration.seconds(600),
             ),
         )
@@ -198,6 +252,7 @@ class ApiStack(cdk.Stack):
         handlers = {
             "invites": self.invites_fn,
             "groups": self.groups_fn,
+            "media": self.media_fn,
             "newsletters": self.newsletters_fn,
             "questions": self.questions_fn,
             "responses": self.responses_fn,

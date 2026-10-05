@@ -9,12 +9,14 @@
 //! that test's mapping table in the same PR.
 
 use crate::{
-    AvatarId, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, Invite, InviteStatus,
-    NewsletterStatus, NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response,
-    ResponseId, ResponseStatus, Role, User, UserId,
+    AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, ImageMedia,
+    ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, NewsletterStatus,
+    NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response, ResponseId,
+    ResponseStatus, Role, User, UserId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 // ===== `03-api-contract.md` §2 — Bootstrap / metadata routes =====
 
@@ -599,6 +601,160 @@ pub enum SaveResponseRequest {
         poll_option_id: PollOptionId,
         publish: bool,
     },
+}
+
+// ===== `03-api-contract.md` §9 — Media routes =====
+
+/// `POST /uploads` request body (§9.1). `mimeType` is deliberately a bare
+/// `String`, not `ImageMimeType` — an unrecognized value (e.g. an SVG) must
+/// reach the handler as `IMAGE_BAD_TYPE` (415), not fail JSON deserialization
+/// into a generic 422.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateUploadRequest {
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub question_id: QuestionId,
+    /// Defaults to `response` when absent (`08-media-uploads.md` §3.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<ImagePurpose>,
+    pub mime_type: String,
+    pub byte_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+/// `POST /uploads` response (§9.1).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateUploadResponse {
+    pub image_id: ImageId,
+    pub upload_url: String,
+    /// Every header the presigned request was signed with, lower-cased. The
+    /// client sends them all verbatim on the PUT. A `BTreeMap` keeps the
+    /// iteration order stable for callers/tests.
+    pub headers: BTreeMap<String, String>,
+    pub expires_in_seconds: u64,
+}
+
+/// `GET /uploads/{imageId}`, `PATCH /uploads/{imageId}`, and
+/// `POST /uploads/{imageId}/complete` response (§9.2, §9.3, §9.6).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageMediaResponse {
+    pub image_id: ImageId,
+    pub user_id: UserId,
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub question_id: Option<QuestionId>,
+    pub purpose: ImagePurpose,
+    pub mime_type: ImageMimeType,
+    pub status: MediaStatus,
+    pub bytes: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub caption: Option<String>,
+    /// Absolute CloudFront URL; `null` until `status=ready`.
+    pub display_url: Option<String>,
+    /// Absolute CloudFront URL; `null` until `status=ready`.
+    pub thumb_url: Option<String>,
+    pub error_message: Option<String>,
+    pub uploaded_at: DateTime<Utc>,
+    pub processed_at: Option<DateTime<Utc>>,
+}
+
+impl ImageMediaResponse {
+    pub fn new(image: ImageMedia, display_url: Option<String>, thumb_url: Option<String>) -> Self {
+        Self {
+            image_id: image.image_id,
+            user_id: image.user_id,
+            group_id: image.group_id,
+            cycle_id: image.cycle_id,
+            question_id: image.question_id,
+            purpose: image.purpose,
+            mime_type: image.mime_type,
+            status: image.status,
+            bytes: image.bytes,
+            width: image.width,
+            height: image.height,
+            caption: image.caption,
+            display_url,
+            thumb_url,
+            error_message: image.error_message,
+            uploaded_at: image.uploaded_at,
+            processed_at: image.processed_at,
+        }
+    }
+}
+
+/// `PATCH /uploads/{imageId}` request body (§9.6). `caption` is a required
+/// key (per the YAML schema) whose value is either a string or `null` —
+/// there is no "absent" state to distinguish, unlike `PatchMeRequest`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatchUploadRequest {
+    pub caption: Option<String>,
+}
+
+/// `GET /media-cookie` response (§9.5).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaCookieResponse {
+    pub policy: String,
+    pub signature: String,
+    pub key_pair_id: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// `POST /avatars` request body (§9.7). `mimeType` is a bare `String` for the
+/// same reason as [`CreateUploadRequest::mime_type`].
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateAvatarRequest {
+    pub mime_type: String,
+    pub byte_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+/// `POST /avatars` response (§9.7).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAvatarResponse {
+    pub avatar_id: AvatarId,
+    pub upload_url: String,
+    pub headers: BTreeMap<String, String>,
+    pub expires_in_seconds: u64,
+}
+
+/// `GET /avatars/{avatarId}` response (§9.7).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarMediaResponse {
+    pub avatar_id: AvatarId,
+    pub mime_type: ImageMimeType,
+    pub status: MediaStatus,
+    pub bytes: u64,
+    /// Absolute, unsigned CloudFront URL; `null` until `status=ready`.
+    pub avatar_url: Option<String>,
+    pub error_message: Option<String>,
+    pub uploaded_at: DateTime<Utc>,
+    pub processed_at: Option<DateTime<Utc>>,
+}
+
+impl AvatarMediaResponse {
+    pub fn new(avatar: AvatarMedia, avatar_url: Option<String>) -> Self {
+        Self {
+            avatar_id: avatar.avatar_id,
+            mime_type: avatar.mime_type,
+            status: avatar.status,
+            bytes: avatar.bytes,
+            avatar_url,
+            error_message: avatar.error_message,
+            uploaded_at: avatar.uploaded_at,
+            processed_at: avatar.processed_at,
+        }
+    }
 }
 
 // ===== `03-api-contract.md` §11 — Health =====
