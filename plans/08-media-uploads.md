@@ -345,10 +345,11 @@ Stored format: `![alt text](image:{imageId})`.
 
 Server-side: nothing. The `body` is stored verbatim.
 
-Render-side (`utils/markdown.ts`):
-- Custom `remark-image-token` plugin replaces `image:{id}` URLs with the resolved `displayUrl`.
-- The plugin needs a lookup table (`imageId -> ImageMedia`), provided by the parent component (the response includes `images` array).
-- Sanitizer allows `image:` and `https://cdn.opennewsletter.example.com/...` URLs only.
+Render-side (`utils/markdown.tsx`, as built in M9):
+- There's no remark plugin. `MarkdownBody` overrides react-markdown's `img` renderer: an `image:{id}` src is looked up in an `images` table the parent passes in (`PublishedAnswerResponse.images`, or the editor's live uploads) and rendered with `CdnImage`. An unknown ID renders nothing.
+- `image:` must pass both `react-markdown`'s `urlTransform` and the `rehype-sanitize` schema. See `04` §9.
+- Any other image URL renders as a link, never an `<img>`.
+- `ImageGallery` shows an answer's images that the body doesn't reference inline.
 
 This indirection means we can change the CDN host (or rotate signed cookies) without rewriting stored markdown.
 

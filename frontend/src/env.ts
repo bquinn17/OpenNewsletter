@@ -11,6 +11,8 @@ type Env = {
   appEnv: AppEnv;
   buildSha: string;
   useMocks: boolean;
+  /** Quiet period after the last keystroke before a draft autosaves (`04` §7.3, §8.2). */
+  autosaveDebounceMs: number;
 };
 
 const raw = import.meta.env;
@@ -39,4 +41,5 @@ export const env: Env = {
   appEnv: raw.VITE_ENV === "prod" ? "prod" : "dev",
   buildSha: raw.VITE_BUILD_SHA ?? "dev",
   useMocks,
+  autosaveDebounceMs: Math.max(1500, Number(raw.VITE_AUTOSAVE_DEBOUNCE_MS) || 1500),
 };

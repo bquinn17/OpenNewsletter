@@ -127,6 +127,18 @@ export function ImageUploader({
     };
   }, []);
 
+  // Resume polling for any `initialImages` still mid-processing when this
+  // component mounts (M8 gap: a page refresh otherwise strands the row as a
+  // permanent spinner since nothing re-triggers `GET /uploads/{id}`).
+  useEffect(() => {
+    for (const row of initialImages ?? []) {
+      if (row.status === "pending") beginPolling(row.imageId);
+    }
+    // Deliberately mount-only: `beginPolling` registers a cancel keyed by
+    // imageId in `pollCancelRef`, cancelled by the unmount effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const pushToast = useToasts((s) => s.push);
 
   function updateImage(imageId: string, patch: Partial<PendingImage>) {

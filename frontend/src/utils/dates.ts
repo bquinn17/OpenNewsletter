@@ -54,3 +54,22 @@ export function cycleLabels(responseOpenAt: string, timezone: string): CycleLabe
   }).format(date);
   return { monthLabel, yearLabel };
 }
+
+/**
+ * Formats an instant in the group's IANA timezone (M9: every date shown on a
+ * group page is in the group's zone, not the viewer's). `options` defaults to
+ * e.g. "Oct 5, 9:00 PM EDT".
+ */
+export function formatInZone(
+  iso: string,
+  timezone: string,
+  options: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  },
+): string {
+  return new Intl.DateTimeFormat("en-US", { ...options, timeZone: timezone }).format(new Date(iso));
+}

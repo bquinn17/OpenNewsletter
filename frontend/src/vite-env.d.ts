@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_ENV: string;
   readonly VITE_BUILD_SHA: string;
   readonly VITE_USE_MOCKS: string;
+  readonly VITE_AUTOSAVE_DEBOUNCE_MS?: string;
 }
 
 interface ImportMeta {

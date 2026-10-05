@@ -196,7 +196,7 @@ These apply regardless of language.
 ### 3.9 Tests
 - Vitest + Testing Library. Test files co-located: `Button.test.tsx` next to `Button.tsx`.
 - Test from the user's perspective: query by role, label, text. Avoid `getByTestId` unless there's no other accessible way.
-- MSW (Mock Service Worker) intercepts API calls; use the OpenAPI-derived handlers in `tests/msw/`.
+- Mock the API at the `api/client` boundary with `vi.mock`, and seed the TanStack Query cache where a test only needs data on screen (see `pages/JoinPage.test.tsx`, `components/responses/ImageUploader.test.tsx`). Type every fixture against `types/api.ts` so a contract change breaks the test at compile time. (Decided in M9; MSW was the original plan — `11-testing-ci-cd.md` §4.2.)
 - Don't assert on internal state, render output structure, or class names. Assert on what the user sees.
 
 ### 3.10 Accessibility

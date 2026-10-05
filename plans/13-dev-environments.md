@@ -239,7 +239,7 @@ The test pyramid in [`11-testing-ci-cd.md`](11-testing-ci-cd.md) stands; this se
 | Test layer | Local | CI | Notes |
 |---|---|---|---|
 | Rust unit (`domain/`, `persistence/keys.rs`, `shared/`, pure validators) | ✅ default | ✅ | Sub-second. No IO, no Docker, no AWS. Run on every save with `cargo watch -x test`. |
-| Frontend unit (Vitest + MSW) | ✅ default | ✅ | Same as planned. |
+| Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Same as planned. |
 | Contract test (OpenAPI ↔ Rust struct round-trip) | ✅ default | ✅ | Pure; runs under `cargo test`. |
 | CDK assertions (`pytest infra/tests/`) | ✅ default | ✅ | Pure synth, no AWS calls. |
 | Rust integration (DDB-local via `testcontainers`) | ⚙️ opt-in: `cargo test --features integration` | ✅ | Needs Docker. Devs don't need to run these to land work. |
@@ -398,4 +398,4 @@ Two mock layers exist; both are for UI iteration without an AWS account (reconci
 - **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each milestone that adds client endpoints adds matching mock routes here. `make fe` (`--mode dev`) talks to the real dev stack instead.
 - **`frontend/src/mocks/`** is the legacy pre-M7 layer (hand-written types). It is transitional and is deleted as M9–M12 migrate their pages (`04-frontend-architecture.md` §16). Don't extend it.
 
-Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`). `11-testing-ci-cd.md` §4.2's MSW plan is not adopted yet; revisit if handler-level fidelity is needed.
+Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`). M9 made this the standard (`coding-standards.md` §3.9, `11-testing-ci-cd.md` §4.2); MSW is not used.

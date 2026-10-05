@@ -116,6 +116,14 @@ export async function apiFetch<T>(
   }
 }
 
+function groupPath(groupId: string): string {
+  return `/groups/${encodeURIComponent(groupId)}`;
+}
+
+function myResponsePath(groupId: string, cycleId: string, questionId: string): string {
+  return `${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}/questions/${encodeURIComponent(questionId)}/my-response`;
+}
+
 /** `groupId`/`cycleId` query string shared by every `/uploads/{imageId}*` route. */
 function mediaQuery(groupId: string, cycleId: string): string {
   return new URLSearchParams({ groupId, cycleId }).toString();
@@ -152,6 +160,56 @@ export const api = {
       `/groups/${encodeURIComponent(groupId)}/newsletters${queryString ? `?${queryString}` : ""}`,
     );
   },
+
+  getNewsletter: (groupId: string, cycleId: string): Promise<S["NewsletterDetailResponse"]> =>
+    apiFetch(`${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}`),
+
+  listCandidates: (
+    groupId: string,
+    params?: { sort?: "top" | "recent"; limit?: number; cursor?: string },
+  ): Promise<S["CandidateListResponse"]> => {
+    const query = new URLSearchParams();
+    if (params?.sort) query.set("sort", params.sort);
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.cursor) query.set("cursor", params.cursor);
+    const queryString = query.toString();
+    return apiFetch(
+      `${groupPath(groupId)}/candidate-questions${queryString ? `?${queryString}` : ""}`,
+    );
+  },
+
+  createCandidate: (
+    groupId: string,
+    body: S["CreateCandidateRequest"],
+  ): Promise<S["CandidateItemResponse"]> =>
+    apiFetch(`${groupPath(groupId)}/candidate-questions`, { method: "POST", body }),
+
+  castVote: (groupId: string, questionId: string): Promise<S["CandidateVoteResponse"]> =>
+    apiFetch(`${groupPath(groupId)}/candidate-questions/${encodeURIComponent(questionId)}/votes`, {
+      method: "POST",
+    }),
+
+  withdrawVote: (groupId: string, questionId: string): Promise<S["CandidateVoteResponse"]> =>
+    apiFetch(`${groupPath(groupId)}/candidate-questions/${encodeURIComponent(questionId)}/votes`, {
+      method: "DELETE",
+    }),
+
+  listMyResponses: (groupId: string, cycleId: string): Promise<S["MyResponsesList"]> =>
+    apiFetch(`${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}/my-responses`),
+
+  getMyResponse: (
+    groupId: string,
+    cycleId: string,
+    questionId: string,
+  ): Promise<S["ResponseDto"]> => apiFetch(myResponsePath(groupId, cycleId, questionId)),
+
+  saveMyResponse: (
+    groupId: string,
+    cycleId: string,
+    questionId: string,
+    body: S["SaveResponseRequest"],
+  ): Promise<S["ResponseDto"]> =>
+    apiFetch(myResponsePath(groupId, cycleId, questionId), { method: "PUT", body }),
 
   redeemInvite: (code: string): Promise<S["RedeemResponse"]> =>
     apiFetch("/invites/redeem", { method: "POST", body: { code } }),

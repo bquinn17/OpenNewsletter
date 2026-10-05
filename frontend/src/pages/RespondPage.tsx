@@ -1,578 +1,372 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
-import { mockApi as api } from "../mocks/api";
-import { useNewsletter, useSaveResponse } from "../mocks/legacyQueries";
-import { useToasts } from "../state/toast";
+import { useEffect, useRef, useState } from "react";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { api, ApiError } from "../api/client";
+import { useConfig, useMembership, useNewsletter } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
-import { Button } from "../components/ui/Button";
 import { Pill } from "../components/ui/Pill";
-import { formatRelative } from "../utils/dates";
-import type { LockedQuestion, MyResponse } from "../mocks/types";
+import { Button } from "../components/ui/Button";
+import { Spinner } from "../components/ui/Spinner";
+import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
+import { ResponseEditor } from "../components/responses/ResponseEditor";
+import { DraftStatusBadge } from "../components/responses/DraftStatusBadge";
+import { PublishButton } from "../components/responses/PublishButton";
+import { useResponseEditor } from "../components/responses/useResponseEditor";
+import { MarkdownBody } from "../utils/markdown";
+import { useToasts } from "../state/toast";
+import { formatInZone, shortCountdown } from "../utils/dates";
+import type { components } from "../types/api";
 
-const AUTOSAVE_MS = 1500;
+type S = components["schemas"];
 
 export function RespondPage() {
   const { groupId = "", cycleId = "", questionId = "" } = useParams();
-  const navigate = useNavigate();
-  const { data, isLoading } = useNewsletter(groupId, cycleId);
-  const save = useSaveResponse(groupId, cycleId);
-  const pushToast = useToasts((s) => s.push);
+  const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
+  const membership = useMembership(groupId);
+  const timezone = membership?.timezone ?? "UTC";
 
-  const question: LockedQuestion | undefined = useMemo(() => {
-    if (!data) return undefined;
-    if (data.status === "open") return data.questions.find((q) => q.questionId === questionId);
-    return undefined;
-  }, [data, questionId]);
+  if (isLoading) return <LoadingShell groupId={groupId} cycleId={cycleId} />;
 
-  const existing: MyResponse | undefined = useMemo(() => {
-    if (!data || data.status !== "open") return undefined;
-    return data.myResponses.find((r) => r.questionId === questionId);
-  }, [data, questionId]);
-
-  const [body, setBody] = useState("");
-  const [pollOptionId, setPollOptionId] = useState<string | null>(null);
-  const [imageIds, setImageIds] = useState<string[]>([]);
-  const [imageCaptions, setImageCaptions] = useState<Record<string, string>>({});
-  const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const initialized = useRef(false);
-
-  useEffect(() => {
-    if (initialized.current) return;
-    // Wait until the newsletter has loaded and the target question resolves —
-    // only then do we know whether there's a pre-existing draft to hydrate.
-    if (!question) return;
-    if (existing) {
-      setBody(existing.body ?? "");
-      setPollOptionId(existing.pollOptionId ?? null);
-      setImageIds(existing.imageMediaIds ?? []);
-      setImageCaptions(existing.imageCaptions ?? {});
-      setSavedAt(existing.updatedAt ?? null);
-    }
-    // Mark initialized either way so the autosave effect can start firing on
-    // the user's first keystroke for brand-new responses.
-    initialized.current = true;
-  }, [question, existing]);
-
-  // Debounced autosave
-  useEffect(() => {
-    if (!question || !initialized.current) return;
-    const id = setTimeout(() => {
-      void doSave(false);
-    }, AUTOSAVE_MS);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, pollOptionId, imageIds, imageCaptions]);
-
-  async function doSave(publish: boolean): Promise<boolean> {
-    if (!question) return false;
-    setSaving(true);
-    try {
-      // Drop captions for any image that's been removed.
-      const cleanedCaptions: Record<string, string> = {};
-      for (const id of imageIds) {
-        const c = imageCaptions[id]?.trim();
-        if (c) cleanedCaptions[id] = c;
-      }
-      const result = await save.mutateAsync({
-        questionId: question.questionId,
-        body:
-          question.kind === "text"
-            ? {
-                kind: "text",
-                body,
-                imageMediaIds: imageIds,
-                imageCaptions: cleanedCaptions,
-                publish,
-              }
-            : { kind: "poll", pollOptionId: pollOptionId ?? "", publish },
-      });
-      setSavedAt(result.updatedAt);
-      if (publish)
-        pushToast("Published — friends can see this when the edition publishes.", "success");
-      return true;
-    } catch (e) {
-      pushToast((e as Error).message ?? "Save failed", "error");
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (isLoading || !data) return null;
-  if (data.status !== "open" || !question) {
+  if (isError) {
     return (
-      <div className="bg-cream pb-32">
-        <PageHeader title="Not open for responses" back="/" />
-        <div className="px-5 pt-6 text-inkmuted">
-          This question isn&apos;t accepting responses right now.
-        </div>
-      </div>
+      <ErrorState
+        groupId={groupId}
+        cycleId={cycleId}
+        message={error instanceof Error ? error.message : "Couldn't load this question."}
+        onRetry={() => refetch()}
+      />
     );
   }
 
-  const wordCount = body.trim() ? body.trim().split(/\s+/).length : 0;
-  const isPublished = existing?.status === "published";
+  if (!data) return null;
+  if (data.status !== "open") return <Navigate to={`/g/${groupId}/n/${cycleId}`} replace />;
+
+  const question = data.questions.find((q) => q.questionId === questionId);
+  if (!question) return <NotFoundState groupId={groupId} cycleId={cycleId} />;
 
   return (
+    <QuestionBody
+      question={question}
+      groupId={groupId}
+      cycleId={cycleId}
+      timezone={timezone}
+      responseCloseAt={data.responseCloseAt}
+    />
+  );
+}
+
+function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }) {
+  return (
     <div className="bg-cream pb-32">
-      <PageHeader
-        eyebrow={`Question · ${data.monthLabel} ${data.yearLabel}`}
-        title={question.prompt}
-        back={`/g/${groupId}/n/${cycleId}`}
-        rightSlot={<Pill tone={saving ? "grape" : "mint"}>● {saving ? "saving" : "saved"}</Pill>}
-      />
-
-      <div className="px-5 pt-5">
-        <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
-          <div className="text-xs font-bold uppercase tracking-widest text-grape">
-            {question.askedBy
-              ? `${question.askedBy.displayName} asked`
-              : question.isAnonymous
-                ? "Asked anonymously"
-                : "Question"}
-          </div>
-          <h1 className="mt-1 font-display text-2xl font-bold leading-tight">{question.prompt}</h1>
-          {question.helperText && (
-            <p className="mt-2 text-sm text-inkmuted">{question.helperText}</p>
-          )}
-        </div>
-      </div>
-
-      {question.kind === "text" ? (
-        <TextEditor
-          groupId={groupId}
-          cycleId={cycleId}
-          questionId={question.questionId}
-          body={body}
-          onBodyChange={setBody}
-          imageIds={imageIds}
-          setImageIds={setImageIds}
-          imageCaptions={imageCaptions}
-          setImageCaptions={setImageCaptions}
-        />
-      ) : (
-        <PollPicker question={question} selected={pollOptionId} onSelect={setPollOptionId} />
-      )}
-
-      <div className="mt-4 px-5">
-        <div className="flex gap-3 rounded-3xl border border-grape/20 bg-grape/5 p-4 text-sm text-grape">
-          <span className="text-lg">💡</span>
-          <div>
-            <strong className="font-semibold">Drafts autosave every couple seconds.</strong> Your
-            friends won&apos;t see this until the edition publishes, and you can edit anytime before
-            then.
-          </div>
-        </div>
-      </div>
-
-      <div className="absolute bottom-3 left-3 right-3 z-40">
-        <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
-          <div className="text-xs leading-tight">
-            <div className="font-semibold">
-              {isPublished ? "Published" : "Draft"} · {wordCount} words
-            </div>
-            <div className="opacity-70">
-              {savedAt ? `Last saved ${formatRelative(savedAt)}` : "Saving…"}
-            </div>
-          </div>
-          <span className="flex-1" />
-          <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
-            Save & exit
-          </Button>
-          <Button onClick={() => doSave(true)}>{isPublished ? "Save changes" : "Publish"}</Button>
-        </div>
+      <PageHeader title="Loading…" back={`/g/${groupId}/n/${cycleId}`} />
+      <div className="space-y-3 px-5 pt-6">
+        <div className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
       </div>
     </div>
   );
 }
 
-interface PendingUpload {
-  imageId: string;
-  fileName: string;
-  status: "uploading" | "processing" | "ready" | "failed";
-  progress: number;
-  dataUrl: string;
-  error?: string | null;
-}
-
-function TextEditor({
+function ErrorState({
   groupId,
   cycleId,
-  questionId,
-  body,
-  onBodyChange,
-  imageIds,
-  setImageIds,
-  imageCaptions,
-  setImageCaptions,
+  message,
+  onRetry,
 }: {
   groupId: string;
   cycleId: string;
-  questionId: string;
-  body: string;
-  onBodyChange: (s: string) => void;
-  imageIds: string[];
-  setImageIds: (ids: string[]) => void;
-  imageCaptions: Record<string, string>;
-  setImageCaptions: (next: Record<string, string>) => void;
+  message: string;
+  onRetry: () => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState(false);
-  const [pending, setPending] = useState<Record<string, PendingUpload>>({});
-  const [previews, setPreviews] = useState<Record<string, string>>({});
+  return (
+    <div className="bg-cream pb-32">
+      <PageHeader title="Question" eyebrow="Couldn't load" back={`/g/${groupId}/n/${cycleId}`} />
+      <div className="px-5 pt-8 text-center">
+        <div className="mb-3 text-5xl">😬</div>
+        <p className="font-semibold text-ink">{message}</p>
+        <button
+          onClick={onRetry}
+          className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string }) {
+  return (
+    <div className="bg-cream pb-32">
+      <PageHeader title="Question" eyebrow="Not found" back={`/g/${groupId}/n/${cycleId}`} />
+      <div className="px-5 pt-8 text-center">
+        <div className="mb-3 text-5xl">🔍</div>
+        <p className="font-semibold text-ink">This question doesn&apos;t exist in this edition.</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Loads the `ImageMediaResponse` rows for the draft's images as they were when
+ * the page opened. `ImageUploader` and `ResponseEditor` read `initialImages`
+ * once, on mount, so the editor must not render until this has settled — an
+ * editor mounted with no images would report `imageMediaIds: []` and autosave
+ * the draft's images away. An image that can't be fetched (e.g. deleted) is
+ * dropped rather than blocking the editor.
+ */
+function useHydratedImages(
+  groupId: string,
+  cycleId: string,
+  imageMediaIds: string[],
+): { images: S["ImageMediaResponse"][]; ready: boolean } {
+  const [ids] = useState(imageMediaIds);
+  const { data, isSuccess } = useQuery(imagesQuery(groupId, cycleId, ids));
+  return { images: data ?? [], ready: ids.length === 0 || isSuccess };
+}
+
+function imagesQuery(groupId: string, cycleId: string, ids: string[]) {
+  return {
+    queryKey: ["myResponseImages", groupId, cycleId, ids.join(",")],
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        ids.map((id) => api.media.getUpload(id, groupId, cycleId)),
+      );
+      return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    },
+    enabled: ids.length > 0,
+    staleTime: Infinity,
+  };
+}
+
+function QuestionBody({
+  question,
+  groupId,
+  cycleId,
+  timezone,
+  responseCloseAt,
+}: {
+  question: S["OpenQuestionResponse"];
+  groupId: string;
+  cycleId: string;
+  timezone: string;
+  responseCloseAt: string;
+}) {
+  const navigate = useNavigate();
   const pushToast = useToasts((s) => s.push);
-  const pollers = useRef<Set<string>>(new Set());
+  const { data: config } = useConfig();
+  const isText = question.kind === "text";
 
-  // Cancel any in-flight uploads on unmount.
+  const { images: hydratedImages, ready: imagesReady } = useHydratedImages(
+    groupId,
+    cycleId,
+    isText ? (question.myResponse?.imageMediaIds ?? []) : [],
+  );
+
+  const editor = useResponseEditor({
+    groupId,
+    cycleId,
+    questionId: question.questionId,
+    userId: config?.userId ?? undefined,
+    initial: question.myResponse,
+    enabled: isText,
+  });
+
+  const [showEditor, setShowEditor] = useState(() => question.myResponse?.status !== "published");
+  const [uploading, setUploading] = useState(false);
+  const prevStatusRef = useRef<S["ResponseStatus"] | undefined>(question.myResponse?.status);
+
   useEffect(() => {
-    // The Set itself never changes identity, so capturing it here still sees
-    // every ID added later.
-    const active = pollers.current;
-    return () => {
-      for (const id of active) {
-        void api.cancelImageUpload(id).catch(() => undefined);
+    const newStatus = editor.lastResponse?.status;
+    if (newStatus && newStatus !== prevStatusRef.current) {
+      if (newStatus === "published") {
+        pushToast("Published — friends can see this when the edition publishes.", "success");
+        setShowEditor(false);
       }
-    };
-  }, []);
+      prevStatusRef.current = newStatus;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pushToast` is a stable zustand setter.
+  }, [editor.lastResponse]);
 
-  const totalCount = imageIds.length + Object.keys(pending).length;
+  // The read-only view follows the current draft, including images added on this visit.
+  const { data: viewImages = hydratedImages } = useQuery({
+    ...imagesQuery(groupId, cycleId, editor.imageMediaIds),
+    placeholderData: keepPreviousData,
+  });
 
-  const readAsDataUrl = (f: File) =>
-    new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = () => reject(r.error ?? new Error("read failed"));
-      r.readAsDataURL(f);
-    });
+  const isPublished = (editor.lastResponse?.status ?? question.myResponse?.status) === "published";
+  const canPublishText = editor.body.trim().length > 0 || editor.imageMediaIds.length > 0;
 
-  async function pollUploadStatus(imageId: string) {
-    pollers.current.add(imageId);
-    const start = Date.now();
-    while (pollers.current.has(imageId)) {
-      try {
-        const s = await api.getImageUploadStatus(imageId);
-        setPending((prev) => {
-          const cur = prev[imageId];
-          if (!cur) return prev;
-          return { ...prev, [imageId]: { ...cur, status: s.status, progress: s.progress } };
-        });
-        if (s.status === "ready") {
-          pollers.current.delete(imageId);
-          setPreviews((p) => ({ ...p, [imageId]: s.displayUrl ?? s.thumbUrl ?? "" }));
-          setImageIds([...imageIds, imageId]);
-          setPending((prev) => {
-            const next = { ...prev };
-            delete next[imageId];
-            return next;
-          });
-          return;
-        }
-        if (s.status === "failed") {
-          pollers.current.delete(imageId);
-          setPending((prev) => {
-            const cur = prev[imageId];
-            if (!cur) return prev;
-            return {
-              ...prev,
-              [imageId]: { ...cur, status: "failed", error: s.error ?? "Upload failed" },
-            };
-          });
-          return;
-        }
-      } catch {
-        pollers.current.delete(imageId);
-        return;
+  const [pollOptionId, setPollOptionId] = useState<string | null>(
+    question.myResponse?.pollOptionId ?? null,
+  );
+  const [pollSaving, setPollSaving] = useState(false);
+  const [pollResponse, setPollResponse] = useState<S["ResponseDto"] | null>(null);
+  const [pollClosed, setPollClosed] = useState(false);
+  const pollIsPublished = (pollResponse?.status ?? question.myResponse?.status) === "published";
+
+  async function savePoll(publish: boolean, optionId: string) {
+    setPollSaving(true);
+    try {
+      const response = await api.saveMyResponse(groupId, cycleId, question.questionId, {
+        kind: "poll",
+        pollOptionId: optionId,
+        publish,
+      });
+      setPollResponse(response);
+      if (response.status === "published" && prevStatusRef.current !== "published") {
+        pushToast("Published — friends can see this when the edition publishes.", "success");
       }
-      // Bail out after 30s — something's wrong.
-      if (Date.now() - start > 30_000) {
-        pollers.current.delete(imageId);
-        setPending((prev) => {
-          const cur = prev[imageId];
-          if (!cur) return prev;
-          return { ...prev, [imageId]: { ...cur, status: "failed", error: "Timed out" } };
-        });
-        return;
+      prevStatusRef.current = response.status;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setPollClosed(true);
       }
-      await new Promise((r) => setTimeout(r, 250));
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? "This edition has closed — your last saved version stands."
+          : "Couldn't save your vote — try again.";
+      pushToast(message, "error");
+    } finally {
+      setPollSaving(false);
     }
   }
 
-  async function handleFiles(files: FileList | null) {
-    if (!files) return;
-    const remaining = 10 - totalCount;
-    const accepted = Array.from(files).slice(0, Math.max(0, remaining));
-    if (files.length > accepted.length) {
-      pushToast(`Only ${remaining} more photo${remaining === 1 ? "" : "s"} allowed.`, "error");
-    }
-    for (const file of accepted) {
-      if (!file.type.startsWith("image/")) {
-        pushToast(`${file.name} isn't an image.`, "error");
-        continue;
-      }
-      if (file.size > 15 * 1024 * 1024) {
-        pushToast(`${file.name} is over 15 MB.`, "error");
-        continue;
-      }
-      try {
-        const dataUrl = await readAsDataUrl(file);
-        const { imageId } = await api.startImageUpload({
-          groupId,
-          cycleId,
-          questionId,
-          fileName: file.name,
-          fileSize: file.size,
-          mimeType: file.type,
-          dataUrl,
-        });
-        setPending((prev) => ({
-          ...prev,
-          [imageId]: {
-            imageId,
-            fileName: file.name,
-            status: "uploading",
-            progress: 0,
-            dataUrl,
-          },
-        }));
-        void pollUploadStatus(imageId);
-      } catch (e) {
-        pushToast((e as Error).message ?? "Couldn't start upload.", "error");
-      }
-    }
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  function handlePollSelect(optionId: string) {
+    setPollOptionId(optionId);
+    // Before the first publish, a pick is just local state — it's only
+    // persisted when Publish is pressed. Once published, every change is
+    // sticky and saves immediately (`03-api-contract.md` §7.3).
+    if (pollIsPublished) void savePoll(false, optionId);
   }
 
-  function removeCommitted(id: string) {
-    setImageIds(imageIds.filter((x) => x !== id));
-    const next = { ...imageCaptions };
-    delete next[id];
-    setImageCaptions(next);
-  }
-
-  function cancelPending(id: string) {
-    pollers.current.delete(id);
-    void api.cancelImageUpload(id).catch(() => undefined);
-    setPending((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }
-
-  function applyMarkdown(kind: "bold" | "italic" | "list" | "quote") {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    const before = body.slice(0, start);
-    const selected = body.slice(start, end);
-    const after = body.slice(end);
-
-    let next: string;
-    let cursorStart: number;
-    let cursorEnd: number;
-
-    if (kind === "bold" || kind === "italic") {
-      const wrap = kind === "bold" ? "**" : "_";
-      // CommonMark requires the emphasis delimiters to be flush against
-      // non-whitespace — `** foo **` does NOT render as bold. Pull any
-      // leading/trailing whitespace out of the wrap so the rendered output
-      // matches what the user expects.
-      const raw = selected || (kind === "bold" ? "bold text" : "italic text");
-      const leadMatch = raw.match(/^\s*/);
-      const trailMatch = raw.match(/\s*$/);
-      const lead = leadMatch ? leadMatch[0] : "";
-      const trail = trailMatch ? trailMatch[0] : "";
-      const inner =
-        raw.slice(lead.length, raw.length - trail.length) ||
-        raw.trim() ||
-        (kind === "bold" ? "bold text" : "italic text");
-      // If trimming consumed everything (selection was pure whitespace), fall
-      // back to wrapping a placeholder and drop the would-be empty padding.
-      const padLead = inner === raw.trim() && raw.trim() === "" ? "" : lead;
-      const padTrail = inner === raw.trim() && raw.trim() === "" ? "" : trail;
-      next = `${before}${padLead}${wrap}${inner}${wrap}${padTrail}${after}`;
-      cursorStart = before.length + padLead.length + wrap.length;
-      cursorEnd = cursorStart + inner.length;
-    } else {
-      const prefix = kind === "list" ? "- " : "> ";
-      const target = selected || (kind === "list" ? "item" : "quote");
-      const lines = target
-        .split("\n")
-        .map((l) => `${prefix}${l}`)
-        .join("\n");
-      // Ensure leading newline if not at start of a line
-      const leading = before.length === 0 || before.endsWith("\n") ? "" : "\n";
-      next = `${before}${leading}${lines}${after}`;
-      cursorStart = before.length + leading.length + prefix.length;
-      cursorEnd = cursorStart + target.length;
+  async function handlePublish() {
+    if (isText) {
+      await editor.publish();
+    } else if (pollOptionId) {
+      await savePoll(true, pollOptionId);
     }
-
-    onBodyChange(next);
-    requestAnimationFrame(() => {
-      ta.focus();
-      ta.setSelectionRange(cursorStart, cursorEnd);
-    });
   }
 
   return (
-    <div className="mt-4 px-5">
-      <div className="overflow-hidden rounded-3xl border border-line bg-white shadow-soft">
-        <div className="flex items-center gap-1 border-b border-line px-3 py-2 text-sm text-inkmuted">
-          <button
-            type="button"
-            onClick={() => applyMarkdown("bold")}
-            disabled={preview}
-            className="grid h-8 w-8 place-items-center rounded-lg font-bold hover:bg-cream disabled:opacity-40"
-            aria-label="Bold"
-          >
-            B
-          </button>
-          <button
-            type="button"
-            onClick={() => applyMarkdown("italic")}
-            disabled={preview}
-            className="grid h-8 w-8 place-items-center rounded-lg italic hover:bg-cream disabled:opacity-40"
-            aria-label="Italic"
-          >
-            I
-          </button>
-          <button
-            type="button"
-            onClick={() => applyMarkdown("list")}
-            disabled={preview}
-            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
-            aria-label="Bulleted list"
-          >
-            •
-          </button>
-          <button
-            type="button"
-            onClick={() => applyMarkdown("quote")}
-            disabled={preview}
-            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-40"
-            aria-label="Quote"
-          >
-            &quot;
-          </button>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={() => setPreview((p) => !p)}
-            className={`rounded-md px-2 py-1 text-xs font-medium ${
-              preview ? "bg-ink text-cream" : "hover:bg-cream"
-            }`}
-          >
-            {preview ? "Edit" : "Preview"}
-          </button>
+    <div className="bg-cream pb-32">
+      <PageHeader
+        eyebrow={`Question · ${question.kind === "poll" ? "poll" : "question"}`}
+        title={question.prompt}
+        back={`/g/${groupId}/n/${cycleId}`}
+        rightSlot={<Pill tone="coral">{shortCountdown(responseCloseAt)}</Pill>}
+      />
+
+      <div className="px-5 pt-5">
+        <div className="rounded-3xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
+          Closes {formatInZone(responseCloseAt, timezone)}
         </div>
-        {preview ? (
-          <div className="markdown-preview min-h-[200px] px-4 py-4 text-[15px] leading-relaxed">
-            {body.trim() ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-                {body}
-              </ReactMarkdown>
-            ) : (
-              <p className="italic text-inkmuted">Nothing to preview yet.</p>
-            )}
+      </div>
+
+      <div className="px-5 pt-5">
+        <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
+          <QuestionPrompt
+            prompt={question.prompt}
+            kind={question.kind}
+            askedBy={question.askedBy}
+            isAnonymous={question.isAnonymous}
+          />
+        </div>
+      </div>
+
+      {isText ? (
+        isPublished && !showEditor ? (
+          <div className="mt-4 px-5">
+            <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
+              <MarkdownBody
+                body={editor.body}
+                images={viewImages}
+                groupId={groupId}
+                className="mt-1"
+              />
+              <button
+                type="button"
+                onClick={() => setShowEditor(true)}
+                className="mt-3 text-sm font-semibold text-grape"
+              >
+                Edit
+              </button>
+            </div>
           </div>
         ) : (
-          <textarea
-            ref={textareaRef}
-            value={body}
-            onChange={(e) => onBodyChange(e.target.value)}
-            className="min-h-[200px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-relaxed focus:outline-none"
-            placeholder="Tell us about it…"
-          />
-        )}
-        <div className="border-t border-line p-3">
-          <div className="space-y-3">
-            {imageIds.map((id) => (
-              <div key={id} className="flex items-start gap-3">
-                <div className="ph-img relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl">
-                  {previews[id] && (
-                    <img src={previews[id]} alt="" className="h-full w-full object-cover" />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeCommitted(id)}
-                    className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink/80 text-[10px] text-white"
-                    aria-label="Remove"
-                  >
-                    ×
-                  </button>
-                </div>
-                <input
-                  value={imageCaptions[id] ?? ""}
-                  onChange={(e) => setImageCaptions({ ...imageCaptions, [id]: e.target.value })}
-                  maxLength={140}
-                  placeholder="Caption (optional)"
-                  className="mt-1 flex-1 rounded-xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
-                />
+          <>
+            {isPublished && (
+              <div className="mt-4 px-5 text-xs text-inkmuted">
+                Changes save automatically and update your published answer.
               </div>
-            ))}
-            {Object.values(pending).map((p) => (
-              <div key={p.imageId} className="flex items-start gap-3">
-                <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl border border-line bg-cream">
-                  <img src={p.dataUrl} alt="" className="h-full w-full object-cover opacity-70" />
-                  {p.status !== "failed" && (
-                    <div className="absolute inset-x-0 bottom-0 h-1.5 bg-black/30">
-                      <div
-                        className={`h-full ${p.status === "processing" ? "animate-pulse bg-grape" : "bg-coral"}`}
-                        style={{ width: `${Math.max(5, Math.round(p.progress * 100))}%` }}
-                      />
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => cancelPending(p.imageId)}
-                    className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-ink/80 text-[10px] text-white"
-                    aria-label={p.status === "failed" ? "Dismiss" : "Cancel upload"}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="mt-1 flex-1 text-xs">
-                  <div className="truncate font-semibold text-inkmuted">{p.fileName}</div>
-                  <div className="mt-0.5 text-inkmuted">
-                    {p.status === "uploading" && `Uploading… ${Math.round(p.progress * 100)}%`}
-                    {p.status === "processing" && "Processing image…"}
-                    {p.status === "failed" && (
-                      <span className="text-coral">
-                        Upload failed{p.error ? ` — ${p.error}` : ""}
-                      </span>
-                    )}
-                  </div>
-                </div>
+            )}
+            {!imagesReady ? (
+              <div className="flex justify-center py-10">
+                <Spinner />
               </div>
-            ))}
-            {totalCount < 10 && (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handleFiles(e.target.files)}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3 text-sm text-inkmuted transition hover:border-grape hover:text-grape"
-                >
-                  <span className="text-xl leading-none">＋</span>
-                  <span>Add photo</span>
-                </button>
-              </>
+            ) : (
+              <ResponseEditor
+                groupId={groupId}
+                cycleId={cycleId}
+                questionId={question.questionId}
+                body={editor.body}
+                onBodyChange={editor.setBody}
+                onBlur={editor.onBlur}
+                onImageMediaIdsChange={editor.setImageMediaIds}
+                onUploadingChange={setUploading}
+                initialImages={hydratedImages}
+                readOnly={editor.readOnly}
+              />
+            )}
+          </>
+        )
+      ) : (
+        <PollPicker
+          question={question}
+          selected={pollOptionId}
+          disabled={pollSaving}
+          onSelect={handlePollSelect}
+        />
+      )}
+
+      {(isText ? editor.readOnly : pollClosed) && (
+        <div className="mt-4 px-5">
+          <div className="rounded-3xl border border-line bg-white p-4 text-sm text-inkmuted">
+            This edition has closed — your last saved version stands.
+          </div>
+        </div>
+      )}
+
+      <div className="fixed bottom-3 left-3 right-3 z-40">
+        <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
+          <div className="text-xs leading-tight">
+            {isText ? (
+              <DraftStatusBadge status={editor.status} />
+            ) : pollSaving ? (
+              <Pill tone="grape">● Saving…</Pill>
+            ) : pollResponse || question.myResponse ? (
+              <Pill tone="mint">Saved</Pill>
+            ) : (
+              <Pill tone="sun">Pick one, then publish</Pill>
             )}
           </div>
-          <div className="mt-2 text-xs text-inkmuted">{totalCount} of 10 photos</div>
+          <span className="flex-1" />
+          <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
+            Save &amp; exit
+          </Button>
+          {isText && !editor.readOnly && (
+            <PublishButton
+              isPublished={isPublished}
+              disabled={!canPublishText || uploading}
+              onPublish={() => void handlePublish()}
+            />
+          )}
+          {!isText && !pollClosed && (
+            <PublishButton
+              isPublished={pollIsPublished}
+              disabled={!pollOptionId || pollSaving}
+              onPublish={() => void handlePublish()}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -582,11 +376,13 @@ function TextEditor({
 function PollPicker({
   question,
   selected,
+  disabled,
   onSelect,
 }: {
-  question: LockedQuestion;
+  question: S["OpenQuestionResponse"];
   selected: string | null;
-  onSelect: (id: string) => void;
+  disabled: boolean;
+  onSelect: (optionId: string) => void;
 }) {
   if (!question.pollOptions) return null;
   return (
@@ -597,8 +393,10 @@ function PollPicker({
           return (
             <button
               key={opt.optionId}
+              type="button"
+              disabled={disabled}
               onClick={() => onSelect(opt.optionId)}
-              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition disabled:opacity-60 ${
                 mine
                   ? "border-grape bg-grape/5 ring-2 ring-grape/30"
                   : "border-line hover:border-ink"

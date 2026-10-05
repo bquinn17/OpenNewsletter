@@ -117,9 +117,9 @@ Component tests with React Testing Library:
 - Markdown sanitizer (strip script, allow headers, allow `image:` tokens).
 - Date utilities in `utils/dates.ts` against fixed clocks for various group TZs.
 
-### 4.2 MSW (Mock Service Worker) for component tests
+### 4.2 API mocking for component tests (decided M9: `vi.mock`, not MSW)
 
-Rather than mocking individual fetches, use MSW to mock the full API surface based on the OpenAPI spec. Generates pre-canned responses; tests can override per-test.
+The original plan was MSW handlers generated from the OpenAPI spec. M7–M9 instead mock `api/client` with `vi.mock` and seed the TanStack Query cache, with every fixture typed against `types/api.ts` so contract drift fails `tsc`. That covers what component tests need without a second mock layer beside `api/mockTransport.ts` (the stateful in-memory API used by `npm run dev`). Revisit MSW only if a test needs real `fetch`-level behavior (headers, retries on 401) — `api/client.test.ts` already covers those by stubbing `fetch` directly.
 
 ### 4.3 Playwright E2E
 
@@ -264,7 +264,7 @@ Coverage is reported, not gated — failing only if it drops more than 5pp from 
 
 `backend/crates/persistence/src/test_factories.rs` (gated under `#[cfg(test)]`): builders for every entity, with sensible defaults. Used by all integration tests.
 
-`frontend/tests/factories.ts`: TypeScript counterparts, used by Vitest + MSW.
+`frontend/tests/factories.ts`: TypeScript counterparts, used by Vitest component tests.
 
 ---
 

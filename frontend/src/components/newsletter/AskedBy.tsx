@@ -1,4 +1,4 @@
-import type { QuestionAuthor } from "../../mocks/types";
+import type { components } from "../../types/api";
 
 /**
  * Renders the "asked by" attribution line for a question. Falls back to
@@ -13,7 +13,7 @@ export function AskedBy({
   isAnonymous,
   className = "",
 }: {
-  askedBy: QuestionAuthor | null;
+  askedBy: components["schemas"]["AskedBy"] | null;
   isAnonymous: boolean;
   className?: string;
 }) {

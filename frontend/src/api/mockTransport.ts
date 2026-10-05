@@ -1,31 +1,23 @@
 import type { components } from "../types/api";
-import { ApiError, type ProblemDetails } from "./client";
+import { mockCandidateRoute } from "./mockCandidates";
+import { mockNewsletterRoute } from "./mockNewsletters";
+import {
+  CALLER_ID,
+  fail,
+  newsletters,
+  NO_MOCK_ROUTE,
+  type Method,
+  type MockRequest,
+} from "./mockShared";
 
 type S = components["schemas"];
-type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 const LATENCY_MS = 250;
-const CALLER_ID = "u_quinn";
 const NEW_GROUP_ID = "g_newgroup";
 const DEMO_INVITE_CODE = "DEMO-JOIN-CODE";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function problemFor(status: number, code: string, detail: string): ProblemDetails {
-  return {
-    type: `https://api.opennewsletter.example.com/errors/${code.toLowerCase().replace(/_/g, "-")}`,
-    title: code,
-    status,
-    detail,
-    code,
-    correlationId: "mock-correlation-id",
-  };
-}
-
-function fail(status: number, code: string, detail: string): never {
-  throw new ApiError(status, code, problemFor(status, code, detail));
 }
 
 let me: S["UserResponse"] = {
@@ -147,95 +139,6 @@ const groups: Record<string, S["GroupResponse"]> = {
       },
     ],
   },
-};
-
-const newsletters: Record<string, S["NewsletterSummary"][]> = {
-  g_trail: [
-    {
-      cycleId: "202610",
-      status: "voting",
-      responseOpenAt: "2026-10-01T04:00:00Z",
-      responseCloseAt: "2026-10-01T04:00:00Z",
-      publishedAt: null,
-      questionCount: 0,
-      myDraftCount: 0,
-      myPublishedCount: 0,
-    },
-    {
-      cycleId: "202609",
-      status: "open",
-      responseOpenAt: "2026-09-01T04:00:00Z",
-      responseCloseAt: "2026-09-05T04:00:00Z",
-      publishedAt: null,
-      questionCount: 5,
-      myDraftCount: 1,
-      myPublishedCount: 1,
-    },
-    {
-      cycleId: "202608",
-      status: "published",
-      responseOpenAt: "2026-08-01T04:00:00Z",
-      responseCloseAt: "2026-08-05T04:00:00Z",
-      publishedAt: "2026-08-05T04:00:01Z",
-      questionCount: 5,
-      myDraftCount: 0,
-      myPublishedCount: 5,
-    },
-    {
-      cycleId: "202607",
-      status: "published",
-      responseOpenAt: "2026-07-01T04:00:00Z",
-      responseCloseAt: "2026-07-05T04:00:00Z",
-      publishedAt: "2026-07-05T04:00:01Z",
-      questionCount: 5,
-      myDraftCount: 0,
-      myPublishedCount: 5,
-    },
-  ],
-  g_game: [
-    {
-      cycleId: "202610",
-      status: "voting",
-      responseOpenAt: "2026-10-01T04:00:00Z",
-      responseCloseAt: "2026-10-01T04:00:00Z",
-      publishedAt: null,
-      questionCount: 0,
-      myDraftCount: 0,
-      myPublishedCount: 0,
-    },
-    {
-      cycleId: "202609",
-      status: "published",
-      responseOpenAt: "2026-09-01T04:00:00Z",
-      responseCloseAt: "2026-09-05T04:00:00Z",
-      publishedAt: "2026-09-05T04:00:01Z",
-      questionCount: 4,
-      myDraftCount: 0,
-      myPublishedCount: 4,
-    },
-  ],
-  g_meeple: [
-    {
-      cycleId: "202609",
-      status: "open",
-      responseOpenAt: "2026-09-03T04:00:00Z",
-      responseCloseAt: "2026-09-10T04:00:00Z",
-      publishedAt: null,
-      questionCount: 8,
-      myDraftCount: 2,
-      myPublishedCount: 0,
-    },
-    {
-      cycleId: "202608",
-      status: "published",
-      responseOpenAt: "2026-08-01T04:00:00Z",
-      responseCloseAt: "2026-08-08T04:00:00Z",
-      publishedAt: "2026-08-08T04:00:01Z",
-      questionCount: 8,
-      myDraftCount: 0,
-      myPublishedCount: 8,
-    },
-  ],
 };
 
 function handleGetConfig(): S["ConfigResponse"] {
@@ -545,6 +448,12 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
   }
   if (method === "DELETE" && segments.length === 2 && segments[0] === "avatars") {
     return handleDeleteAvatar(decodeURIComponent(segments[1]));
+  }
+
+  const request: MockRequest = { method, rawPath, segments, query, body };
+  for (const route of [mockCandidateRoute, mockNewsletterRoute]) {
+    const result = route(request);
+    if (result !== NO_MOCK_ROUTE) return result;
   }
 
   fail(404, "NOT_FOUND", `no mock route for ${method} ${rawPath}`);

@@ -20,14 +20,14 @@ blockers resolve. Authoritative milestone definitions live in
 | **M6** | **Responses + drafts** | 🟡 **code-complete, deploy unverified** | See "M6 detail" below. 201 backend + 41 CDK tests green. The curl save → save → publish gate needs AWS (B5); DynamoDB Local integration tests cover the same sequence. |
 | **M7** | **Frontend skeleton + auth** | 🟡 **code-complete, deploy unverified** | See "M7 detail" and "Post-M7 gap pass" below. 28 frontend, 217 backend and 42 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt, clippy, ruff (check + format), mypy and `cdk synth` are all clean. The Google sign-in / redeem / logout gate needs a deployed stack (B5). |
 | **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
-| M9 | Newsletter UI | ⬜ | |
+| **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
 | M10 | Engagement | ⬜ | |
 | M11 | Notifications | ⬜ | |
 | M12 | Admin UI | ⬜ | |
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M8 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M9 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -442,14 +442,22 @@ On both machines no Lambda artifact has ever been produced. `ApiStack`/`Notifica
    - log out
    Also try `/admin/bootstrap-login` with the `bootstrap_admin.py` credentials.
 7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build has only been compiled natively on macOS, never cross-compiled. Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403.
-8. **Begin M9** (Newsletter UI) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+8. **M9 gate**: after deploy, run a simulated month in the UI:
+   - suggest and vote on candidates
+   - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to promote and open
+   - draft with images, reload, then publish text and poll answers
+   - tick again to publish, then read the edition
+9. **Begin M10** (Engagement) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
 - **Comment-image in-use check:** `DELETE /uploads/{id}` only refuses images referenced by the caller's published *answer*. Add the comment check with comments in M10.
-- **`ImageUploader` doesn't resume polling** for `initialImages` that are still `pending` on mount. M9 should either resume or filter them when it hydrates a draft.
+- **Legacy mock query keys collide with real ones in mock mode.** `src/mocks/legacyQueries.ts` still caches `["config"]` and `["group", g]` with the legacy shapes, and `GroupAdminPage` (M12) uses them. With `VITE_USE_MOCKS=true`, opening the admin page can poison the real `/config` cache for the session. This goes away when M12 migrates the page.
+- **`utils/avatar.ts#avatarClasses` uses the legacy colour slugs** (coral/grape/mint…), not the API's `AvatarColorSlug` set. New M9 code uses `utils/avatarColor.ts`. `Avatar`'s `color` prop still falls back to the legacy table, so callers should pass `colorClassName`. Remove the legacy table with the last legacy page.
+- **`RespondPage` has no markdown formatting toolbar** (the legacy page had bold/italic/list buttons). The spec only requires Write/Preview. Add it if users ask.
+- **No "hype check" banner** (`04` §14a `utils/hype.ts`) and no recurring-question helper text (`utils/recurring.ts`). Both are optional decoration and not built.
 
 The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What remains:
 
@@ -457,7 +465,6 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
 - **Future-milestone stub crates all name their binary `bootstrap`**: `lambda-engagement`, `-push` and `-notify-tick` (`-media` and `-image-process` were renamed in M8). Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
-- **Component tests use `vi.mock` + TanStack cache seeding, not MSW.** `coding-standards.md` §3.9 and `11` §4.2 specify MSW. Adopt it when component tests grow (M9), or amend the standard; `13` §16 records the current state.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth: the `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows aren't written until M11.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
 
@@ -546,27 +553,123 @@ The live-S3 and live-CloudFront halves of 1 and 7 need a deploy.
 
 ---
 
-## Handoff — starting M9 (Newsletter UI)
+## M9 detail — what landed (2026-10-04)
+
+The lead read the spec first and laid the shared groundwork, so the two agents never touched the same files:
+- the `api.*` client methods
+- the query and mutation hooks
+- `useMembership`
+- `formatInZone`
+- `env.autosaveDebounceMs`
+- per-feature mock-route seams
+- unconditional routing of the four pages
+
+Two Sonnet agents then ran in parallel: candidates/suggest, and newsletter/respond. Both hit a rate limit mid-read and were resumed with their context. The lead's review found and fixed two data-loss bugs in the respond flow (below).
+
+### Shared groundwork (lead)
+- `api/client.ts`: `getNewsletter`, `listCandidates`, `createCandidate`, `castVote`, `withdrawVote`, `listMyResponses`, `getMyResponse`, `saveMyResponse`.
+- `api/queries.ts`:
+  - `useNewsletter` and `useCandidates(groupId, sort)`
+  - `useMembership(groupId)`, which reads the group's timezone and role from `/config`
+  - `queryKeys.candidatesAll` as the invalidation prefix
+- `api/mutations.ts`: `useCreateCandidate`, plus `useToggleVote`, which patches the vote tally into every cached sort order and then refetches.
+- The mock transport is split into per-feature routes:
+  - `mockShared.ts`: `fail`, `CALLER_ID`, and the `newsletters` fixture, now dated relative to the current time
+  - `mockCandidates.ts`
+  - `mockNewsletters.ts`
+  - `mockTransport.ts` falls through to the per-feature routes.
+- `App.tsx`: Candidates, Suggest, Newsletter and Respond are routed unconditionally. Only `/admin` still uses `PendingMilestonePage` against a real API.
+
+### Candidates and Suggest
+- `components/candidates/{CandidateCard,CandidateList,SuggestQuestionForm}.tsx`.
+- `CandidatesPage`:
+  - a countdown banner to the `voting` cycle's open date, in the group timezone
+  - a link to the `open` cycle when one exists
+  - a Top/Recent toggle
+  - a "used X of Y votes" line and an inline "Manage votes" panel with Remove buttons
+  - un-voted buttons disabled at the cap
+- `CYCLE_NOT_VOTING` from the list call shows a calm "voting hasn't opened" state.
+- `SuggestPage`: react-hook-form + zod (text/poll, 2–6 options, "Ask anonymously"). It mirrors the server's trimming and **case-sensitive** duplicate-label rule. Server `fieldErrors` map onto fields.
+
+### Newsletter and Respond
+- `NewsletterPage`:
+  - `voting` redirects to `/upcoming`
+  - `open` shows question rows with a draft preview, Not started / Draft / Published pills, a deadline and a progress count
+  - `published` shows expandable questions with `AnswerCard`s and `PollWidget` tallies (the caller's vote highlighted)
+  - 410 shows an "archived" state
+- `components/newsletter/{QuestionPrompt,ImageGallery}.tsx` are new. `AnswerCard`/`PollWidget` were rewritten on API types, with an M10 slot for comments and reactions.
+- `utils/markdown.tsx` provides `MarkdownBody`: react-markdown + remark-gfm + rehype-sanitize. `image:{id}` tokens become `CdnImage`; remote images become links.
+- `components/responses/`:
+  - `ResponseEditor`: Write/Preview, the uploader mounted, image tokens inserted on `ready` and stripped on remove, a word count
+  - `useResponseEditor`: debounce, blur/hide/unmount flush, one save in flight with coalescing, backoff (`utils/retry.ts`), stop on `CYCLE_NOT_OPEN`, localStorage mirror and restore
+  - `DraftStatusBadge`
+  - `PublishButton`
+- `RespondPage`:
+  - text and poll answers
+  - read-only published view with an Edit toggle
+  - "changes update your published answer" note
+- `ImageUploader` now resumes polling for `pending` initial images (the M8 gap).
+
+### Bugs caught in lead review (fixed, with regression tests)
+- **Draft images were dropped when the page opened.** `ResponseEditor` mounted before the draft's images had loaded. `ImageUploader` reads `initialImages` once, so it reported zero images and the autosave cleared `imageMediaIds`. The editor now waits for hydration (`Promise.allSettled`; an image that can't be fetched is dropped). The published read-only view does its own lookup by the current image IDs.
+- **Opening a question created an empty draft.** Blur, tab-hide and unmount always PUT. They now flush only when the local draft differs from the server.
+- Smaller fixes:
+  - Only `CYCLE_NOT_OPEN` (not every 409) puts the editor into "closed".
+  - Remote markdown images no longer render as `<img>`.
+  - `<button>`-inside-`<Link>` nesting removed.
+  - `aria-pressed` added to the sort toggle.
+  - A cross-agent test pinned a literal cycle ID; it now uses `VOTING_CYCLE_ID`.
+
+### Decisions (recorded in `04` §7.2–§7.5/§9/§16, `08` §7, `coding-standards.md` §3.9, `11` §4.2, `13` §16)
+- **Component tests use `vi.mock` of `api/client` plus cache seeding, not MSW.** The standard was amended to match.
+- Every date on group pages is in the group's timezone. The published layout takes its month label from the cycle's `NewsletterSummary`.
+- Comments and reactions are deferred to M10.
+- The vote-cap "tooltip" is an inline accessible panel. The ID list in `VOTE_CAP_REACHED`'s `detail` is never shown.
+- Poll answers:
+  - before first publish, a pick is local only
+  - after it, each change saves immediately with `publish:false` (sticky)
+- `react-markdown`'s `urlTransform` must allow `image:` separately from the sanitize schema.
+- Leftover legacy code was pruned: 19 dead hooks removed from `src/mocks/legacyQueries.ts`. Only `GroupAdminPage` (M12) and `CommentList`/`ReactionBar` (M10) still use `src/mocks/`.
+
+### Tests
+Frontend 116 (was 52), across 22 files:
+- `mockCandidates` (13) and `mockNewsletters` (9)
+- `CandidatesPage` (5) and `SuggestPage` (7)
+- `NewsletterPage` (4) and `RespondPage` (4)
+- `useResponseEditor` (8)
+- `markdown` (11) and `retry` (2)
+- one more `ImageUploader` test
+
+---
+
+## Handoff — starting M10 (Engagement)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M9, `04-frontend-architecture.md` §7 and §16 (the legacy mock pages), `06-newsletter-lifecycle.md` §5, and `08` §7 (`image:{id}` markdown tokens).
-2. **Know the M9 scope.** It is mostly frontend, against routes that already exist:
-   - `CandidatesPage` and `SuggestPage` (candidate questions + votes, M5)
-   - `NewsletterPage` in its three layouts (newsletter list/detail, M5)
-   - `RespondPage`, which becomes real: editor, autosave (≥1500 ms debounce), Publish against `PUT …/my-response` (M6)
-   - `PollWidget`, `AnswerCard`, `ImageGallery`, `QuestionPrompt`
-3. **Reuse M8:**
-   - Mount `components/responses/ImageUploader` in the `RespondPage` editor. Its `onChange` yields image IDs and alt text. Insert `![alt](image:{imageId})` tokens and send `imageMediaIds`; drop the ID from the draft when an image is removed.
-   - Render images through `components/ui/CdnImage` after `ensureCookie(groupId)`.
-   - `ImageGallery` resolves `image:{id}` against the `images` array on published answers (`08` §7).
-4. **Carry-forward decision:** `coding-standards.md` §3.9 / `11` §4.2 say component tests use MSW, but M7–M8 used `vi.mock` + cache seeding. M9 is where component tests grow, so either adopt MSW or amend the standard (see Known gaps).
-5. **Frontend verify** (macOS, from `frontend/`):
-   ```bash
-   export PATH="/opt/homebrew/bin:$PATH" && npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
-   ```
-   Baselines: 52 frontend tests and ESLint 0 problems; 308 backend (`cargo test --workspace -- --test-threads=4`); 53 CDK.
-6. **Suggested split:** the work is frontend-heavy, so use two Sonnet frontend agents divided by page (candidates/suggest vs. newsletter/respond) with disjoint files. Add a backend agent only if a contract gap appears.
+1. **Orient.** Read `CLAUDE.md`, then `12` M10, `09-engagement.md` (all of it, especially §4 components, §5 sanitization and §8 tests), and `03` §8.
+2. **Know the M10 scope.** Backend and frontend:
+   - `lambda-engagement`: its stub binary is still named `bootstrap`; rename it to `engagement-api` per `CLAUDE.md`. Copy the `lambda-questions`/`lambda-responses` layout.
+   - comment and reaction routes (`03` §8), wired in `infra/opennewsletter/api_stack.py` with a `FUNCTION_engagement-api` entry in the `Makefile`
+   - the `shared/openapi.yaml` + `ROUTE_TABLE` update, then `scripts/codegen_types.sh`
+3. **Frontend:**
+   - Rewrite `components/newsletter/{CommentList,ReactionBar,EmojiPickerPopover}.tsx` off `src/mocks/` onto the real API.
+   - Mount them in the M10 slot in `AnswerCard.tsx`. Render comment bodies through `MarkdownBody` (`utils/markdown.tsx`), so sanitization stays in one place.
+   - Add mock routes to a new `api/mockEngagement.ts` and register it in `mockTransport.ts`'s route list.
+   - Add the reaction total to the published header (`04` §14a).
+   - Delete the legacy engagement hooks and types from `src/mocks/`.
+4. **Carry-forward:** add the comment-image in-use check to `DELETE /uploads/{id}` (see Known gaps).
+5. **Verify.**
+   - Frontend (macOS, from `frontend/`):
+     ```bash
+     export PATH="/opt/homebrew/bin:$PATH" && npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
+     ```
+   - Baselines: 116 frontend tests and ESLint 0 problems; 308 backend (`cargo test --workspace -- --test-threads=4`); 53 CDK.
+6. **Suggested split:**
+   - a Sonnet backend agent (`backend/`, `shared/openapi.yaml`, generated `api.ts`)
+   - a Haiku infra agent (`infra/`, `Makefile`)
+   - a Sonnet frontend agent (`frontend/src/components/newsletter/*`, `api/mockEngagement.ts`)
+
+   The lead writes the OpenAPI contract first, so the frontend agent can start in parallel.
 
 ---
 

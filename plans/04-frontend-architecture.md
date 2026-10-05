@@ -305,6 +305,12 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
   - `voting` → redirect to `/g/:g/upcoming` (the candidate UI is the right surface for that state)
   - `open` → list of questions; each row shows: prompt, "your draft" preview if any, status pill (`Not started` / `Draft` / `Published`), CTA → respond
   - `published` → questions list; each question expandable, showing all answers (with images, comments, reactions). Polls show stacked-bar tally with caller's vote highlighted.
+- **Decided in M9:**
+  - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
+  - The published payload carries no `responseOpenAt`, so the month/year label comes from the cycle's `NewsletterSummary` (`useNewsletters`), falling back to `publishedAt`.
+  - Published questions are expanded by default, with a collapse toggle.
+  - Comments and reactions are not rendered until M10 (which owns `CommentList`/`ReactionBar`); `AnswerCard` leaves the slot for them.
+  - An `archived` cycle (410) shows a friendly "archived" state rather than an error.
 
 ### 7.3 RespondPage `/g/:g/n/:c/respond/:q`
 
@@ -314,6 +320,15 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
 - For poll questions: option list with single-select, Publish button.
 - Banner showing time-until-deadline (group TZ).
 - After publish, page becomes read-only with an "Edit" toggle that reopens editor (until cycle close).
+- **Decided in M9:**
+  - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID.
+  - Publish is disabled while the body is blank with no images, or while an upload is in flight.
+  - Editing a published answer autosaves with `publish: false` (publishing is sticky server-side), and the editor says so.
+  - A poll selection change on a published poll answer saves immediately.
+  - Saves are serialized (one in flight, later edits coalesce). A 409 `CYCLE_NOT_OPEN` stops saving and makes the page read-only. Other 4xx errors stop retrying; only network errors and 5xx retry with backoff.
+  - Blur, tab-hide and unmount flush only when `local` differs from the server, so opening a question and leaving does not create an empty draft.
+  - The editor doesn't mount until the draft's `imageMediaIds` have been fetched (`GET /uploads/{id}`), because `ImageUploader` reads `initialImages` once. Mounting it empty would autosave the images away. An image that can't be fetched is dropped.
+  - Before a poll answer's first publish, a pick is local state only; Publish sends `{kind:"poll", pollOptionId, publish:true}`.
 - **Concurrency: last-write-wins.** The server doesn't enforce optimistic-concurrency tokens (see `03-api-contract.md` §7.3) and the SPA does not implement a conflict-resolution UI. The debounced autosave makes interleaving rare — if a real conflict ever lands, the most recent save wins. We accept this trade for the v1 simplicity it buys; revisit if telemetry shows actual clobbering.
 
 ### 7.4 CandidatesPage `/g/:g/upcoming`
@@ -322,6 +337,10 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
   - "Vote on suggested questions" — list of candidates sorted by votes (default) or recent. Each card: prompt, vote count, upvote button (filled if voted). Disabled when caller is at vote cap; tooltip lists their existing votes with "remove" links.
   - "Suggest a question" — link to `/suggest`.
 - Banner: "X days until next newsletter opens" (compute from group settings + clock; group TZ).
+- **Decided in M9:**
+  - The cap "tooltip" is an inline, keyboard-reachable panel listing the caller's voted questions with "Remove vote" buttons (a hover-only tooltip isn't accessible).
+  - The banner date comes from the `voting` cycle's `responseOpenAt` in `GET /groups/{g}/newsletters`, not recomputed from settings. When an `open` cycle also exists, the page links to it.
+  - A `VOTE_CAP_REACHED` 409 shows friendly copy and refetches; the ID list in `detail` is not shown.
 
 ### 7.5 SuggestPage
 
@@ -337,6 +356,7 @@ See `05-auth-flow.md` for the full sequence. The frontend pieces:
   ]);
   ```
 - Submit redirects back to candidates page with a toast.
+- **Decided in M9:** the form also has an "Ask anonymously" checkbox (`isAnonymous`, default off) and mirrors the server's trimming and duplicate-label rules. Server `fieldErrors` map onto form fields.
 
 ### 7.6 SettingsPage
 
@@ -395,6 +415,10 @@ See `08-media-uploads.md` §3 for the upload protocol. The editor inserts an ima
 ## 9. Renderers
 
 - Markdown: `react-markdown` + `remark-gfm` for tables/strikethrough/checkboxes. Sanitized via `rehype-sanitize` with a custom schema that allows our `image:` tokens but rejects `<script>`/`<iframe>`/`<style>`/event handlers/`javascript:` URLs.
+- **Decided in M9:**
+  - `react-markdown` runs its own `urlTransform` before `rehype-sanitize`, and its default blanks any URL that isn't `http(s)`/`mailto`/etc. `utils/markdown.tsx` therefore passes `image:` through explicitly and defers to `defaultUrlTransform` for everything else.
+  - Only `image:{id}` tokens render inline. A remote `![](https://…)` renders as a link, because CSP `img-src` (§12.1) would block it and it would leak readers' IPs to its host.
+  - Raw HTML is never parsed (no `rehype-raw`).
 - Image rendering uses `<picture>` with `<source srcset>` from `displayUrl` and a `thumbUrl` placeholder for blur-up.
 - Polls render as horizontal stacked bars with percentages; caller's pick gets a ring highlight.
 - Reactions: pill buttons grouped by emoji with counts. Tap toggles. Plus button opens a native emoji picker (browser's; no library dependency).
@@ -598,3 +622,5 @@ Commit `91188ba` shipped a full mock-only UI on hand-written types before the re
 - their data layer, moved to `src/mocks/` (`legacyQueries.ts`, `types.ts`, `api.ts`, `data.ts`)
 
 The router renders a legacy page only when `VITE_USE_MOCKS=true`. Against a real API, each of those routes renders `PendingMilestonePage`. Each later milestone (M9 newsletter/candidates, M10 engagement, M12 admin) migrates its pages onto `api/queries.ts` + `types/api.ts` and deletes the legacy code it replaces. `src/mocks/` is deleted when it is empty.
+
+**M9 status:** `CandidatesPage`, `SuggestPage`, `NewsletterPage` and `RespondPage` (plus `AnswerCard`, `PollWidget`, `AskedBy`) are on the real API and routed unconditionally. Their mock routes live in `api/mockCandidates.ts` / `api/mockNewsletters.ts`, which share `api/mockShared.ts`. What remains legacy is `GroupAdminPage` (M12) and `CommentList`/`ReactionBar`/`EmojiPickerPopover` (M10).

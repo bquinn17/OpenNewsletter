@@ -272,4 +272,54 @@ describe("ImageUploader", () => {
     expect(deleteUpload).toHaveBeenCalledWith("img1", "g1", "202606");
     expect(screen.queryByAltText("Uploaded image")).not.toBeInTheDocument();
   });
+
+  it("resumes polling an initial image that was still pending on mount", async () => {
+    vi.useFakeTimers();
+    getUpload.mockResolvedValue({
+      imageId: "img1",
+      status: "ready",
+      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      errorMessage: null,
+    });
+
+    render(
+      <ImageUploader
+        groupId="g1"
+        cycleId="202606"
+        questionId="q1"
+        initialImages={[
+          {
+            imageId: "img1",
+            userId: "u1",
+            groupId: "g1",
+            cycleId: "202606",
+            questionId: "q1",
+            purpose: "response",
+            mimeType: "image/jpeg",
+            status: "pending",
+            bytes: 1000,
+            width: null,
+            height: null,
+            caption: null,
+            displayUrl: null,
+            thumbUrl: null,
+            errorMessage: null,
+            uploadedAt: "2026-01-01T00:00:00Z",
+            processedAt: null,
+          },
+        ]}
+      />,
+    );
+
+    expect(getUpload).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+      await flush();
+    });
+
+    expect(getUpload).toHaveBeenCalledWith("img1", "g1", "202606");
+    expect(screen.getByAltText("Uploaded image")).toBeInTheDocument();
+  });
 });

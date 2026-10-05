@@ -40,38 +40,10 @@ const router = createBrowserRouter([
             element: <RequireMembership />,
             children: [
               { index: true, element: <GroupRedirect /> },
-              {
-                path: "upcoming",
-                element: env.useMocks ? (
-                  <CandidatesPage />
-                ) : (
-                  <PendingMilestonePage message="Candidate voting arrives in a later release." />
-                ),
-              },
-              {
-                path: "upcoming/suggest",
-                element: env.useMocks ? (
-                  <SuggestPage />
-                ) : (
-                  <PendingMilestonePage message="Suggesting questions arrives in a later release." />
-                ),
-              },
-              {
-                path: "n/:cycleId",
-                element: env.useMocks ? (
-                  <NewsletterPage />
-                ) : (
-                  <PendingMilestonePage message="Newsletter editions arrive in a later release." />
-                ),
-              },
-              {
-                path: "n/:cycleId/respond/:questionId",
-                element: env.useMocks ? (
-                  <RespondPage />
-                ) : (
-                  <PendingMilestonePage message="Responding to questions arrives in a later release." />
-                ),
-              },
+              { path: "upcoming", element: <CandidatesPage /> },
+              { path: "upcoming/suggest", element: <SuggestPage /> },
+              { path: "n/:cycleId", element: <NewsletterPage /> },
+              { path: "n/:cycleId/respond/:questionId", element: <RespondPage /> },
               { path: "n/:cycleId/respond", element: <Navigate to=".." replace /> },
               {
                 element: <RequireGroupAdmin />,
