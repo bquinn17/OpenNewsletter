@@ -30,7 +30,8 @@ Other scripts:
 ```bash
 npm run build         # production bundle
 npm run preview       # serve the production bundle locally
-npm run typecheck     # tsc --noEmit
+npm run dev:https     # vite --mode https — self-signed cert, needed for Web Push (see below)
+npm run typecheck     # tsc -b --noEmit, plus a separate pass for the service worker's own tsconfig
 npm run lint          # eslint .
 npm test              # vitest run
 npm run format        # prettier --write .
@@ -74,21 +75,67 @@ codebase:
 - `src/api/client.ts` — attaches `Authorization: Bearer {idToken}` and an `x-correlation-id`
   header to every request; on a 401 it renews once and retries before signing the user out.
 
+## PWA & Web Push
+
+See [`../plans/04-frontend-architecture.md` §5/§14](../plans/04-frontend-architecture.md) and
+[`../plans/07-notifications.md`](../plans/07-notifications.md) for the full design. In this
+codebase:
+
+- `vite-plugin-pwa` (`injectManifest` strategy) builds `src/pwa/sw.ts` into `dist/sw.js`
+  alongside the Workbox precache manifest. `src/main.tsx` registers it via the
+  `virtual:pwa-register` module (aliased to a no-op stand-in under Vitest —
+  `vite.config.ts`'s `test.alias` — so running the test suite never touches the real
+  service worker machinery).
+- `src/pwa/sw.ts` precaches the build, `CacheFirst`-caches CDN images (`/img/*`, `/avatar/*`
+  on the CDN origin) and handles `push`/`notificationclick`. It deliberately does **not**
+  cache any API response — an authenticated JSON response sitting in Cache Storage would
+  outlive logout and could leak between users on a shared device. Its `push`/`notificationclick`
+  logic is pulled out into pure, unit-tested helpers in `src/pwa/swHelpers.ts`, since a real
+  `ServiceWorkerGlobalScope` isn't available under Vitest. The service worker compiles under
+  its own `tsconfig.sw.json` (`lib: ["WebWorker"]`, which conflicts with the app's `"DOM"` lib),
+  excluded from the main `tsconfig.json` and checked separately by `npm run typecheck`.
+- `src/pwa/pushSetup.ts` — `ensurePushSubscription(vapidPublicKey, { prompt })`,
+  `disablePush()`, `isPushSupported()`. Called from: `App.tsx` on every authenticated load
+  (`prompt: false` — refreshes an existing subscription, never shows the OS permission
+  prompt), the Settings master toggle (`prompt: true`), and `AuthProvider.logout` (best-effort,
+  before tokens are cleared, raced against a 2s timeout so a stuck push call can never block
+  signing out).
+- `src/components/settings/NotificationsSection.tsx` — the Settings "Notifications" section:
+  master toggle, "Send test push", "My devices" (with a "This device" badge matched by
+  subscription endpoint), and per-group "Cycle open"/"Deadline reminders" toggles
+  (`GET`/`PUT /push/preferences`, optimistic). Handles the unsupported-browser and
+  iOS-not-yet-installed states per `07-notifications.md` §14.
+- `src/state/installPrompt.ts` + `src/components/pwa/InstallPwaPrompt.tsx` — captures
+  `beforeinstallprompt` (`App.tsx`) and surfaces an "Install" button on Home and Settings;
+  iOS Safari never fires that event, so there it shows a dismissible "Add to Home Screen"
+  banner instead (dismissal persisted to `localStorage`).
+- `npm run dev:https` is the only mode that loads `@vitejs/plugin-basic-ssl` (see
+  `vite.config.ts`) — `PushManager.subscribe`/`Notification.requestPermission` need a secure
+  context, which plain HTTP `npm run dev` isn't. Accept the self-signed cert's browser warning
+  once per machine to test push locally.
+- `frontend/public/{icon-*,apple-touch-icon,badge-96}.png` are placeholder artwork generated
+  by `frontend/scripts/generate-icons.mjs` (a small PNG encoder using only Node's built-in
+  `zlib` — no image tool needed). Re-run it after changing the colors/sizes there; swap in
+  real designed icons whenever they're ready.
+
 ## Mocks
 
 `src/api/mockTransport.ts` holds self-contained in-memory fixtures (users, groups,
 newsletters) and is what `apiFetch` calls when `env.useMocks` is true. Mutations
-(`PATCH /me`, `DELETE /groups/{g}/members/{u}`, `POST /invites/redeem`) write back into
-that in-memory store, so the UI feels live across navigations within a session — reload
-the tab to reset. Invite code `DEMO-JOIN-CODE` joins a demo group; any other code shows
-the invalid-invite error.
+(`PATCH /me`, `DELETE /groups/{g}/members/{u}`, `POST /invites/redeem`, `/push/*` —
+`src/api/mockPush.ts`) write back into that in-memory store, so the UI feels live across
+navigations within a session — reload the tab to reset. Invite code `DEMO-JOIN-CODE` joins
+a demo group; any other code shows the invalid-invite error. `GET /config`'s
+`vapidPublicKey` is a valid but throwaway P-256 key in mock mode: the browser will
+subscribe, but no private key exists for it, so no real push can arrive.
 
 `src/mocks/` is the **legacy** pre-M7 mock layer (`legacyQueries.ts`, `types.ts`, `api.ts`,
 `data.ts`). It backs the pages later milestones haven't migrated yet (Candidates, Suggest,
 Newsletter, Respond, GroupAdmin), which the router renders only in mock mode — against a
 real API those routes show `PendingMilestonePage`. See
 [`../plans/04-frontend-architecture.md` §16](../plans/04-frontend-architecture.md). Don't
-build new features on it.
+build new features on it. (M11 removed its unused push/notification-preference mocks —
+`GroupAdminPage`, the only remaining consumer, never read them.)
 
 ## Where types come from
 

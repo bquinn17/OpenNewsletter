@@ -252,20 +252,6 @@ export interface Invite {
   roleOnRedeem: Role;
 }
 
-export interface PushDevice {
-  subscriptionId: string;
-  userAgent: string;
-  icon: string; // emoji for display
-  lastSuccessAt: string | null;
-}
-
-export interface NotificationPref {
-  groupId: GroupId;
-  cycleOpen: boolean;
-  deadlineReminders: boolean;
-  publication: boolean;
-}
-
 export interface ImageUploadStatus {
   imageId: ImageId;
   status: "uploading" | "processing" | "ready" | "failed";

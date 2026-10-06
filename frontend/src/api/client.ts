@@ -366,4 +366,25 @@ export const api = {
         { method: "DELETE" },
       ),
   },
+
+  push: {
+    subscribe: (body: S["PushSubscribeRequest"]): Promise<S["PushSubscribeResponse"]> =>
+      apiFetch("/push/subscribe", { method: "POST", body }),
+
+    unsubscribe: (body: S["PushUnsubscribeRequest"]): Promise<void> =>
+      apiFetch("/push/unsubscribe", { method: "POST", body }),
+
+    listSubscriptions: (): Promise<S["PushSubscriptionListResponse"]> =>
+      apiFetch("/push/subscriptions"),
+
+    sendTest: (): Promise<S["PushTestResponse"]> => apiFetch("/push/test", { method: "POST" }),
+
+    listPreferences: (): Promise<S["PushPreferenceListResponse"]> => apiFetch("/push/preferences"),
+
+    putPreference: (
+      groupId: string,
+      body: S["PutPushPreferenceRequest"],
+    ): Promise<S["PushPreferenceResponse"]> =>
+      apiFetch(`/push/preferences/${encodeURIComponent(groupId)}`, { method: "PUT", body }),
+  },
 };

@@ -88,6 +88,42 @@ pub async fn list_cycles_due(
         .collect()
 }
 
+/// `lambda-notify-tick`'s candidate query (`07-notifications.md` §7.1, M11
+/// decision D5): every `open` cycle whose `responseCloseAt` falls within
+/// `[now, now + max_offset]`. The lower bound is a plain `key_timestamp`
+/// (shorter than, and therefore sorting before, any `gsi2sk` at the same
+/// second); the upper bound uses the `#~~~` trick from [`list_cycles_due`] so
+/// a cycle closing at exactly the boundary second still matches.
+pub async fn list_open_cycles_closing_within(
+    repo: &Repo,
+    now: DateTime<Utc>,
+    max_offset: Duration,
+) -> Result<Vec<Newsletter>, RepoError> {
+    let lower = key_timestamp(now);
+    let upper = format!("{}#~~~", key_timestamp(now + max_offset));
+    let resp = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk AND #sk BETWEEN :lower AND :upper")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_names("#sk", attr::GSI2SK)
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Open)),
+        )
+        .expression_attribute_values(":lower", AttributeValue::S(lower))
+        .expression_attribute_values(":upper", AttributeValue::S(upper))
+        .send()
+        .await?;
+    let items = resp.items.unwrap_or_default();
+    items
+        .into_iter()
+        .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
+        .collect()
+}
+
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
 /// for state transitions referenced in §9 of `02-data-model-dynamodb.md`.
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {

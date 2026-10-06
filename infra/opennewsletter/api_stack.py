@@ -4,8 +4,8 @@ Per `plans/01-infrastructure-cdk.md` §6. The route table is driven from
 `plans/03-api-contract.md` §13, which is authoritative when the two disagree.
 
 M4 wires `lambda-invites` and `lambda-groups`. M5 adds `lambda-newsletters` and
-`lambda-questions`, M6 `lambda-responses`, M8 `lambda-media` and M10
-`lambda-engagement`.
+`lambda-questions`, M6 `lambda-responses`, M8 `lambda-media`, M10
+`lambda-engagement`, and M11 `lambda-push`.
 The remaining handler Lambdas join this stack as their milestones land; `_ROUTES`
 is the single place to add them.
 
@@ -13,10 +13,10 @@ The `PreSignUp` trigger Lambda lives in AuthStack, not here: `add_trigger` attac
 the wiring to the user pool's own stack, so building it here would make AuthStack
 depend on ApiStack while ApiStack already depends on AuthStack for the authorizer.
 
-The dev-only `POST /admin/dev/tick/cycle` route (`plans/03-api-contract.md` §11a.1)
-integrates `NotificationsStack`'s cycle-tick Lambda, passed in via constructor
-parameter — see `notifications_stack.py` for why that makes this stack depend on
-`NotificationsStack` rather than the other way around.
+The dev-only `POST /admin/dev/tick/cycle` and `POST /admin/dev/tick/notify` routes
+integrate `NotificationsStack`'s cycle-tick and notify-tick Lambdas, passed in via
+constructor parameters — see `notifications_stack.py` for why that makes this stack
+depend on `NotificationsStack` rather than the other way around.
 """
 
 from __future__ import annotations
@@ -133,6 +133,12 @@ _ROUTES: list[tuple[str, str, str]] = [
         "DELETE",
         "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
     ),
+    ("push", "POST", "/push/subscribe"),
+    ("push", "POST", "/push/unsubscribe"),
+    ("push", "GET", "/push/subscriptions"),
+    ("push", "POST", "/push/test"),
+    ("push", "GET", "/push/preferences"),
+    ("push", "PUT", "/push/preferences/{groupId}"),
 ]
 
 
@@ -154,6 +160,7 @@ class ApiStack(cdk.Stack):
         bootstrap_client: cognito.IUserPoolClient,
         certificate: acm.ICertificate,
         cycle_tick_fn: aws_lambda.IFunction,
+        notify_tick_fn: aws_lambda.IFunction,
         media_originals_bucket: s3.Bucket,
         avatars_originals_bucket: s3.Bucket,
         cdn_domain: str,
@@ -254,6 +261,22 @@ class ApiStack(cdk.Stack):
             )
         )
 
+        self.push_fn = self._handler_lambda(
+            "Push",
+            binary_name="push-api",
+            description="Web Push subscriptions and test messages",
+            timeout_secs=60,
+            extra_environment={
+                "VAPID_SECRET_ARN": config.vapid_secret_arn,
+            },
+        )
+        self.push_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[config.vapid_secret_arn],
+            )
+        )
+
         # --- HTTP API ---
 
         allowed_origins = [f"https://{config.domain}"]
@@ -302,6 +325,7 @@ class ApiStack(cdk.Stack):
             "questions": self.questions_fn,
             "responses": self.responses_fn,
             "engagement": self.engagement_fn,
+            "push": self.push_fn,
         }
         for handler_key, method, path in _ROUTES:
             handler = handlers[handler_key]
@@ -314,15 +338,21 @@ class ApiStack(cdk.Stack):
                 ),
             )
 
-        # Dev-only fast-forward route (`plans/03-api-contract.md` §11a.1); refuses
-        # with 404 in prod simply by not existing there. `POST /admin/dev/tick/notify`
-        # joins once `lambda-notify-tick` lands in M11.
+        # Dev-only fast-forward routes (`plans/03-api-contract.md` §11a.1, §11a.2);
+        # refuse with 404 in prod simply by not existing there.
         if config.env == "dev":
             self.api.add_routes(
                 path="/admin/dev/tick/cycle",
                 methods=[apigw.HttpMethod.POST],
                 integration=apigw_integrations.HttpLambdaIntegration(
                     "AdminDevTickCycle", cycle_tick_fn
+                ),
+            )
+            self.api.add_routes(
+                path="/admin/dev/tick/notify",
+                methods=[apigw.HttpMethod.POST],
+                integration=apigw_integrations.HttpLambdaIntegration(
+                    "AdminDevTickNotify", notify_tick_fn
                 ),
             )
 
@@ -373,6 +403,7 @@ class ApiStack(cdk.Stack):
         binary_name: str,
         description: str,
         memory_size: int = 256,
+        timeout_secs: int = 10,
         extra_environment: dict[str, str] | None = None,
     ) -> aws_lambda.Function:
         environment = {
@@ -394,7 +425,7 @@ class ApiStack(cdk.Stack):
             handler="bootstrap",
             code=lambda_code(binary_name),
             memory_size=memory_size,
-            timeout=cdk.Duration.seconds(10),
+            timeout=cdk.Duration.seconds(timeout_secs),
             environment=environment,
             log_group=self._log_group(name),
         )

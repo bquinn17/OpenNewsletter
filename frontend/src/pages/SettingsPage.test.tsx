@@ -28,6 +28,10 @@ vi.mock("../api/client", async (importOriginal) => {
         getAvatar: vi.fn(),
         deleteAvatar: vi.fn(),
       },
+      push: {
+        listSubscriptions: vi.fn().mockResolvedValue({ items: [] }),
+        listPreferences: vi.fn().mockResolvedValue({ items: [] }),
+      },
     },
   };
 });

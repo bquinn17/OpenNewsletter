@@ -241,6 +241,61 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
 }
 
 #[tokio::test]
+async fn first_publish_in_a_second_group_same_month_still_bumps_editions_answered() {
+    // Cycle ids are calendar months shared by every group, and GSI1's
+    // `USER#{u}#NL#{cycleId}` key has no group: group A's published answer
+    // must not count as "already published" for group B (`02` AP15 note).
+    let (_c, repo) = common::make_repo().await;
+    for g in ["gx-a", "gx-b"] {
+        let group = common::group(g, "u1");
+        common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+        newsletters::write_status_transition(&repo, &common::open_newsletter(g, "202606"))
+            .await
+            .unwrap();
+    }
+    common::put_locked_question(
+        &repo,
+        &common::locked_question("gx-a", "202606", "qa", "u1"),
+    )
+    .await;
+    common::put_locked_question(
+        &repo,
+        &common::locked_question("gx-b", "202606", "qb", "u1"),
+    )
+    .await;
+
+    let state = state(repo);
+    let caller = UserId::new("u1");
+    let cycle_id = CycleId::new("202606");
+    for (g, q) in [("gx-a", "qa"), ("gx-b", "qb")] {
+        handlers::save_response(
+            &state,
+            &caller,
+            &GroupId::new(g),
+            &cycle_id,
+            &QuestionId::new(q),
+            text_request("an answer", vec![], true),
+        )
+        .await
+        .unwrap();
+    }
+
+    for g in ["gx-a", "gx-b"] {
+        let membership =
+            persistence::groups::get_membership(&state.repo, &caller, &GroupId::new(g))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(membership.editions_answered, 1, "group {g}");
+    }
+
+    let listed = handlers::list_my_responses(&state, &caller, &GroupId::new("gx-b"), &cycle_id)
+        .await
+        .unwrap();
+    assert_eq!(listed.items.len(), 1);
+}
+
+#[tokio::test]
 async fn publish_false_after_publish_stays_published() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gsp", "u1");

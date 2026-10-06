@@ -4,6 +4,45 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+name = "push"
+path = "src/lib.rs"
+
 [[bin]]
-name = "bootstrap"
+name = "push-api"
 path = "src/main.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+persistence = { path = "../persistence" }
+shared = { path = "../shared" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-secretsmanager = "1"
+base64.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+lambda_http.workspace = true
+lambda_runtime.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+# Pure-Rust RFC 8291 / RFC 8292 Web Push crypto (M11 decision D1) — the
+# `web-push` crate pulls in `ece` (openssl) and `isahc` (libcurl), both C
+# builds that are unreliable under the `cargo-lambda` arm64 cross-compile.
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+hkdf = "0.12"
+sha2 = "0.10"
+aes-gcm = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+persistence = { path = "../persistence", features = ["test-utils"] }
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+serde_dynamo.workspace = true

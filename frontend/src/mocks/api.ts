@@ -12,8 +12,6 @@ import {
   invites,
   newsletters,
   newsletterSummariesByGroup,
-  notificationPrefs,
-  pushDevices,
   trailCrewGradient,
 } from "./data";
 import type {
@@ -27,8 +25,6 @@ import type {
   MyResponse,
   NewsletterDetail,
   NewsletterSummary,
-  NotificationPref,
-  PushDevice,
   Role,
   VotingNewsletter,
 } from "./types";
@@ -36,8 +32,6 @@ import type {
 function delay<T>(value: T, ms = 250): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
-
-const pushState = { globalEnabled: true };
 
 // MOCK: in-memory upload state map keyed by imageId. Real impl replaces this
 // with persistent storage (DDB row + S3 trigger updating it).
@@ -385,48 +379,6 @@ export const mockApi = {
       if (m) m.avatarUrl = null;
     }
     return delay(structuredClone(mockConfig.user), 200);
-  },
-
-  // --- Push ---------------------------------------------------------------
-  async getPushEnabled(): Promise<{ enabled: boolean }> {
-    return delay({ enabled: pushState.globalEnabled });
-  },
-
-  async setPushEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
-    pushState.globalEnabled = enabled;
-    return delay({ enabled }, 200);
-  },
-
-  async listPushDevices(): Promise<PushDevice[]> {
-    return delay(structuredClone(pushDevices));
-  },
-
-  async removePushDevice(subscriptionId: string): Promise<void> {
-    const idx = pushDevices.findIndex((d) => d.subscriptionId === subscriptionId);
-    if (idx >= 0) pushDevices.splice(idx, 1);
-    return delay(undefined);
-  },
-
-  async sendTestPush(): Promise<{ devices: number }> {
-    return delay({ devices: pushDevices.length }, 600);
-  },
-
-  // --- Notification preferences ------------------------------------------
-  async listNotificationPrefs(): Promise<NotificationPref[]> {
-    return delay(structuredClone(notificationPrefs));
-  },
-
-  async updateNotificationPref(
-    groupId: string,
-    patch: Partial<NotificationPref>,
-  ): Promise<NotificationPref> {
-    let pref = notificationPrefs.find((p) => p.groupId === groupId);
-    if (!pref) {
-      pref = { groupId, cycleOpen: true, deadlineReminders: true, publication: true };
-      notificationPrefs.push(pref);
-    }
-    Object.assign(pref, patch);
-    return delay(structuredClone(pref));
   },
 };
 

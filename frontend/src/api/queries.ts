@@ -13,6 +13,8 @@ export const queryKeys = {
   candidates: (groupId: string, sort: CandidateSort) => ["candidates", groupId, sort] as const,
   myResponse: (groupId: string, cycleId: string, questionId: string) =>
     ["myResponse", groupId, cycleId, questionId] as const,
+  pushSubscriptions: ["pushSubscriptions"] as const,
+  pushPreferences: ["pushPreferences"] as const,
 };
 
 export type CandidateSort = "top" | "recent";
@@ -69,6 +71,28 @@ export function useCandidates(groupId: string | undefined, sort: CandidateSort =
     queryKey: queryKeys.candidates(groupId ?? "", sort),
     queryFn: () => api.listCandidates(groupId!, { sort }),
     enabled: !!groupId,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The caller's push subscriptions ("My devices", `07-notifications.md` §11.1).
+ * Only ever rendered inside `SettingsPage` (behind `RequireAuth`), so — like
+ * `useGroup`/`useCandidates` — no separate auth-status gate.
+ */
+export function usePushSubscriptions() {
+  return useQuery({
+    queryKey: queryKeys.pushSubscriptions,
+    queryFn: api.push.listSubscriptions,
+    staleTime: 30_000,
+  });
+}
+
+/** The caller's per-group notification preferences (cycle-open / deadline-reminders). */
+export function usePushPreferences() {
+  return useQuery({
+    queryKey: queryKeys.pushPreferences,
+    queryFn: api.push.listPreferences,
     staleTime: 30_000,
   });
 }

@@ -13,6 +13,7 @@
 //! depth limit is no longer enough.
 #![recursion_limit = "256"]
 
+use cycle_tick::notify::{LambdaNotifier, NoopNotifier, Notifier};
 use cycle_tick::{dispatch, state::AppState};
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use persistence::Repo;
@@ -26,9 +27,21 @@ async fn main() -> Result<(), Error> {
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let table = std::env::var("TABLE_NAME").map_err(|_| "TABLE_NAME is not set")?;
 
+    let notifier: Box<dyn Notifier> = match std::env::var("PUSH_FUNCTION_NAME") {
+        Ok(name) if !name.is_empty() => Box::new(LambdaNotifier {
+            client: aws_sdk_lambda::Client::new(&aws_config),
+            function_name: name,
+        }),
+        _ => {
+            tracing::warn!("PUSH_FUNCTION_NAME is not set; cycle-open and publication notifications are disabled");
+            Box::new(NoopNotifier)
+        }
+    };
+
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
         env: std::env::var("ENV").unwrap_or_default(),
+        notifier,
     });
 
     run(service_fn(move |event: LambdaEvent<Value>| {

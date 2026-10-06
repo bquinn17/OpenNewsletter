@@ -8,10 +8,8 @@ import type {
   MyResponse,
   NewsletterDetail,
   NewsletterSummary,
-  NotificationPref,
   OpenNewsletter,
   PublishedNewsletter,
-  PushDevice,
   VotingNewsletter,
 } from "./types";
 
@@ -1689,27 +1687,6 @@ export const invites: Invite[] = [
     consumedAt: "2026-04-22T11:00:00Z",
     roleOnRedeem: "member",
   },
-];
-
-export const pushDevices: PushDevice[] = [
-  {
-    subscriptionId: "ps_pixel",
-    userAgent: "Pixel 8 · Chrome",
-    icon: "📱",
-    lastSuccessAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    subscriptionId: "ps_mac",
-    userAgent: "MacBook · Safari",
-    icon: "💻",
-    lastSuccessAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
-
-export const notificationPrefs: NotificationPref[] = [
-  { groupId: "g_trail", cycleOpen: true, deadlineReminders: true, publication: true },
-  { groupId: "g_game", cycleOpen: false, deadlineReminders: false, publication: false },
-  { groupId: "g_meeple", cycleOpen: true, deadlineReminders: true, publication: true },
 ];
 
 export const config: AppConfig = {

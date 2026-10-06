@@ -272,3 +272,92 @@ describe("api.engagement", () => {
     expect(requestInit.method).toBe("DELETE");
   });
 });
+
+describe("api.push", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    mockedManager.getUser.mockResolvedValue(null);
+  });
+
+  it("POSTs a subscription to /push/subscribe", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(201, { subscriptionId: "sub1" }));
+
+    await api.push.subscribe({
+      endpoint: "https://push.example/e1",
+      expirationTime: null,
+      keys: { p256dh: "p", auth: "a" },
+      userAgent: "ua",
+    });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/push/subscribe");
+    expect(requestInit.method).toBe("POST");
+    expect(requestInit.body).toBe(
+      JSON.stringify({
+        endpoint: "https://push.example/e1",
+        expirationTime: null,
+        keys: { p256dh: "p", auth: "a" },
+        userAgent: "ua",
+      }),
+    );
+  });
+
+  it("POSTs to /push/unsubscribe and resolves undefined on 204", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(
+      api.push.unsubscribe({ endpoint: "https://push.example/e1" }),
+    ).resolves.toBeUndefined();
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/push/unsubscribe");
+    expect(requestInit.method).toBe("POST");
+  });
+
+  it("GETs /push/subscriptions", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [] }));
+
+    await api.push.listSubscriptions();
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain("/push/subscriptions");
+  });
+
+  it("POSTs to /push/test", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { results: [] }));
+
+    await api.push.sendTest();
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/push/test");
+    expect(requestInit.method).toBe("POST");
+  });
+
+  it("GETs /push/preferences", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [] }));
+
+    await api.push.listPreferences();
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain("/push/preferences");
+  });
+
+  it("PUTs a preference for one group", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { groupId: "g1", cycleOpen: true, deadlineReminders: false }),
+    );
+
+    await api.push.putPreference("g1", { cycleOpen: true, deadlineReminders: false });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/push/preferences/g1");
+    expect(requestInit.method).toBe("PUT");
+    expect(requestInit.body).toBe(JSON.stringify({ cycleOpen: true, deadlineReminders: false }));
+  });
+});

@@ -75,6 +75,7 @@ api_stack = ApiStack(
     bootstrap_client=auth_stack.bootstrap_client,
     certificate=frontend_stack.certificate,
     cycle_tick_fn=notifications_stack.cycle_tick_fn,
+    notify_tick_fn=notifications_stack.notify_tick_fn,
     media_originals_bucket=media_persistent_stack.originals_bucket,
     avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
     cdn_domain=media_persistent_stack.distribution.distribution_domain_name,

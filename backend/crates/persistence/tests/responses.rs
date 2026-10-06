@@ -113,16 +113,30 @@ async fn it_lists_my_responses_in_cycle_via_gsi1() {
         r.response_id = domain::ResponseId::new("resp-03");
         r
     };
+    // Same user, same calendar-month cycle id, different group: GSI1's key
+    // has no group, so this must be filtered out, not listed.
+    let other_group = {
+        let mut r = common::draft_response("g2", "202606", "q9", "u1");
+        r.response_id = domain::ResponseId::new("resp-04");
+        r
+    };
     common::put_response(&repo, &r1).await;
     common::put_response(&repo, &r2).await;
     common::put_response(&repo, &other).await;
+    common::put_response(&repo, &other_group).await;
 
-    let my =
-        responses::list_my_responses_in_cycle(&repo, &UserId::new("u1"), &CycleId::new("202606"))
-            .await
-            .unwrap();
+    let my = responses::list_my_responses_in_cycle(
+        &repo,
+        &UserId::new("u1"),
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
     assert_eq!(my.len(), 2);
-    assert!(my.iter().all(|r| r.user_id.as_str() == "u1"));
+    assert!(my
+        .iter()
+        .all(|r| r.user_id.as_str() == "u1" && r.group_id.as_str() == "g1"));
 }
 
 #[tokio::test]

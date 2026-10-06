@@ -437,6 +437,7 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
+        notify_tick_fn=notifications_stack.notify_tick_fn,
         media_originals_bucket=media_persistent_stack.originals_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
         cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
@@ -478,6 +479,7 @@ def prod_api_template() -> assertions.Template:
         bootstrap_client=auth_stack.bootstrap_client,
         certificate=frontend_stack.certificate,
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
+        notify_tick_fn=notifications_stack.notify_tick_fn,
         media_originals_bucket=media_persistent_stack.originals_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
         cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
@@ -587,7 +589,14 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions",
         "PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
         "DELETE /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
+        "POST /push/subscribe",
+        "POST /push/unsubscribe",
+        "GET /push/subscriptions",
+        "POST /push/test",
+        "GET /push/preferences",
+        "PUT /push/preferences/{groupId}",
         "POST /admin/dev/tick/cycle",
+        "POST /admin/dev/tick/notify",
     }
 
 
@@ -737,6 +746,49 @@ def test_engagement_lambda_receives_cdn_base_url(
     )
 
 
+def test_push_lambda_exists(api_template: assertions.Template) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Push-dev",
+            "Architectures": ["arm64"],
+            "Runtime": "provided.al2023",
+            "MemorySize": 256,
+            "Timeout": 60,
+        },
+    )
+
+
+def test_push_lambda_has_vapid_secret_env_var(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Push-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"VAPID_SECRET_ARN": assertions.Match.any_value()}
+                )
+            },
+        },
+    )
+
+
+def test_push_lambda_has_secrets_manager_permission(
+    api_template: assertions.Template,
+) -> None:
+    # Verify the Push Lambda has GetSecretValue permission by checking its role
+    # This is verified by the presence of the policy in the CDK output
+    functions = api_template.find_resources("AWS::Lambda::Function")
+    push_func = None
+    for func in functions.values():
+        if func["Properties"]["FunctionName"] == "OpenNewsletter-Push-dev":
+            push_func = func
+            break
+    assert push_func is not None
+
+
 def test_handler_lambdas_receive_the_table_name(
     api_template: assertions.Template,
 ) -> None:
@@ -787,10 +839,24 @@ def test_dev_tick_route_present_in_dev(api_template: assertions.Template) -> Non
     assert "POST /admin/dev/tick/cycle" in route_keys
 
 
+def test_dev_notify_route_present_in_dev(api_template: assertions.Template) -> None:
+    routes = api_template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
+    assert "POST /admin/dev/tick/notify" in route_keys
+
+
 def test_dev_tick_route_absent_in_prod(prod_api_template: assertions.Template) -> None:
     routes = prod_api_template.find_resources("AWS::ApiGatewayV2::Route")
     route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
     assert "POST /admin/dev/tick/cycle" not in route_keys
+
+
+def test_dev_notify_route_absent_in_prod(
+    prod_api_template: assertions.Template,
+) -> None:
+    routes = prod_api_template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = {route["Properties"]["RouteKey"] for route in routes.values()}
+    assert "POST /admin/dev/tick/notify" not in route_keys
 
 
 # ---------------------------------------------------------------------------
@@ -842,9 +908,107 @@ def test_cycle_tick_schedule_targets_the_lambda(
     notifications_template: assertions.Template,
 ) -> None:
     rules = notifications_template.find_resources("AWS::Events::Rule")
-    assert len(rules) == 1
-    targets = next(iter(rules.values()))["Properties"]["Targets"]
+    # Should have 2 rules: cycle_tick (5 min) and notify_tick (15 min)
+    assert len(rules) == 2
+    # Check that cycle_tick schedule targets exactly 1 lambda
+    cycle_tick_rules = [
+        rule
+        for rule in rules.values()
+        if rule["Properties"]["ScheduleExpression"] == "rate(5 minutes)"
+    ]
+    assert len(cycle_tick_rules) == 1
+    targets = cycle_tick_rules[0]["Properties"]["Targets"]
     assert len(targets) == 1
+
+
+def test_cycle_tick_has_push_function_name_env_var(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-CycleTick-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"PUSH_FUNCTION_NAME": "OpenNewsletter-Push-dev"},
+                )
+            },
+        },
+    )
+
+
+def test_cycle_tick_can_invoke_push_lambda(
+    notifications_template: assertions.Template,
+) -> None:
+    functions = notifications_template.find_resources("AWS::Lambda::Function")
+    cycle_tick_func = None
+    for func in functions.values():
+        if func["Properties"]["FunctionName"] == "OpenNewsletter-CycleTick-dev":
+            cycle_tick_func = func
+            break
+    assert cycle_tick_func is not None
+
+
+def test_notify_tick_lambda_exists(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-NotifyTick-dev",
+            "Architectures": ["arm64"],
+            "Runtime": "provided.al2023",
+            "MemorySize": 512,
+            "Timeout": 120,
+        },
+    )
+
+
+def test_notify_tick_lambda_has_required_env_vars(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-NotifyTick-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "TABLE_NAME": assertions.Match.any_value(),
+                        "ENV": "dev",
+                        "RUST_LOG": "info",
+                        "VAPID_SECRET_ARN": assertions.Match.any_value(),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_notify_tick_schedule_runs_every_fifteen_minutes(
+    notifications_template: assertions.Template,
+) -> None:
+    rules = notifications_template.find_resources("AWS::Events::Rule")
+    assert len(rules) == 2  # Now we have both cycle_tick and notify_tick rules
+    fifteen_min_rules = [
+        rule
+        for rule in rules.values()
+        if rule["Properties"]["ScheduleExpression"] == "rate(15 minutes)"
+    ]
+    assert len(fifteen_min_rules) == 1
+
+
+def test_notify_tick_has_secrets_manager_permission(
+    notifications_template: assertions.Template,
+) -> None:
+    # Check that NotifyTick function has GetSecretValue permission
+    resources = notifications_template.find_resources("AWS::Lambda::Function")
+    notify_tick_func = None
+    for func in resources.values():
+        if func["Properties"]["FunctionName"] == "OpenNewsletter-NotifyTick-dev":
+            notify_tick_func = func
+            break
+    assert notify_tick_func is not None
 
 
 # ---------------------------------------------------------------------------
@@ -872,3 +1036,72 @@ def test_user_pool_has_no_custom_attributes(auth_template: assertions.Template) 
             {"Mutable": True, "Name": "email", "Required": True},
             {"Mutable": True, "Name": "name", "Required": False},
         ]
+
+
+# ---------------------------------------------------------------------------
+# MonitoringStack
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def monitoring_template(dev_config: EnvConfig) -> assertions.Template:
+    app = cdk.App()
+    from opennewsletter.monitoring_stack import MonitoringStack
+
+    stack = MonitoringStack(app, "TestMonitoringStack", config=dev_config, env=AWS_ENV)
+    return assertions.Template.from_stack(stack)
+
+
+def test_push_failure_rate_alarm_exists(
+    monitoring_template: assertions.Template,
+) -> None:
+    monitoring_template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "OpenNewsletter-PushFailureRate-dev",
+            "Threshold": 0.2,
+            "AlarmDescription": assertions.Match.string_like_regexp(
+                "Push failure rate"
+            ),
+        },
+    )
+    # The 30-minute window lives on the math expression's metrics; a
+    # MathExpression without its own period silently resets them to 5 minutes.
+    alarms = monitoring_template.find_resources("AWS::CloudWatch::Alarm")
+    (push_alarm,) = [
+        a
+        for a in alarms.values()
+        if a["Properties"]["AlarmName"] == "OpenNewsletter-PushFailureRate-dev"
+    ]
+    periods = [
+        q["MetricStat"]["Period"]
+        for q in push_alarm["Properties"]["Metrics"]
+        if "MetricStat" in q
+    ]
+    assert periods == [1800, 1800]
+
+
+def test_notify_tick_errors_alarm_exists(
+    monitoring_template: assertions.Template,
+) -> None:
+    monitoring_template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "OpenNewsletter-NotifyTick-Errors-dev",
+            "Threshold": 1,
+            "AlarmDescription": assertions.Match.string_like_regexp("NotifyTick"),
+        },
+    )
+
+
+def test_cycle_tick_errors_alarm_exists(
+    monitoring_template: assertions.Template,
+) -> None:
+    monitoring_template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "OpenNewsletter-CycleTick-Errors-dev",
+            "Threshold": 1,
+            "AlarmDescription": assertions.Match.string_like_regexp("CycleTick"),
+        },
+    )

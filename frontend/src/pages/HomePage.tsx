@@ -3,6 +3,7 @@ import { useAuth } from "../auth/useAuth";
 import { api } from "../api/client";
 import { useConfig, queryKeys } from "../api/queries";
 import { JoinForm } from "../components/join/JoinForm";
+import { InstallPwaPrompt } from "../components/pwa/InstallPwaPrompt";
 import { Button } from "../components/ui/Button";
 import { Spinner } from "../components/ui/Spinner";
 import { GroupSection } from "../components/home/GroupSection";
@@ -71,6 +72,9 @@ function SignedInHome() {
     <div className="pb-12">
       <div className="px-5 pb-2 pt-6">
         <h1 className="font-display text-2xl font-bold leading-tight">{greeting}</h1>
+      </div>
+      <div className="px-5 pb-2">
+        <InstallPwaPrompt />
       </div>
       {memberships.map((m, i) => (
         <GroupSection key={m.groupId} membership={m} query={results[i]!} />

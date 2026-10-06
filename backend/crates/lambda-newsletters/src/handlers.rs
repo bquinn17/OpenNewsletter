@@ -48,7 +48,7 @@ pub async fn list_newsletters(
     let mut items = Vec::with_capacity(filtered.len());
     for nl in filtered {
         let my_responses =
-            responses::list_my_responses_in_cycle(&state.repo, caller, &nl.cycle_id)
+            responses::list_my_responses_in_cycle(&state.repo, caller, group_id, &nl.cycle_id)
                 .await
                 .map_err(|e| {
                     tracing::error!(error = ?e, group_id = %group_id, cycle_id = %nl.cycle_id, "my-response listing failed");
@@ -165,12 +165,13 @@ async fn open_detail(
 ) -> Result<NewsletterDetailResponse, ApiError> {
     let locked = load_locked_questions(state, group_id, &nl.cycle_id).await?;
 
-    let my_responses = responses::list_my_responses_in_cycle(&state.repo, caller, &nl.cycle_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "my-response listing failed");
-            ApiError::internal("failed to load your responses")
-        })?;
+    let my_responses =
+        responses::list_my_responses_in_cycle(&state.repo, caller, group_id, &nl.cycle_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, group_id = %group_id, "my-response listing failed");
+                ApiError::internal("failed to load your responses")
+            })?;
     let mut by_question: HashMap<QuestionId, domain::Response> = my_responses
         .into_iter()
         .map(|r| (r.question_id.clone(), r))

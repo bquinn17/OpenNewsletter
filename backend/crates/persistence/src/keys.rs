@@ -274,6 +274,7 @@ pub fn notified_open_pk(group_id: &GroupId, cycle_id: &CycleId) -> String {
 }
 
 pub const NOTIFIED_OPEN_SK: &str = "NOTIFIED#OPEN";
+pub const NOTIFIED_PUBLISH_SK: &str = "NOTIFIED#PUBLISH";
 
 pub fn notified_close_sk(offset_hours: u32) -> String {
     format!("NOTIFIED#CLOSE#{offset_hours}")
@@ -459,6 +460,7 @@ mod tests {
     fn tick_and_idempotency_keys() {
         assert_eq!(notified_open_pk(&gid(), &cid()), "GROUP#01HG2#NL#202606");
         assert_eq!(NOTIFIED_OPEN_SK, "NOTIFIED#OPEN");
+        assert_eq!(NOTIFIED_PUBLISH_SK, "NOTIFIED#PUBLISH");
         assert_eq!(notified_close_sk(48), "NOTIFIED#CLOSE#48");
         assert_eq!(TICK_PK, "TICK");
         assert_eq!(TICK_CYCLE_SK, "CYCLE");

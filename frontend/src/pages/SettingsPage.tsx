@@ -10,6 +10,8 @@ import { useConfig, useMe } from "../api/queries";
 import { useLeaveGroup, useUpdateProfile } from "../api/mutations";
 import { useToasts } from "../state/toast";
 import { PageHeader } from "../components/layout/PageHeader";
+import { InstallPwaPrompt } from "../components/pwa/InstallPwaPrompt";
+import { NotificationsSection } from "../components/settings/NotificationsSection";
 import { Avatar } from "../components/ui/Avatar";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -384,6 +386,12 @@ export function SettingsPage() {
           )}
         </div>
       </div>
+
+      <div className="mt-5 px-5">
+        <InstallPwaPrompt />
+      </div>
+
+      <NotificationsSection config={config} />
 
       <div className="mt-5 px-5">
         <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">

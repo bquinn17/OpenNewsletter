@@ -216,8 +216,7 @@ Workbox config (via plugin):
 - **Precache**: Vite-built static assets (JS/CSS/HTML).
 - **Runtime caches**:
   - CDN images (`https://cdn.opennewsletter.example.com/img/*`): `CacheFirst` with `expiration: { maxEntries: 200, maxAgeSeconds: 30 days }`. The signed-cookie URL has the same path regardless of viewer, which makes caching effective. Variant by `Vary: Cookie` not enabled (cookies are auth, not content) so all requests for the same path share one entry. (In dev, image URLs carry signed query params instead of cookies — `08-media-uploads.md` §4.5 — so cache entries churn when the signature refreshes hourly; acceptable, dev doesn't need offline fidelity.)
-  - API GETs (`https://api.opennewsletter.example.com/*`): `NetworkFirst` with a 3 s timeout falling back to cache. Used so a freshly-launched PWA without connectivity still shows last-known state. Mutations (POST/PUT/PATCH/DELETE) are NEVER cached.
-  - Auth tokens / `/config`: bypass SW entirely (network-only).
+  - ~~API GETs: `NetworkFirst` with a 3 s timeout falling back to cache.~~ **Dropped in M11:** authenticated API responses in Cache Storage are keyed by URL, not by user, and would outlive logout — a second user on a shared device could be served the first user's data offline. The SW does not touch API requests at all (so `/config` and tokens are network-only by construction). Revisit with per-user cache names cleared on logout if offline reads are wanted.
 
 ### 5.3 Push subscription flow
 

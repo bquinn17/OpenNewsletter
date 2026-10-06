@@ -12,7 +12,7 @@ use crate::{
     AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, ImageMedia,
     ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, NewsletterStatus,
     NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response, ResponseId,
-    ResponseStatus, Role, User, UserId,
+    ResponseStatus, Role, SubscriptionId, User, UserId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -828,6 +828,110 @@ impl AvatarMediaResponse {
             processed_at: avatar.processed_at,
         }
     }
+}
+
+// ===== `03-api-contract.md` §10 — Push routes =====
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscriptionKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+/// `POST /push/subscribe` request body (§10.1) — the browser's
+/// `PushSubscription.toJSON()` plus `userAgent`. `expirationTime` is accepted
+/// and ignored.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PushSubscribeRequest {
+    pub endpoint: String,
+    #[serde(default)]
+    pub expiration_time: Option<f64>,
+    pub keys: PushSubscriptionKeys,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscribeResponse {
+    pub subscription_id: SubscriptionId,
+}
+
+/// `POST /push/unsubscribe` request body (§10.2).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PushUnsubscribeRequest {
+    pub endpoint: String,
+}
+
+/// `GET /push/subscriptions` item (§10.3). The encryption keys are never
+/// returned.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscriptionResponse {
+    pub subscription_id: SubscriptionId,
+    pub endpoint: String,
+    pub user_agent: String,
+    pub created_at: DateTime<Utc>,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub failure_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscriptionListResponse {
+    pub items: Vec<PushSubscriptionResponse>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PushDeliveryOutcome {
+    Delivered,
+    Expired,
+    Failed,
+}
+
+/// `POST /push/test` per-subscription result (§10.4, §9).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushTestResult {
+    pub subscription_id: SubscriptionId,
+    pub user_agent: String,
+    pub outcome: PushDeliveryOutcome,
+    pub status_code: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushTestResponse {
+    pub results: Vec<PushTestResult>,
+}
+
+/// `PUT /push/preferences/{groupId}` request body (§10.5). Unknown fields —
+/// including `publication` (publication pushes have no per-user toggle) —
+/// are a 422.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PutPushPreferenceRequest {
+    pub cycle_open: bool,
+    pub deadline_reminders: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushPreferenceResponse {
+    pub group_id: GroupId,
+    pub cycle_open: bool,
+    pub deadline_reminders: bool,
+}
+
+/// `GET /push/preferences` response. Added M11: `03` §10 only had the PUT.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushPreferenceListResponse {
+    pub items: Vec<PushPreferenceResponse>,
 }
 
 // ===== `03-api-contract.md` §11 — Health =====

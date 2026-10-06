@@ -13,6 +13,16 @@ import {
 import { renewSession } from "./renewSession";
 import { userManager } from "./userManager";
 import { stashInvite } from "./inviteStash";
+import { disablePush } from "../pwa/pushSetup";
+
+/**
+ * `disablePush()` is already internally best-effort (never throws), but it
+ * awaits `navigator.serviceWorker.ready`, which in principle could hang
+ * forever — logout must never wait on that (M11 D11).
+ */
+async function bestEffortDisablePush(): Promise<void> {
+  await Promise.race([disablePush(), new Promise((resolve) => setTimeout(resolve, 2000))]);
+}
 
 const MOCK_USER: AuthUser = { sub: "mock-sub", email: "quinn@example.com", name: "Quinn" };
 
@@ -96,6 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    // Best-effort, before tokens are cleared below — never blocks logout.
+    await bestEffortDisablePush();
+
     if (env.useMocks) {
       queryClient.clear();
       useCurrentGroup.getState().clear();

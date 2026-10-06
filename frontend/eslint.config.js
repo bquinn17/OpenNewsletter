@@ -58,4 +58,12 @@ export default tseslint.config(
       "import-x/no-named-as-default-member": "off",
     },
   },
+  {
+    // One-off Node scripts (e.g. `scripts/generate-icons.mjs`) — not part of
+    // the browser app bundle.
+    files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
 );

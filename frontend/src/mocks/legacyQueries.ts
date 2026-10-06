@@ -14,9 +14,6 @@ const keys = {
   newsletters: (groupId: string) => ["newsletters", groupId] as const,
   candidates: (groupId: string) => ["candidates", groupId] as const,
   invites: (groupId: string) => ["invites", groupId] as const,
-  pushDevices: ["pushDevices"] as const,
-  pushEnabled: ["pushEnabled"] as const,
-  notificationPrefs: ["notificationPrefs"] as const,
 };
 
 export const useConfig = () =>

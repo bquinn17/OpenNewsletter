@@ -651,33 +651,37 @@ Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{ava
 
 ## 10. Push routes
 
+**Lambda** for every route here: `lambda-push` (binary `push-api`). **Role**: self. Exact shapes are in `shared/openapi.yaml` (tag `push`, written M11).
+
 ### 10.1 `POST /push/subscribe`
 
-**Lambda**: `lambda-push`.
+Body: full PushSubscription JSON from the browser (`endpoint`, `expirationTime` (ignored), `keys: { p256dh, auth }`, `userAgent`).
 
-Body: full PushSubscription JSON from the browser (`endpoint`, `keys: { p256dh, auth }`, `userAgent`).
+Behavior: hash endpoint (base64url-unpadded sha256), upsert by `(userId, endpointHash)`. Resets `failureCount=0`; keeps the row's original `createdAt` and `lastSuccessAt` (decided M11 — the SPA re-posts its subscription on every load, which must not wipe the device's history). Validation: `endpoint` is `https://`, ≤2048 chars; `keys.p256dh` decodes to a 65-byte uncompressed P-256 point, `keys.auth` to 16 bytes (base64url; trailing `=` padding is accepted and stripped before storing); `userAgent` ≤512 chars. **Cap (decided M11):** at most `MAX_PUSH_SUBSCRIPTIONS_PER_USER` (10) rows per user; a new 11th endpoint evicts the least recently successful one (never-succeeded counts as oldest, ties by `createdAt`).
 
-Behavior: hash endpoint, upsert by `(userId, endpointHash)`. Resets `failureCount=0`.
-
-Response 201: `{ "subscriptionId": "..." }`.
+Response 201: `{ "subscriptionId": "..." }` (= the endpoint hash).
 
 ### 10.2 `POST /push/unsubscribe`
 
-Body: `{ "endpoint": "..." }`. Deletes the matching row.
+Body: `{ "endpoint": "..." }`. Deletes the matching row. Idempotent.
 
-Response 204.
+Response 204. The Settings "My devices" remove button uses this too, with the `endpoint` from §10.3 (no separate DELETE route).
 
 ### 10.3 `GET /push/subscriptions`
 
-Returns the caller's active subs (for a settings page where they can prune devices).
+Returns the caller's active subs (for a settings page where they can prune devices): `{ items: [{ subscriptionId, endpoint, userAgent, createdAt, lastSuccessAt, failureCount }] }`, newest first. Keys are never returned; `endpoint` is, so the client can mark "This device".
 
 ### 10.4 `POST /push/test`
 
-Sends a test push to all of the caller's subscriptions. Useful from the Settings page. Response 200 with delivery results.
+Sends a test push to all of the caller's subscriptions. Useful from the Settings page. Response 200 `{ results: [{ subscriptionId, userAgent, outcome: "delivered"|"expired"|"failed", statusCode|null }] }`. `expired` (push service 404/410) means the row was deleted; `failed` increments `failureCount` (deleted at 5).
 
 ### 10.5 `PUT /push/preferences/{groupId}`
 
-Body: `{ "cycleOpen": true, "deadlineReminders": true }`. Upserts a `NotificationPref` row. Publication notifications are always-on with no per-user toggle; the API rejects any `publication` field in the body with `VALIDATION_FAILED`.
+Body: `{ "cycleOpen": true, "deadlineReminders": true }`, both required. Upserts a `NotificationPref` row and returns it (`{ groupId, cycleOpen, deadlineReminders }`). The caller must be a member of `groupId` (403 otherwise). Publication notifications are always-on with no per-user toggle; the API rejects any `publication` field (indeed any unknown field) in the body with `VALIDATION_FAILED`.
+
+### 10.6 `GET /push/preferences` (added M11)
+
+Returns `{ items: [{ groupId, cycleOpen, deadlineReminders }] }`, one per membership of the caller, defaults (both `true`) filled in where no row exists. §10.5 alone left the Settings page no way to read current state.
 
 ---
 
@@ -709,7 +713,7 @@ Response 200: `{ "transitions": [{ "groupId", "cycleId", "from", "to" }] }`. `fr
 
 **Lambda**: `lambda-notify-tick`. **Auth**: required. **Role**: any group admin.
 
-Synchronously invokes the notify-tick handler. Returns `{ "fanouts": [{ "groupId", "cycleId", "kind", "delivered", "failed" }] }`.
+Synchronously invokes the notify-tick handler (globally; no body). Returns `{ "fanouts": [{ "groupId", "cycleId", "kind", "offsetHours", "delivered", "failed" }] }`. Only deadline reminders run in notify-tick, so `kind` is always `deadline_reminder`; `failed` counts expired and failed sends together. Cycle-open and publication fan-outs triggered by `POST /admin/dev/tick/cycle` run asynchronously in `lambda-push` and are not reported by either route (decided M11).
 
 Both routes are also called by Playwright E2E (`11-testing-ci-cd.md` §4.3) — implement once, two consumers.
 

@@ -18,7 +18,9 @@ use domain::api::{
     ImageMediaResponse, InviteListResponse, MediaCookieResponse, MemberResponse,
     MembershipListResponse, MyResponsesList, NewsletterDetailResponse, NewsletterListResponse,
     PatchCommentRequest, PatchGroupRequest, PatchMeRequest, PatchMemberRequest, PatchUploadRequest,
-    ProblemDetails, ReactionsResponse, RedeemRequest, RedeemResponse, ResponseDto,
+    ProblemDetails, PushPreferenceListResponse, PushPreferenceResponse, PushSubscribeRequest,
+    PushSubscribeResponse, PushSubscriptionListResponse, PushTestResponse, PushUnsubscribeRequest,
+    PutPushPreferenceRequest, ReactionsResponse, RedeemRequest, RedeemResponse, ResponseDto,
     SaveResponseRequest, UserResponse,
 };
 use serde::de::DeserializeOwned;
@@ -503,6 +505,73 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "DELETE",
         "/avatars/{avatarId}",
         "404",
+        round_trip::<ProblemDetails>,
+    ),
+    // ---- `03-api-contract.md` §10 — Push routes ----
+    (
+        "POST",
+        "/push/subscribe",
+        "request",
+        round_trip::<PushSubscribeRequest>,
+    ),
+    (
+        "POST",
+        "/push/subscribe",
+        "201",
+        round_trip::<PushSubscribeResponse>,
+    ),
+    (
+        "POST",
+        "/push/subscribe",
+        "422",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "POST",
+        "/push/unsubscribe",
+        "request",
+        round_trip::<PushUnsubscribeRequest>,
+    ),
+    (
+        "POST",
+        "/push/unsubscribe",
+        "422",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/push/subscriptions",
+        "200",
+        round_trip::<PushSubscriptionListResponse>,
+    ),
+    (
+        "POST",
+        "/push/test",
+        "200",
+        round_trip::<PushTestResponse>,
+    ),
+    (
+        "GET",
+        "/push/preferences",
+        "200",
+        round_trip::<PushPreferenceListResponse>,
+    ),
+    (
+        "PUT",
+        "/push/preferences/{groupId}",
+        "request",
+        round_trip::<PutPushPreferenceRequest>,
+    ),
+    (
+        "PUT",
+        "/push/preferences/{groupId}",
+        "200",
+        round_trip::<PushPreferenceResponse>,
+    ),
+    (
+        "PUT",
+        "/push/preferences/{groupId}",
+        "422",
         round_trip::<ProblemDetails>,
     ),
 ];

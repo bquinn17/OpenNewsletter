@@ -327,6 +327,8 @@ Group settings stored in DynamoDB override these defaults per-group; see `02-dat
 - **Job**: Open / lock / close / publish cycles whose timestamps have passed. Driven by GSI2. See `06-newsletter-lifecycle.md` §3.
 - **IAM**: full RW on table; `lambda:InvokeFunction` on `lambda-push` (or call directly via async invoke).
 
+**M11 status**: `lambda-cycle-tick` now async-invokes `lambda-push` (`InvocationType=Event`) for the cycle-open and publication fan-outs. It finds the function through env `PUSH_FUNCTION_NAME=OpenNewsletter-Push-{env}`, and its `lambda:InvokeFunction` grant is on an ARN built with `Stack.format_arn`, not on the `ApiStack` construct, which would create a stack cycle (§1 "Correction (M5)").
+
 **M5 status**: the stack, schedule, and table RW grant above are built. The `lambda:InvokeFunction` grant on `lambda-push` isn't — that Lambda doesn't exist until M11, and cycle-tick has no push fan-out to do yet (§7.4's `lambda-notify-tick` owns that). No VAPID secret access is wired to `lambda-cycle-tick` either; only `lambda-notify-tick` needs it (§7.3).
 
 ### 7.3 `lambda-notify-tick`
@@ -334,7 +336,7 @@ Group settings stored in DynamoDB override these defaults per-group; see `02-dat
 - **Trigger**: EventBridge Scheduler rule running **every 15 minutes**.
 - **Memory**: 512 MB. **Timeout**: 120 s.
 - **Job**: Find cycles with deadlines within the next configured offset (96/48/24h) that haven't been notified yet, fan out Web Push messages.
-- **IAM**: RW on table, `secretsmanager:GetSecretValue` on VAPID secret, `lambda:InvokeFunction` on `lambda-push`.
+- **IAM**: RW on table, `secretsmanager:GetSecretValue` on VAPID secret. (M11: no `lambda:InvokeFunction` — it links `lambda-push`'s library and sends reminders in-process; only `lambda-cycle-tick` invokes `lambda-push`.)
 - See `07-notifications.md` for full logic.
 
 ### 7.4 Idempotency

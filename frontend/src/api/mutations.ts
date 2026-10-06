@@ -282,3 +282,62 @@ export function useDeleteComment(groupId: string, cycleId: string, questionId: s
     },
   });
 }
+
+// ---- Push notifications (M11 — `07-notifications.md` §11, D11) -----------
+
+/** Sends a `kind: test` push to every one of the caller's subscriptions. */
+export function useSendTestPush() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.push.sendTest(),
+    // SettingsPage renders per-device results inline — suppress the generic
+    // global toast to avoid showing both.
+    meta: { silent: true },
+    // A failed/expired send can delete the subscription server-side.
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.pushSubscriptions }),
+  });
+}
+
+/** Removes one push subscription by endpoint ("My devices" remove button). */
+export function useRemovePushSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (endpoint: string) => api.push.unsubscribe({ endpoint }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.pushSubscriptions }),
+  });
+}
+
+/**
+ * Upserts the caller's per-group `cycleOpen`/`deadlineReminders` prefs.
+ * Optimistically patches the cached preference list, rolling back on error.
+ */
+export function usePutPushPreference(groupId: string) {
+  const qc = useQueryClient();
+  const key = queryKeys.pushPreferences;
+
+  return useMutation({
+    mutationFn: (body: S["PutPushPreferenceRequest"]) => api.push.putPreference(groupId, body),
+    onMutate: async (body) => {
+      await qc.cancelQueries({ queryKey: key });
+      const previous = qc.getQueryData<S["PushPreferenceListResponse"]>(key);
+      qc.setQueryData<S["PushPreferenceListResponse"]>(key, (data) => {
+        if (!data) return data;
+        const exists = data.items.some((p) => p.groupId === groupId);
+        const items = exists
+          ? data.items.map((p) => (p.groupId === groupId ? { ...p, ...body } : p))
+          : [...data.items, { groupId, ...body }];
+        return { items };
+      });
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) qc.setQueryData(key, context.previous);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData<S["PushPreferenceListResponse"]>(key, (cache) => {
+        if (!cache) return cache;
+        return { items: cache.items.map((p) => (p.groupId === data.groupId ? data : p)) };
+      });
+    },
+  });
+}

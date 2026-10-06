@@ -2,6 +2,7 @@ import type { components } from "../types/api";
 import { mockCandidateRoute } from "./mockCandidates";
 import { mockEngagementRoute } from "./mockEngagement";
 import { mockNewsletterRoute } from "./mockNewsletters";
+import { mockPushRoute } from "./mockPush";
 import {
   CALLER_ID,
   fail,
@@ -147,7 +148,10 @@ function handleGetConfig(): S["ConfigResponse"] {
     userId: me.userId,
     email: me.email,
     displayName: me.displayName,
-    vapidPublicKey: "BPV_mock_vapid_public_key",
+    // A real (throwaway) P-256 public key, so `PushManager.subscribe()` accepts it
+    // in mock mode. No private key exists for it: nothing can push to the result.
+    vapidPublicKey:
+      "BJTfWJoykcXuskzxVht3DnGpI07IIX8QCxj668lx_G0GgtvMi_mAFvD0_r6Z5Hvy3QRzrVQJrXo7NUUc9Nnix40",
     groupDefaults: {},
     memberships: [...memberships],
   };
@@ -452,7 +456,12 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
   }
 
   const request: MockRequest = { method, rawPath, segments, query, body };
-  for (const route of [mockCandidateRoute, mockNewsletterRoute, mockEngagementRoute]) {
+  for (const route of [
+    mockCandidateRoute,
+    mockNewsletterRoute,
+    mockEngagementRoute,
+    mockPushRoute,
+  ]) {
     const result = route(request);
     if (result !== NO_MOCK_ROUTE) return result;
   }

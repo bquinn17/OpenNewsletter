@@ -387,6 +387,9 @@ A few small entities for atomic bookkeeping:
 
 - `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#OPEN` — written when cycle-open notification fans out, prevents duplicates.
 - `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#CLOSE#{offset_hours}` — likewise per offset.
+- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#PUBLISH` — likewise for the publication fan-out (added M11).
+
+All `NOTIFIED#…` markers are claimed with `attribute_not_exists(pk)` **before** the fan-out runs (at-most-once: a crash mid-fan-out drops the remaining recipients rather than risk duplicates). They carry `entity=NotifiedMarker` and `created_at`. Decided M11; this makes the `Newsletter.notified_offsets_hours` / `notified_on_open` attributes (§2.5) vestigial — they're still written with their defaults but nothing reads them.
 - `pk=TICK` `sk=CYCLE` — single record updated on each `lambda-cycle-tick` run with `last_ran_at`.
 - `pk=TICK` `sk=NOTIFY` — likewise for `lambda-notify-tick`.
 
@@ -434,13 +437,15 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP12 | List my votes this cycle | Query | base |
 | AP13 | List locked questions for newsletter | Query | base |
 | AP14 | List answers to a question (post-publish) | Query | base |
-| AP15 | List my drafts in cycle | Query | GSI1 |
+| AP15 | List my drafts in cycle | Query + filter on `group_id` | GSI1 |
 | AP16 | Get my response to a question | GetItem | base |
 | AP17 | List my image uploads (admin/audit) | Query | GSI1 |
 | AP18 | Comments on an answer | Query | base |
 | AP19 | Reactions on an answer | Query | base |
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
+
+**Note (fixed M11) — AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows. This was pre-existing: `my-responses`, the newsletter list/detail counts and M11's reminder "N of total" count all over-counted for multi-group users, and publishing in group B after group A in the same month skipped B's `editions_answered` bump (step 4 below).
 
 ---
 

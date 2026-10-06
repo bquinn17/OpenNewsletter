@@ -9,7 +9,7 @@ use domain::{CycleId, GroupId, LockedQuestion, Newsletter, NewsletterStatus};
 use persistence::{groups, newsletters, questions, Repo};
 use serde::Serialize;
 
-use crate::notify;
+use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 
 /// One state change this tick made, or a new cycle it created. `from: null`
 /// marks a freshly created `voting` cycle rather than an existing row's
@@ -30,15 +30,22 @@ pub struct TickSummary {
 
 /// Run one full tick: promote due `voting` cycles, publish due `open` cycles,
 /// then record the sentinel. Every per-cycle failure is logged and skipped —
-/// one group's bad data never blocks another group's tick (§8).
+/// one group's bad data never blocks another group's tick (§8). Fan-outs go
+/// nowhere; see [`run_tick_with`].
 pub async fn run_tick(repo: &Repo) -> TickSummary {
+    run_tick_with(repo, &NoopNotifier).await
+}
+
+/// [`run_tick`], triggering a notification fan-out through `notifier` after
+/// each cycle opens or publishes.
+pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> TickSummary {
     let now = Utc::now();
     let mut transitions = Vec::new();
 
     match newsletters::list_cycles_due(repo, NewsletterStatus::Voting, now).await {
         Ok(due) => {
             for nl in due {
-                transitions.extend(promote_and_open(repo, &nl, now).await);
+                transitions.extend(promote_and_open(repo, notifier, &nl, now).await);
             }
         }
         Err(e) => tracing::error!(error = ?e, "failed to query voting cycles due for promotion"),
@@ -47,7 +54,7 @@ pub async fn run_tick(repo: &Repo) -> TickSummary {
     match newsletters::list_cycles_due(repo, NewsletterStatus::Open, now).await {
         Ok(due) => {
             for nl in due {
-                transitions.extend(publish(repo, &nl, now).await);
+                transitions.extend(publish(repo, notifier, &nl, now).await);
             }
         }
         Err(e) => tracing::error!(error = ?e, "failed to query open cycles due for publication"),
@@ -67,7 +74,12 @@ pub async fn run_tick(repo: &Repo) -> TickSummary {
 /// to `open`, then (best-effort, outside that transaction) create the group's
 /// next `voting` cycle. Returns 0-2 transitions: the `open` flip, and — if a
 /// next cycle didn't already exist — its creation.
-async fn promote_and_open(repo: &Repo, nl: &Newsletter, now: DateTime<Utc>) -> Vec<Transition> {
+async fn promote_and_open(
+    repo: &Repo,
+    notifier: &dyn Notifier,
+    nl: &Newsletter,
+    now: DateTime<Utc>,
+) -> Vec<Transition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -129,7 +141,9 @@ async fn promote_and_open(repo: &Repo, nl: &Newsletter, now: DateTime<Utc>) -> V
         }
     }
 
-    notify::cycle_opened(&nl.group_id, &nl.cycle_id);
+    notifier
+        .fanout(FanoutKind::CycleOpen, &nl.group_id, &nl.cycle_id)
+        .await;
 
     let mut transitions = vec![Transition {
         group_id: nl.group_id.to_string(),
@@ -190,10 +204,17 @@ async fn create_next_voting_cycle(
 }
 
 /// §5.3 — `open -> published`.
-async fn publish(repo: &Repo, nl: &Newsletter, now: DateTime<Utc>) -> Option<Transition> {
+async fn publish(
+    repo: &Repo,
+    notifier: &dyn Notifier,
+    nl: &Newsletter,
+    now: DateTime<Utc>,
+) -> Option<Transition> {
     match newsletters::publish_cycle(repo, &nl.group_id, &nl.cycle_id, now).await {
         Ok(()) => {
-            notify::cycle_published(&nl.group_id, &nl.cycle_id);
+            notifier
+                .fanout(FanoutKind::Publication, &nl.group_id, &nl.cycle_id)
+                .await;
             Some(Transition {
                 group_id: nl.group_id.to_string(),
                 cycle_id: nl.cycle_id.to_string(),

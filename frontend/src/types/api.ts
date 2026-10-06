@@ -458,6 +458,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push/subscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upsert the caller's push subscription for one browser endpoint, keyed by `(userId, sha256(endpoint))` (`07-notifications.md` §3.1). Resets `failureCount` to 0 and keeps the row's original `createdAt` and `lastSuccessAt`. `endpoint` must be an `https://` URL of at most 2048 characters; `keys.p256dh` must base64url-decode to a 65-byte uncompressed P-256 point, and `keys.auth` to 16 bytes; `userAgent` is at most 512 characters. A user keeps at most 10 subscriptions: adding an 11th removes the one least recently successful (oldest `createdAt` when none has succeeded). */
+        post: operations["pushSubscribe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/unsubscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete the caller's subscription for `endpoint`. Idempotent: 204 even if no such row exists. Also used by the Settings "My devices" remove button, which passes the `endpoint` from `GET /push/subscriptions`. */
+        post: operations["pushUnsubscribe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's push subscriptions, most recently created first. The encryption keys are never returned; `endpoint` is, so the client can tell which row is the current browser. */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a `kind: test` push to every one of the caller's subscriptions (`07-notifications.md` §9). No request body. Each result is `delivered`, `expired` (the push service answered 404/410, and the subscription has been deleted) or `failed` (anything else; the subscription's `failureCount` is incremented, and it is deleted at 5). `statusCode` is the push service's HTTP status, or null for a network error. A caller with no subscriptions gets an empty list. */
+        post: operations["sendTestPush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's notification preferences, one entry per group they belong to, in `GET /config` membership order. Groups with no stored `NotificationPref` row report the defaults (both true). Added M11: `03` §10 only had the PUT, which left Settings no way to read state. */
+        get: operations["listPushPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/preferences/{groupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upsert the caller's `NotificationPref` for one group. Both fields are required. Unknown fields, including `publication` (publication pushes are always on), are a 422. The caller must be a member of the group, otherwise 403. */
+        put: operations["putPushPreference"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -957,6 +1059,62 @@ export interface components {
             uploadedAt: string;
             /** Format: date-time */
             processedAt: string | null;
+        };
+        PushSubscriptionKeys: {
+            /** @description base64url uncompressed P-256 public key (65 bytes decoded). */
+            p256dh: string;
+            /** @description base64url auth secret (16 bytes decoded). */
+            auth: string;
+        };
+        /** @description The browser's `PushSubscription.toJSON()` plus `userAgent`. `expirationTime` is accepted and ignored. */
+        PushSubscribeRequest: {
+            endpoint: string;
+            expirationTime?: number | null;
+            keys: components["schemas"]["PushSubscriptionKeys"];
+            userAgent?: string;
+        };
+        PushSubscribeResponse: {
+            /** @description base64url (unpadded) sha256 of the endpoint. */
+            subscriptionId: string;
+        };
+        PushUnsubscribeRequest: {
+            endpoint: string;
+        };
+        PushSubscriptionResponse: {
+            subscriptionId: string;
+            endpoint: string;
+            userAgent: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            lastSuccessAt: string | null;
+            failureCount: number;
+        };
+        PushSubscriptionListResponse: {
+            items: components["schemas"]["PushSubscriptionResponse"][];
+        };
+        /** @enum {string} */
+        PushDeliveryOutcome: "delivered" | "expired" | "failed";
+        PushTestResult: {
+            subscriptionId: string;
+            userAgent: string;
+            outcome: components["schemas"]["PushDeliveryOutcome"];
+            statusCode: number | null;
+        };
+        PushTestResponse: {
+            results: components["schemas"]["PushTestResult"][];
+        };
+        PutPushPreferenceRequest: {
+            cycleOpen: boolean;
+            deadlineReminders: boolean;
+        };
+        PushPreferenceResponse: {
+            groupId: string;
+            cycleOpen: boolean;
+            deadlineReminders: boolean;
+        };
+        PushPreferenceListResponse: {
+            items: components["schemas"]["PushPreferenceResponse"][];
         };
         HealthResponse: {
             status: string;
@@ -2892,6 +3050,220 @@ export interface operations {
                 content?: never;
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    pushSubscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "endpoint": "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG",
+                 *       "expirationTime": null,
+                 *       "keys": {
+                 *         "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+                 *         "auth": "tBHItJI5svbpez7KI4CCXg"
+                 *       },
+                 *       "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PushSubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Subscription stored. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "subscriptionId": "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PushSubscribeResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    pushUnsubscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "endpoint": "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PushUnsubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted (or already absent). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's subscriptions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "subscriptionId": "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu",
+                     *           "endpoint": "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG",
+                     *           "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0",
+                     *           "createdAt": "2026-10-05T14:00:00Z",
+                     *           "lastSuccessAt": "2026-10-05T14:01:00Z",
+                     *           "failureCount": 0
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PushSubscriptionListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    sendTestPush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-subscription delivery results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "results": [
+                     *         {
+                     *           "subscriptionId": "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu",
+                     *           "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0",
+                     *           "outcome": "delivered",
+                     *           "statusCode": 201
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PushTestResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    listPushPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One preference per membership. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "groupId": "01HG2F3K4M5N6P7Q8R9S0T1V2W",
+                     *           "cycleOpen": true,
+                     *           "deadlineReminders": false
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PushPreferenceListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    putPushPreference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "cycleOpen": true,
+                 *       "deadlineReminders": false
+                 *     }
+                 */
+                "application/json": components["schemas"]["PutPushPreferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored preference. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "groupId": "01HG2F3K4M5N6P7Q8R9S0T1V2W",
+                     *       "cycleOpen": true,
+                     *       "deadlineReminders": false
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PushPreferenceResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     healthz: {

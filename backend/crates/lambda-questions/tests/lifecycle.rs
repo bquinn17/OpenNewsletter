@@ -7,13 +7,29 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use cycle_tick::tick::run_tick;
+use cycle_tick::notify::{FanoutKind, Notifier};
+use cycle_tick::tick::run_tick_with;
 use domain::api::CreateCandidateRequest;
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus, QuestionKind, Role, UserId};
 use persistence::newsletters;
 use pretty_assertions::assert_eq;
 use questions::handlers;
 use questions::state::AppState;
+use std::sync::Mutex;
+
+/// Records every fan-out the tick triggers, in order.
+#[derive(Default)]
+struct RecordingNotifier(Mutex<Vec<(FanoutKind, String, String)>>);
+
+#[async_trait::async_trait]
+impl Notifier for RecordingNotifier {
+    async fn fanout(&self, kind: FanoutKind, group_id: &GroupId, cycle_id: &CycleId) {
+        self.0
+            .lock()
+            .unwrap()
+            .push((kind, group_id.to_string(), cycle_id.to_string()));
+    }
+}
 
 #[tokio::test]
 async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_cycle() {
@@ -104,7 +120,8 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .expect("group has an active cycle to rewind");
 
     // 4. Run the tick — this is exactly what the EventBridge schedule invokes.
-    let summary = run_tick(&state.repo).await;
+    let notifier = RecordingNotifier::default();
+    let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
         summary
             .transitions
@@ -137,7 +154,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .await
         .unwrap()
         .expect("group has an active (open) cycle to rewind");
-    let summary = run_tick(&state.repo).await;
+    let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
         summary
             .transitions
@@ -154,6 +171,23 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .expect("cycle exists");
     assert_eq!(published.status, NewsletterStatus::Published);
     assert!(published.published_at.is_some());
+
+    // Each transition triggered exactly one fan-out, cycle-open then publication.
+    assert_eq!(
+        *notifier.0.lock().unwrap(),
+        vec![
+            (
+                FanoutKind::CycleOpen,
+                group_id.to_string(),
+                "202606".to_string()
+            ),
+            (
+                FanoutKind::Publication,
+                group_id.to_string(),
+                "202606".to_string()
+            ),
+        ]
+    );
 
     // 8. The next voting cycle created back in step 5 is untouched and still voting.
     let still_voting = newsletters::find_voting_cycle(&state.repo, &group_id)

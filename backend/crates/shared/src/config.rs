@@ -93,6 +93,21 @@ pub const DEFAULT_COMMENT_LIST_LIMIT: u32 = 50;
 /// (`09-engagement.md` §1.4, decided M10).
 pub const COMMENT_WRITE_ATTEMPTS: u32 = 3;
 
+/// A push subscription is deleted after this many consecutive delivery
+/// failures (`07-notifications.md` §3.2).
+pub const MAX_PUSH_FAILURES: u32 = 5;
+/// A user keeps at most this many push subscriptions; adding one more evicts
+/// the least-recently-successful (`03-api-contract.md` §10.1).
+pub const MAX_PUSH_SUBSCRIPTIONS_PER_USER: usize = 10;
+/// `TTL` header sent with every Web Push request — 24h, so a push service
+/// doesn't deliver a stale notification to a reopened app (`07` §10).
+pub const PUSH_TTL_SECONDS: u64 = 86_400;
+/// Per-send HTTP timeout for the Web Push request itself.
+pub const PUSH_SEND_TIMEOUT_SECS: u64 = 10;
+/// Push payload JSON must serialize to at most this many bytes before
+/// encryption (`07-notifications.md` §5, M11 decision D6).
+pub const MAX_PUSH_PAYLOAD_BYTES: usize = 3_000;
+
 #[cfg(test)]
 mod tests {
     use super::*;

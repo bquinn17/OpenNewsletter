@@ -12,6 +12,7 @@ from typing import Any
 import aws_cdk as cdk
 from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_cloudwatch as cloudwatch
+from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subscriptions
 from constructs import Construct
@@ -102,6 +103,83 @@ class MonitoringStack(cdk.Stack):
                 else []
             ),
         )
+
+        # Push failure-rate alarm: PushFailed / (PushSent + PushFailed) > 0.2
+        # over 30 minutes, treating missing data as not breaching (M11).
+        push_sent_metric = cloudwatch.Metric(
+            namespace=f"OpenNewsletter/{config.env}",
+            metric_name="PushSent",
+            statistic=cloudwatch.Stats.SUM,
+            period=cdk.Duration.minutes(30),
+        )
+        push_failed_metric = cloudwatch.Metric(
+            namespace=f"OpenNewsletter/{config.env}",
+            metric_name="PushFailed",
+            statistic=cloudwatch.Stats.SUM,
+            period=cdk.Duration.minutes(30),
+        )
+
+        cloudwatch.Alarm(
+            self,
+            "PushFailureRateAlarm",
+            metric=cloudwatch.MathExpression(
+                expression="failed / (sent + failed)",
+                using_metrics={
+                    "failed": push_failed_metric,
+                    "sent": push_sent_metric,
+                },
+                # Without this the expression overrides its metrics' periods to
+                # the 5-minute default, silently shrinking the 30-minute window.
+                period=cdk.Duration.minutes(30),
+            ),
+            threshold=0.2,
+            evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+            alarm_description="Push failure rate exceeds 20% over 30 minutes",
+            alarm_name=f"OpenNewsletter-PushFailureRate-{config.env}",
+        ).add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+
+        # NotifyTick Lambda error alarm (M11)
+        notify_tick_errors = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Errors",
+            dimensions_map={
+                "FunctionName": f"OpenNewsletter-NotifyTick-{config.env}",
+            },
+            statistic=cloudwatch.Stats.SUM,
+            period=cdk.Duration.minutes(1),
+        )
+
+        cloudwatch.Alarm(
+            self,
+            "NotifyTickErrorsAlarm",
+            metric=notify_tick_errors,
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="NotifyTick Lambda has encountered errors",
+            alarm_name=f"OpenNewsletter-NotifyTick-Errors-{config.env}",
+        ).add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+
+        # CycleTick Lambda error alarm (M11, mirrors NotifyTick)
+        cycle_tick_errors = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Errors",
+            dimensions_map={
+                "FunctionName": f"OpenNewsletter-CycleTick-{config.env}",
+            },
+            statistic=cloudwatch.Stats.SUM,
+            period=cdk.Duration.minutes(1),
+        )
+
+        cloudwatch.Alarm(
+            self,
+            "CycleTickErrorsAlarm",
+            metric=cycle_tick_errors,
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="CycleTick Lambda has encountered errors",
+            alarm_name=f"OpenNewsletter-CycleTick-Errors-{config.env}",
+        ).add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
 
         cdk.CfnOutput(self, "AlarmTopicArn", value=self.alarm_topic.topic_arn)
         cdk.CfnOutput(self, "DashboardName", value=self.dashboard.dashboard_name)

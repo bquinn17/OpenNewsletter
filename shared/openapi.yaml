@@ -44,6 +44,8 @@ tags:
     description: Comment and reaction routes (`03-api-contract.md` §8).
   - name: media
     description: Upload, avatar and signed-cookie routes (`03-api-contract.md` §9).
+  - name: push
+    description: Web Push subscription, test and preference routes (`03-api-contract.md` §10).
   - name: health
     description: Health check (`03-api-contract.md` §11).
 
@@ -1406,6 +1408,187 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /push/subscribe:
+    post:
+      operationId: pushSubscribe
+      tags: [push]
+      summary: >
+        Upsert the caller's push subscription for one browser endpoint, keyed
+        by `(userId, sha256(endpoint))` (`07-notifications.md` §3.1). Resets
+        `failureCount` to 0 and keeps the row's original `createdAt` and
+        `lastSuccessAt`. `endpoint` must be an `https://` URL of at most 2048
+        characters; `keys.p256dh` must base64url-decode to a 65-byte
+        uncompressed P-256 point, and `keys.auth` to 16 bytes; `userAgent` is
+        at most 512 characters. A user keeps at most 10 subscriptions: adding
+        an 11th removes the one least recently successful (oldest `createdAt`
+        when none has succeeded).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscribeRequest"
+            example:
+              endpoint: "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG"
+              expirationTime: null
+              keys:
+                p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM"
+                auth: "tBHItJI5svbpez7KI4CCXg"
+              userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0"
+      responses:
+        "201":
+          description: Subscription stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushSubscribeResponse"
+              example:
+                subscriptionId: "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /push/unsubscribe:
+    post:
+      operationId: pushUnsubscribe
+      tags: [push]
+      summary: >
+        Delete the caller's subscription for `endpoint`. Idempotent: 204 even
+        if no such row exists. Also used by the Settings "My devices" remove
+        button, which passes the `endpoint` from `GET /push/subscriptions`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushUnsubscribeRequest"
+            example:
+              endpoint: "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG"
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /push/subscriptions:
+    get:
+      operationId: listPushSubscriptions
+      tags: [push]
+      summary: >
+        The caller's push subscriptions, most recently created first. The
+        encryption keys are never returned; `endpoint` is, so the client can
+        tell which row is the current browser.
+      responses:
+        "200":
+          description: The caller's subscriptions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushSubscriptionListResponse"
+              example:
+                items:
+                  - subscriptionId: "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu"
+                    endpoint: "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG"
+                    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0"
+                    createdAt: "2026-10-05T14:00:00Z"
+                    lastSuccessAt: "2026-10-05T14:01:00Z"
+                    failureCount: 0
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /push/test:
+    post:
+      operationId: sendTestPush
+      tags: [push]
+      summary: >
+        Send a `kind: test` push to every one of the caller's subscriptions
+        (`07-notifications.md` §9). No request body. Each result is
+        `delivered`, `expired` (the push service answered 404/410, and the
+        subscription has been deleted) or `failed` (anything else; the
+        subscription's `failureCount` is incremented, and it is deleted at 5).
+        `statusCode` is the push service's HTTP status, or null for a network
+        error. A caller with no subscriptions gets an empty list.
+      responses:
+        "200":
+          description: Per-subscription delivery results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushTestResponse"
+              example:
+                results:
+                  - subscriptionId: "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu"
+                    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0"
+                    outcome: "delivered"
+                    statusCode: 201
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /push/preferences:
+    get:
+      operationId: listPushPreferences
+      tags: [push]
+      summary: >
+        The caller's notification preferences, one entry per group they
+        belong to, in `GET /config` membership order. Groups with no stored
+        `NotificationPref` row report the defaults (both true). Added M11:
+        `03` §10 only had the PUT, which left Settings no way to read state.
+      responses:
+        "200":
+          description: One preference per membership.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushPreferenceListResponse"
+              example:
+                items:
+                  - groupId: "01HG2F3K4M5N6P7Q8R9S0T1V2W"
+                    cycleOpen: true
+                    deadlineReminders: false
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /push/preferences/{groupId}:
+    put:
+      operationId: putPushPreference
+      tags: [push]
+      summary: >
+        Upsert the caller's `NotificationPref` for one group. Both fields are
+        required. Unknown fields, including `publication` (publication pushes
+        are always on), are a 422. The caller must be a member of the group,
+        otherwise 403.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutPushPreferenceRequest"
+            example:
+              cycleOpen: true
+              deadlineReminders: false
+      responses:
+        "200":
+          description: The stored preference.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushPreferenceResponse"
+              example:
+                groupId: "01HG2F3K4M5N6P7Q8R9S0T1V2W"
+                cycleOpen: true
+                deadlineReminders: false
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /healthz:
     get:
       operationId: healthz
@@ -2765,6 +2948,134 @@ components:
         processedAt:
           type: [string, "null"]
           format: date-time
+
+    # ---- §10 Push ----
+
+    PushSubscriptionKeys:
+      type: object
+      required: [p256dh, auth]
+      properties:
+        p256dh:
+          type: string
+          description: base64url uncompressed P-256 public key (65 bytes decoded).
+        auth:
+          type: string
+          description: base64url auth secret (16 bytes decoded).
+
+    PushSubscribeRequest:
+      type: object
+      description: >
+        The browser's `PushSubscription.toJSON()` plus `userAgent`.
+        `expirationTime` is accepted and ignored.
+      required: [endpoint, keys]
+      properties:
+        endpoint:
+          type: string
+        expirationTime:
+          type: [number, "null"]
+        keys:
+          $ref: "#/components/schemas/PushSubscriptionKeys"
+        userAgent:
+          type: string
+
+    PushSubscribeResponse:
+      type: object
+      required: [subscriptionId]
+      properties:
+        subscriptionId:
+          type: string
+          description: base64url (unpadded) sha256 of the endpoint.
+
+    PushUnsubscribeRequest:
+      type: object
+      required: [endpoint]
+      properties:
+        endpoint:
+          type: string
+
+    PushSubscriptionResponse:
+      type: object
+      required: [subscriptionId, endpoint, userAgent, createdAt, lastSuccessAt, failureCount]
+      properties:
+        subscriptionId:
+          type: string
+        endpoint:
+          type: string
+        userAgent:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastSuccessAt:
+          type: [string, "null"]
+          format: date-time
+        failureCount:
+          type: integer
+
+    PushSubscriptionListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PushSubscriptionResponse"
+
+    PushDeliveryOutcome:
+      type: string
+      enum: [delivered, expired, failed]
+
+    PushTestResult:
+      type: object
+      required: [subscriptionId, userAgent, outcome, statusCode]
+      properties:
+        subscriptionId:
+          type: string
+        userAgent:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/PushDeliveryOutcome"
+        statusCode:
+          type: [integer, "null"]
+
+    PushTestResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PushTestResult"
+
+    PutPushPreferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [cycleOpen, deadlineReminders]
+      properties:
+        cycleOpen:
+          type: boolean
+        deadlineReminders:
+          type: boolean
+
+    PushPreferenceResponse:
+      type: object
+      required: [groupId, cycleOpen, deadlineReminders]
+      properties:
+        groupId:
+          type: string
+        cycleOpen:
+          type: boolean
+        deadlineReminders:
+          type: boolean
+
+    PushPreferenceListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PushPreferenceResponse"
 
     # ---- §11 Health ----
 

@@ -22,7 +22,7 @@ pub async fn list_my_responses(
     auth::require_membership(&state.repo, caller, group_id, false).await?;
     require_newsletter_not_archived(state, group_id, cycle_id).await?;
 
-    let items = responses::list_my_responses_in_cycle(&state.repo, caller, cycle_id)
+    let items = responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");
@@ -86,7 +86,7 @@ pub async fn save_response(
 
     let content = validate_content(state, caller, group_id, cycle_id, &question, request).await?;
 
-    let my_responses = responses::list_my_responses_in_cycle(&state.repo, caller, cycle_id)
+    let my_responses = responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");

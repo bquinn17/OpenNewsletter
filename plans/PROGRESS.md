@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-05. Working document — update as milestones complete or
+Snapshot as of 2026-10-06. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -22,12 +22,12 @@ blockers resolve. Authoritative milestone definitions live in
 | **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
 | **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
-| M11 | Notifications | ⬜ | |
+| **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 427 backend, 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
 | M12 | Admin UI | ⬜ | |
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M10 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M11 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -435,7 +435,7 @@ Still outstanding: Google + Facebook OAuth app registrations, the real CloudFron
 ## Suggested next steps (in order)
 
 1. **Finish the M1 operator tasks** to clear B5: Google/Facebook OAuth apps, the real CloudFront keypair and their Secrets Manager entries. VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
-2. **Rebuild the Lambda artifacts** (`cargo lambda build --release --arm64`) so `engagement-api` gets one (B6).
+2. **Rebuild the Lambda artifacts** (`cargo lambda build --release --arm64`) so `engagement-api`, `push-api` and `notify-tick` get one, and `cycle-tick` picks up the M11 fan-out invoke (B6).
 3. *(done 2026-10-05: CDK bootstrap)*
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
 5. **M6 gate**: after deploy, the curl save → save → publish dance against `PUT …/my-response` (`12` M6).
@@ -451,12 +451,24 @@ Still outstanding: Google + Facebook OAuth app registrations, the real CloudFron
    - draft with images, reload, then publish text and poll answers
    - tick again to publish, then read the edition
 9. **M10 gate**: after deploy, two users comment on each other's published answers (one with an image), edit and delete a comment, and react with a ZWJ emoji (e.g. 👨‍👩‍👧‍👦) and a flag. An admin deletes the other user's comment. Check that API Gateway hands the Lambda the emoji path param decoded or encoded; the handler accepts both (`03` §8.6).
-10. **Begin M11** (Notifications). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+10. **M11 gate**: after deploy, `cargo lambda build --release --arm64` for `push-api`, `notify-tick` and `cycle-tick` — all three cross-compiled cleanly on macOS 2026-10-06, artifacts in `backend/target/lambda/`. Then:
+   - enable notifications in Settings on a desktop Chrome and an installed iOS PWA; "Send test push" reaches both, and "My devices" lists both
+   - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to open a cycle → the cycle-open push arrives once (retick: no duplicate)
+   - rewind into the reminder window and `POST /admin/dev/tick/notify` → one reminder (the smallest due offset), not a burst
+   - tick to publish → the publication push arrives; tapping it opens the edition
+   - turn a group's "Deadline reminders" off and confirm that member is skipped
+   - check the `PushFailureRate` alarm and the `PushSent`/`PushFailed` EMF metrics exist in CloudWatch
+11. **Begin M12** (Admin UI). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
+- **No `frontend-deploy.yml` workflow yet**, so the `04` §14.5 `404.html` copy (SPA deep links on GitHub Pages) isn't done. Add both in M13/M14.
+- **Push endpoints aren't host-allowlisted.** `POST /push/subscribe` accepts any `https://` URL, so `POST /push/test` will POST an encrypted body to whatever host a signed-in user registered. The Lambda isn't in a VPC and the body is opaque, so the exposure is small; restrict to known push-service hosts in M13 if wanted.
+- **A crash mid-fan-out loses the rest of that fan-out** (markers are claimed first, at-most-once — `07` §7.1). Accepted for now; the alternative risks duplicate pushes.
+- **Fan-outs are sequential.** Fine for small groups (60s push timeout, 120s notify-tick); parallelise with a bounded `join_all` if groups grow.
+- **PWA icons are generated placeholders** (`frontend/scripts/generate-icons.mjs`). Swap in designed artwork.
 - **Comment author names: no cross-request cache.** `09` §1.5 suggests a 60s per-cold-start user cache. M10 does one deduped `BatchGetItem` per request instead. Add the cache if user reads show up as hot.
 - **`get_comment_by_id` walks the answer's whole `C#` range with a filter**, because there's no index on `comment_id`. That's fine at expected thread sizes; revisit if threads get long.
 - **The comment composer's image upload and the `[deleted]` placeholder** are only exercised in mock mode and component tests, since there's no deploy yet (M10 gate).
@@ -469,11 +481,63 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
-- **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
-- **Future-milestone stub crates still name their binary `bootstrap`**: `lambda-push` and `-notify-tick` (`-engagement` was renamed `engagement-api` in M10). Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
 - **The Rust toolchain is unpinned `stable`.** Rust 1.99 (2026-09-28) added clippy's `double_must_use`, which fired through `#[async_trait]` in `lambda-image-process/src/storage.rs`. It's now `allow`ed with a reason. A new stable can break `-D warnings` without any code change; pin a version in `rust-toolchain.toml` if that keeps happening.
-- **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth: the `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows aren't written until M11.
+- **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth (the `NOTIFIED#…`/`TICK#NOTIFY` rows) is resolved: M11 writes them.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
+
+---
+
+## M11 detail — what landed (2026-10-06)
+
+The lead settled the spec's gaps (decisions D1–D11, folded into the plan docs) and wrote the push contract into `shared/openapi.yaml` (then regenerated `api.ts`) before any agent started. Three agents ran in parallel: a Sonnet backend agent, a Haiku infra agent and a Sonnet frontend agent. The backend agent hit the session limit twice and never finished; the lead completed the backend directly (persistence tests, the `cycle-tick` invoke) and audited the rest.
+
+### Backend
+- **`lambda-push`** (binary `push-api`, lib `push`), laid out like `lambda-engagement` plus:
+  - `webpush.rs`: RFC 8291 `aes128gcm` encryption and RFC 8292 ES256 VAPID JWTs in pure Rust (`p256`, `hkdf`, `aes-gcm`, `sha2`). **Not** the `web-push` crate, whose OpenSSL `ece` and isahc/libcurl dependencies put the arm64 cross-compile at risk (B6). `VapidKeys::parse` checks the private key derives the public key.
+  - `sender.rs` (a `PushSender` trait, reqwest/rustls impl), `delivery.rs` (send one + `07` §3.2 bookkeeping), `payload.rs` (payload + copy, ≤3,000 bytes), `fanout.rs` (cycle-open and publication), `metrics.rs` (EMF).
+  - One binary serves the six `/push/*` routes and the internal fan-out invoke. It takes the raw event and checks `requestContext` **first**, so an HTTP caller can never forge an `{internal: …}` event.
+- **`lambda-notify-tick`** (binary `notify-tick`, lib `notify_tick`): every 15 minutes, finds `open` cycles closing within `MAX_REMINDER_OFFSET_HOURS` (`newsletters::list_open_cycles_closing_within`, GSI2) and sends deadline reminders in-process through the `push` lib. Also serves the dev-only `POST /admin/dev/tick/notify` (404 outside dev, 403 for non-admins).
+- **`lambda-cycle-tick`** now async-invokes `lambda-push` (`InvocationType::Event`, function name from `PUSH_FUNCTION_NAME`) after each `voting → open` and `open → published`, through a `Notifier` trait. `run_tick(&repo)` keeps a no-op notifier; `run_tick_with` takes one. An unset env var logs a WARN and disables fan-out; an invoke failure is logged and never fails the tick.
+- **`persistence::push`**: `upsert_subscription` (keeps `createdAt`/`lastSuccessAt`, resets `failureCount`, enforces the 10-sub cap by evicting the least recently successful), `mark_delivered`/`record_failure` conditioned on the row existing (never resurrect a deleted row), at-most-once `claim_*_notified_marker`, and the `TICK/NOTIFY` sentinel.
+- `shared::config`: `MAX_PUSH_FAILURES`, `MAX_PUSH_SUBSCRIPTIONS_PER_USER`, `PUSH_TTL_SECONDS`, `PUSH_SEND_TIMEOUT_SECS`, `MAX_PUSH_PAYLOAD_BYTES`.
+
+### Infrastructure
+- `ApiStack`: the `Push` function (`push-api`, 60s timeout, `VAPID_SECRET_ARN` + `GetSecretValue`), the six push routes, and `POST /admin/dev/tick/notify` → notify-tick (new `notify_tick_fn` constructor param). `_handler_lambda` gained `timeout_secs`.
+- `NotificationsStack`: `NotifyTickFn` (120s, 512 MB, 15-minute rule, VAPID env + grant, own log group). `cycle_tick_fn` gets `PUSH_FUNCTION_NAME` and `lambda:InvokeFunction` on an ARN built with `Stack.format_arn`. Passing the `Push` construct would cycle, since `ApiStack` depends on this stack.
+- `MonitoringStack`: `PushFailureRateAlarm` (metric math `PushFailed / (PushSent + PushFailed) > 0.2` over 30 min, missing data not breaching), plus NotifyTick and CycleTick error alarms.
+- `Makefile`: `FUNCTION_push-api`, `FUNCTION_notify-tick`.
+
+### Frontend
+- `vite-plugin-pwa` (`injectManifest`) builds `src/pwa/sw.ts`: precache, `CacheFirst` for CDN images, `push` and `notificationclick` (pure helpers in `swHelpers.ts`). Own `tsconfig.sw.json`; `npm run typecheck` checks both.
+- `src/pwa/pushSetup.ts`: `isPushSupported`, `ensurePushSubscription(key, {prompt})`, `disablePush`, `getLocalPushState`. `App.tsx` refreshes the subscription on every authenticated load (`prompt: false`). `AuthProvider.logout` unsubscribes best-effort, raced against a 2s timeout.
+- Settings "Notifications" section: master toggle, "Send test push", "My devices" (with a "This device" badge), and per-group "Cycle open"/"Deadline reminders" toggles (optimistic). Unsupported-browser and iOS-not-installed states per `07` §14.
+- Install prompt: `beforeinstallprompt` capture, plus a dismissible iOS "Add to Home Screen" banner on Home and Settings.
+- Manifest, placeholder icons (`scripts/generate-icons.mjs`), `npm run dev:https` (basic-ssl) for testing push locally.
+- `api/mockPush.ts` in `mockTransport`; the legacy push mocks were removed from `src/mocks/`.
+
+### Bugs caught in lead review (fixed, with regression tests where testable)
+- **Pre-existing, cross-group: AP15 ignored the group.** `list_my_responses_in_cycle` queries GSI1 `USER#{u}#NL#{cycleId}`, and cycle IDs are calendar months shared by every group. A user in two groups got both groups' responses: `my-responses` and the newsletter list/detail counts over-counted, and publishing in group B after group A in the same month **skipped B's `editions_answered` bump**. It now takes `group_id` and filters. Regressions: `persistence/tests/responses.rs` and `lambda-responses` `first_publish_in_a_second_group_same_month_still_bumps_editions_answered`. M11's reminder "N of total" count would have inherited the same bug.
+- **The RFC 8291 test only round-tripped** through a mirror decryptor sharing the encoder's derivation, which can't catch a spec-level mistake. It now also asserts the exact ciphertext RFC 8291 §5 publishes (it matches).
+- **Padded base64url push keys were rejected.** `keys.p256dh`/`keys.auth` are now accepted with trailing `=` and stored unpadded.
+- **The push failure-rate alarm evaluated over 5 minutes, not 30.** The `MathExpression` overrode its metrics' periods to 300s; `period` is now set on the expression, and a CDK test asserts 1800s.
+- **The mock-mode VAPID key wasn't a valid P-256 point**, so `PushManager.subscribe` threw in mock mode. Replaced with a real throwaway key.
+- The cycle-tick invoke was never wired by the backend agent (only the `aws-sdk-lambda` dependency landed); the lead wrote it.
+
+### Decisions (recorded in `07` §2/§5/§6/§7/§8/§10/§11/§13, `03` §10/§11a.2, `02` §2.15/AP15, `04` §5.2, `01` §7.2/§7.3)
+- Own Web Push implementation, not the `web-push` crate (above). The VAPID secret holds raw base64url scalars.
+- **Markers are claimed before fanning out** (`attribute_not_exists`): at-most-once, so a crash mid-fan-out loses the rest rather than risking duplicates. New `NOTIFIED#PUBLISH` marker. `Newsletter.notified_offsets_hours`/`notified_on_open` stay vestigial.
+- **Reminders:** an offset landing at or before `responseOpenAt` is moot (marked, never sent). Of the due offsets, only the smallest is sent and all are marked, so a late tick or a dev rewind doesn't burst. Members who've published every answer are skipped at the group's smallest offset.
+- The payload `url` is root-relative (`/g/{g}/n/{c}`), resolved by the service worker against its own origin, so no frontend-origin env var is needed.
+- Subscribe keeps `createdAt`/`lastSuccessAt`; the cap is 10 per user with LRU eviction; unsubscribe is idempotent and also serves "My devices" removal.
+- New `GET /push/preferences` (one entry per membership, defaults both true).
+- **No API runtime caching in the service worker** (deviation from `04` §5.2): an authenticated response in Cache Storage would outlive logout on a shared device.
+- notify-tick runs reminders in-process (it has the VAPID secret) and doesn't need `InvokeFunction`; 120s timeout per `01` §7.3.
+- EMF dimension sets `[["kind"], []]`, so the alarm can use the dimensionless totals.
+
+### Tests
+- Backend 427 (was 365): `lambda-push` unit tests (webpush incl. the RFC 8291 vector, validation, payload copy, dispatch) and DynamoDB Local tests (`push_routes.rs`, `fanout.rs`); `lambda-notify-tick` tests (`notify_tick.rs`); `persistence/tests/push.rs` +5 (re-subscribe, cap eviction, failure limit, no resurrection, markers); `cycle-tick` envelope test; the lifecycle test now asserts both fan-outs fire; the AP15 regressions; six push contract-table routes.
+- CDK 68 (was 54): 14 new (push function and routes, notify-tick function and schedule, invoke grant, alarms incl. the 1800s period).
+- Frontend 220 (was 166): `pushSetup` 16, `swHelpers`, `installPrompt`, `NotificationsSection`, `mockPush`, `client` additions.
 
 ---
 
@@ -728,23 +792,17 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 
 ---
 
-## Handoff — starting M11 (Notifications)
+## Handoff — starting M12 (Admin UI)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M11, `07-notifications.md`, and `03` §10 (push routes) and §11a.2 (`POST /admin/dev/tick/notify`).
-2. **Know the M11 scope.**
-   - `lambda-push` and `lambda-notify-tick` are still stubs with binary `bootstrap`. Rename them (`push-api`, and `notify-tick` like `cycle-tick`) and copy the `lambda-engagement` layout.
-   - VAPID keys are in Secrets Manager at `opennewsletter/vapid/dev` (B5).
-   - The `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows (`02`) land here.
-   - Wire the dev-only `POST /admin/dev/tick/notify`.
-3. **Frontend:** the service worker push handler, a subscribe/unsubscribe UI and per-group preferences (`PUT /push/preferences/{groupId}`).
-4. **Verify** with the commands in `CLAUDE.md`. Baselines: 361 backend, 54 CDK, 163 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`); from inside `infra/` its import sorting misfires. Put `infra/.venv/bin` first on `PATH` for `cdk synth`.
-5. **Suggested split**, same as M10:
-   - the lead writes the contract first
-   - a Sonnet backend agent
-   - a Haiku infra agent
-   - a Sonnet frontend agent
+1. **Orient.** Read `CLAUDE.md`, then `12` M12, `04` (the GroupAdmin page and §16 legacy-mock migration) and the admin routes in `03` (groups, members, invites, cycle settings).
+2. **Know the M12 scope.**
+   - `GroupAdminPage` is still on the legacy `src/mocks/` layer and only routes in mock mode. Migrating it removes the legacy `["config"]`/`["group", g]` query-key collision (Known gaps).
+   - Group notification settings (`notificationSettings.onCycleOpen`, `offsetsHoursBeforeClose`) are read by M11's fan-outs; the admin UI is where they get edited.
+   - Check which admin routes exist in `shared/openapi.yaml` before writing any; anything new goes into the YAML, `ROUTE_TABLE` and `codegen_types.sh` in the same change.
+3. **Verify** with the commands in `CLAUDE.md`. Baselines: 427 backend, 68 CDK, 220 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`). Put `infra/.venv/bin` first on `PATH` for `cdk synth`. If DynamoDB Local tests fail at "create table" with `IncompleteMessage`, the machine was overloaded (don't build in parallel with the test run); re-run with `--no-fail-fast`.
+4. **Suggested split:** M12 is mostly frontend. The lead writes any contract changes first, then a Sonnet frontend agent, and a backend agent only if routes are missing.
 
 ---
 

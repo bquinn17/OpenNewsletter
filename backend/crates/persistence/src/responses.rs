@@ -42,10 +42,14 @@ pub async fn list_answers(
         .collect()
 }
 
-/// AP15 — list a user's drafts/publishes for a cycle (via GSI1).
+/// AP15 — list a user's drafts/publishes for one group's cycle (via GSI1).
+/// GSI1's key is `USER#{u}#NL#{cycleId}` with no group, and cycle ids are
+/// calendar months shared by every group, so a user in two groups gets both
+/// groups' responses back from the query; `group_id` filters them down.
 pub async fn list_my_responses_in_cycle(
     repo: &Repo,
     user_id: &UserId,
+    group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<Vec<Response>, RepoError> {
     let resp = repo
@@ -59,10 +63,14 @@ pub async fn list_my_responses_in_cycle(
         .send()
         .await?;
     let items = resp.items.unwrap_or_default();
-    items
+    let all: Vec<Response> = items
         .into_iter()
         .map(|i| from_item::<_, Response>(i).map_err(RepoError::from))
-        .collect()
+        .collect::<Result<_, _>>()?;
+    Ok(all
+        .into_iter()
+        .filter(|r| &r.group_id == group_id)
+        .collect())
 }
 
 /// AP16 — get my response to a question.

@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 
 use crate::duration::parse_duration;
 use crate::state::AppState;
-use crate::tick::{run_tick, TickSummary};
+use crate::tick::{run_tick_with, TickSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingEvent {
@@ -50,7 +50,7 @@ pub fn classify_event(event: &Value) -> IncomingEvent {
 /// Handle the scheduled invocation: run the tick globally, return the summary
 /// for CloudWatch Logs (EventBridge itself ignores the return value).
 pub async fn handle_scheduled(state: &AppState) -> Value {
-    let summary = run_tick(&state.repo).await;
+    let summary = run_tick_with(&state.repo, state.notifier.as_ref()).await;
     tracing::info!(
         transition_count = summary.transitions.len(),
         "scheduled tick complete"
@@ -145,7 +145,7 @@ async fn handle_http_inner(
         }
     }
 
-    Ok(run_tick(&state.repo).await)
+    Ok(run_tick_with(&state.repo, state.notifier.as_ref()).await)
 }
 
 async fn require_admin_of_any_group(
