@@ -38,6 +38,7 @@ def main() -> int:
 
     try:
         from py_vapid import Vapid
+        from py_vapid.utils import b64urlencode, num_to_bytes
     except ImportError:
         print(
             "ERROR: py-vapid not installed. Run: pip install py-vapid",
@@ -52,11 +53,27 @@ def main() -> int:
         )
         return 2
 
+    # py-vapid >=1.8 exposes raw cryptography key objects via `.public_key` /
+    # `.private_key` rather than the `*_urlsafe_base64()` helpers this script
+    # used to call (removed upstream). Encode RFC 8292's wire format
+    # ourselves: public key as the uncompressed X9.62 point, private key as
+    # the 32-byte big-endian scalar, both base64url without padding — this
+    # is exactly what `Vapid01.from_raw`/`from_raw_public` expect back.
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
     vapid = Vapid()
     vapid.generate_keys()
+
+    public_raw = vapid.public_key.public_bytes(
+        encoding=Encoding.X962, format=PublicFormat.UncompressedPoint
+    )
+    private_raw = num_to_bytes(
+        vapid.private_key.private_numbers().private_value, pad_to=32
+    )
+
     payload = {
-        "publicKey": vapid.public_key_urlsafe_base64().decode("ascii"),
-        "privateKey": vapid.private_key_urlsafe_base64().decode("ascii"),
+        "publicKey": b64urlencode(public_raw),
+        "privateKey": b64urlencode(private_raw),
         "subject": args.subject,
     }
 

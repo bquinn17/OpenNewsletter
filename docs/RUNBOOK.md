@@ -48,8 +48,7 @@ Summary of steps (can run in parallel with M2/M3 code work):
 - [ ] Decide on a domain; create Route53 hosted zone; record `HOSTED_ZONE_ID`.
 - [ ] Pick a Cognito hosted-UI domain prefix (e.g. `opennewsletter-dev`).
 - [ ] Register Google OAuth 2.0 client; save credentials to Secrets Manager `opennewsletter/oauth/google/dev`.
-- [ ] Register Apple Services ID + Sign In With Apple; save to `opennewsletter/oauth/apple/dev`.
-- [ ] Register Facebook Login app; save to `opennewsletter/oauth/facebook/dev`.
+- [ ] Register Facebook Login app; save to `opennewsletter/oauth/facebook/dev`. (No Apple IdP — dropped, see `plans/PROGRESS.md` decisions; Apple Developer membership is $99/yr.)
 - [ ] Generate VAPID keys (`python scripts/generate_vapid_keys.py`); store in `opennewsletter/vapid/dev`.
 - [ ] Generate CloudFront signing keypair; commit `infra/keys/cf-signing.pub.pem`; store private key in `opennewsletter/cdn-signing/dev`.
 - [ ] Set `ALARM_EMAIL` in `.env.local` (receives AWS Budgets + CloudWatch alerts).
@@ -252,12 +251,11 @@ Follow [`smoke.md`](smoke.md) (created in M13). All steps must pass clean.
 All the Secrets Manager secrets created in M1 must be duplicated for production:
 
 - `opennewsletter/oauth/google/prod`
-- `opennewsletter/oauth/apple/prod`
 - `opennewsletter/oauth/facebook/prod`
 - `opennewsletter/vapid/prod`
 - `opennewsletter/cdn-signing/prod`
 
-Update the Cognito redirect URIs on Google/Apple/Facebook to include the prod Cognito domain.
+Update the Cognito redirect URIs on Google/Facebook to include the prod Cognito domain.
 
 Generate a **fresh** CloudFront signing keypair for prod (never share the dev private key):
 

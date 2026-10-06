@@ -1,10 +1,13 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { queryKeys } from "./queries";
 import { useCurrentGroup } from "../state/currentGroup";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
+type NewsletterDetail = S["NewsletterDetailResponse"];
+type PublishedAnswer = S["PublishedAnswerResponse"];
+type ReactionGroup = S["ReactionGroupResponse"];
 
 export function useRedeemInvite() {
   const qc = useQueryClient();
@@ -103,5 +106,179 @@ export function useToggleVote(groupId: string) {
     // A rejected vote (e.g. the cap was reached by a concurrent request since
     // our last fetch) can leave the cache stale — refetch so the UI catches up.
     onError: () => qc.invalidateQueries({ queryKey: queryKeys.candidatesAll(groupId) }),
+  });
+}
+
+// ---- Engagement (comments + reactions, M10 — `09-engagement.md`) ----------
+//
+// Comments and reactions come inline on the published newsletter (no
+// separate per-answer query). Every mutation below patches the one answer
+// it affects inside the cached `queryKeys.newsletter(groupId, cycleId)`
+// response rather than refetching the whole edition.
+
+/** Patches the one answer matching `responseId` inside the cached newsletter, if present. */
+function patchAnswer(
+  qc: QueryClient,
+  groupId: string,
+  cycleId: string,
+  responseId: string,
+  updater: (answer: PublishedAnswer) => PublishedAnswer,
+): void {
+  qc.setQueryData<NewsletterDetail>(queryKeys.newsletter(groupId, cycleId), (data) => {
+    if (!data || data.status !== "published") return data;
+    return {
+      ...data,
+      questions: data.questions.map((q) =>
+        q.kind === "text" && q.answers
+          ? { ...q, answers: q.answers.map((a) => (a.responseId === responseId ? updater(a) : a)) }
+          : q,
+      ),
+    };
+  });
+}
+
+/**
+ * Optimistic local toggle, mirroring the server's ordering (count desc, then
+ * earliest reaction, then emoji — `03-api-contract.md` §8.5): a new emoji is
+ * appended at the end, an existing group's position is otherwise kept, and a
+ * group that hits zero is dropped. The server's response (applied in
+ * `onSuccess` below) always wins over this guess.
+ */
+function applyReactionToggle(
+  groups: ReactionGroup[],
+  emoji: string,
+  active: boolean,
+): ReactionGroup[] {
+  const index = groups.findIndex((g) => g.emoji === emoji);
+  if (active) {
+    if (index === -1) return [...groups, { emoji, count: 1, reactedByMe: true }];
+    const group = groups[index]!;
+    if (group.reactedByMe) return groups;
+    const next = [...groups];
+    next[index] = { ...group, count: group.count + 1, reactedByMe: true };
+    return next;
+  }
+  if (index === -1) return groups;
+  const group = groups[index]!;
+  if (!group.reactedByMe) return groups;
+  if (group.count - 1 <= 0) return groups.filter((_, i) => i !== index);
+  const next = [...groups];
+  next[index] = { ...group, count: group.count - 1, reactedByMe: false };
+  return next;
+}
+
+/**
+ * Toggles the caller's reaction on one published answer. Optimistically
+ * patches `reactionGroups`, then replaces them with the server's authoritative
+ * `ReactionsResponse` on success; rolls back the optimistic patch on error
+ * (the global mutation-error toast in `main.tsx` surfaces the failure).
+ */
+export function useToggleReaction(groupId: string, cycleId: string, questionId: string) {
+  const qc = useQueryClient();
+  const key = queryKeys.newsletter(groupId, cycleId);
+
+  return useMutation({
+    mutationFn: ({
+      responseId,
+      emoji,
+      active,
+    }: {
+      responseId: string;
+      emoji: string;
+      active: boolean;
+    }) =>
+      active
+        ? api.engagement.putReaction(groupId, cycleId, questionId, responseId, emoji)
+        : api.engagement.deleteReaction(groupId, cycleId, questionId, responseId, emoji),
+    onMutate: async ({ responseId, emoji, active }) => {
+      // An in-flight refetch would otherwise land after, and erase, the optimistic patch.
+      await qc.cancelQueries({ queryKey: key });
+      const previous = qc.getQueryData<NewsletterDetail>(key);
+      patchAnswer(qc, groupId, cycleId, responseId, (answer) => ({
+        ...answer,
+        reactionGroups: applyReactionToggle(answer.reactionGroups, emoji, active),
+      }));
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) qc.setQueryData(key, context.previous);
+    },
+    onSuccess: (data, { responseId }) => {
+      patchAnswer(qc, groupId, cycleId, responseId, (answer) => ({
+        ...answer,
+        reactionGroups: data.reactionGroups,
+      }));
+    },
+  });
+}
+
+/**
+ * Posts a new comment on a published answer. On success, appends the
+ * server's returned comment into the cached answer, then invalidates the
+ * newsletter query so a background refetch catches up. The composer renders
+ * the server's `detail` inline on error (`meta.silent` suppresses the
+ * generic global toast to avoid showing both).
+ */
+export function useAddComment(groupId: string, cycleId: string, questionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ responseId, body }: { responseId: string; body: S["CreateCommentRequest"] }) =>
+      api.engagement.createComment(groupId, cycleId, questionId, responseId, body),
+    meta: { silent: true },
+    onSuccess: (comment, { responseId }) => {
+      patchAnswer(qc, groupId, cycleId, responseId, (answer) => ({
+        ...answer,
+        comments: [...answer.comments, comment],
+      }));
+      void qc.invalidateQueries({ queryKey: queryKeys.newsletter(groupId, cycleId) });
+    },
+  });
+}
+
+/** Edits the caller's own comment. Same inline-error convention as `useAddComment`. */
+export function useEditComment(groupId: string, cycleId: string, questionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      responseId,
+      commentId,
+      body,
+    }: {
+      responseId: string;
+      commentId: string;
+      body: S["PatchCommentRequest"];
+    }) => api.engagement.patchComment(groupId, cycleId, questionId, responseId, commentId, body),
+    meta: { silent: true },
+    onSuccess: (comment, { responseId }) => {
+      patchAnswer(qc, groupId, cycleId, responseId, (answer) => ({
+        ...answer,
+        comments: answer.comments.map((c) => (c.commentId === comment.commentId ? comment : c)),
+      }));
+      void qc.invalidateQueries({ queryKey: queryKeys.newsletter(groupId, cycleId) });
+    },
+  });
+}
+
+/**
+ * Soft-deletes a comment (author or group admin). Patches the cache to the
+ * muted "[deleted]" placeholder locally, then invalidates. Uses the default
+ * global error toast — there's no bespoke inline message for delete failures.
+ */
+export function useDeleteComment(groupId: string, cycleId: string, questionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ responseId, commentId }: { responseId: string; commentId: string }) =>
+      api.engagement.deleteComment(groupId, cycleId, questionId, responseId, commentId),
+    onSuccess: (_void, { responseId, commentId }) => {
+      patchAnswer(qc, groupId, cycleId, responseId, (answer) => ({
+        ...answer,
+        comments: answer.comments.map((c) =>
+          c.commentId === commentId
+            ? { ...c, body: "", image: null, deletedAt: new Date().toISOString() }
+            : c,
+        ),
+      }));
+      void qc.invalidateQueries({ queryKey: queryKeys.newsletter(groupId, cycleId) });
+    },
   });
 }

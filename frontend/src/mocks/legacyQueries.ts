@@ -1,7 +1,8 @@
 // Pre-M7 mock query/mutation layer. Every hook here reads and writes the
-// in-memory store in `./data` via `./api`. Only `GroupAdminPage` (M12) and
-// the comment/reaction components (M10) still import these hooks; each is
-// deleted when its milestone rebuilds that UI against the live API.
+// in-memory store in `./data` via `./api`. Only `GroupAdminPage` (M12) still
+// imports these hooks; it's deleted when that milestone rebuilds the admin UI
+// against the live API. (M10 rebuilt comments/reactions against the live API
+// and removed its hooks from here — `src/components/newsletter/{CommentList,ReactionBar}.tsx`.)
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mockApi as api } from "./api";
@@ -11,7 +12,6 @@ const keys = {
   config: ["config"] as const,
   group: (groupId: string) => ["group", groupId] as const,
   newsletters: (groupId: string) => ["newsletters", groupId] as const,
-  newsletter: (groupId: string, cycleId: string) => ["newsletter", groupId, cycleId] as const,
   candidates: (groupId: string) => ["candidates", groupId] as const,
   invites: (groupId: string) => ["invites", groupId] as const,
   pushDevices: ["pushDevices"] as const,
@@ -35,72 +35,6 @@ export const useInvites = (groupId: string | undefined) =>
     queryFn: () => api.listInvites(groupId!),
     enabled: !!groupId,
   });
-
-export const useToggleReaction = (groupId: string, cycleId: string) => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      questionId,
-      responseId,
-      emoji,
-    }: {
-      questionId: string;
-      responseId: string;
-      emoji: string;
-    }) => api.toggleReaction(groupId, cycleId, questionId, responseId, emoji),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.newsletter(groupId, cycleId) }),
-  });
-};
-
-export const useAddComment = (groupId: string, cycleId: string) => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      questionId,
-      responseId,
-      body,
-    }: {
-      questionId: string;
-      responseId: string;
-      body: string;
-    }) => api.addComment(groupId, cycleId, questionId, responseId, body),
-    onSuccess: (data) => qc.setQueryData(keys.newsletter(groupId, cycleId), data),
-  });
-};
-
-export const useEditComment = (groupId: string, cycleId: string) => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      questionId,
-      responseId,
-      commentId,
-      body,
-    }: {
-      questionId: string;
-      responseId: string;
-      commentId: string;
-      body: string;
-    }) => api.editComment(groupId, cycleId, questionId, responseId, commentId, body),
-    onSuccess: (data) => qc.setQueryData(keys.newsletter(groupId, cycleId), data),
-  });
-};
-
-export const useDeleteComment = (groupId: string, cycleId: string) => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      questionId,
-      responseId,
-      commentId,
-    }: {
-      questionId: string;
-      responseId: string;
-      commentId: string;
-    }) => api.deleteComment(groupId, cycleId, questionId, responseId, commentId),
-    onSuccess: (data) => qc.setQueryData(keys.newsletter(groupId, cycleId), data),
-  });
-};
 
 export const useCreateInvite = (groupId: string) => {
   const qc = useQueryClient();

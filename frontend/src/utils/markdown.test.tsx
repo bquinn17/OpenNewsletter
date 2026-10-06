@@ -73,6 +73,65 @@ describe("MarkdownBody sanitization", () => {
   });
 });
 
+describe("MarkdownBody with allowImages=false (comments, `09-engagement.md` §5)", () => {
+  it("still strips script tags", () => {
+    render(
+      <MarkdownBody
+        body={"before<script>alert(1)</script>after"}
+        images={[]}
+        groupId="g1"
+        allowImages={false}
+      />,
+    );
+    expect(document.querySelector("script")).not.toBeInTheDocument();
+    expect(screen.getByText(/before/)).toBeInTheDocument();
+  });
+
+  it("still neutralizes a javascript: link", () => {
+    render(
+      <MarkdownBody
+        body="[click me](javascript:alert(1))"
+        images={[]}
+        groupId="g1"
+        allowImages={false}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "click me" })).not.toBeInTheDocument();
+  });
+
+  it("does not render an <img> for an image: token even with a matching image", () => {
+    render(
+      <MarkdownBody
+        body="![a photo](image:img1)"
+        images={[
+          {
+            imageId: "img1",
+            displayUrl: "https://cdn.test.invalid/img1/display.webp",
+            thumbUrl: "https://cdn.test.invalid/img1/thumb.webp",
+          },
+        ]}
+        groupId="g1"
+        allowImages={false}
+      />,
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("a photo")).not.toBeInTheDocument();
+  });
+
+  it("still renders a remote image as a link, not an <img>", () => {
+    render(
+      <MarkdownBody
+        body="![chart](https://example.com/x.png)"
+        images={[]}
+        groupId="g1"
+        allowImages={false}
+      />,
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "chart" })).toBeInTheDocument();
+  });
+});
+
 describe("stripImageTokens", () => {
   it("removes image tokens and collapses whitespace", () => {
     expect(stripImageTokens("hello ![alt](image:abc)   world")).toBe("hello world");

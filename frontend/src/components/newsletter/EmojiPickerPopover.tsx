@@ -1,27 +1,76 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-// Side-effect import: registers <emoji-picker> as a custom element.
-import "emoji-picker-element";
+import { firstGrapheme, isValidEmoji, normalizeEmoji } from "../../utils/emoji";
 
-// emoji-picker-element fires a CustomEvent<{ unicode: string; ... }> on pick.
-interface EmojiClickDetail {
-  unicode: string;
-  emoji: { annotation: string };
-  skinTone?: number;
-}
-
-// React doesn't know about <emoji-picker>; declare it for JSX. We only ever
-// attach an event listener via ref, so an empty prop set is enough.
-declare module "react" {
-  // eslint-disable-next-line @typescript-eslint/no-namespace -- augmenting React's JSX namespace requires `namespace` syntax
-  namespace JSX {
-    interface IntrinsicElements {
-      "emoji-picker": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
-        class?: string;
-      };
-    }
-  }
-}
+// A curated grid (~64) covering the common reaction categories, plus a
+// native text input for anything else (`09-engagement.md` §2.5). No external
+// emoji-picker dependency — this is all plain Unicode text.
+const CURATED_EMOJI = [
+  "😀",
+  "😂",
+  "🤣",
+  "😊",
+  "😍",
+  "🥰",
+  "😘",
+  "😎",
+  "🤔",
+  "🙄",
+  "😮",
+  "😢",
+  "😭",
+  "😡",
+  "🥳",
+  "😴",
+  "🤯",
+  "🥺",
+  "😅",
+  "😇",
+  "🙂",
+  "😉",
+  "😏",
+  "🤩",
+  "👍",
+  "👎",
+  "👏",
+  "🙌",
+  "🙏",
+  "🤝",
+  "💪",
+  "👋",
+  "❤️",
+  "🧡",
+  "💛",
+  "💚",
+  "💙",
+  "💜",
+  "🖤",
+  "💔",
+  "🔥",
+  "✨",
+  "🎉",
+  "🎊",
+  "🎈",
+  "🏆",
+  "⭐",
+  "💯",
+  "☕",
+  "🍕",
+  "🍺",
+  "🎵",
+  "⚽",
+  "🏔️",
+  "🚀",
+  "🌈",
+  "🐶",
+  "🐱",
+  "🦆",
+  "🐢",
+  "🌸",
+  "☀️",
+  "🌧️",
+  "❄️",
+];
 
 interface Props {
   anchorRef: RefObject<HTMLElement | null>;
@@ -31,9 +80,11 @@ interface Props {
 
 // Portal-rendered popover anchored to the ＋ button. Closes on outside click,
 // Escape, and viewport resize/scroll (since the absolute position would drift).
+// Focus-return to the anchor on close is the caller's responsibility (so it
+// works the same whether `onClose` fires from here or from an emoji pick).
 export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props) {
   const popRef = useRef<HTMLDivElement>(null);
-  const pickerRef = useRef<HTMLElement>(null);
+  const [customInput, setCustomInput] = useState("");
 
   // Position the popover above the anchor (or below if there's no room).
   useEffect(() => {
@@ -43,9 +94,8 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
       if (!el || !anchor) return;
       const rect = anchor.getBoundingClientRect();
       const margin = 8;
-      // emoji-picker-element default size is ~360x400; clamp to viewport.
-      const popW = Math.min(360, window.innerWidth - 16);
-      const popH = 400;
+      const popW = Math.min(300, window.innerWidth - 16);
+      const popH = 280;
       let left = rect.left + rect.width / 2 - popW / 2;
       left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
       const placeAbove = rect.top - popH - margin > 8;
@@ -87,31 +137,60 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
     };
   }, [anchorRef, onClose]);
 
-  // Wire the picker's emoji-click event. The element is a custom element so we
-  // attach via addEventListener rather than React's synthetic-event system.
-  useEffect(() => {
-    const el = pickerRef.current;
-    if (!el) return;
-    function handler(e: Event) {
-      const detail = (e as CustomEvent<EmojiClickDetail>).detail;
-      if (detail?.unicode) onPick(detail.unicode);
-    }
-    el.addEventListener("emoji-click", handler);
-    return () => el.removeEventListener("emoji-click", handler);
-  }, [onPick]);
+  function submitCustom() {
+    if (!isValidEmoji(customInput)) return;
+    onPick(normalizeEmoji(customInput));
+    setCustomInput("");
+  }
 
   return createPortal(
     <div
       ref={popRef}
-      className="fixed z-50 animate-pop overflow-hidden rounded-2xl border border-line bg-white shadow-pop"
-      style={{ height: 400 }}
+      className="fixed z-50 flex animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-pop"
+      style={{ height: 280 }}
       role="dialog"
       aria-label="Choose an emoji"
     >
-      <emoji-picker
-        ref={pickerRef as unknown as RefObject<HTMLElement>}
-        class="block h-full w-full"
-      />
+      <div className="grid grid-cols-8 gap-0.5 overflow-y-auto p-2">
+        {CURATED_EMOJI.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => onPick(emoji)}
+            aria-label={`React with ${emoji}`}
+            className="rounded-lg p-1 text-lg leading-none hover:bg-cream"
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 border-t border-line p-2">
+        <label htmlFor="emoji-picker-custom-input" className="sr-only">
+          Type an emoji
+        </label>
+        <input
+          id="emoji-picker-custom-input"
+          type="text"
+          value={customInput}
+          onChange={(e) => setCustomInput(firstGrapheme(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submitCustom();
+            }
+          }}
+          placeholder="Type an emoji…"
+          className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+        />
+        <button
+          type="button"
+          onClick={submitCustom}
+          disabled={!isValidEmoji(customInput)}
+          className="rounded-lg bg-grape px-3 py-1 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
     </div>,
     document.body,
   );

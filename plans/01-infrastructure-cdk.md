@@ -40,10 +40,7 @@ class EnvConfig:
     cognito_domain_prefix: str        # globally unique; e.g. "opennewsletter-prod"
     google_client_id_secret_arn: str
     google_client_secret_secret_arn: str
-    apple_client_id: str
-    apple_team_id: str
-    apple_key_id: str
-    apple_private_key_secret_arn: str
+    # No Apple IdP — dropped, see plans/PROGRESS.md decisions (M1).
     facebook_app_id_secret_arn: str
     facebook_app_secret_secret_arn: str
     log_retention_days: int           # 30 in dev, 90 in prod
@@ -108,10 +105,12 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 ### 4.2 Identity Providers (federated)
 
 - **Google** — `UserPoolIdentityProviderGoogle`. Reads client ID/secret from Secrets Manager ARNs in config.
-- **Apple** — `UserPoolIdentityProviderApple`. Reads team ID, key ID, private key.
 - **Facebook** — `UserPoolIdentityProviderFacebook`.
 
-For all three: attribute mapping `email -> email`, `name -> name`.
+No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple
+Developer membership is $99/yr.
+
+For both: attribute mapping `email -> email`, `name -> name`.
 
 ### 4.3 App Clients
 
@@ -123,7 +122,7 @@ Two app clients on the same user pool:
 - **OAuth scopes**: `openid`, `email`, `profile`
 - **Callback URLs**: `https://{config.domain}/auth/callback`, plus `http://localhost:5173/auth/callback` in `dev`
 - **Logout URLs**: `https://{config.domain}/`, plus `http://localhost:5173/` in `dev`
-- **Supported IdPs**: Google, Apple, Facebook (Cognito itself disabled for end users)
+- **Supported IdPs**: Google, Facebook (Cognito itself disabled for end users)
 - **Token validity**: ID 60min, Access 60min, Refresh 30 days
 
 **`admin-bootstrap`** — used only by `scripts/bootstrap_admin.py` and the dev-only `/admin/bootstrap-login` page (see `05-auth-flow.md` §9.2).
@@ -131,7 +130,7 @@ Two app clients on the same user pool:
 - **Auth flows**: `ALLOW_USER_PASSWORD_AUTH` + `ALLOW_REFRESH_TOKEN_AUTH`
 - **Supported IdPs**: Cognito only (no federation)
 - **Token validity**: same as `frontend`
-- In `prod` this client exists but is exercised once at first-admin bootstrap and then dormant; in `dev` it's the inner-loop sign-in path so we don't bounce through Google/Apple/Facebook for every iteration.
+- In `prod` this client exists but is exercised once at first-admin bootstrap and then dormant; in `dev` it's the inner-loop sign-in path so we don't bounce through Google/Facebook for every iteration.
 
 ### 4.4 Hosted UI Domain
 

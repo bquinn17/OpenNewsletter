@@ -3,9 +3,9 @@
 
 use crate::state::AppState;
 use domain::api::{
-    AskedBy, CandidateItemResponse, MyResponseSummary, NewsletterDetailResponse,
-    NewsletterListResponse, NewsletterSummary, OpenQuestionResponse, PollOptionResponse,
-    PublishedAnswerResponse, PublishedCommentResponse, PublishedImageResponse,
+    AskedBy, CandidateItemResponse, CommentImageResponse, CommentResponse, MyResponseSummary,
+    NewsletterDetailResponse, NewsletterListResponse, NewsletterSummary, OpenQuestionResponse,
+    PollOptionResponse, PublishedAnswerResponse, PublishedImageResponse,
     PublishedPollOptionResponse, PublishedQuestionResponse, ReactionGroupResponse,
 };
 use domain::{
@@ -460,13 +460,92 @@ async fn hydrate_images(
     Ok(images)
 }
 
+/// Builds the wire `CommentResponse` for one comment row, including a
+/// soft-deleted one as a `[deleted]` placeholder (`09-engagement.md` §1.1,
+/// decided M10 — soft-deleted comments are returned here too, not filtered).
+async fn hydrate_comment(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    authors: &HashMap<UserId, User>,
+    comment: domain::Comment,
+) -> Result<CommentResponse, ApiError> {
+    let author = authors
+        .get(&comment.author_user_id)
+        .ok_or_else(|| ApiError::internal("comment references a missing user profile"))?;
+    let is_deleted = comment.deleted_at.is_some();
+    let image = if is_deleted {
+        None
+    } else {
+        match &comment.image_media_id {
+            Some(image_id) => hydrate_comment_image(state, group_id, cycle_id, image_id).await?,
+            None => None,
+        }
+    };
+
+    Ok(CommentResponse {
+        comment_id: comment.comment_id,
+        author_user_id: comment.author_user_id,
+        display_name: author.display_name.clone(),
+        body: if is_deleted {
+            String::new()
+        } else {
+            comment.body
+        },
+        image,
+        created_at: comment.created_at,
+        edited_at: comment.edited_at,
+        deleted_at: comment.deleted_at,
+    })
+}
+
+/// The comment's attached image, hydrated only while it's `ready`
+/// (`09-engagement.md` §1.1).
+async fn hydrate_comment_image(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_id: &ImageId,
+) -> Result<Option<CommentImageResponse>, ApiError> {
+    let Some(img) = media::get_image(&state.repo, group_id, cycle_id, image_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "comment image lookup failed");
+            ApiError::internal("failed to load comment image")
+        })?
+    else {
+        return Ok(None);
+    };
+    if img.status != MediaStatus::Ready {
+        return Ok(None);
+    }
+    let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
+        (img.display_key, img.thumb_key, img.width, img.height)
+    else {
+        return Ok(None);
+    };
+    let (Some(display_url), Some(thumb_url)) =
+        (state.image_url(&display_key), state.image_url(&thumb_key))
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CommentImageResponse {
+        image_id: img.image_id,
+        display_url,
+        thumb_url,
+        width,
+        height,
+        caption: img.caption,
+    }))
+}
+
 async fn load_comments(
     state: &AppState,
     group_id: &GroupId,
     cycle_id: &CycleId,
     question_id: &QuestionId,
     answer_user_id: &UserId,
-) -> Result<Vec<PublishedCommentResponse>, ApiError> {
+) -> Result<Vec<CommentResponse>, ApiError> {
     let comments =
         engagement::list_comments(&state.repo, group_id, cycle_id, question_id, answer_user_id)
             .await
@@ -475,16 +554,17 @@ async fn load_comments(
                 ApiError::internal("failed to load comments")
             })?;
 
+    let author_ids: Vec<UserId> = comments
+        .iter()
+        .map(|c| c.author_user_id.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let authors = load_profiles(state, &author_ids).await?;
+
     let mut out = Vec::with_capacity(comments.len());
-    for c in comments.into_iter().filter(|c| c.deleted_at.is_none()) {
-        let author = load_user(state, &c.author_user_id).await?;
-        out.push(PublishedCommentResponse {
-            comment_id: c.comment_id,
-            author_user_id: c.author_user_id,
-            display_name: author.display_name,
-            body: c.body,
-            created_at: c.created_at,
-        });
+    for c in comments {
+        out.push(hydrate_comment(state, group_id, cycle_id, &authors, c).await?);
     }
     Ok(out)
 }
@@ -504,26 +584,7 @@ async fn load_reaction_groups(
                 tracing::error!(error = ?e, group_id = %group_id, "reaction listing failed");
                 ApiError::internal("failed to load reactions")
             })?;
-
-    let mut counts: HashMap<String, (u32, bool)> = HashMap::new();
-    for r in reactions {
-        let entry = counts.entry(r.emoji).or_insert((0, false));
-        entry.0 += 1;
-        if r.reactor_user_id == *caller {
-            entry.1 = true;
-        }
-    }
-
-    let mut groups: Vec<ReactionGroupResponse> = counts
-        .into_iter()
-        .map(|(emoji, (count, reacted_by_me))| ReactionGroupResponse {
-            emoji,
-            count,
-            reacted_by_me,
-        })
-        .collect();
-    groups.sort_by(|a, b| a.emoji.cmp(&b.emoji));
-    Ok(groups)
+    Ok(domain::engagement::group_reactions(&reactions, caller))
 }
 
 fn poll_option_responses(

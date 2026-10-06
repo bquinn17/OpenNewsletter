@@ -451,16 +451,6 @@ pub struct PublishedImageResponse {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PublishedCommentResponse {
-    pub comment_id: CommentId,
-    pub author_user_id: UserId,
-    pub display_name: String,
-    pub body: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReactionGroupResponse {
     pub emoji: String,
     pub count: u32,
@@ -468,7 +458,9 @@ pub struct ReactionGroupResponse {
 }
 
 /// One member's published answer, hydrated with comments and reaction tallies
-/// (§5.2). Only ever appears once the cycle is `published`.
+/// (§5.2). Only ever appears once the cycle is `published`. `comments` uses
+/// the same [`CommentResponse`] shape as the dedicated engagement routes
+/// (§8, decided M10) — soft-deleted comments are included as placeholders.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedAnswerResponse {
@@ -479,7 +471,7 @@ pub struct PublishedAnswerResponse {
     pub body: Option<String>,
     pub images: Vec<PublishedImageResponse>,
     pub published_at: DateTime<Utc>,
-    pub comments: Vec<PublishedCommentResponse>,
+    pub comments: Vec<CommentResponse>,
     pub reaction_groups: Vec<ReactionGroupResponse>,
 }
 
@@ -601,6 +593,87 @@ pub enum SaveResponseRequest {
         poll_option_id: PollOptionId,
         publish: bool,
     },
+}
+
+// ===== `03-api-contract.md` §8 — Engagement routes (comments + reactions) =====
+
+/// A comment's attached image, hydrated only while the underlying
+/// `ImageMedia` row is `ready` (§8, `09-engagement.md` §1.1).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentImageResponse {
+    pub image_id: ImageId,
+    pub display_url: String,
+    pub thumb_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub caption: Option<String>,
+}
+
+/// One comment (§8, `09-engagement.md` §1.1). Used both on the dedicated
+/// engagement routes and inline in the published newsletter
+/// (`PublishedAnswerResponse::comments`) — one shape, one place it's built. A
+/// soft-deleted comment has `deletedAt` set, an empty `body`, and a null
+/// `image`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentResponse {
+    pub comment_id: CommentId,
+    pub author_user_id: UserId,
+    pub display_name: String,
+    pub body: String,
+    pub image: Option<CommentImageResponse>,
+    pub created_at: DateTime<Utc>,
+    pub edited_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+/// `GET .../comments` response (§8.1). AP18.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentListResponse {
+    pub items: Vec<CommentResponse>,
+    pub next_cursor: Option<String>,
+}
+
+/// `POST .../comments` request body (§8.2). At least one of a non-whitespace
+/// `body` or `imageMediaId` is required — enforced by the handler, not the
+/// wire shape (both fields are independently optional here).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateCommentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub image_media_id: Option<ImageId>,
+}
+
+/// `PATCH .../comments/{commentId}` request body (§8.3). An absent field is
+/// left unchanged; `imageMediaId: null` removes the attachment —
+/// [`double_option`] distinguishes "absent" from "explicit null" the same
+/// way [`PatchMeRequest::avatar_media_id`] does.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatchCommentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub image_media_id: Option<Option<ImageId>>,
+}
+
+/// `GET`/`PUT`/`DELETE .../reactions` response (§8.5-§8.7). `reactionGroups`
+/// is ordered count descending, then earliest reaction, then emoji
+/// (`domain::engagement::group_reactions` — decided M10, one function shared
+/// with the inline newsletter view). `myReactions` follows the same order.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionsResponse {
+    pub reaction_groups: Vec<ReactionGroupResponse>,
+    pub my_reactions: Vec<String>,
 }
 
 // ===== `03-api-contract.md` §9 — Media routes =====
@@ -820,6 +893,19 @@ mod tests {
         let parsed: PatchMeRequest = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(parsed.avatar_media_id, Some(None));
         assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+    }
+
+    #[test]
+    fn patch_comment_request_distinguishes_absent_from_explicit_null_image() {
+        let absent = serde_json::json!({ "body": "edited" });
+        let parsed: PatchCommentRequest = serde_json::from_value(absent.clone()).unwrap();
+        assert_eq!(parsed.image_media_id, None);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), absent);
+
+        let explicit_null = serde_json::json!({ "imageMediaId": null });
+        let parsed: PatchCommentRequest = serde_json::from_value(explicit_null.clone()).unwrap();
+        assert_eq!(parsed.image_media_id, Some(None));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), explicit_null);
     }
 
     #[test]

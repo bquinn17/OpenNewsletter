@@ -3,7 +3,7 @@
 ## **The Final, Low-Complexity Blueprint**
 
 1. **Frontend:** Hosted on GitHub Pages (Static HTML/JS/CSS). Uses Progressive Web App (PWA) Service Workers and Cache Storage API to cache assets on the device and avoid Varnish/server costs.  
-2. **Auth:** Amazon Cognito. Handles OAuth (Google, Apple, Facebook) and issues JWTs.  
+2. **Auth:** Amazon Cognito. Handles OAuth (Google, Facebook) and issues JWTs. (No Apple IdP — dropped, see `plans/PROGRESS.md` decisions; Apple Developer membership is $99/yr.)  
 3. **API & Security:** Amazon API Gateway \+ AWS Lambda. API Gateway validates Cognito tokens before invoking Lambda, ensuring the backend stays idle and secure against unauthenticated traffic.  
 4. **Database:** Amazon DynamoDB. A Single-Table NoSQL design storing Users, Groups, Invites, Questions, Answers, Comments, and Reactions. Sort keys naturally handle multi-tenancy isolation and "last-write-wins" idempotency for reactions/polls.  
 5. **Storage:** Amazon S3. Frontend requests a Pre-Signed URL from Lambda, then uploads images directly to S3 (capped at 15MB, restricted MIME types).  
@@ -33,7 +33,7 @@ To minimize costs, the application will be hosted on AWS using a fully serverles
 
 ## **4\. Authentication & Access**
 
-* **Login:** Users will authenticate via OAuth using Google, Facebook, or Apple accounts.  
+* **Login:** Users will authenticate via OAuth using Google or Facebook accounts. (No Apple IdP — dropped, see `plans/PROGRESS.md` decisions; Apple Developer membership is $99/yr.)  
 * **Group Management:** Registration is strictly gated by special invite codes. These codes are tied to specific groups. Upon redemption, the user is linked to that group. Existing users can use new invite codes to join additional groups.  
 * **Visibility:** Users will only see data for the groups they are explicitly a part of. Admins will generate these invite codes manually via the AWS Console to reduce initial app complexity.
 

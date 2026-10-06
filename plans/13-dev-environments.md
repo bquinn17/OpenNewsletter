@@ -114,7 +114,7 @@ The stacks in [`01-infrastructure-cdk.md`](01-infrastructure-cdk.md) are regroup
 
 | Tier | Stacks | Why |
 |---|---|---|
-| **Persistent** | `AuthStack`, the S3 buckets and CloudFront distribution from `MediaStack`, `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Apple/Facebook consoles; recreating the user pool means re-registering. CloudFront distributions take 15–30 min to delete. ACM/Route53 churn is just noise. |
+| **Persistent** | `AuthStack`, the S3 buckets and CloudFront distribution from `MediaStack`, `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. CloudFront distributions take 15–30 min to delete. ACM/Route53 churn is just noise. |
 | **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `lambda-image-process` (split out of MediaStack into its own construct) | Pure code/config — fast to recreate, no out-of-band registration. |
 
 Concretely, `MediaStack` is split into:
@@ -159,7 +159,7 @@ Each is a one-line conditional on `config.env == "dev"`.
 
 ## 6. Cognito strategy in dev
 
-The federated IdP flow (Google/Apple/Facebook) works in `dev` and is exercised periodically — but not on every iteration, because OAuth bounces through three external services and pollutes the iteration loop.
+The federated IdP flow (Google/Facebook) works in `dev` and is exercised periodically — but not on every iteration, because OAuth bounces through external services and pollutes the iteration loop.
 
 For inner-loop work, sign in via the `admin-bootstrap` app client described in [`05-auth-flow.md` §9](05-auth-flow.md). It supports `ALLOW_USER_PASSWORD_AUTH`, so `aws cognito-idp admin-initiate-auth` returns a real JWT in one round-trip, no browser involved. `seed_dev_data.py` prints the credentials after seeding.
 

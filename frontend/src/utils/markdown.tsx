@@ -59,6 +59,13 @@ type Props = {
   images: MarkdownImage[];
   groupId: string;
   className?: string;
+  /**
+   * When `false` (comments — `09-engagement.md` §1.3/§5), `image:{id}` tokens
+   * never render an `<img>`, regardless of `images`. A remote `http(s)` image
+   * already degrades to a link either way, so this only changes the
+   * `image:` token path.
+   */
+  allowImages?: boolean;
 };
 
 /**
@@ -66,7 +73,7 @@ type Props = {
  * `image:{id}` tokens against `images` into `<CdnImage>`s. An id with no
  * match (not yet uploaded, or removed) renders nothing.
  */
-export function MarkdownBody({ body, images, groupId, className }: Props) {
+export function MarkdownBody({ body, images, groupId, className, allowImages = true }: Props) {
   const byId = useMemo(() => new Map(images.map((image) => [image.imageId, image])), [images]);
   const hasReadyImage = images.some((image) => image.displayUrl);
 
@@ -92,6 +99,7 @@ export function MarkdownBody({ body, images, groupId, className }: Props) {
           </a>
         );
       }
+      if (!allowImages) return null;
       const image = byId.get(src.slice("image:".length));
       if (!image) return null;
       if (!image.displayUrl) {

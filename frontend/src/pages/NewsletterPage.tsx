@@ -267,6 +267,17 @@ function PublishedLayout({
   );
   const sorted = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Client-derived display data (`04-frontend-architecture.md` §14a) — the
+  // server never sends a total, so sum every answer's reaction groups here.
+  const reactionTotal = sorted.reduce(
+    (sum, q) =>
+      sum +
+      (q.kind === "text" ? (q.answers ?? []) : []).reduce(
+        (qSum, a) => qSum + a.reactionGroups.reduce((aSum, g) => aSum + g.count, 0),
+        0,
+      ),
+    0,
+  );
 
   return (
     <div className="bg-cream pb-12">
@@ -277,8 +288,13 @@ function PublishedLayout({
         rightSlot={<Pill tone="ink">Published</Pill>}
       />
 
-      <div className="px-5 pt-5 text-sm text-inkmuted">
-        Published {formatInZone(data.publishedAt, timezone)}
+      <div className="flex items-center justify-between px-5 pt-5 text-sm text-inkmuted">
+        <span>Published {formatInZone(data.publishedAt, timezone)}</span>
+        {reactionTotal > 0 && (
+          <span>
+            {reactionTotal} reaction{reactionTotal === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
 
       {sorted.map((q) => {
@@ -312,6 +328,8 @@ function PublishedLayout({
                       key={a.responseId}
                       answer={a}
                       groupId={groupId}
+                      cycleId={data.cycleId}
+                      questionId={q.questionId}
                       timezone={timezone}
                     />
                   ))}

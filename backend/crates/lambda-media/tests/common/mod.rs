@@ -241,11 +241,38 @@ pub async fn seed_image(
         uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
         processed_at: None,
         error_message: None,
+        attached_comment_id: None,
     };
     media_persist::put_image(repo, &img)
         .await
         .expect("image written");
     img.image_id
+}
+
+/// Claims a `purpose=comment` image for a comment, bypassing the comment
+/// create/patch transaction — just enough for `lambda-media`'s `DELETE
+/// /uploads/{imageId}` `IMAGE_IN_USE` check (`03-api-contract.md` §9.4) to
+/// have something to find.
+pub async fn attach_image_to_comment(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    image_id: &ImageId,
+    comment_id: &str,
+) {
+    let mut img = media_persist::get_image(
+        repo,
+        &GroupId::new(group_id),
+        &CycleId::new(cycle_id),
+        image_id,
+    )
+    .await
+    .expect("image lookup")
+    .expect("image exists");
+    img.attached_comment_id = Some(domain::CommentId::new(comment_id));
+    media_persist::put_image(repo, &img)
+        .await
+        .expect("image re-written with attached_comment_id");
 }
 
 /// Writes a `Response` row directly (bypassing the publish transaction) so

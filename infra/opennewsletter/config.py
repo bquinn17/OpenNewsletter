@@ -24,9 +24,8 @@ class EnvConfig:
     cognito_domain_prefix: str
     # Each ARN points to a Secrets Manager secret storing JSON with IdP credentials.
     # Google/Facebook: {"clientId":"...","clientSecret":"..."}
-    # Apple: {"teamId":"...","keyId":"...","privateKey":"...","clientId":"..."}
+    # No Apple IdP — dropped, see plans/PROGRESS.md decisions (M1).
     google_oauth_secret_arn: str
-    apple_oauth_secret_arn: str
     facebook_oauth_secret_arn: str
     vapid_secret_arn: str
     cdn_signing_secret_arn: str
@@ -69,7 +68,6 @@ def load_config(env: str) -> EnvConfig:
         hosted_zone_name=get_opt("HOSTED_ZONE_NAME"),
         cognito_domain_prefix=get("COGNITO_DOMAIN_PREFIX", f"opennewsletter-{env}"),
         google_oauth_secret_arn=get("GOOGLE_OAUTH_SECRET_ARN", _PLACEHOLDER_ARN),
-        apple_oauth_secret_arn=get("APPLE_OAUTH_SECRET_ARN", _PLACEHOLDER_ARN),
         facebook_oauth_secret_arn=get("FACEBOOK_OAUTH_SECRET_ARN", _PLACEHOLDER_ARN),
         vapid_secret_arn=get("VAPID_SECRET_ARN", _PLACEHOLDER_ARN),
         cdn_signing_secret_arn=get("CDN_SIGNING_SECRET_ARN", _PLACEHOLDER_ARN),

@@ -513,6 +513,37 @@ async fn delete_of_an_image_in_a_published_answer_is_refused() {
 }
 
 #[tokio::test]
+async fn delete_of_an_image_claimed_by_a_comment_is_refused() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdelcmt", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image_id = common::seed_image(
+        &repo,
+        "gdelcmt",
+        "202606",
+        "q1",
+        "img-1",
+        "u1",
+        MediaStatus::Ready,
+        ImagePurpose::Comment,
+    )
+    .await;
+    common::attach_image_to_comment(&repo, "gdelcmt", "202606", &image_id, "comment-1").await;
+    let state = common::test_state(repo);
+
+    let err = handlers::delete_upload(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gdelcmt"),
+        &CycleId::new("202606"),
+        &image_id,
+    )
+    .await
+    .expect_err("a comment-claimed image can't be deleted");
+    assert_eq!(err.code, ApiErrorCode::ImageInUse);
+}
+
+#[tokio::test]
 async fn complete_upload_mirrors_get_upload() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gcomplete", "u1");

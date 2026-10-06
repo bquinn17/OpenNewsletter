@@ -1,4 +1,5 @@
 pub mod api;
+pub mod engagement;
 pub mod entities;
 pub mod error;
 pub mod ids;

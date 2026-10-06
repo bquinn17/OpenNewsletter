@@ -13,7 +13,7 @@ info:
     §8). This file currently covers every route through Milestone 4
     (`plans/03-api-contract.md` §2-§4, §13); Milestone 5 adds the newsletter and
     candidate-question routes (§5-§6) as new tags alongside these; Milestone 8
-    adds the media routes (§9).
+    adds the media routes (§9); Milestone 10 adds the engagement routes (§8).
 
 servers:
   - url: https://api.opennewsletter.example.com
@@ -40,6 +40,8 @@ tags:
     description: Candidate question and vote routes (`03-api-contract.md` §6).
   - name: responses
     description: Response draft/publish routes (`03-api-contract.md` §7).
+  - name: engagement
+    description: Comment and reaction routes (`03-api-contract.md` §8).
   - name: media
     description: Upload, avatar and signed-cookie routes (`03-api-contract.md` §9).
   - name: health
@@ -795,6 +797,297 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
+  /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments:
+    get:
+      operationId: listComments
+      tags: [engagement]
+      summary: >
+        Comments on one published text answer, oldest first (AP18). Soft-deleted
+        comments are included as placeholders (`deletedAt` set, `body` empty,
+        `image` null) so ordering is preserved. Cycle must be `published`
+        (409 `CYCLE_NOT_PUBLISHED`). 404 when the response is missing, not
+        published, or a poll answer. Caller must be a member. Default page
+        size 50.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: A page of comments, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentListResponse"
+              example:
+                items:
+                  - commentId: "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b"
+                    authorUserId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70"
+                    displayName: "Alex"
+                    body: "Same — the switchbacks are brutal."
+                    image: null
+                    createdAt: "2026-06-05T09:00:00Z"
+                    editedAt: null
+                    deletedAt: null
+                nextCursor: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    post:
+      operationId: createComment
+      tags: [engagement]
+      summary: >
+        Comment on a published text answer. `body` 0-2000 chars; optional
+        `imageMediaId` must be a `ready` image owned by the caller, uploaded
+        for this group, cycle and question with `purpose: "comment"`, and not
+        already attached to another comment. At least one of a non-whitespace
+        `body` or an image is required (`09-engagement.md` §1.3). Caller must
+        be a member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+            example:
+              body: "Same — the switchbacks are brutal."
+              imageMediaId: null
+      responses:
+        "201":
+          description: The created comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentResponse"
+              example:
+                commentId: "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b"
+                authorUserId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70"
+                displayName: "Alex"
+                body: "Same — the switchbacks are brutal."
+                image:
+                  imageId: "018f2b6b-6c1b-7c3a-9d4e-ad1e2f3a4b5c"
+                  displayUrl: "https://cdn.opennewsletter.example.com/img/g/202606/display.webp"
+                  thumbUrl: "https://cdn.opennewsletter.example.com/img/g/202606/thumb.webp"
+                  width: 1200
+                  height: 800
+                  caption: null
+                createdAt: "2026-06-05T09:00:00Z"
+                editedAt: null
+                deletedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}:
+    patch:
+      operationId: patchComment
+      tags: [engagement]
+      summary: >
+        Edit one's own comment (author only — admins cannot edit others'; 403).
+        An absent field is left unchanged; `"imageMediaId": null` removes the
+        attachment. The result must still have a non-whitespace body or an
+        image. Sets `editedAt`. 404 for a missing or soft-deleted comment.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+        - $ref: "#/components/parameters/CommentIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchCommentRequest"
+            example:
+              body: "Same — the switchbacks are brutal. Worth it though."
+      responses:
+        "200":
+          description: The updated comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentResponse"
+              example:
+                commentId: "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b"
+                authorUserId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70"
+                displayName: "Alex"
+                body: "Same — the switchbacks are brutal. Worth it though."
+                image: null
+                createdAt: "2026-06-05T09:00:00Z"
+                editedAt: "2026-06-05T09:10:00Z"
+                deletedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteComment
+      tags: [engagement]
+      summary: >
+        Soft delete: sets `deletedAt`, blanks `body`, drops the image
+        attachment. Author or group admin. Idempotent — 204 for an
+        already-deleted comment, 404 for a missing one.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+        - $ref: "#/components/parameters/CommentIdPath"
+      responses:
+        "204":
+          description: Deleted (or already deleted).
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+
+  /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions:
+    get:
+      operationId: listReactions
+      tags: [engagement]
+      summary: >
+        Grouped reactions on one published text answer (AP19), plus the
+        caller's own emoji. Groups are ordered by count descending, then by
+        their earliest reaction. Cycle must be `published`. Caller must be a
+        member.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+      responses:
+        "200":
+          description: The answer's reactions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReactionsResponse"
+              example:
+                reactionGroups:
+                  - emoji: "🔥"
+                    count: 4
+                    reactedByMe: true
+                  - emoji: "🤣"
+                    count: 2
+                    reactedByMe: false
+                myReactions: ["🔥"]
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+
+  /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}:
+    put:
+      operationId: putReaction
+      tags: [engagement]
+      summary: >
+        Idempotently add the caller's reaction. `emoji` is URL-encoded,
+        NFC-normalized, 1-12 codepoints with at least one
+        `Extended_Pictographic` or regional-indicator codepoint
+        (`09-engagement.md` §2.2); otherwise 422. No request body. Returns
+        the answer's reactions after the change.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+        - $ref: "#/components/parameters/EmojiPath"
+      responses:
+        "200":
+          description: The answer's reactions after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReactionsResponse"
+              example:
+                reactionGroups:
+                  - emoji: "🔥"
+                    count: 5
+                    reactedByMe: true
+                myReactions: ["🔥"]
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteReaction
+      tags: [engagement]
+      summary: >
+        Idempotently remove the caller's reaction with this emoji. Same emoji
+        validation as PUT. Returns the answer's reactions after the change.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/CycleIdPath"
+        - $ref: "#/components/parameters/QuestionIdPath"
+        - $ref: "#/components/parameters/ResponseIdPath"
+        - $ref: "#/components/parameters/EmojiPath"
+      responses:
+        "200":
+          description: The answer's reactions after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReactionsResponse"
+              example:
+                reactionGroups:
+                  - emoji: "🔥"
+                    count: 4
+                    reactedByMe: false
+                myReactions: []
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/NewsletterArchived"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /uploads:
     post:
       operationId: createUpload
@@ -942,7 +1235,8 @@ paths:
         Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`;
         the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4).
         Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when
-        the caller's published answer still references it.
+        the caller's published answer still references it, or (for a
+        `purpose: "comment"` image) a live comment has it attached.
       parameters:
         - $ref: "#/components/parameters/ImageIdPath"
         - $ref: "#/components/parameters/GroupIdQuery"
@@ -1184,6 +1478,28 @@ components:
       schema:
         type: string
       example: "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d"
+    ResponseIdPath:
+      name: responseId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+    CommentIdPath:
+      name: commentId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b"
+    EmojiPath:
+      name: emoji
+      in: path
+      required: true
+      description: URL-encoded emoji (`09-engagement.md` §2.2).
+      schema:
+        type: string
+      example: "%F0%9F%94%A5"
     GroupIdQuery:
       name: groupId
       in: query
@@ -1938,9 +2254,30 @@ components:
         height:
           type: integer
 
-    PublishedCommentResponse:
+    CommentImageResponse:
       type: object
-      required: [commentId, authorUserId, displayName, body, createdAt]
+      required: [imageId, displayUrl, thumbUrl, width, height, caption]
+      properties:
+        imageId:
+          type: string
+        displayUrl:
+          type: string
+        thumbUrl:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        caption:
+          type: [string, "null"]
+
+    CommentResponse:
+      type: object
+      description: >
+        One comment (`09-engagement.md` §1.1). Used both on the engagement
+        routes and inline in the published newsletter. A soft-deleted comment
+        has `deletedAt` set, an empty `body` and a null `image`.
+      required: [commentId, authorUserId, displayName, body, image, createdAt, editedAt, deletedAt]
       properties:
         commentId:
           type: string
@@ -1950,9 +2287,63 @@ components:
           type: string
         body:
           type: string
+        image:
+          oneOf:
+            - $ref: "#/components/schemas/CommentImageResponse"
+            - type: "null"
         createdAt:
           type: string
           format: date-time
+        editedAt:
+          type: [string, "null"]
+          format: date-time
+        deletedAt:
+          type: [string, "null"]
+          format: date-time
+
+    CommentListResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentResponse"
+        nextCursor:
+          type: [string, "null"]
+
+    CreateCommentRequest:
+      type: object
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+        imageMediaId:
+          type: [string, "null"]
+
+    PatchCommentRequest:
+      type: object
+      description: >
+        Absent fields are unchanged; `imageMediaId: null` removes the attachment.
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+        imageMediaId:
+          type: [string, "null"]
+
+    ReactionsResponse:
+      type: object
+      required: [reactionGroups, myReactions]
+      properties:
+        reactionGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReactionGroupResponse"
+        myReactions:
+          type: array
+          items:
+            type: string
 
     ReactionGroupResponse:
       type: object
@@ -1987,7 +2378,7 @@ components:
         comments:
           type: array
           items:
-            $ref: "#/components/schemas/PublishedCommentResponse"
+            $ref: "#/components/schemas/CommentResponse"
         reactionGroups:
           type: array
           items:

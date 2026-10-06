@@ -8,6 +8,9 @@ use async_trait::async_trait;
 #[error("object store error: {0}")]
 pub struct StoreError(pub String);
 
+// `async_trait` marks its boxed-future return `#[must_use]`, which clippy 1.99's
+// `double_must_use` flags on every method. Macro-generated, not ours to fix.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     /// The object's size in bytes, without downloading its body — used to

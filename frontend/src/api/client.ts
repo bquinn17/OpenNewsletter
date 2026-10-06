@@ -129,6 +129,19 @@ function mediaQuery(groupId: string, cycleId: string): string {
   return new URLSearchParams({ groupId, cycleId }).toString();
 }
 
+/** Shared prefix for every engagement route (`03-api-contract.md` §8). */
+function engagementBasePath(
+  groupId: string,
+  cycleId: string,
+  questionId: string,
+  responseId: string,
+): string {
+  return (
+    `${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}` +
+    `/questions/${encodeURIComponent(questionId)}/responses/${encodeURIComponent(responseId)}`
+  );
+}
+
 export const api = {
   getConfig: (): Promise<S["ConfigResponse"]> => apiFetch("/config"),
 
@@ -263,5 +276,94 @@ export const api = {
 
     deleteAvatar: (avatarId: string): Promise<void> =>
       apiFetch(`/avatars/${encodeURIComponent(avatarId)}`, { method: "DELETE" }),
+  },
+
+  engagement: {
+    listComments: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      params?: { limit?: number; cursor?: string },
+    ): Promise<S["CommentListResponse"]> => {
+      const query = new URLSearchParams();
+      if (params?.limit !== undefined) query.set("limit", String(params.limit));
+      if (params?.cursor) query.set("cursor", params.cursor);
+      const queryString = query.toString();
+      return apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments${
+          queryString ? `?${queryString}` : ""
+        }`,
+      );
+    },
+
+    createComment: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      body: S["CreateCommentRequest"],
+    ): Promise<S["CommentResponse"]> =>
+      apiFetch(`${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments`, {
+        method: "POST",
+        body,
+      }),
+
+    patchComment: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      commentId: string,
+      body: S["PatchCommentRequest"],
+    ): Promise<S["CommentResponse"]> =>
+      apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: "PATCH", body },
+      ),
+
+    deleteComment: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      commentId: string,
+    ): Promise<void> =>
+      apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: "DELETE" },
+      ),
+
+    listReactions: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+    ): Promise<S["ReactionsResponse"]> =>
+      apiFetch(`${engagementBasePath(groupId, cycleId, questionId, responseId)}/reactions`),
+
+    putReaction: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      emoji: string,
+    ): Promise<S["ReactionsResponse"]> =>
+      apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/reactions/${encodeURIComponent(emoji)}`,
+        { method: "PUT" },
+      ),
+
+    deleteReaction: (
+      groupId: string,
+      cycleId: string,
+      questionId: string,
+      responseId: string,
+      emoji: string,
+    ): Promise<S["ReactionsResponse"]> =>
+      apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/reactions/${encodeURIComponent(emoji)}`,
+        { method: "DELETE" },
+      ),
   },
 };

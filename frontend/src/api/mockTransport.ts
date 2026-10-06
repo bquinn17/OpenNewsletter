@@ -1,5 +1,6 @@
 import type { components } from "../types/api";
 import { mockCandidateRoute } from "./mockCandidates";
+import { mockEngagementRoute } from "./mockEngagement";
 import { mockNewsletterRoute } from "./mockNewsletters";
 import {
   CALLER_ID,
@@ -451,7 +452,7 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
   }
 
   const request: MockRequest = { method, rawPath, segments, query, body };
-  for (const route of [mockCandidateRoute, mockNewsletterRoute]) {
+  for (const route of [mockCandidateRoute, mockNewsletterRoute, mockEngagementRoute]) {
     const result = route(request);
     if (result !== NO_MOCK_ROUTE) return result;
   }

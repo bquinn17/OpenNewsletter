@@ -127,6 +127,7 @@ pub async fn create_upload(
         uploaded_at: now,
         processed_at: None,
         error_message: None,
+        attached_comment_id: None,
     };
     media::put_image(&state.repo, &image).await.map_err(|e| {
         tracing::error!(error = ?e, group_id = %request.group_id, cycle_id = %request.cycle_id, "image row write failed");
@@ -205,9 +206,10 @@ pub async fn patch_upload(
 
 /// `DELETE /uploads/{imageId}` (§9.4). Caller must own the image. Refused
 /// with `IMAGE_IN_USE` when the caller's own *published* response for the
-/// image's question still references it — comment usage is out of scope
-/// until comments ship (M10). Otherwise idempotent: an already-`failed`
-/// image is a no-op success.
+/// image's question still references it, or (`purpose=comment`, added M10)
+/// a live comment still has it claimed via `attachedCommentId`
+/// (`09-engagement.md` §1.5, `03-api-contract.md` §8.2). Otherwise
+/// idempotent: an already-`failed` image is a no-op success.
 pub async fn delete_upload(
     state: &AppState,
     caller: &UserId,
@@ -218,6 +220,13 @@ pub async fn delete_upload(
     auth::require_membership(&state.repo, caller, group_id, false).await?;
     let image = load_image(state, group_id, cycle_id, image_id).await?;
     require_owner(caller, &image)?;
+
+    if image.purpose == ImagePurpose::Comment && image.attached_comment_id.is_some() {
+        return Err(ApiError::new(
+            ApiErrorCode::ImageInUse,
+            "image is attached to a comment",
+        ));
+    }
 
     if let Some(question_id) = &image.question_id {
         let response = responses::get_my_response(&state.repo, group_id, cycle_id, question_id, caller)

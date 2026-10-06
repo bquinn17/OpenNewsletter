@@ -158,8 +158,9 @@ def test_user_pool_exactly_two_clients(auth_template: assertions.Template) -> No
     auth_template.resource_count_is("AWS::Cognito::UserPoolClient", 2)
 
 
-def test_user_pool_three_idps(auth_template: assertions.Template) -> None:
-    auth_template.resource_count_is("AWS::Cognito::UserPoolIdentityProvider", 3)
+def test_user_pool_two_idps(auth_template: assertions.Template) -> None:
+    # Google + Facebook only — Apple dropped (plans/PROGRESS.md decisions, M1).
+    auth_template.resource_count_is("AWS::Cognito::UserPoolIdentityProvider", 2)
 
 
 def test_user_pool_has_cognito_domain(auth_template: assertions.Template) -> None:
@@ -579,6 +580,13 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /groups/{groupId}/newsletters/{cycleId}/my-responses",
         "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
         "PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
+        "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
+        "POST /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
+        "PATCH /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}",
+        "DELETE /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}",
+        "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions",
+        "PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
+        "DELETE /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
         "POST /admin/dev/tick/cycle",
     }
 
@@ -591,6 +599,7 @@ def test_handler_lambdas_are_arm64_provided_al2023(
         "OpenNewsletter-Groups-dev",
         "OpenNewsletter-Newsletters-dev",
         "OpenNewsletter-Questions-dev",
+        "OpenNewsletter-Engagement-dev",
     ):
         api_template.has_resource_properties(
             "AWS::Lambda::Function",
@@ -703,6 +712,22 @@ def test_groups_lambda_receives_cdn_base_url(
         "AWS::Lambda::Function",
         {
             "FunctionName": "OpenNewsletter-Groups-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"CDN_BASE_URL": assertions.Match.any_value()}
+                )
+            },
+        },
+    )
+
+
+def test_engagement_lambda_receives_cdn_base_url(
+    api_template: assertions.Template,
+) -> None:
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Engagement-dev",
             "Environment": {
                 "Variables": assertions.Match.object_like(
                     {"CDN_BASE_URL": assertions.Match.any_value()}

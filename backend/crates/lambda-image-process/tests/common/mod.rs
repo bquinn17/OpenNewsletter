@@ -44,6 +44,7 @@ pub fn pending_image(
         uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 12, 0, 0).unwrap(),
         processed_at: None,
         error_message: None,
+        attached_comment_id: None,
     }
 }
 

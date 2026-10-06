@@ -31,7 +31,7 @@ These are non-negotiable preamble for every milestone below. The pre-flight chec
 Read: `05-auth-flow.md` §10.
 
 A human operator (the user) completes the out-of-band setup:
-- [ ] Register Google, Apple, Facebook OAuth apps with the Cognito redirect URI (need Cognito domain set up first, OR placeholder updated after Milestone 3).
+- [ ] Register Google, Facebook OAuth apps with the Cognito redirect URI (need Cognito domain set up first, OR placeholder updated after Milestone 3). No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple Developer membership is $99/yr.
 - [ ] Generate VAPID keys (`scripts/generate_vapid_keys.py`) and store in Secrets Manager.
 - [ ] Generate CloudFront signing keypair; store private in Secrets Manager, commit public key file to `infra/keys/cf-signing.pub.pem`.
 - [ ] Configure DNS for the chosen domain (`opennewsletter.example.com`, `cdn.opennewsletter.example.com`, `api.opennewsletter.example.com`). If using Route53, note the hosted zone ID.

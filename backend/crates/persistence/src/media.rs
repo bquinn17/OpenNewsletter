@@ -5,8 +5,10 @@ use crate::keys::{
     attr, avatar_sk, image_gsi1pk, image_gsi1sk, image_pk, image_sk, index, user_pk,
 };
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::AttributeValue;
-use domain::{AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia, QuestionId, UserId};
+use aws_sdk_dynamodb::types::{AttributeValue, Update};
+use domain::{
+    AvatarId, AvatarMedia, CommentId, CycleId, GroupId, ImageId, ImageMedia, QuestionId, UserId,
+};
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
 
@@ -232,4 +234,60 @@ pub async fn mark_avatar_deleted(
         .await
         .map_err(error::from_update_item_error)?;
     Ok(())
+}
+
+/// Builds the `Update` that claims a `purpose=comment` image for `comment_id`,
+/// for inclusion in the caller's own `TransactWriteItems` (`03-api-contract.md`
+/// §8.2, decided M10) — never sent standalone. Conditioned on the image being
+/// unclaimed or already claimed by this same comment (an idempotent re-save),
+/// so a transaction cancellation on this item unambiguously means "claimed by
+/// another comment" — the caller maps that to 422 on `imageMediaId`.
+///
+/// `attribute_not_exists` alone isn't enough: `serde_dynamo::to_item`
+/// serializes every `Option::None` field (including a never-claimed
+/// `attached_comment_id`) as an explicit `AttributeValue::Null`, not an
+/// absent attribute, so every row written through [`put_image`] already
+/// "exists" with a null value. The condition also matches that null form
+/// directly.
+pub fn attach_image_to_comment_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_id: &ImageId,
+    comment_id: &CommentId,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(image_sk(image_id)))
+        .update_expression("SET attached_comment_id = :cid")
+        .condition_expression(
+            "attribute_not_exists(attached_comment_id) OR attached_comment_id = :null \
+             OR attached_comment_id = :cid",
+        )
+        .expression_attribute_values(":null", AttributeValue::Null(true))
+        .expression_attribute_values(":cid", AttributeValue::S(comment_id.to_string()))
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+/// Builds the unconditioned `Update` that releases a `purpose=comment`
+/// image's claim, for inclusion in the caller's own `TransactWriteItems`
+/// (changing/removing a comment's image, or soft-deleting it — `03`
+/// §8.3, §8.4, decided M10). Unconditioned because only the comment's own
+/// author (or an admin, for delete) can ever reach this, and they're
+/// releasing a claim their own write holds.
+pub fn detach_image_from_comment_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_id: &ImageId,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(image_sk(image_id)))
+        .update_expression("REMOVE attached_comment_id")
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
 }

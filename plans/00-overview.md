@@ -36,7 +36,7 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 |---|---|
 | Frontend | React 18 + TypeScript + Vite + Tailwind, deployed as static assets to GitHub Pages on a custom domain |
 | PWA | Workbox-generated service worker, Web Push (VAPID) for notifications |
-| Auth | Amazon Cognito User Pool with Google / Apple / Facebook IdPs; JWT validated by API Gateway |
+| Auth | Amazon Cognito User Pool with Google / Facebook IdPs; JWT validated by API Gateway |
 | API | Amazon API Gateway HTTP API with Cognito JWT authorizer |
 | Compute | AWS Lambda, Rust (`provided.al2023` runtime via `cargo-lambda`) |
 | Data | Amazon DynamoDB single-table design, on-demand billing |

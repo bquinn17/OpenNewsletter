@@ -19,7 +19,6 @@ import {
 import type {
   AppConfig,
   CandidateQuestion,
-  Comment,
   Group,
   GroupGradient,
   ImageUploadStatus,
@@ -29,7 +28,6 @@ import type {
   NewsletterDetail,
   NewsletterSummary,
   NotificationPref,
-  PublishedNewsletter,
   PushDevice,
   Role,
   VotingNewsletter,
@@ -195,121 +193,6 @@ export const mockApi = {
       existing.publishedAt = new Date().toISOString();
     }
     return delay(structuredClone(existing), 350);
-  },
-
-  // --- Engagement ---------------------------------------------------------
-  async toggleReaction(
-    groupId: string,
-    cycleId: string,
-    questionId: string,
-    responseId: string,
-    emoji: string,
-  ): Promise<{ emoji: string; count: number; reactedByMe: boolean }> {
-    const nl = newsletters[`${groupId}/${cycleId}`];
-    if (!nl || nl.status !== "published") throw new Error("not published");
-    const q = nl.questions.find((x) => x.questionId === questionId);
-    if (!q || q.kind !== "text") throw new Error("question not found");
-    const ans = q.answers.find((a) => a.responseId === responseId);
-    if (!ans) throw new Error("answer not found");
-    let group = ans.reactionGroups.find((g) => g.emoji === emoji);
-    if (!group) {
-      group = { emoji, count: 1, reactedByMe: true };
-      ans.reactionGroups.push(group);
-    } else if (group.reactedByMe) {
-      group.count -= 1;
-      group.reactedByMe = false;
-      if (group.count === 0) ans.reactionGroups = ans.reactionGroups.filter((g) => g !== group);
-    } else {
-      group.count += 1;
-      group.reactedByMe = true;
-    }
-    return delay({ ...group });
-  },
-
-  async addComment(
-    groupId: string,
-    cycleId: string,
-    questionId: string,
-    responseId: string,
-    body: string,
-  ): Promise<PublishedNewsletter> {
-    const nl = newsletters[`${groupId}/${cycleId}`];
-    if (!nl || nl.status !== "published") throw new Error("not published");
-    const q = nl.questions.find((x) => x.questionId === questionId);
-    if (!q) throw new Error("question not found");
-    const newComment: Comment = {
-      commentId: `c_${Date.now()}`,
-      authorUserId: mockConfig.user.userId,
-      authorDisplayName: mockConfig.user.displayName,
-      authorAvatarColor: mockConfig.user.avatarColor,
-      authorAvatarUrl: mockConfig.user.avatarUrl ?? null,
-      body,
-      createdAt: new Date().toISOString(),
-      editedAt: null,
-    };
-    if (q.kind === "poll") {
-      // Poll comments hang off the question itself; the client passes
-      // responseId === questionId as a sentinel.
-      if (responseId !== q.questionId)
-        throw new Error("poll comment responseId must match questionId");
-      q.comments.push(newComment);
-    } else {
-      const ans = q.answers.find((a) => a.responseId === responseId);
-      if (!ans) throw new Error("answer not found");
-      ans.comments.push(newComment);
-    }
-    return delay(structuredClone(nl));
-  },
-
-  async editComment(
-    groupId: string,
-    cycleId: string,
-    questionId: string,
-    responseId: string,
-    commentId: string,
-    body: string,
-  ): Promise<PublishedNewsletter> {
-    const nl = newsletters[`${groupId}/${cycleId}`];
-    if (!nl || nl.status !== "published") throw new Error("not published");
-    const q = nl.questions.find((x) => x.questionId === questionId);
-    if (!q) throw new Error("question not found");
-    const list =
-      q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
-    if (!list) throw new Error("comments not found");
-    const c = list.find((cc) => cc.commentId === commentId);
-    if (!c) throw new Error("comment not found");
-    if (c.authorUserId !== mockConfig.user.userId)
-      throw new Error("only the author can edit this comment");
-    c.body = body;
-    c.editedAt = new Date().toISOString();
-    return delay(structuredClone(nl));
-  },
-
-  async deleteComment(
-    groupId: string,
-    cycleId: string,
-    questionId: string,
-    responseId: string,
-    commentId: string,
-  ): Promise<PublishedNewsletter> {
-    const nl = newsletters[`${groupId}/${cycleId}`];
-    if (!nl || nl.status !== "published") throw new Error("not published");
-    const q = nl.questions.find((x) => x.questionId === questionId);
-    if (!q) throw new Error("question not found");
-    const list =
-      q.kind === "poll" ? q.comments : q.answers.find((a) => a.responseId === responseId)?.comments;
-    if (!list) throw new Error("comments not found");
-    const idx = list.findIndex((cc) => cc.commentId === commentId);
-    if (idx < 0) throw new Error("comment not found");
-    const c = list[idx]!;
-    const isAuthor = c.authorUserId === mockConfig.user.userId;
-    const isAdmin =
-      groups[groupId]?.members.find((m) => m.userId === mockConfig.user.userId)?.role === "admin";
-    if (!isAuthor && !isAdmin)
-      throw new Error("only the author or a group admin can delete this comment");
-    // Hard delete — no soft-delete tombstones in v1.
-    list.splice(idx, 1);
-    return delay(structuredClone(nl));
   },
 
   // --- Invites ------------------------------------------------------------

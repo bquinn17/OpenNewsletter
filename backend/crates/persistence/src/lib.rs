@@ -9,6 +9,7 @@
 
 pub mod auth;
 mod batch;
+pub mod cursor;
 pub mod error;
 pub mod expr;
 pub mod keys;

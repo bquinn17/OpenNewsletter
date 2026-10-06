@@ -14,7 +14,7 @@ Flat (no threading). One author per comment. Stored in DynamoDB per `02-data-mod
 type Comment = {
   commentId: string;
   authorUserId: string;
-  authorDisplayName: string;
+  displayName: string;   // author's account display name (wire name decided M10; matches the inline newsletter shape)
   body: string;          // 0-2000 chars; markdown allowed (sanitized identical to response bodies)
   image: {               // optional single attached image; null when none
     imageId: string;
@@ -26,12 +26,13 @@ type Comment = {
   } | null;
   createdAt: string;
   editedAt: string | null;
+  deletedAt: string | null; // set on soft-deleted placeholders (added M10)
 };
 ```
 
 Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
 
-Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder.
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null (decided M10).
 
 ### 1.2 Permissions
 
@@ -74,7 +75,9 @@ let name_map: HashMap<String, String> = users.into_iter()
 // Inject into output
 ```
 
-Cache the user batch per cold-start (60s TTL) to avoid repeating the read for hot cycles. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
+Cache the user batch per cold-start (60s TTL) to avoid repeating the read for hot cycles. **M10 decision:** v1 dedupes author IDs within a request and uses one `BatchGetItem`, with no cross-request cache. Add the TTL cache only if user reads show up as hot. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
+
+Routes are addressed by `questionId` + `responseId` (`03` §8, decided M10). The attached image is claimed through `ImageMedia.attached_comment_id`, written in the same transaction as the comment, so one image can't back two comments and `DELETE /uploads` can refuse a claimed image.
 
 ### 1.6 Notifications on comments
 
@@ -106,8 +109,10 @@ Server normalizes the emoji to NFC and uses the normalized form as the storage k
 
 Detailed in `03-api-contract.md` §8.5–8.7.
 
-- `PUT /...reactions/{emoji}` — idempotent put; URL-encoded emoji
-- `DELETE /...reactions/{emoji}` — idempotent delete
+- `PUT /...reactions/{emoji}`: idempotent put of a URL-encoded emoji
+- `DELETE /...reactions/{emoji}`: idempotent delete
+- Both return the answer's reactions after the change, in the `GET` shape (decided M10).
+- `reactionGroups` order: count descending, then earliest reaction, then emoji. The inline newsletter view uses the same order.
 - `GET /...reactions` — returns:
   ```json
   {
@@ -124,6 +129,8 @@ In practice the published-newsletter endpoint (`GET /groups/{g}/newsletters/{c}`
 ### 2.4 Live update strategy
 
 After PUT or DELETE, the SPA optimistically updates local state, then revalidates by invalidating the newsletter query (or just the affected answer's reactions, if we expose a lightweight per-answer reactions query — we'll do this for hot cycles).
+
+**M10 decision:** the SPA patches the answer's `reactionGroups` in the cached newsletter optimistically. On success it replaces them with the server's `ReactionsResponse`, and on error it rolls back. No newsletter refetch is needed. Comment mutations patch the cache and then invalidate the newsletter query.
 
 No WebSocket / live push for v1. Users see other reactions on next page load or pull-to-refresh.
 

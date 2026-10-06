@@ -84,6 +84,10 @@ pub const MAX_LIST_LIMIT: u32 = 100;
 /// with one extra query per cycle returned, so its page size is capped tighter
 /// than the general list limit (`plans/03-api-contract.md` §5.1).
 pub const MAX_NEWSLETTER_LIST_LIMIT: u32 = 24;
+/// Default page size for `GET .../comments` when `?limit=` is omitted;
+/// capped at [`MAX_LIST_LIMIT`] (`plans/03-api-contract.md` §8.1,
+/// `09-engagement.md` §8 #9).
+pub const DEFAULT_COMMENT_LIST_LIMIT: u32 = 50;
 
 #[cfg(test)]
 mod tests {

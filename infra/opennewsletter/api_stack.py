@@ -4,8 +4,10 @@ Per `plans/01-infrastructure-cdk.md` §6. The route table is driven from
 `plans/03-api-contract.md` §13, which is authoritative when the two disagree.
 
 M4 wires `lambda-invites` and `lambda-groups`. M5 adds `lambda-newsletters` and
-`lambda-questions`. The remaining handler Lambdas join this stack as their
-milestones land; `_ROUTES` is the single place to add them.
+`lambda-questions`, M6 `lambda-responses`, M8 `lambda-media` and M10
+`lambda-engagement`.
+The remaining handler Lambdas join this stack as their milestones land; `_ROUTES`
+is the single place to add them.
 
 The `PreSignUp` trigger Lambda lives in AuthStack, not here: `add_trigger` attaches
 the wiring to the user pool's own stack, so building it here would make AuthStack
@@ -96,6 +98,41 @@ _ROUTES: list[tuple[str, str, str]] = [
         "PUT",
         "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
     ),
+    (
+        "engagement",
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
+    ),
+    (
+        "engagement",
+        "POST",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
+    ),
+    (
+        "engagement",
+        "PATCH",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}",
+    ),
+    (
+        "engagement",
+        "DELETE",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}",
+    ),
+    (
+        "engagement",
+        "GET",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions",
+    ),
+    (
+        "engagement",
+        "PUT",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
+    ),
+    (
+        "engagement",
+        "DELETE",
+        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}",
+    ),
 ]
 
 
@@ -183,6 +220,14 @@ class ApiStack(cdk.Stack):
             description="My response get/list/put",
             memory_size=512,
         )
+        self.engagement_fn = self._handler_lambda(
+            "Engagement",
+            binary_name="engagement-api",
+            description="Comments + reactions",
+            extra_environment={
+                "CDN_BASE_URL": cdn_base_url,
+            },
+        )
         self.media_fn = self._handler_lambda(
             "Media",
             binary_name="media-api",
@@ -256,6 +301,7 @@ class ApiStack(cdk.Stack):
             "newsletters": self.newsletters_fn,
             "questions": self.questions_fn,
             "responses": self.responses_fn,
+            "engagement": self.engagement_fn,
         }
         for handler_key, method, path in _ROUTES:
             handler = handlers[handler_key]

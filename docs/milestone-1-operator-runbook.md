@@ -23,8 +23,11 @@ be used:
 - `cdn.` → CloudFront image distribution
 - `api.` → API Gateway
 
-Create a Route53 hosted zone (or your DNS provider's equivalent). Record the
-hosted zone ID.
+Create a Route53 hosted zone (or your DNS provider's equivalent) and record
+the hosted zone ID — or skip Route53 entirely and manage DNS at your
+registrar instead (saves the $0.50/mo hosted-zone charge); leave
+`HOSTED_ZONE_ID`/`HOSTED_ZONE_NAME` unset in that case and add the ACM
+validation CNAMEs manually when `cdk deploy` prints them.
 
 **`.env.local`**: `ROOT_DOMAIN`, `CDN_DOMAIN`, `API_DOMAIN`, `HOSTED_ZONE_ID`.
 
@@ -32,7 +35,7 @@ hosted zone ID.
 
 ## 2. Decide on a Cognito hosted-UI domain prefix
 
-Something like `opennewsletter-dev`. The OAuth redirect URI all three IdPs
+Something like `opennewsletter-dev`. The OAuth redirect URI both IdPs
 will use is:
 
 ```
@@ -56,24 +59,12 @@ Client ID (Web).
 
 **`.env.local`**: `GOOGLE_OAUTH_SECRET_ARN`.
 
----
-
-## 4. Apple Sign In
-
-Apple Developer → Identifiers → Services ID.
-
-- Configure Sign In With Apple. Domain: `opennewsletter.example.com`.
-  Return URL: Cognito URI above.
-- Generate a private key, download `.p8`.
-- Secrets Manager `opennewsletter/oauth/apple/dev` with
-  `{"teamId","keyId","privateKey","clientId"}` (privateKey is the `.p8`
-  contents).
-
-**`.env.local`**: `APPLE_OAUTH_SECRET_ARN`.
+(No Apple Sign In step — dropped. Apple Developer membership is $99/yr,
+which the owner declined; see decision in `plans/PROGRESS.md`.)
 
 ---
 
-## 5. Facebook Login
+## 4. Facebook Login
 
 Meta for Developers → Create App → Add Facebook Login product.
 
@@ -85,7 +76,7 @@ Meta for Developers → Create App → Add Facebook Login product.
 
 ---
 
-## 6. VAPID keys for Web Push
+## 5. VAPID keys for Web Push
 
 ```sh
 pip install py-vapid
@@ -99,22 +90,29 @@ rm vapid.json
 
 ---
 
-## 7. CloudFront signing keypair
+## 6. CloudFront signing keypair
+
+CloudFront signed URLs/cookies accept either RSA 2048 or ECDSA P-256 keys;
+EC is smaller/faster to generate and works the same way with the CDK
+`PublicKey`/`KeyGroup` constructs:
 
 ```sh
-openssl genrsa -out cf-signing.key 2048
-openssl rsa -pubout -in cf-signing.key -out infra/keys/cf-signing.pub.pem
+openssl ecparam -name prime256v1 -genkey -noout -out cf-signing.key
+openssl ec -in cf-signing.key -pubout -out infra/keys/cf-signing.pub.pem
 aws secretsmanager create-secret --name opennewsletter/cdn-signing/dev \
   --secret-string file://cf-signing.key
 rm cf-signing.key   # never commit; only the .pub.pem is checked in
 git add infra/keys/cf-signing.pub.pem
 ```
 
+(RSA 2048 via `openssl genrsa` / `openssl rsa -pubout` also works if you'd
+rather stick with that.)
+
 **`.env.local`**: `CDN_SIGNING_SECRET_ARN`.
 
 ---
 
-## 8. Operator contact email
+## 7. Operator contact email
 
 Used for AWS Budgets and CloudWatch alarm notifications.
 

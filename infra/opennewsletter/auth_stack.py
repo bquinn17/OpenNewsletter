@@ -110,22 +110,9 @@ class AuthStack(cdk.Stack):
             ),
         )
 
-        apple_idp = cognito.UserPoolIdentityProviderApple(
-            self,
-            "AppleIdP",
-            user_pool=self.user_pool,
-            client_id=_sm_ref(config.apple_oauth_secret_arn, "clientId"),
-            team_id=_sm_ref(config.apple_oauth_secret_arn, "teamId"),
-            key_id=_sm_ref(config.apple_oauth_secret_arn, "keyId"),
-            private_key_value=cdk.SecretValue.secrets_manager(
-                config.apple_oauth_secret_arn, json_field="privateKey"
-            ),
-            scopes=["openid", "email", "name"],
-            attribute_mapping=cognito.AttributeMapping(
-                email=cognito.ProviderAttribute.other("email"),
-                fullname=cognito.ProviderAttribute.other("name"),
-            ),
-        )
+        # No Apple IdP: Sign In with Apple requires a paid ($99/yr) Apple
+        # Developer membership, which the owner declined (decision recorded
+        # in `plans/PROGRESS.md`). Google + Facebook only.
 
         facebook_idp = cognito.UserPoolIdentityProviderFacebook(
             self,
@@ -164,7 +151,6 @@ class AuthStack(cdk.Stack):
             ),
             supported_identity_providers=[
                 cognito.UserPoolClientIdentityProvider.GOOGLE,
-                cognito.UserPoolClientIdentityProvider.APPLE,
                 cognito.UserPoolClientIdentityProvider.FACEBOOK,
             ],
             id_token_validity=cdk.Duration.minutes(60),
@@ -172,7 +158,6 @@ class AuthStack(cdk.Stack):
             refresh_token_validity=cdk.Duration.days(30),
         )
         self.frontend_client.node.add_dependency(google_idp)
-        self.frontend_client.node.add_dependency(apple_idp)
         self.frontend_client.node.add_dependency(facebook_idp)
 
         self.bootstrap_client = self.user_pool.add_client(

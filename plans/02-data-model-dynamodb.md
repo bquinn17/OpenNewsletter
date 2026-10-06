@@ -299,6 +299,7 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
 | `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED` (added M8; `08` §3.2, `03` §9.4) |
+| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` image is attached to. Set and cleared in the same transaction as the comment write, and checked by `DELETE /uploads` (added M10; `03` §8.2, §9.4). Absent on rows written before M10, which reads as null. |
 
 `question_id` is set at `POST /uploads` time (the route requires `questionId`), so in practice it is never null for rows created since M8.
 

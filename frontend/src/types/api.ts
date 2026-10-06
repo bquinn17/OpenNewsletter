@@ -282,6 +282,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Comments on one published text answer, oldest first (AP18). Soft-deleted comments are included as placeholders (`deletedAt` set, `body` empty, `image` null) so ordering is preserved. Cycle must be `published` (409 `CYCLE_NOT_PUBLISHED`). 404 when the response is missing, not published, or a poll answer. Caller must be a member. Default page size 50. */
+        get: operations["listComments"];
+        put?: never;
+        /** Comment on a published text answer. `body` 0-2000 chars; optional `imageMediaId` must be a `ready` image owned by the caller, uploaded for this group, cycle and question with `purpose: "comment"`, and not already attached to another comment. At least one of a non-whitespace `body` or an image is required (`09-engagement.md` §1.3). Caller must be a member. */
+        post: operations["createComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Soft delete: sets `deletedAt`, blanks `body`, drops the image attachment. Author or group admin. Idempotent — 204 for an already-deleted comment, 404 for a missing one. */
+        delete: operations["deleteComment"];
+        options?: never;
+        head?: never;
+        /** Edit one's own comment (author only — admins cannot edit others'; 403). An absent field is left unchanged; `"imageMediaId": null` removes the attachment. The result must still have a non-whitespace body or an image. Sets `editedAt`. 404 for a missing or soft-deleted comment. */
+        patch: operations["patchComment"];
+        trace?: never;
+    };
+    "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grouped reactions on one published text answer (AP19), plus the caller's own emoji. Groups are ordered by count descending, then by their earliest reaction. Cycle must be `published`. Caller must be a member. */
+        get: operations["listReactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/reactions/{emoji}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Idempotently add the caller's reaction. `emoji` is URL-encoded, NFC-normalized, 1-12 codepoints with at least one `Extended_Pictographic` or regional-indicator codepoint (`09-engagement.md` §2.2); otherwise 422. No request body. Returns the answer's reactions after the change. */
+        put: operations["putReaction"];
+        post?: never;
+        /** Idempotently remove the caller's reaction with this emoji. Same emoji validation as PUT. Returns the answer's reactions after the change. */
+        delete: operations["deleteReaction"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/uploads": {
         parameters: {
             query?: never;
@@ -310,7 +381,7 @@ export interface paths {
         get: operations["getUpload"];
         put?: never;
         post?: never;
-        /** Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`; the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4). Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it. */
+        /** Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`; the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4). Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. */
         delete: operations["deleteUpload"];
         options?: never;
         head?: never;
@@ -664,13 +735,44 @@ export interface components {
             width: number;
             height: number;
         };
-        PublishedCommentResponse: {
+        CommentImageResponse: {
+            imageId: string;
+            displayUrl: string;
+            thumbUrl: string;
+            width: number;
+            height: number;
+            caption: string | null;
+        };
+        /** @description One comment (`09-engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body` and a null `image`. */
+        CommentResponse: {
             commentId: string;
             authorUserId: string;
             displayName: string;
             body: string;
+            image: components["schemas"]["CommentImageResponse"] | null;
             /** Format: date-time */
             createdAt: string;
+            /** Format: date-time */
+            editedAt: string | null;
+            /** Format: date-time */
+            deletedAt: string | null;
+        };
+        CommentListResponse: {
+            items: components["schemas"]["CommentResponse"][];
+            nextCursor: string | null;
+        };
+        CreateCommentRequest: {
+            body?: string;
+            imageMediaId?: string | null;
+        };
+        /** @description Absent fields are unchanged; `imageMediaId: null` removes the attachment. */
+        PatchCommentRequest: {
+            body?: string;
+            imageMediaId?: string | null;
+        };
+        ReactionsResponse: {
+            reactionGroups: components["schemas"]["ReactionGroupResponse"][];
+            myReactions: string[];
         };
         ReactionGroupResponse: {
             emoji: string;
@@ -685,7 +787,7 @@ export interface components {
             images: components["schemas"]["PublishedImageResponse"][];
             /** Format: date-time */
             publishedAt: string;
-            comments: components["schemas"]["PublishedCommentResponse"][];
+            comments: components["schemas"]["CommentResponse"][];
             reactionGroups: components["schemas"]["ReactionGroupResponse"][];
         };
         PublishedPollOptionResponse: {
@@ -996,6 +1098,15 @@ export interface components {
         ImageIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d */
         AvatarIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+        ResponseIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b */
+        CommentIdPath: string;
+        /**
+         * @description URL-encoded emoji (`09-engagement.md` §2.2).
+         * @example %F0%9F%94%A5
+         */
+        EmojiPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
         GroupIdQuery: string;
         /**
@@ -2020,6 +2131,371 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["ResponseDto"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listComments: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description. */
+                limit?: components["parameters"]["LimitQuery"];
+                /** @description Opaque pagination token from a previous page's `nextCursor`. */
+                cursor?: components["parameters"]["CursorQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of comments, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "commentId": "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b",
+                     *           "authorUserId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70",
+                     *           "displayName": "Alex",
+                     *           "body": "Same — the switchbacks are brutal.",
+                     *           "image": null,
+                     *           "createdAt": "2026-06-05T09:00:00Z",
+                     *           "editedAt": null,
+                     *           "deletedAt": null
+                     *         }
+                     *       ],
+                     *       "nextCursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CommentListResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "body": "Same — the switchbacks are brutal.",
+                 *       "imageMediaId": null
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description The created comment. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "commentId": "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b",
+                     *       "authorUserId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70",
+                     *       "displayName": "Alex",
+                     *       "body": "Same — the switchbacks are brutal.",
+                     *       "image": {
+                     *         "imageId": "018f2b6b-6c1b-7c3a-9d4e-ad1e2f3a4b5c",
+                     *         "displayUrl": "https://cdn.opennewsletter.example.com/img/g/202606/display.webp",
+                     *         "thumbUrl": "https://cdn.opennewsletter.example.com/img/g/202606/thumb.webp",
+                     *         "width": 1200,
+                     *         "height": 800,
+                     *         "caption": null
+                     *       },
+                     *       "createdAt": "2026-06-05T09:00:00Z",
+                     *       "editedAt": null,
+                     *       "deletedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CommentResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b */
+                commentId: components["parameters"]["CommentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (or already deleted). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+        };
+    };
+    patchComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b */
+                commentId: components["parameters"]["CommentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "body": "Same — the switchbacks are brutal. Worth it though."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PatchCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated comment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "commentId": "018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b",
+                     *       "authorUserId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f70",
+                     *       "displayName": "Alex",
+                     *       "body": "Same — the switchbacks are brutal. Worth it though.",
+                     *       "image": null,
+                     *       "createdAt": "2026-06-05T09:00:00Z",
+                     *       "editedAt": "2026-06-05T09:10:00Z",
+                     *       "deletedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CommentResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listReactions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The answer's reactions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "reactionGroups": [
+                     *         {
+                     *           "emoji": "🔥",
+                     *           "count": 4,
+                     *           "reactedByMe": true
+                     *         },
+                     *         {
+                     *           "emoji": "🤣",
+                     *           "count": 2,
+                     *           "reactedByMe": false
+                     *         }
+                     *       ],
+                     *       "myReactions": [
+                     *         "🔥"
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReactionsResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+        };
+    };
+    putReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+                /**
+                 * @description URL-encoded emoji (`09-engagement.md` §2.2).
+                 * @example %F0%9F%94%A5
+                 */
+                emoji: components["parameters"]["EmojiPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The answer's reactions after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "reactionGroups": [
+                     *         {
+                     *           "emoji": "🔥",
+                     *           "count": 5,
+                     *           "reactedByMe": true
+                     *         }
+                     *       ],
+                     *       "myReactions": [
+                     *         "🔥"
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReactionsResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["NewsletterArchived"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+                /** @example 202606 */
+                cycleId: components["parameters"]["CycleIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
+                questionId: components["parameters"]["QuestionIdPath"];
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
+                responseId: components["parameters"]["ResponseIdPath"];
+                /**
+                 * @description URL-encoded emoji (`09-engagement.md` §2.2).
+                 * @example %F0%9F%94%A5
+                 */
+                emoji: components["parameters"]["EmojiPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The answer's reactions after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "reactionGroups": [
+                     *         {
+                     *           "emoji": "🔥",
+                     *           "count": 4,
+                     *           "reactedByMe": false
+                     *         }
+                     *       ],
+                     *       "myReactions": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReactionsResponse"];
                 };
             };
             403: components["responses"]["Forbidden"];

@@ -59,7 +59,7 @@ Error code catalog (machine-readable codes for the top-level `code`):
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
-| `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references (added M8) |
+| `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references (added M8), or that a live comment has attached (added M10) |
 | `RATE_LIMITED` | 429 | Throttled |
 | `INTERNAL` | 500 | Generic server error |
 
@@ -296,7 +296,7 @@ Response 200 (published):
           "body": "...markdown...",
           "images": [{ "imageId": "01H...", "displayUrl": "https://cdn.../img/...", "thumbUrl": "...", "width": 1200, "height": 800 }],
           "publishedAt": "...",
-          "comments": [{ "commentId": "01H...", "authorUserId": "01H...", "displayName": "...", "body": "...", "createdAt": "..." }],
+          "comments": [{ "commentId": "01H...", "authorUserId": "01H...", "displayName": "...", "body": "...", "image": null, "createdAt": "...", "editedAt": null, "deletedAt": null }],
           "reactionGroups": [{ "emoji": "🔥", "count": 3, "reactedByMe": true }]
         }
       ]
@@ -498,35 +498,55 @@ After the cycle has closed (status `published`), responses are immutable. Attemp
 
 All require the cycle to be `published`. Pre-publish, this surface is hidden in the UI.
 
-### 8.1 `GET /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments`
+**Addressing (decided M10).** Every engagement route is nested under the answer's question: `/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/...`. Comment and reaction rows are keyed on `(questionId, answerUserId)` (`02` §2.11–§2.12), and a bare `responseId` has no index, so it couldn't be resolved without reading every question's answers. With `questionId` in the path, the handler queries that question's answers (`pk=GROUP#g#NL#c#Q#q`, `begins_with(sk, A#)`, at most one row per member) and takes the row whose `response_id` matches. That row must be a published **text** answer; otherwise the route returns 404. Poll answers are never engagement targets (`09` §3).
 
-**Lambda**: `lambda-engagement`. AP18. Paginated, oldest first.
+**Check order on all seven routes (GETs included).** Each check runs only if the previous one passed:
+1. Membership: 403 if the caller isn't a member.
+2. The cycle exists: 404 if not.
+3. The cycle isn't `archived`: 410 `NEWSLETTER_ARCHIVED` if it is.
+4. The cycle is `published`: 409 `CYCLE_NOT_PUBLISHED` if not.
+5. The answer resolves: 404 if not.
+6. Route-specific checks.
 
-### 8.2 `POST /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments`
+**Comment shape.** `CommentResponse` (`shared/openapi.yaml`) is `{commentId, authorUserId, displayName, body, image, createdAt, editedAt, deletedAt}`, and it is used both here and inline in §5.2. `displayName` is the author's account display name. `image` is `{imageId, displayUrl, thumbUrl, width, height, caption}` while the attached image is `ready`, and null otherwise. Soft-deleted comments are **returned** as placeholders, with `deletedAt` set, `body` empty and `image` null, so the UI can render `[deleted]` in place.
 
-Body: `{ "body"?: string, "imageMediaId"?: string|null }`. `body` 0–2000 chars; `imageMediaId` must reference a `ready` ImageMedia owned by the caller with `purpose: "comment"` (uploaded via §9.1 with `purpose: "comment"`, which is valid while the cycle is `published`). At least one of the two must be non-empty. See `09-engagement.md` §1.3.
+### 8.1 `GET .../questions/{questionId}/responses/{responseId}/comments`
 
-Response 201: created comment (with `image` hydrated when set).
+**Lambda**: `lambda-engagement`. AP18. Paginated (`limit` default 50, max 100), oldest first. Returns `CommentListResponse {items, nextCursor}`.
 
-### 8.3 `PATCH /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments/{commentId}`
+### 8.2 `POST .../questions/{questionId}/responses/{responseId}/comments`
 
-Body: `{ "body"?: string, "imageMediaId"?: string|null }`. Allowed for the author only. Same validation as POST. Sets `editedAt`. Passing `"imageMediaId": null` removes the attachment.
+Body: `{ "body"?: string, "imageMediaId"?: string|null }`. `body` 0–2000 chars. `imageMediaId` must reference an image that is all of the following:
+- `ready`
+- owned by the caller
+- uploaded for this group, cycle and question with `purpose: "comment"` (§9.1)
+- not attached to another comment
 
-### 8.4 `DELETE /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/comments/{commentId}`
+A whitespace-only or missing `body` with no image is a 422. All failures are `VALIDATION_FAILED` with `fieldErrors` on `body` or `imageMediaId`. See `09-engagement.md` §1.3.
 
-Soft delete: sets `deletedAt`, blanks `body`. The row remains so the parent thread's ordering is preserved and audit/moderation history exists. Allowed for author OR group admin. Idempotent — a `DELETE` of an already-soft-deleted row returns 204; a `DELETE` of a missing row returns 404.
+Response 201: the created `CommentResponse`.
 
-### 8.5 `GET /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions`
+**Image attachment (decided M10).** `ImageMedia` gains `attached_comment_id` (`02` §2.10). Writing the comment and claiming the image happen in one `TransactWriteItems`, conditioned on the image being unclaimed (or already claimed by this comment). The same applies to changing or removing an image on PATCH and to soft delete, which also releases the old image. §9.4 uses the claim for its in-use check.
 
-**Lambda**: `lambda-engagement`. AP19. Returns grouped form (`reactionGroups`) plus a flat list scoped to caller (`myReactions`).
+### 8.3 `PATCH .../comments/{commentId}`
 
-### 8.6 `PUT /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions/{emoji}`
+Body: `{ "body"?: string, "imageMediaId"?: string|null }`. Author only: admins can't edit other people's comments, and get 403. An absent field is left unchanged. `"imageMediaId": null` removes the attachment. The result must still have a non-whitespace body or an image. Sets `editedAt`. A missing or soft-deleted comment returns 404. Response 200: the updated `CommentResponse`.
 
-Idempotent toggle-on. Body empty. `emoji` URL-encoded; server validates it per the canonical emoji predicate in `09-engagement.md` §2.2 (NFC-normalized, 1–12 codepoints, at least one `Extended_Pictographic` or regional-indicator codepoint) and otherwise rejects with `VALIDATION_FAILED`. Path-encoded emoji simplifies the `R#{user}#{emoji}` sort key.
+### 8.4 `DELETE .../comments/{commentId}`
 
-### 8.7 `DELETE /groups/{groupId}/newsletters/{cycleId}/responses/{responseId}/reactions/{emoji}`
+Soft delete: sets `deletedAt`, blanks `body` and drops the image attachment, releasing the image's claim. The row remains, so the parent thread's ordering is preserved and moderation history survives. Allowed for the author or a group admin. Idempotent: a `DELETE` of an already-soft-deleted row returns 204, and a `DELETE` of a missing row returns 404.
 
-Removes the caller's reaction with that emoji. Idempotent.
+### 8.5 `GET .../questions/{questionId}/responses/{responseId}/reactions`
+
+**Lambda**: `lambda-engagement`. AP19. Returns `ReactionsResponse`: the grouped form (`reactionGroups`) plus the caller's own emoji (`myReactions`). **Group order (decided M10):** count descending, then earliest reaction first, then emoji. The inline `reactionGroups` in §5.2 use the same order (one shared function).
+
+### 8.6 `PUT .../reactions/{emoji}`
+
+Idempotent toggle-on with an empty body. `emoji` is URL-encoded. The server percent-decodes it if it still contains `%`, because API Gateway's decoding of path parameters isn't relied on. It then validates it against the canonical emoji predicate in `09-engagement.md` §2.2: NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
+
+### 8.7 `DELETE .../reactions/{emoji}`
+
+Removes the caller's reaction with that emoji. Idempotent, with the same validation as PUT. Response 200: the answer's `ReactionsResponse` after the change.
 
 ---
 
@@ -586,7 +606,7 @@ Every one of these routes that returns a body returns `ImageMediaResponse` (`sha
 
 ### 9.4 `DELETE /uploads/{imageId}`
 
-**Lambda**: `lambda-media`. Detach + mark for cleanup. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. Otherwise soft-marks the row `failed` with `errorMessage: "DELETED"` and returns 204; the S3 lifecycle handles real deletion. Idempotent. A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID when it deletes. (Comment-image in-use checks arrive with comments in M10.)
+**Lambda**: `lambda-media`. Detach + mark for cleanup. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. Otherwise soft-marks the row `failed` with `errorMessage: "DELETED"` and returns 204; the S3 lifecycle handles real deletion. Idempotent. A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID when it deletes. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE` (added M10).
 
 ### 9.5 `GET /media-cookie`
 
@@ -726,7 +746,9 @@ All of this now exists (landed in M5, `12-build-order.md` M5 "OpenAPI contract")
 | `*` candidate-questions GET/POST/votes | member |
 | `DELETE /admin/groups/{g}/candidate-questions/{q}` | admin |
 | `*` my-response routes | member (and self) |
-| `*` comments/reactions | member |
+| `*` comments/reactions GET/POST, reactions PUT/DELETE | member |
+| `PATCH` comment | author only |
+| `DELETE` comment | author OR admin |
 | `POST /uploads*`, `GET /uploads/{id}`, `PATCH /uploads/{id}`, `DELETE /uploads/{id}`, `GET /media-cookie` | member (owner for PATCH/DELETE) |
 | `POST /avatars`, `GET /avatars/{id}`, `DELETE /avatars/{id}` | self (owner) |
 | `*` push routes | self |

@@ -55,7 +55,7 @@ OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce 
 ## Stack at a glance
 
 Frontend: React 18 + TS + Vite + Tailwind, GitHub Pages.
-Auth: Cognito User Pool, hosted UI, Google/Apple/Facebook IdPs.
+Auth: Cognito User Pool, hosted UI, Google/Facebook IdPs. (Apple dropped — see PROGRESS.md decisions; Apple Developer membership is $99/yr.)
 API: API Gateway HTTP API + Cognito JWT authorizer → Rust Lambdas (`provided.al2023`, `cargo-lambda`).
 Data: DynamoDB on-demand single table.
 Media: S3 + CloudFront with signed cookies.

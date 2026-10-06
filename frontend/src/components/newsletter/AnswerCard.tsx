@@ -4,16 +4,20 @@ import { avatarColorClass } from "../../utils/avatarColor";
 import { formatInZone } from "../../utils/dates";
 import { MarkdownBody } from "../../utils/markdown";
 import { Avatar } from "../ui/Avatar";
+import { CommentList } from "./CommentList";
 import { ImageGallery } from "./ImageGallery";
+import { ReactionBar } from "./ReactionBar";
 
 type Props = {
   answer: components["schemas"]["PublishedAnswerResponse"];
   groupId: string;
+  cycleId: string;
+  questionId: string;
   timezone: string;
 };
 
-/** One published answer to a text question. Comments/reactions are M10 (`04-frontend-architecture.md` §16). */
-export function AnswerCard({ answer, groupId, timezone }: Props) {
+/** One published answer to a text question, with its reactions and comments (`09-engagement.md` §4.1). */
+export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: Props) {
   const { data: group } = useGroup(groupId);
   const member = group?.members.find((m) => m.userId === answer.userId);
 
@@ -44,7 +48,21 @@ export function AnswerCard({ answer, groupId, timezone }: Props) {
 
       <ImageGallery images={answer.images} body={answer.body ?? ""} groupId={groupId} />
 
-      {/* M10: ReactionBar + CommentList */}
+      <ReactionBar
+        groupId={groupId}
+        cycleId={cycleId}
+        questionId={questionId}
+        responseId={answer.responseId}
+        reactionGroups={answer.reactionGroups}
+      />
+      <CommentList
+        comments={answer.comments}
+        groupId={groupId}
+        cycleId={cycleId}
+        questionId={questionId}
+        responseId={answer.responseId}
+        timezone={timezone}
+      />
     </article>
   );
 }

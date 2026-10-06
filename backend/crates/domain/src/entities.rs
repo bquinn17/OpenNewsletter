@@ -231,6 +231,13 @@ pub struct ImageMedia {
     /// `DELETED` (`plans/08-media-uploads.md` §3.2, §9).
     #[serde(default)]
     pub error_message: Option<String>,
+    /// The comment this `purpose=comment` image is attached to, if any. Set
+    /// and cleared in the same transaction as the comment write (`03`
+    /// §8.2, §9.4). `#[serde(default)]` so rows written before M10 (which
+    /// never had this attribute) load as `None`. Not exposed on
+    /// `ImageMediaResponse`.
+    #[serde(default)]
+    pub attached_comment_id: Option<CommentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

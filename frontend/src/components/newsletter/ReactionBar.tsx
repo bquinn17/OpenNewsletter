@@ -1,101 +1,96 @@
 import clsx from "clsx";
 import { lazy, Suspense, useRef, useState } from "react";
-import { useToggleReaction } from "../../mocks/legacyQueries";
-import type { ReactionGroup } from "../../mocks/types";
+import { useToggleReaction } from "../../api/mutations";
+import type { components } from "../../types/api";
 
-interface Props {
-  reactions: ReactionGroup[];
+type ReactionGroup = components["schemas"]["ReactionGroupResponse"];
+
+type Props = {
   groupId: string;
   cycleId: string;
   questionId: string;
   responseId: string;
-}
+  reactionGroups: ReactionGroup[];
+};
 
-// Quick-pick defaults shown after the user opens the ＋ menu. Tweak freely —
-// the full picker is one click further for anything not on this list.
-const DEFAULTS: { emoji: string; label: string }[] = [
-  { emoji: "❤️", label: "heart" },
-  { emoji: "😮", label: "oh" },
-  { emoji: "🔥", label: "fire" },
-  { emoji: "😢", label: "cry" },
-  { emoji: "🎉", label: "tada" },
-  { emoji: "😠", label: "angry" },
-];
+// One-tap quick pills for anything not already shown as a group
+// (`09-engagement.md` §2.5).
+const QUICK_EMOJI = ["🔥", "🤣", "❤️", "😍", "👍", "🎉"];
 
-// emoji-picker-element ships its own ~150KB bundle (with IndexedDB cache) and
-// only matters once the user asks for "more", so lazy-load it.
+// The full curated-grid picker is only needed once the caller asks for "+",
+// so lazy-load it.
 const EmojiPickerPopover = lazy(() => import("./EmojiPickerPopover"));
 
-export function ReactionBar({ reactions, groupId, cycleId, questionId, responseId }: Props) {
-  const toggle = useToggleReaction(groupId, cycleId);
-  const [quickOpen, setQuickOpen] = useState(false);
+/** `[🔥 4] [🤣 2] [+]` — `09-engagement.md` §2.5, §4.2. */
+export function ReactionBar({ groupId, cycleId, questionId, responseId, reactionGroups }: Props) {
+  const toggle = useToggleReaction(groupId, cycleId, questionId);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const morePickerAnchorRef = useRef<HTMLButtonElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
 
-  const handleToggle = (emoji: string) => {
-    toggle.mutate({ questionId, responseId, emoji });
-  };
+  const shown = new Set(reactionGroups.map((g) => g.emoji));
+  const quickPicks = QUICK_EMOJI.filter((emoji) => !shown.has(emoji));
+
+  function toggleEmoji(emoji: string, active: boolean) {
+    toggle.mutate({ responseId, emoji, active });
+  }
+
+  function closePicker() {
+    setPickerOpen(false);
+    addButtonRef.current?.focus();
+  }
 
   return (
     <div className="mt-4 flex flex-wrap items-center gap-1.5">
-      {reactions.map((r) => (
+      {reactionGroups.map((g) => (
         <button
-          key={r.emoji}
-          onClick={() => handleToggle(r.emoji)}
+          key={g.emoji}
+          type="button"
+          onClick={() => toggleEmoji(g.emoji, !g.reactedByMe)}
+          aria-pressed={g.reactedByMe}
+          aria-label={`React with ${g.emoji}, ${g.count} reaction${g.count === 1 ? "" : "s"}`}
           className={clsx(
             "rounded-full border px-2.5 py-1 text-sm font-semibold transition",
-            r.reactedByMe
+            g.reactedByMe
               ? "border-coral/30 bg-coral/10 text-coral"
               : "border-line bg-cream text-inkmuted hover:border-ink",
           )}
         >
-          {r.emoji} {r.count}
+          {g.emoji} {g.count}
         </button>
       ))}
+
+      {quickPicks.map((emoji) => (
+        <button
+          key={emoji}
+          type="button"
+          onClick={() => toggleEmoji(emoji, true)}
+          aria-label={`React with ${emoji}`}
+          className="rounded-full border border-dashed border-line/70 bg-transparent px-2.5 py-1 text-sm text-inkmuted/60 transition hover:border-ink hover:text-ink"
+        >
+          {emoji}
+        </button>
+      ))}
+
       <button
-        onClick={() => setQuickOpen((s) => !s)}
+        ref={addButtonRef}
+        type="button"
+        onClick={() => setPickerOpen((open) => !open)}
         aria-label="Add reaction"
-        aria-expanded={quickOpen}
+        aria-expanded={pickerOpen}
         className="rounded-full border border-line bg-cream px-2.5 py-1 text-sm text-inkmuted"
       >
         ＋
       </button>
-      {quickOpen && (
-        <div className="mt-2 flex w-full animate-pop flex-wrap items-center gap-1.5">
-          {DEFAULTS.map((d) => (
-            <button
-              key={d.emoji}
-              onClick={() => {
-                handleToggle(d.emoji);
-                setQuickOpen(false);
-              }}
-              aria-label={`React with ${d.label}`}
-              className="rounded-full border border-line bg-white px-2.5 py-1 text-sm hover:border-coral"
-            >
-              {d.emoji}
-            </button>
-          ))}
-          <button
-            ref={morePickerAnchorRef}
-            onClick={() => setPickerOpen(true)}
-            aria-label="More emoji"
-            aria-expanded={pickerOpen}
-            className="rounded-full border border-line bg-white px-2.5 py-1 text-xs text-inkmuted hover:border-ink"
-          >
-            More…
-          </button>
-        </div>
-      )}
+
       {pickerOpen && (
         <Suspense fallback={null}>
           <EmojiPickerPopover
-            anchorRef={morePickerAnchorRef}
+            anchorRef={addButtonRef}
             onPick={(emoji) => {
-              handleToggle(emoji);
-              setPickerOpen(false);
-              setQuickOpen(false);
+              toggleEmoji(emoji, true);
+              closePicker();
             }}
-            onClose={() => setPickerOpen(false)}
+            onClose={closePicker}
           />
         </Suspense>
       )}

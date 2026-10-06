@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-04. Working document — update as milestones complete or
+Snapshot as of 2026-10-05. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -11,7 +11,7 @@ blockers resolve. Authoritative milestone definitions live in
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
-| M1 | Operator prerequisites | 🟡 partial | `scripts/generate_vapid_keys.py` and `infra/keys/cf-signing.pub.pem` (dev placeholder) are committed. Google/Apple/Facebook OAuth apps, Cognito domain, DNS records, real signing keypair, and `cdk bootstrap` still owed by the operator (B5). |
+| M1 | Operator prerequisites | 🟡 partial | Domain, Cognito domain prefix, `cdk bootstrap`, IAM user credentials, and VAPID secret are done. Google/Facebook OAuth apps and the real CloudFront signing keypair still owed by the operator (B5). No Apple IdP — dropped (see B5 decision). |
 | **M2** | **Backend foundations (domain + persistence)** | ✅ **done** | See "M2 detail" below. All 64 tests green (`cargo test -p persistence`), fmt + clippy clean. Small follow-ups from the 2026-08-09 plan reconciliation listed under "M2 follow-ups". |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
@@ -21,13 +21,13 @@ blockers resolve. Authoritative milestone definitions live in
 | **M7** | **Frontend skeleton + auth** | 🟡 **code-complete, deploy unverified** | See "M7 detail" and "Post-M7 gap pass" below. 28 frontend, 217 backend and 42 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt, clippy, ruff (check + format), mypy and `cdk synth` are all clean. The Google sign-in / redeem / logout gate needs a deployed stack (B5). |
 | **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
-| M10 | Engagement | ⬜ | |
+| **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 361 backend, 54 CDK and 163 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
 | M11 | Notifications | ⬜ | |
 | M12 | Admin UI | ⬜ | |
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M9 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M10 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -97,7 +97,7 @@ All paths relative to `infra/`.
 - **`app.py`** — instantiates all M3 stacks; reads `--context env=<dev|prod>` and passes `EnvConfig` into each stack constructor.
 - **`opennewsletter/config.py`** — `EnvConfig` frozen dataclass; `load_config(env)` reads `.env.local` (dev) or env vars (CI/prod); falls back to placeholder ARNs when M1 values are absent.
 - **`opennewsletter/data_stack.py`** — `DataStack`: DDB table `OpenNewsletter-{env}`, pay-per-request, TTL on `ttl`, two GSIs (`gsi1`, `gsi2`), AWS-managed KMS, PITR in prod only, DESTROY removal in dev.
-- **`opennewsletter/auth_stack.py`** — `AuthStack`: Cognito User Pool, 3 federated IdPs (Google/Apple/Facebook) via CFN dynamic references to Secrets Manager, `frontend` + `admin-bootstrap` app clients, Cognito-managed hosted UI domain. The PreSignUp (pass-through) trigger is wired in M4; there is no PostConfirmation trigger (plans reconciled 2026-08-09).
+- **`opennewsletter/auth_stack.py`** — `AuthStack`: Cognito User Pool, federated IdPs (Google/Facebook; Apple dropped 2026-10-05, see B5 decision below — 3 IdPs including Apple at the time this milestone landed) via CFN dynamic references to Secrets Manager, `frontend` + `admin-bootstrap` app clients, Cognito-managed hosted UI domain. The PreSignUp (pass-through) trigger is wired in M4; there is no PostConfirmation trigger (plans reconciled 2026-08-09).
 - **`opennewsletter/frontend_stack.py`** — `FrontendStack`: ACM cert (us-east-1) covering `domain`, `cdn.domain`, and `api_domain`; optional Route53 CNAME if `hosted_zone_id` is set.
 - **`opennewsletter/media_persistent_stack.py`** — `MediaPersistentStack`: S3 originals + processed buckets (both private, Block-Public-Access all-on), CloudFront distribution with OAC, signed-cookie `KeyGroup` reading `infra/keys/cf-signing.pub.pem`.
 - **`opennewsletter/media_pipeline_stack.py`** — `MediaPipelineStack`: `lambda-image-process` (shell stub, arm64, 1024 MB, `provided.al2023`), S3 `ObjectCreated` notification on `uploads/` prefix, least-privilege IAM.
@@ -414,26 +414,29 @@ After M7, every known gap was worked through and two read-only review agents (ba
 
 ### B5 — M1 operator tasks outstanding
 
-OAuth app registrations (Google / Apple / Facebook), Cognito hosted-UI domain, DNS records, the real CloudFront signing keypair, VAPID keys in Secrets Manager, and `cdk bootstrap` of the dev account are still owed by the human operator. These are non-blocking for code work but block the M3/M3.5/M4 deploy gates and any end-to-end auth verification. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+**Updated 2026-10-05.** Progress so far: domain decided (`betterloop.site`, bought on Namecheap — DNS stays on Namecheap's nameservers, no Route53 hosted zone, so ACM validation CNAMEs get added there manually when `cdk deploy` prints them); Cognito domain prefix picked; AWS CLI credentials fixed to use IAM user `bquinn17` via `aws login` (was briefly root — see note below) with `AdministratorAccess` + `SignInLocalDevelopmentAccess`; `cdk bootstrap` done (`CDKToolkit` stack `CREATE_COMPLETE`); `cargo-lambda` installed on macOS (clears part of B6); VAPID keypair generated and stored at `opennewsletter/vapid/dev` (required fixing `scripts/generate_vapid_keys.py` — the `py-vapid` API it called, `public_key_urlsafe_base64()`/`private_key_urlsafe_base64()`, doesn't exist in the installed 1.9.4; replaced with direct RFC 8292 raw-point encoding via `cryptography`); `ALARM_EMAIL` set.
+
+Still outstanding: Google + Facebook OAuth app registrations, the real CloudFront signing keypair (`infra/keys/cf-signing.pub.pem` is still the repo's dev placeholder), and the two corresponding Secrets Manager entries (`opennewsletter/oauth/google/dev`, `opennewsletter/oauth/facebook/dev`, `opennewsletter/cdn-signing/dev`). These are non-blocking for code work but block the M3/M3.5/M4 deploy gates and any end-to-end auth verification. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+
+**Decision — Apple IdP dropped (2026-10-05).** Sign In with Apple requires a paid Apple Developer membership ($99/yr); the owner declined. Removed `UserPoolIdentityProviderApple` from `AuthStack`, `apple_oauth_secret_arn` from `EnvConfig`, and the Apple step from `docs/milestone-1-operator-runbook.md`; updated the CDK test (`test_user_pool_two_idps`, was `_three_idps`) and every plan doc that listed three IdPs (`00`, `01`, `12`, `13`, `OpenNewsletter_spec.md`) to Google/Facebook only. `cdk synth --context env=dev` and `pytest infra/tests/` (54 passed) both verified green after the change. If Apple support is wanted later, re-add the IdP construct, the 4 config fields (`apple_client_id`/`apple_team_id`/`apple_key_id`/`apple_private_key_secret_arn` per `01` §4.1, collapsed to one `apple_oauth_secret_arn` in the actual `config.py`), and the operator-runbook step.
+
+**Note — root-credential near-miss.** `aws login` was initially run while signed into the AWS Console as the **root** user, so it issued short-term rotating keys under the root identity rather than an IAM user. `aws login` works with any identity you authenticate as in the browser; it doesn't itself pick a non-root one. Fixed by attaching `AdministratorAccess` + `SignInLocalDevelopmentAccess` to `bquinn17` and re-running `aws login`, signing in as that IAM user. Worth calling out in `docs/milestone-1-operator-runbook.md` §"AWS account and credentials" if that section gets revised.
 
 ### B6 — Lambda release builds (Windows/WSL2 only) + `cargo-lambda` not installed anywhere
 
 **Windows/WSL2**: `cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). That host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the test suite are unaffected. Fix: `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain; failing both, switch rustls to the `ring` backend.
 
-**macOS**: the gcc issue doesn't apply (Apple clang). `cargo-lambda` is not installed because Homebrew refuses its third-party tap until the user trusts it — an operator decision: `brew tap cargo-lambda/cargo-lambda && brew trust cargo-lambda/cargo-lambda && brew install cargo-lambda`.
+**macOS**: the gcc issue doesn't apply (Apple clang). `cargo-lambda` 1.9.2 is now installed (2026-10-05, see B5). Release artifacts exist under `backend/target/lambda/` for every binary built before M10, dated 2026-10-04 21:14. They include `image-process`, but that cross-compile has not been run through the M8 gate. **`engagement-api` has no artifact yet**: rebuild before deploying, or the stack falls back to the stub for it.
 
-On both machines no Lambda artifact has ever been produced. `ApiStack`/`NotificationsStack` fall back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth passes — deploying before this is cleared would ship stubs.
+**Windows/WSL2** has never produced a Lambda artifact. `ApiStack`/`NotificationsStack` fall back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth passes — deploying before this is cleared would ship stubs.
 
 ---
 
 ## Suggested next steps (in order)
 
-1. **Complete M1 operator tasks** (OAuth apps, VAPID keys, DNS, real CloudFront keypair) to clear B5. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
-2. **Install `cargo-lambda`** (B6) on whichever machine will deploy.
-3. **Bootstrap CDK** in the dev AWS account:
-   ```bash
-   source infra/.venv/bin/activate && npx aws-cdk@2 bootstrap aws://ACCOUNT_ID/us-east-1
-   ```
+1. **Finish the M1 operator tasks** to clear B5: Google/Facebook OAuth apps, the real CloudFront keypair and their Secrets Manager entries. VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+2. **Rebuild the Lambda artifacts** (`cargo lambda build --release --arm64`) so `engagement-api` gets one (B6).
+3. *(done 2026-10-05: CDK bootstrap)*
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
 5. **M6 gate**: after deploy, the curl save → save → publish dance against `PUT …/my-response` (`12` M6).
 6. **M7 gate**: `make fe`, then:
@@ -447,13 +450,16 @@ On both machines no Lambda artifact has ever been produced. `ApiStack`/`Notifica
    - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to promote and open
    - draft with images, reload, then publish text and poll answers
    - tick again to publish, then read the edition
-9. **Begin M10** (Engagement) — see the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+9. **M10 gate**: after deploy, two users comment on each other's published answers (one with an image), edit and delete a comment, and react with a ZWJ emoji (e.g. 👨‍👩‍👧‍👦) and a flag. An admin deletes the other user's comment. Check that API Gateway hands the Lambda the emoji path param decoded or encoded; the handler accepts both (`03` §8.6).
+10. **Begin M11** (Notifications). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
-- **Comment-image in-use check:** `DELETE /uploads/{id}` only refuses images referenced by the caller's published *answer*. Add the comment check with comments in M10.
+- **Comment author names: no cross-request cache.** `09` §1.5 suggests a 60s per-cold-start user cache. M10 does one deduped `BatchGetItem` per request instead. Add the cache if user reads show up as hot.
+- **`get_comment_by_id` walks the answer's whole `C#` range with a filter**, because there's no index on `comment_id`. That's fine at expected thread sizes; revisit if threads get long.
+- **The comment composer's image upload and the `[deleted]` placeholder** are only exercised in mock mode and component tests, since there's no deploy yet (M10 gate).
 - **Legacy mock query keys collide with real ones in mock mode.** `src/mocks/legacyQueries.ts` still caches `["config"]` and `["group", g]` with the legacy shapes, and `GroupAdminPage` (M12) uses them. With `VITE_USE_MOCKS=true`, opening the admin page can poison the real `/config` cache for the session. This goes away when M12 migrates the page.
 - **`utils/avatar.ts#avatarClasses` uses the legacy colour slugs** (coral/grape/mint…), not the API's `AvatarColorSlug` set. New M9 code uses `utils/avatarColor.ts`. `Avatar`'s `color` prop still falls back to the legacy table, so callers should pass `colorClassName`. Remove the legacy table with the last legacy page.
 - **`RespondPage` has no markdown formatting toolbar** (the legacy page had bold/italic/list buttons). The spec only requires Write/Preview. Add it if users ask.
@@ -464,7 +470,8 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`POST /admin/dev/tick/notify`** is not wired — it arrives with `lambda-notify-tick` in M11.
-- **Future-milestone stub crates all name their binary `bootstrap`**: `lambda-engagement`, `-push` and `-notify-tick` (`-media` and `-image-process` were renamed in M8). Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
+- **Future-milestone stub crates still name their binary `bootstrap`**: `lambda-push` and `-notify-tick` (`-engagement` was renamed `engagement-api` in M10). Every `cargo build` prints output-filename-collision warnings. Rename each to `<name>-api` (per `CLAUDE.md`) when its milestone implements it.
+- **The Rust toolchain is unpinned `stable`.** Rust 1.99 (2026-09-28) added clippy's `double_must_use`, which fired through `#[async_trait]` in `lambda-image-process/src/storage.rs`. It's now `allow`ed with a reason. A new stable can break `-D warnings` without any code change; pin a version in `rust-toolchain.toml` if that keeps happening.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth: the `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows aren't written until M11.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
 
@@ -642,34 +649,93 @@ Frontend 116 (was 52), across 22 files:
 
 ---
 
-## Handoff — starting M10 (Engagement)
+## M10 detail — what landed (2026-10-05)
+
+The lead read the spec, settled its gaps, and wrote the engagement contract into `shared/openapi.yaml` (then regenerated `api.ts`) before any agent started. Three agents then ran in parallel:
+- a Sonnet backend agent
+- a Haiku infra agent
+- a Sonnet frontend agent
+
+The backend and frontend agents hit a session limit and an auth expiry, and were resumed with their context. The backend agent never delivered its final report, so the lead audited its work directly (below).
+
+### Backend
+- `lambda-engagement`, binary renamed to `engagement-api`, laid out like `lambda-responses`. It serves all seven `03` §8 routes, with the check order fixed there: membership → cycle exists → not archived → published → answer resolves.
+- `domain::engagement`: `normalize_emoji` (percent-decode if needed, then NFC), `is_valid_emoji` (1–12 codepoints, with an `Extended_Pictographic` or regional-indicator codepoint), and `group_reactions` (count desc, earliest, emoji). `lambda-newsletters` now uses the same `group_reactions` (it used to sort by emoji) and the same `CommentResponse` hydration. Soft-deleted comments come back as placeholders instead of being filtered out.
+- `persistence::engagement`:
+  - a paginated `list_comments_page`
+  - `get_comment_by_id`
+  - transactional `create_comment`, `update_comment` and `soft_delete_comment`, which claim and release the comment image via `ImageMedia.attached_comment_id`
+  - `persistence::cursor` for the opaque cursor
+- `lambda-media` `DELETE /uploads/{id}` returns 409 `IMAGE_IN_USE` for a claimed comment image (the carried M9 gap).
+
+### Infrastructure
+- `ApiStack` gains the `Engagement` function (`engagement-api`). It gets the same `CDN_BASE_URL` environment as newsletters-api and table read/write via `_handler_lambda`.
+- The seven routes are wired.
+- `Makefile` gains `FUNCTION_engagement-api`.
+- CDK tests: route and arm64 coverage, plus a new env test.
+
+### Frontend
+- `api.engagement.*` client methods, with the emoji `encodeURIComponent`-ed.
+- Mutations: `useToggleReaction` patches the cached newsletter optimistically, takes the server's `ReactionsResponse` on success, rolls back on error, and cancels in-flight refetches first. `useAddComment`, `useEditComment` and `useDeleteComment` patch the cache, then invalidate.
+- `ReactionBar` has toggle pills, quick picks (🔥🤣❤️😍👍🎉) and a `+` picker. `EmojiPickerPopover` is now a curated 64-emoji grid plus a native input, and the `emoji-picker-element` dependency was dropped (the lazy chunk went from about 150 kB to 2.6 kB).
+- `CommentList`:
+  - the last 3 comments, with "Show all N" above
+  - a composer with a single `purpose="comment"` image
+  - inline edit, and a `ConfirmDialog` before delete; admins can delete any comment
+  - a `[deleted]` placeholder
+  - relative times, with the absolute time in the group's timezone as a tooltip
+- `MarkdownBody` gains `allowImages={false}` for comments.
+- `utils/emoji.ts` mirrors the server's emoji predicate.
+- `NewsletterPage` shows the reaction total in the published header (`04` §14a).
+- `api/mockEngagement.ts` is registered in `mockTransport`, and the published fixture is seeded with an edited comment, a deleted comment and reactions.
+- The legacy engagement hooks were removed from `src/mocks/`.
+
+### Bugs caught in lead review (fixed)
+- **An edit racing a delete could resurrect a deleted comment.** `update_comment` had no condition, so a PATCH landing just after a soft delete wrote the body back. It is now conditioned on `deleted_at` being absent or NULL, and the handler re-reads on a cancelled transaction to return 404 (deleted) or 422 (image claimed elsewhere). A regression test was added (`persistence/tests/engagement.rs`).
+- Reaction optimistic updates now `cancelQueries` before patching, so a stale in-flight refetch can't overwrite them.
+- The `ApiStack` docstring misattributed which milestone added which Lambda.
+- **Clippy 1.99's new `double_must_use` broke `-D warnings` in `lambda-image-process`.** This wasn't an M10 change; see Known gaps.
+
+### Decisions (recorded in `03` §8/§9.4/§13, `09` §1.1/§1.5/§2.3/§2.4, `02` §2.10)
+- **Engagement routes are nested under `questions/{questionId}`.** Comment and reaction rows are keyed on `(question, answerUser)`, and `responseId` alone has no index. The answer is resolved by matching `response_id` among that question's answers, and must be a published text answer, otherwise 404.
+- One `CommentResponse` (`displayName`, not `authorDisplayName`) is used both inline and on the engagement routes. Soft-deleted comments are returned with `deletedAt` set, an empty body and a null image.
+- **Comment images are claimed via `ImageMedia.attached_comment_id`,** set and cleared in the same transaction as the comment write.
+- **PATCH semantics:** an absent field is left unchanged, and `imageMediaId: null` removes the image. Only the author can edit; admins get 403.
+- Reaction PUT and DELETE return the updated `ReactionsResponse`.
+- No cross-request cache for author names (see Known gaps).
+
+### Tests
+- Backend 361 (was 308):
+  - `lambda-engagement` integration tests: comments 17, reactions 6
+  - engagement unit tests: 11
+  - contract-table rows for all seven routes
+  - the media in-use test
+  - the persistence race regression
+- CDK 54 (was 53): the new engagement env test. The Apple-IdP removal renamed an existing test but added none.
+- Frontend 163 (was 116):
+  - `emoji` 14 and `mockEngagement` 11
+  - `ReactionBar` 5 and `CommentList` 6
+  - `client` +7 and `markdown` +4
+
+---
+
+## Handoff — starting M11 (Notifications)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M10, `09-engagement.md` (all of it, especially §4 components, §5 sanitization and §8 tests), and `03` §8.
-2. **Know the M10 scope.** Backend and frontend:
-   - `lambda-engagement`: its stub binary is still named `bootstrap`; rename it to `engagement-api` per `CLAUDE.md`. Copy the `lambda-questions`/`lambda-responses` layout.
-   - comment and reaction routes (`03` §8), wired in `infra/opennewsletter/api_stack.py` with a `FUNCTION_engagement-api` entry in the `Makefile`
-   - the `shared/openapi.yaml` + `ROUTE_TABLE` update, then `scripts/codegen_types.sh`
-3. **Frontend:**
-   - Rewrite `components/newsletter/{CommentList,ReactionBar,EmojiPickerPopover}.tsx` off `src/mocks/` onto the real API.
-   - Mount them in the M10 slot in `AnswerCard.tsx`. Render comment bodies through `MarkdownBody` (`utils/markdown.tsx`), so sanitization stays in one place.
-   - Add mock routes to a new `api/mockEngagement.ts` and register it in `mockTransport.ts`'s route list.
-   - Add the reaction total to the published header (`04` §14a).
-   - Delete the legacy engagement hooks and types from `src/mocks/`.
-4. **Carry-forward:** add the comment-image in-use check to `DELETE /uploads/{id}` (see Known gaps).
-5. **Verify.**
-   - Frontend (macOS, from `frontend/`):
-     ```bash
-     export PATH="/opt/homebrew/bin:$PATH" && npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
-     ```
-   - Baselines: 116 frontend tests and ESLint 0 problems; 308 backend (`cargo test --workspace -- --test-threads=4`); 53 CDK.
-6. **Suggested split:**
-   - a Sonnet backend agent (`backend/`, `shared/openapi.yaml`, generated `api.ts`)
-   - a Haiku infra agent (`infra/`, `Makefile`)
-   - a Sonnet frontend agent (`frontend/src/components/newsletter/*`, `api/mockEngagement.ts`)
-
-   The lead writes the OpenAPI contract first, so the frontend agent can start in parallel.
+1. **Orient.** Read `CLAUDE.md`, then `12` M11, `07-notifications.md`, and `03` §10 (push routes) and §11a.2 (`POST /admin/dev/tick/notify`).
+2. **Know the M11 scope.**
+   - `lambda-push` and `lambda-notify-tick` are still stubs with binary `bootstrap`. Rename them (`push-api`, and `notify-tick` like `cycle-tick`) and copy the `lambda-engagement` layout.
+   - VAPID keys are in Secrets Manager at `opennewsletter/vapid/dev` (B5).
+   - The `NOTIFIED#…`/`TICK#NOTIFY` idempotency rows (`02`) land here.
+   - Wire the dev-only `POST /admin/dev/tick/notify`.
+3. **Frontend:** the service worker push handler, a subscribe/unsubscribe UI and per-group preferences (`PUT /push/preferences/{groupId}`).
+4. **Verify** with the commands in `CLAUDE.md`. Baselines: 361 backend, 54 CDK, 163 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`); from inside `infra/` its import sorting misfires. Put `infra/.venv/bin` first on `PATH` for `cdk synth`.
+5. **Suggested split**, same as M10:
+   - the lead writes the contract first
+   - a Sonnet backend agent
+   - a Haiku infra agent
+   - a Sonnet frontend agent
 
 ---
 

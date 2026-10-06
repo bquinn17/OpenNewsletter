@@ -183,3 +183,92 @@ describe("api.media", () => {
     expect(requestInit.credentials).toBe("include");
   });
 });
+
+describe("api.engagement", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    mockedManager.getUser.mockResolvedValue(null);
+  });
+
+  function basePath(): string {
+    return "/groups/g1/newsletters/202606/questions/q1/responses/r1";
+  }
+
+  it("builds the comments list URL with limit and cursor", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }));
+
+    await api.engagement.listComments("g1", "202606", "q1", "r1", { limit: 10, cursor: "c1" });
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain(`${basePath()}/comments?`);
+    expect(url).toContain("limit=10");
+    expect(url).toContain("cursor=c1");
+  });
+
+  it("POSTs a new comment to the comments collection", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(201, { commentId: "c1" }));
+
+    await api.engagement.createComment("g1", "202606", "q1", "r1", { body: "hi" });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${basePath()}/comments`);
+    expect(requestInit.method).toBe("POST");
+    expect(requestInit.body).toBe(JSON.stringify({ body: "hi" }));
+  });
+
+  it("PATCHes a specific comment by id", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { commentId: "c1" }));
+
+    await api.engagement.patchComment("g1", "202606", "q1", "r1", "c1", { body: "edited" });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${basePath()}/comments/c1`);
+    expect(requestInit.method).toBe("PATCH");
+  });
+
+  it("DELETEs a specific comment by id", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await api.engagement.deleteComment("g1", "202606", "q1", "r1", "c1");
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${basePath()}/comments/c1`);
+    expect(requestInit.method).toBe("DELETE");
+  });
+
+  it("GETs reactions for an answer", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { reactionGroups: [], myReactions: [] }));
+
+    await api.engagement.listReactions("g1", "202606", "q1", "r1");
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain(`${basePath()}/reactions`);
+  });
+
+  it("PUTs a reaction with the emoji URL-encoded in the path", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { reactionGroups: [], myReactions: [] }));
+
+    await api.engagement.putReaction("g1", "202606", "q1", "r1", "🔥");
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${basePath()}/reactions/${encodeURIComponent("🔥")}`);
+    expect(requestInit.method).toBe("PUT");
+  });
+
+  it("DELETEs a reaction with the emoji URL-encoded in the path", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { reactionGroups: [], myReactions: [] }));
+
+    await api.engagement.deleteReaction("g1", "202606", "q1", "r1", "👨‍👩‍👧‍👦");
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${basePath()}/reactions/${encodeURIComponent("👨‍👩‍👧‍👦")}`);
+    expect(requestInit.method).toBe("DELETE");
+  });
+});

@@ -15,6 +15,7 @@ type S = components["schemas"];
 type AskedBy = S["AskedBy"];
 type OpenQuestion = S["OpenQuestionResponse"];
 type PublishedQuestion = S["PublishedQuestionResponse"];
+type PublishedAnswer = S["PublishedAnswerResponse"];
 type MyResponseSummary = S["MyResponseSummary"];
 type ResponseDto = S["ResponseDto"];
 type SaveResponseRequest = S["SaveResponseRequest"];
@@ -225,7 +226,30 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         body: "Can't beat the **ridge walk at sunset** — golden light the whole way down.",
         images: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 1000).toISOString(),
-        comments: [],
+        // Seeded for M10 (`09-engagement.md` §1) — one edited, one soft-deleted,
+        // so VITE_USE_MOCKS=true demonstrates both without any manual steps.
+        comments: [
+          {
+            commentId: "cmt_seed_1",
+            authorUserId: CALLER_ID,
+            displayName: "Quinn",
+            body: "Same — the switchbacks are brutal.",
+            image: null,
+            createdAt: new Date(Date.now() - 27 * 24 * 60 * 60_000).toISOString(),
+            editedAt: new Date(Date.now() - 27 * 24 * 60 * 60_000 + 60_000).toISOString(),
+            deletedAt: null,
+          },
+          {
+            commentId: "cmt_seed_2",
+            authorUserId: "u_alex",
+            displayName: "Alex",
+            body: "",
+            image: null,
+            createdAt: new Date(Date.now() - 26 * 24 * 60 * 60_000).toISOString(),
+            editedAt: null,
+            deletedAt: new Date(Date.now() - 25 * 24 * 60 * 60_000).toISOString(),
+          },
+        ],
         reactionGroups: [{ emoji: "🔥", count: 2, reactedByMe: false }],
       },
       {
@@ -396,6 +420,23 @@ const PUBLISHED_QUESTIONS: Record<string, PublishedQuestion[]> = {
 
 function findSummary(groupId: string, cycleId: string): S["NewsletterSummary"] | undefined {
   return newsletters[groupId]?.find((n) => n.cycleId === cycleId);
+}
+
+/**
+ * The live `PublishedAnswerResponse` object backing one published text
+ * answer — a direct reference, not a copy, so `mockEngagement.ts` can mutate
+ * its `comments`/`reactionGroups` in place and have the next `GET` newsletter
+ * pick up the change without a second source of truth.
+ */
+export function findPublishedAnswer(
+  groupId: string,
+  cycleId: string,
+  questionId: string,
+  responseId: string,
+): PublishedAnswer | undefined {
+  const questions = PUBLISHED_QUESTIONS[`${groupId}|${cycleId}`] ?? [];
+  const question = questions.find((q) => q.questionId === questionId && q.kind === "text");
+  return question?.answers?.find((a) => a.responseId === responseId);
 }
 
 function handleGetDetail(groupId: string, cycleId: string): S["NewsletterDetailResponse"] {
