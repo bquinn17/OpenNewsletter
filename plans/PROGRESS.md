@@ -22,7 +22,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
 | **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
-| **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 427 backend, 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
+| **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 430 backend (427 + 3 from the post-M11 review fixes), 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
 | M12 | Admin UI | ⬜ | |
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
@@ -481,7 +481,6 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
-- **The Rust toolchain is unpinned `stable`.** Rust 1.99 (2026-09-28) added clippy's `double_must_use`, which fired through `#[async_trait]` in `lambda-image-process/src/storage.rs`. It's now `allow`ed with a reason. A new stable can break `-D warnings` without any code change; pin a version in `rust-toolchain.toml` if that keeps happening.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth (the `NOTIFIED#…`/`TICK#NOTIFY` rows) is resolved: M11 writes them.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
 
@@ -522,6 +521,10 @@ The lead settled the spec's gaps (decisions D1–D11, folded into the plan docs)
 - **The push failure-rate alarm evaluated over 5 minutes, not 30.** The `MathExpression` overrode its metrics' periods to 300s; `period` is now set on the expression, and a CDK test asserts 1800s.
 - **The mock-mode VAPID key wasn't a valid P-256 point**, so `PushManager.subscribe` threw in mock mode. Replaced with a real throwaway key.
 - The cycle-tick invoke was never wired by the backend agent (only the `aws-sdk-lambda` dependency landed); the lead wrote it.
+
+### Bugs found in post-M11 code review (fixed 2026-10-06)
+- **Fan-outs sent to subscriptions one at a time under a fixed time limit.** Each send could take up to 10s. At 60s, 6 hung endpoints were enough to kill a cycle-open/publication fan-out partway through. Its marker was already claimed, so retries skipped it and the remaining members silently got nothing. The same applied to notify-tick's 120s. `POST /push/test` (up to 10 devices × 10s) could pass API Gateway's 30s limit and 503. Now every fan-out sends concurrently (16 in flight) with a send cutoff under each limit. Skipped deliveries are logged at ERROR and counted as `PushSkipped`, and notify-tick stops claiming new cycles after 60s (`07` §6.2). Tests: `lambda-push/tests/delivery.rs` (concurrency, cutoff) and a `metrics` unit test.
+- **The push failure-rate alarm couldn't see a total outage.** With every send failing, `PushSent` has no data, so `failed / (sent + failed)` was missing, which counts as not breaching. Now `FILL(sent, 0)`; the CDK test asserts it.
 
 ### Decisions (recorded in `07` §2/§5/§6/§7/§8/§10/§11/§13, `03` §10/§11a.2, `02` §2.15/AP15, `04` §5.2, `01` §7.2/§7.3)
 - Own Web Push implementation, not the `web-push` crate (above). The VAPID secret holds raw base64url scalars.
@@ -758,7 +761,7 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 - **An edit racing a delete could resurrect a deleted comment.** `update_comment` had no condition, so a PATCH landing just after a soft delete wrote the body back. It is now conditioned on `deleted_at` being absent or NULL, and the handler re-reads on a cancelled transaction to return 404 (deleted) or 422 (image claimed elsewhere). A regression test was added (`persistence/tests/engagement.rs`).
 - Reaction optimistic updates now `cancelQueries` before patching, so a stale in-flight refetch can't overwrite them.
 - The `ApiStack` docstring misattributed which milestone added which Lambda.
-- **Clippy 1.99's new `double_must_use` broke `-D warnings` in `lambda-image-process`.** This wasn't an M10 change; see Known gaps.
+- **Clippy 1.99's new `double_must_use` broke `-D warnings` in `lambda-image-process`.** This wasn't an M10 change. It fired through `#[async_trait]` and is now `allow`ed with a reason. In response, `rust-toolchain.toml` is pinned to `1.99.0` (2026-10-06), so later stable releases can't break CI unannounced.
 
 ### Bugs caught in post-M10 code review (fixed, with regression tests)
 - **Replacing a comment's image sent `imageMediaId: null`.** In the edit form, "Remove image" followed by a new upload dropped the image, or got a 422 if the text was empty. A freshly uploaded image now wins over the removal flag (`CommentList.tsx`).

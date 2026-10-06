@@ -38,6 +38,14 @@ Notes:
 npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
 ```
 
+**CDK synth** (from `infra/`; same command on both machines, but on macOS prefix `export PATH="/opt/homebrew/bin:$PATH" &&`):
+
+```bash
+source .venv/bin/activate && npx aws-cdk@2 synth --quiet
+```
+
+Use exactly `npx aws-cdk@2`. Don't use `npx cdk` or a global `cdk` install. When npx runs a globally installed binary it puts that binary's directory first on `PATH`, and on macOS that's `/opt/homebrew/bin`, whose `python3` then shadows the venv's. Synth then fails with `No module named 'aws_cdk'` even though the venv is fine.
+
 Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/13-dev-environments.md) (which also covers which test layers need Docker at all).
 
 ## What this app is

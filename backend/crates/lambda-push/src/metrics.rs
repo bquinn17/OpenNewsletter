@@ -3,7 +3,7 @@
 //! fan-out/test call; CloudWatch Logs extracts the metrics directly from
 //! the structured log, no separate `PutMetricData` call needed.
 
-use crate::delivery::DeliveryOutcome;
+use crate::delivery::{DeliveryOutcome, DeliveryResult};
 use serde_json::json;
 
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub struct FanoutMetrics {
     sent: u64,
     failed: u64,
     expired: u64,
+    skipped: u64,
     latencies_ms: Vec<u64>,
 }
 
@@ -22,6 +23,7 @@ impl FanoutMetrics {
             sent: 0,
             failed: 0,
             expired: 0,
+            skipped: 0,
             latencies_ms: Vec::new(),
         }
     }
@@ -46,6 +48,17 @@ impl FanoutMetrics {
         self.latencies_ms.push(latency_ms);
     }
 
+    /// Records a [`crate::delivery::send_all`] batch; a `None` entry (not
+    /// attempted before the send cutoff) counts as skipped.
+    pub fn record_all(&mut self, results: &[Option<DeliveryResult>]) {
+        for result in results {
+            match result {
+                Some(r) => self.record(r.outcome, r.latency_ms),
+                None => self.skipped += 1,
+            }
+        }
+    }
+
     /// Emits the EMF log line to stdout. A no-op call (no sends recorded)
     /// still emits a zeroed line — useful for confirming a fan-out ran at
     /// all.
@@ -61,6 +74,7 @@ impl FanoutMetrics {
                         {"Name": "PushSent", "Unit": "Count"},
                         {"Name": "PushFailed", "Unit": "Count"},
                         {"Name": "PushExpired", "Unit": "Count"},
+                        {"Name": "PushSkipped", "Unit": "Count"},
                         {"Name": "PushLatencyMs", "Unit": "Milliseconds"},
                     ],
                 }],
@@ -69,6 +83,7 @@ impl FanoutMetrics {
             "PushSent": self.sent,
             "PushFailed": self.failed,
             "PushExpired": self.expired,
+            "PushSkipped": self.skipped,
             "PushLatencyMs": self.latencies_ms,
         });
         println!("{line}");
@@ -90,5 +105,19 @@ mod tests {
         assert_eq!(m.expired, 1);
         assert_eq!(m.failed, 1);
         assert_eq!(m.latencies_ms, vec![100, 150, 5, 20]);
+    }
+
+    #[test]
+    fn record_all_counts_unattempted_deliveries_as_skipped() {
+        let mut m = FanoutMetrics::new("cycle_open");
+        let delivered = DeliveryResult {
+            outcome: DeliveryOutcome::Delivered,
+            status_code: Some(201),
+            latency_ms: 40,
+        };
+        m.record_all(&[Some(delivered), None, None]);
+        assert_eq!(m.sent, 1);
+        assert_eq!(m.skipped, 2);
+        assert_eq!(m.latencies_ms, vec![40]);
     }
 }

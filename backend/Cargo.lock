@@ -2642,6 +2642,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "domain",
+ "futures",
  "hkdf",
  "lambda_http",
  "lambda_runtime",

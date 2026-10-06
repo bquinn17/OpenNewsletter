@@ -104,6 +104,27 @@ pub const MAX_PUSH_SUBSCRIPTIONS_PER_USER: usize = 10;
 pub const PUSH_TTL_SECONDS: u64 = 86_400;
 /// Per-send HTTP timeout for the Web Push request itself.
 pub const PUSH_SEND_TIMEOUT_SECS: u64 = 10;
+/// How many Web Push requests one fan-out keeps in flight at once
+/// (`07-notifications.md` §6.2, decided M11 review). A dead endpoint costs
+/// one slot for up to `PUSH_SEND_TIMEOUT_SECS` instead of stalling every
+/// member queued behind it.
+pub const PUSH_SEND_CONCURRENCY: usize = 16;
+/// Send cutoffs: no *new* send starts once this many seconds have passed
+/// since the work began; sends already in flight run to completion. Each
+/// cutoff leaves `PUSH_SEND_TIMEOUT_SECS` plus ~5s of bookkeeping headroom
+/// under the hard limit it protects, so a send is never killed mid-flight.
+///
+/// Cycle-open / publication fan-out — `push-api` Lambda timeout is 60s.
+pub const PUSH_FANOUT_SEND_CUTOFF_SECS: u64 = 45;
+/// `POST /push/test` — API Gateway's integration timeout is 30s.
+pub const PUSH_TEST_SEND_CUTOFF_SECS: u64 = 15;
+/// Deadline-reminder sends within one notify tick — `notify-tick` Lambda
+/// timeout is 120s.
+pub const NOTIFY_TICK_SEND_CUTOFF_SECS: u64 = 105;
+/// A notify tick claims no further cycles after this many seconds; the
+/// rest stay unclaimed and are picked up by the next tick 15 minutes later
+/// rather than being claimed and then cut off.
+pub const NOTIFY_TICK_CYCLE_CUTOFF_SECS: u64 = 60;
 /// Push payload JSON must serialize to at most this many bytes before
 /// encryption (`07-notifications.md` §5, M11 decision D6).
 pub const MAX_PUSH_PAYLOAD_BYTES: usize = 3_000;

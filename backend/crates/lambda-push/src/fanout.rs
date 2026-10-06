@@ -11,12 +11,15 @@ use domain::{
     ResponseStatus,
 };
 use persistence::{groups, newsletters, push as push_repo, questions, responses};
+use shared::config::PUSH_FANOUT_SEND_CUTOFF_SECS;
+use std::time::{Duration, Instant};
 
 /// `cycle_open_fanout` (`07-notifications.md` §6.1). Skipped entirely when
 /// `group.notificationSettings.onCycleOpen` is false; per member skipped
 /// when their `NotificationPref.cycleOpen` is false or they have zero
 /// subscriptions. At-most-once via the `NOTIFIED#OPEN` marker.
 pub async fn cycle_open_fanout(state: &AppState, group_id: &GroupId, cycle_id: &CycleId) {
+    let cutoff = send_cutoff();
     if !claim_marker(state, group_id, cycle_id, Marker::Open).await {
         return;
     }
@@ -52,6 +55,7 @@ pub async fn cycle_open_fanout(state: &AppState, group_id: &GroupId, cycle_id: &
         group_id,
         &payload,
         cycle_open_should_send,
+        cutoff,
         &mut fanout_metrics,
     )
     .await;
@@ -62,6 +66,7 @@ pub async fn cycle_open_fanout(state: &AppState, group_id: &GroupId, cycle_id: &
 /// switch, no per-user preference. At-most-once via the `NOTIFIED#PUBLISH`
 /// marker.
 pub async fn publication_fanout(state: &AppState, group_id: &GroupId, cycle_id: &CycleId) {
+    let cutoff = send_cutoff();
     if !claim_marker(state, group_id, cycle_id, Marker::Publish).await {
         return;
     }
@@ -107,8 +112,25 @@ pub async fn publication_fanout(state: &AppState, group_id: &GroupId, cycle_id: 
     let payload = payload::publication(&group.name, group_id, cycle_id, answers, polls);
 
     let mut fanout_metrics = FanoutMetrics::new("publication");
-    fan_out_to_members(state, group_id, &payload, |_| true, &mut fanout_metrics).await;
+    fan_out_to_members(
+        state,
+        group_id,
+        &payload,
+        |_| true,
+        cutoff,
+        &mut fanout_metrics,
+    )
+    .await;
     fanout_metrics.emit();
+}
+
+/// The send cutoff for this invocation, measured from its start
+/// (`PUSH_FANOUT_SEND_CUTOFF_SECS`). The marker is claimed before sending,
+/// so a retry never resumes a cut-off fan-out — the cutoff instead keeps
+/// the Lambda from being killed partway, and `delivery::send_all` logs and
+/// counts anything it had to skip.
+fn send_cutoff() -> Instant {
+    Instant::now() + Duration::from_secs(PUSH_FANOUT_SEND_CUTOFF_SECS)
 }
 
 enum Marker {
@@ -180,16 +202,17 @@ async fn load_newsletter(
     }
 }
 
-/// Sequential fan-out over a group's members (`07-notifications.md` §6.2):
-/// resolve the VAPID keys once, then for each member apply `should_send` to
-/// their (possibly absent) `NotificationPref`, skip members with zero
-/// subscriptions, and send the same `payload` to every remaining
-/// subscription.
+/// Fan-out over a group's members (`07-notifications.md` §6.2): resolve the
+/// VAPID keys once, then for each member apply `should_send` to their
+/// (possibly absent) `NotificationPref` and gather their subscriptions;
+/// finally send the same `payload` to every gathered subscription
+/// concurrently via `delivery::send_all`, starting none after `cutoff`.
 async fn fan_out_to_members(
     state: &AppState,
     group_id: &GroupId,
     payload: &PushPayload,
     should_send: impl Fn(Option<&NotificationPref>) -> bool,
+    cutoff: Instant,
     fanout_metrics: &mut FanoutMetrics,
 ) {
     let members = match groups::list_members_for_group(&state.repo, group_id).await {
@@ -208,6 +231,7 @@ async fn fan_out_to_members(
         }
     };
 
+    let mut targets = Vec::new();
     for member in members {
         let pref = match push_repo::get_pref(&state.repo, &member.user_id, group_id).await {
             Ok(p) => p,
@@ -227,17 +251,24 @@ async fn fan_out_to_members(
                 continue;
             }
         };
-        for sub in subs {
-            let result = delivery::send_one(
-                &state.repo,
-                state.sender.as_ref(),
-                vapid,
-                &member.user_id,
-                &sub,
-                payload,
-            )
-            .await;
-            fanout_metrics.record(result.outcome, result.latency_ms);
-        }
+        targets.extend(subs.into_iter().map(|sub| (member.user_id.clone(), sub)));
     }
+
+    let deliveries: Vec<_> = targets
+        .iter()
+        .map(|(user_id, sub)| delivery::Delivery {
+            user_id,
+            sub,
+            payload,
+        })
+        .collect();
+    let results = delivery::send_all(
+        &state.repo,
+        state.sender.as_ref(),
+        vapid,
+        &deliveries,
+        cutoff,
+    )
+    .await;
+    fanout_metrics.record_all(&results);
 }

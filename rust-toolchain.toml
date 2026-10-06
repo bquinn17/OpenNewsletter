@@ -1,4 +1,7 @@
 [toolchain]
-channel = "stable"
+# Pinned so a new stable release can't break `clippy -D warnings` without a code
+# change (Rust 1.99 did, via `double_must_use`). Bump deliberately: change this,
+# then run fmt, clippy and the full test suite (`CLAUDE.md`).
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

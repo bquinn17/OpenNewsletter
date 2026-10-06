@@ -14,6 +14,8 @@ use domain::api::{
 use domain::{ApiError, GroupId, NotificationPref, PushSubscription, SubscriptionId, UserId};
 use persistence::{auth, groups, push as push_repo};
 use sha2::{Digest, Sha256};
+use shared::config::PUSH_TEST_SEND_CUTOFF_SECS;
+use std::time::{Duration, Instant};
 
 /// `POST /push/subscribe` (§10.1). Upserts by `(userId, endpointHash)`.
 pub async fn subscribe(
@@ -83,8 +85,12 @@ pub async fn list_subscriptions(
 }
 
 /// `POST /push/test` (§10.4, `07-notifications.md` §9). A caller with no
-/// subscriptions gets an empty list.
+/// subscriptions gets an empty list. Sends to every device concurrently so
+/// the reply lands inside API Gateway's 30s limit even when several
+/// endpoints hang; a device not attempted before the cutoff reports
+/// `failed` with no status code.
 pub async fn send_test(state: &AppState, caller: &UserId) -> Result<PushTestResponse, ApiError> {
+    let cutoff = Instant::now() + Duration::from_secs(PUSH_TEST_SEND_CUTOFF_SECS);
     let subs = push_repo::list_subs_for_user(&state.repo, caller)
         .await
         .map_err(|e| {
@@ -99,29 +105,39 @@ pub async fn send_test(state: &AppState, caller: &UserId) -> Result<PushTestResp
 
     let vapid = state.vapid_keys().await?;
     let payload = payload::test();
+    let deliveries: Vec<_> = subs
+        .iter()
+        .map(|sub| delivery::Delivery {
+            user_id: caller,
+            sub,
+            payload: &payload,
+        })
+        .collect();
+    let sent = delivery::send_all(
+        &state.repo,
+        state.sender.as_ref(),
+        vapid,
+        &deliveries,
+        cutoff,
+    )
+    .await;
+
     let mut fanout_metrics = metrics::FanoutMetrics::new("test");
-    let mut results = Vec::with_capacity(subs.len());
-    for sub in subs {
-        let user_agent = sub.user_agent.clone();
-        let endpoint_hash = sub.endpoint_hash.clone();
-        let result = delivery::send_one(
-            &state.repo,
-            state.sender.as_ref(),
-            vapid,
-            caller,
-            &sub,
-            &payload,
-        )
-        .await;
-        fanout_metrics.record(result.outcome, result.latency_ms);
-        results.push(PushTestResult {
-            subscription_id: SubscriptionId::new(endpoint_hash),
-            user_agent,
-            outcome: to_api_outcome(result.outcome),
-            status_code: result.status_code,
-        });
-    }
+    fanout_metrics.record_all(&sent);
     fanout_metrics.emit();
+
+    let results = subs
+        .into_iter()
+        .zip(sent)
+        .map(|(sub, result)| PushTestResult {
+            subscription_id: SubscriptionId::new(sub.endpoint_hash),
+            user_agent: sub.user_agent,
+            outcome: result
+                .as_ref()
+                .map_or(PushDeliveryOutcome::Failed, |r| to_api_outcome(r.outcome)),
+            status_code: result.and_then(|r| r.status_code),
+        })
+        .collect();
     Ok(PushTestResponse { results })
 }
 

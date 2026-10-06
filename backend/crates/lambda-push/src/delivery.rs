@@ -7,8 +7,9 @@ use crate::sender::{PushSender, SendResult};
 use crate::webpush::{self, VapidKeys};
 use chrono::Utc;
 use domain::{PushSubscription, UserId};
+use futures::{future, stream, StreamExt};
 use persistence::{push as push_repo, Repo};
-use shared::config::PUSH_TTL_SECONDS;
+use shared::config::{PUSH_SEND_CONCURRENCY, PUSH_TTL_SECONDS};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +111,54 @@ pub async fn send_one(
         status_code,
         latency_ms,
     }
+}
+
+/// One message for one device.
+pub struct Delivery<'a> {
+    pub user_id: &'a UserId,
+    pub sub: &'a PushSubscription,
+    pub payload: &'a PushPayload,
+}
+
+/// Sends every delivery via [`send_one`], up to `PUSH_SEND_CONCURRENCY` at
+/// once, and starts no new send at or after `cutoff`. Sends already in
+/// flight are never cancelled, so their §3.2 bookkeeping always lands.
+///
+/// Returns one entry per delivery, in input order. A `None` entry wasn't
+/// attempted because the cutoff passed; those are logged at ERROR here so a
+/// truncated fan-out is never silent.
+pub async fn send_all(
+    repo: &Repo,
+    sender: &dyn PushSender,
+    vapid: &VapidKeys,
+    deliveries: &[Delivery<'_>],
+    cutoff: Instant,
+) -> Vec<Option<DeliveryResult>> {
+    let mut results: Vec<Option<DeliveryResult>> = vec![None; deliveries.len()];
+    stream::iter(deliveries.iter().enumerate())
+        .map(|(i, d)| async move {
+            if Instant::now() >= cutoff {
+                return (i, None);
+            }
+            let result = send_one(repo, sender, vapid, d.user_id, d.sub, d.payload).await;
+            (i, Some(result))
+        })
+        .buffer_unordered(PUSH_SEND_CONCURRENCY)
+        .for_each(|(i, result)| {
+            results[i] = result;
+            future::ready(())
+        })
+        .await;
+
+    let skipped = results.iter().filter(|r| r.is_none()).count();
+    if skipped > 0 {
+        tracing::error!(
+            skipped,
+            total = deliveries.len(),
+            "push send cutoff reached; remaining deliveries were not attempted"
+        );
+    }
+    results
 }
 
 async fn record_failure(repo: &Repo, user_id: &UserId, endpoint_hash: &str) {

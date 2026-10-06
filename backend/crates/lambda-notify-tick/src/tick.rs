@@ -11,7 +11,10 @@ use push::metrics::FanoutMetrics;
 use push::state::AppState;
 use push::{delivery, payload};
 use serde::Serialize;
-use shared::config::MAX_REMINDER_OFFSET_HOURS;
+use shared::config::{
+    MAX_REMINDER_OFFSET_HOURS, NOTIFY_TICK_CYCLE_CUTOFF_SECS, NOTIFY_TICK_SEND_CUTOFF_SECS,
+};
+use std::time::Instant;
 
 /// One deadline-reminder fan-out this tick ran
 /// (`plans/03-api-contract.md` §11a.2). This route/tick only ever reports
@@ -36,8 +39,16 @@ pub struct NotifyTickSummary {
 /// Run one full tick: find every `open` cycle whose `responseCloseAt` falls
 /// within the configurable max offset, fan out at most one deadline
 /// reminder per cycle, then record the sentinel.
+///
+/// Time-boxed to fit the Lambda timeout: no cycle is claimed after
+/// `NOTIFY_TICK_CYCLE_CUTOFF_SECS` (the rest stay unclaimed and the next
+/// tick picks them up), and no send starts after
+/// `NOTIFY_TICK_SEND_CUTOFF_SECS`.
 pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
     let now = Utc::now();
+    let started = Instant::now();
+    let cycle_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_CYCLE_CUTOFF_SECS);
+    let send_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_SEND_CUTOFF_SECS);
     let mut fanouts = Vec::new();
 
     let candidates = match newsletters::list_open_cycles_closing_within(
@@ -54,8 +65,16 @@ pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
         }
     };
 
-    for nl in candidates {
-        if let Some(fanout) = process_cycle(state, &nl, now).await {
+    let total = candidates.len();
+    for (i, nl) in candidates.into_iter().enumerate() {
+        if Instant::now() >= cycle_cutoff {
+            tracing::warn!(
+                deferred = total - i,
+                "notify tick cycle cutoff reached; remaining cycles deferred to the next tick"
+            );
+            break;
+        }
+        if let Some(fanout) = process_cycle(state, &nl, now, send_cutoff).await {
             fanouts.push(fanout);
         }
     }
@@ -76,6 +95,7 @@ async fn process_cycle(
     state: &AppState,
     nl: &Newsletter,
     now: DateTime<Utc>,
+    send_cutoff: Instant,
 ) -> Option<NotifyFanout> {
     let group = match groups::get_group(&state.repo, &nl.group_id).await {
         Ok(Some(g)) => g,
@@ -151,6 +171,7 @@ async fn process_cycle(
         offset_to_send,
         smallest_offset_overall,
         tz,
+        send_cutoff,
     )
     .await;
 
@@ -171,6 +192,7 @@ async fn fan_out_deadline_reminder(
     offset_hours: u32,
     smallest_offset_overall: u32,
     tz: Tz,
+    send_cutoff: Instant,
 ) -> FanoutMetrics {
     let mut fanout_metrics = FanoutMetrics::new("deadline_reminder");
 
@@ -192,6 +214,9 @@ async fn fan_out_deadline_reminder(
 
     let total_questions = nl.locked_question_ids.len() as u32;
 
+    // Each member's message differs (their own progress), so gather
+    // (user, subscriptions, message) first, then send everything at once.
+    let mut targets = Vec::new();
     for member in members {
         let pref = match push_repo::get_pref(&state.repo, &member.user_id, &nl.group_id).await {
             Ok(p) => p,
@@ -249,19 +274,28 @@ async fn fan_out_deadline_reminder(
             is_done,
         );
 
-        for sub in subs {
-            let result = delivery::send_one(
-                &state.repo,
-                state.sender.as_ref(),
-                vapid,
-                &member.user_id,
-                &sub,
-                &message,
-            )
-            .await;
-            fanout_metrics.record(result.outcome, result.latency_ms);
-        }
+        targets.push((member.user_id, subs, message));
     }
+
+    let deliveries: Vec<_> = targets
+        .iter()
+        .flat_map(|(user_id, subs, message)| {
+            subs.iter().map(move |sub| delivery::Delivery {
+                user_id,
+                sub,
+                payload: message,
+            })
+        })
+        .collect();
+    let results = delivery::send_all(
+        &state.repo,
+        state.sender.as_ref(),
+        vapid,
+        &deliveries,
+        send_cutoff,
+    )
+    .await;
+    fanout_metrics.record_all(&results);
 
     fanout_metrics.emit();
     fanout_metrics

@@ -152,7 +152,17 @@ for member in members:
 
 ### 6.2 Concurrency
 
-Members are fanned out sequentially within the Lambda invocation. With ≤50 members per group and Web Push send taking ~200ms median, this finishes in < 15s.
+Every fan-out (cycle-open, deadline reminder, publication, test push) first gathers its recipients' subscriptions, then sends via `delivery::send_all`: up to `PUSH_SEND_CONCURRENCY` (16) requests in flight at once, each with the `PUSH_SEND_TIMEOUT_SECS` (10s) timeout. A dead endpoint costs one slot for 10s instead of delaying everyone queued behind it. Sending one at a time was dropped after the M11 review: with each send able to take up to 10s, 6 hung endpoints were enough to exhaust the 60s `push-api` timeout.
+
+**Send cutoffs (decided post-M11 review).** No *new* send starts after a cutoff measured from the start of the work. Sends already in flight always finish, so their §3.2 bookkeeping lands. Each cutoff leaves the 10s send timeout plus ~5s headroom under the hard limit it protects:
+
+| Work | Hard limit | Cutoff (`shared::config`) |
+|---|---|---|
+| Cycle-open / publication fan-out | `push-api` Lambda, 60s | `PUSH_FANOUT_SEND_CUTOFF_SECS` = 45 |
+| `POST /push/test` | API Gateway integration, 30s | `PUSH_TEST_SEND_CUTOFF_SECS` = 15 |
+| Deadline-reminder sends in one notify tick | `notify-tick` Lambda, 120s | `NOTIFY_TICK_SEND_CUTOFF_SECS` = 105 |
+
+Markers are still claimed before sending (at-most-once), so a delivery skipped at the cutoff is never retried. It is, however, never silent: `send_all` logs it at ERROR and it counts toward the `PushSkipped` metric (§13). A test-push device that is skipped reports `failed` with no status code. In addition, a notify tick claims no further cycles after `NOTIFY_TICK_CYCLE_CUTOFF_SECS` (60s); those cycles' markers stay unclaimed, so the next tick (15 min later) sends their reminders instead of claiming them and then running out of time.
 
 If a group ever exceeds 200 members (we'd revisit the soft cap first), refactor to batch via SQS.
 
@@ -315,12 +325,13 @@ Metrics:
   PushSent (count)
   PushFailed (count)
   PushExpired (count)        # 410/404 → subscription deleted
+  PushSkipped (count)        # not attempted: send cutoff reached (§6.2)
   PushLatencyMs (p50/p95/p99)
 ```
 
 One EMF line per fan-out (or test push), with dimension sets `[["kind"], []]` so the alarm can use the dimensionless series.
 
-Alarm: PushFailed/(PushSent+PushFailed) > 20% over 30 min → SNS to operator.
+Alarm: PushFailed/(FILL(PushSent,0)+PushFailed) > 20% over 30 min → SNS to operator. The `FILL` matters: in a total outage `PushSent` has no datapoints, and without it the expression is missing (= not breaching) at a 100% failure rate.
 
 ---
 

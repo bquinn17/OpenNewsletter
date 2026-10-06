@@ -87,7 +87,7 @@ These apply regardless of language.
 ## 2. Rust
 
 ### 2.1 Toolchain
-- Pinned via `rust-toolchain.toml` (1.85+ stable; channel pinned to `stable` in `rust-toolchain.toml`). Don't override locally.
+- Pinned via `rust-toolchain.toml` to an exact release (currently `1.99.0`). Don't override locally. To upgrade, bump the version there and re-run fmt, clippy with `-D warnings` and the full test suite in the same change.
 - Edition 2021.
 - `cargo-lambda` for Lambda builds.
 

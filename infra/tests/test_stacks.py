@@ -1079,6 +1079,14 @@ def test_push_failure_rate_alarm_exists(
         if "MetricStat" in q
     ]
     assert periods == [1800, 1800]
+    # A total outage emits no PushSent datapoints; without FILL the expression
+    # goes missing and the alarm reads "not breaching" at a 100% failure rate.
+    (expression,) = [
+        q["Expression"]
+        for q in push_alarm["Properties"]["Metrics"]
+        if "Expression" in q
+    ]
+    assert "FILL(sent, 0)" in expression
 
 
 def test_notify_tick_errors_alarm_exists(

@@ -106,6 +106,9 @@ class MonitoringStack(cdk.Stack):
 
         # Push failure-rate alarm: PushFailed / (PushSent + PushFailed) > 0.2
         # over 30 minutes, treating missing data as not breaching (M11).
+        # FILL(sent, 0): in a total outage PushSent has no datapoints, and an
+        # unfilled expression would then be missing too — i.e. "not
+        # breaching" at a 100% failure rate.
         push_sent_metric = cloudwatch.Metric(
             namespace=f"OpenNewsletter/{config.env}",
             metric_name="PushSent",
@@ -123,7 +126,7 @@ class MonitoringStack(cdk.Stack):
             self,
             "PushFailureRateAlarm",
             metric=cloudwatch.MathExpression(
-                expression="failed / (sent + failed)",
+                expression="failed / (FILL(sent, 0) + failed)",
                 using_metrics={
                     "failed": push_failed_metric,
                     "sent": push_sent_metric,
