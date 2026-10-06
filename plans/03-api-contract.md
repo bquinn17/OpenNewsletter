@@ -15,7 +15,7 @@ A canonical OpenAPI 3.1 document lives at `shared/openapi.yaml`. This Markdown i
 - Auth: All routes require a Cognito JWT in `Authorization: Bearer {idToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint. **The ID token, not the access token**: `POST /invites/redeem` creates the caller's `User` row from the `email` and `name` claims, which only the ID token carries (`05-auth-flow.md` §4.2). The JWT authorizer's audience is the frontend client ID, which matches the ID token's `aud`.
 - Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per `02-data-model-dynamodb.md` §6).
 - Correlation: Clients SHOULD send `x-correlation-id: {ulid}`. If absent the API generates one. It is echoed in responses and logged.
-- Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`.
+- Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`. A cursor that decodes but doesn't address a row in the listing's own partition and key range (e.g. one taken from another answer's comment list) is a 422 on `cursor`, the same as a malformed one (decided M10, `persistence::cursor::decode_scoped`).
 - Timestamps: All ISO-8601 UTC.
 - IDs: All UUIDv7 strings except `cycleId` (yyyymm) and `inviteCode` (16-char Crockford base32).
 

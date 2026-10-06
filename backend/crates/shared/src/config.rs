@@ -88,6 +88,10 @@ pub const MAX_NEWSLETTER_LIST_LIMIT: u32 = 24;
 /// capped at [`MAX_LIST_LIMIT`] (`plans/03-api-contract.md` §8.1,
 /// `09-engagement.md` §8 #9).
 pub const DEFAULT_COMMENT_LIST_LIMIT: u32 = 50;
+/// How many times a comment edit/delete re-reads and retries after its
+/// transaction lost a race to a concurrent image change on the same comment
+/// (`09-engagement.md` §1.4, decided M10).
+pub const COMMENT_WRITE_ATTEMPTS: u32 = 3;
 
 #[cfg(test)]
 mod tests {

@@ -79,6 +79,8 @@ Cache the user batch per cold-start (60s TTL) to avoid repeating the read for ho
 
 Routes are addressed by `questionId` + `responseId` (`03` §8, decided M10). The attached image is claimed through `ImageMedia.attached_comment_id`, written in the same transaction as the comment, so one image can't back two comments and `DELETE /uploads` can refuse a claimed image.
 
+Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read (decided M10, post-review). The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere.
+
 ### 1.6 Notifications on comments
 
 **Out of scope for v1.** Future: notify the answer's author on a new comment. Tracked separately.

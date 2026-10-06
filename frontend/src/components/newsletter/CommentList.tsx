@@ -156,10 +156,12 @@ function CommentRow({
         commentId: comment.commentId,
         body: {
           body: trimmed,
-          ...(imageRemoved
-            ? { imageMediaId: null }
-            : readyImage
-              ? { imageMediaId: readyImage.imageId }
+          // A freshly uploaded image wins: "Remove image" is how the author
+          // gets to the uploader to replace one, so it implies a swap.
+          ...(readyImage
+            ? { imageMediaId: readyImage.imageId }
+            : imageRemoved
+              ? { imageMediaId: null }
               : {}),
         },
       });
@@ -349,6 +351,9 @@ function CommentComposer({
 }) {
   const [body, setBody] = useState("");
   const [images, setImages] = useState<UploaderImage[]>([]);
+  // Bumped after a post to remount the uploader: it owns its image list, and
+  // the posted image would otherwise stay in its single slot.
+  const [uploaderKey, setUploaderKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const addComment = useAddComment(groupId, cycleId, questionId);
 
@@ -370,6 +375,7 @@ function CommentComposer({
       });
       setBody("");
       setImages([]);
+      setUploaderKey((k) => k + 1);
     } catch (err) {
       setError(errorDetail(err, "Couldn't post your comment — try again."));
     }
@@ -394,6 +400,7 @@ function CommentComposer({
         </div>
       )}
       <ImageUploader
+        key={uploaderKey}
         groupId={groupId}
         cycleId={cycleId}
         questionId={questionId}

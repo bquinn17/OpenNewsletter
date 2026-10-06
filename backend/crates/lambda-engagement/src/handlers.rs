@@ -14,7 +14,8 @@ use domain::{
     ResponseStatus, Role, User, UserId,
 };
 use persistence::engagement::{self, CommentLocation, NewComment};
-use persistence::{auth, media, newsletters, responses, users};
+use persistence::{auth, keys, media, newsletters, responses, users};
+use shared::config::COMMENT_WRITE_ATTEMPTS;
 use std::collections::HashMap;
 
 /// `GET .../comments` (§8.1). AP18.
@@ -37,10 +38,13 @@ pub async fn list_comments(
             .await?;
 
     let exclusive_start_key = match cursor {
-        Some(c) => Some(
-            persistence::cursor::decode(c)
-                .map_err(|_| ApiError::invalid_field("cursor", "invalid cursor"))?,
-        ),
+        Some(c) => {
+            let pk = keys::engagement_pk(group_id, cycle_id, question_id, &answer_user_id);
+            Some(
+                persistence::cursor::decode_scoped(c, &pk, keys::COMMENT_SK_PREFIX)
+                    .map_err(|_| ApiError::invalid_field("cursor", "invalid cursor"))?,
+            )
+        }
         None => None,
     };
 
@@ -152,97 +156,114 @@ pub async fn patch_comment(
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
 
-    let existing = load_live_comment(
-        state,
-        group_id,
-        cycle_id,
-        question_id,
-        &answer_user_id,
-        comment_id,
-    )
-    .await?;
-    if existing.author_user_id != *caller {
-        return Err(ApiError::forbidden("only the comment's author can edit it"));
-    }
+    // Read-compute-write, retried when the write lost a race to a concurrent
+    // image change on this comment (its transaction is conditioned on the
+    // image read here, so a stale detach can't release the wrong image).
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let existing = load_live_comment(
+            state,
+            group_id,
+            cycle_id,
+            question_id,
+            &answer_user_id,
+            comment_id,
+        )
+        .await?;
+        if existing.author_user_id != *caller {
+            return Err(ApiError::forbidden("only the comment's author can edit it"));
+        }
 
-    let new_body = match &request.body {
-        Some(raw) => Some(validation::body(raw)?),
-        None => None,
-    };
+        let new_body = match &request.body {
+            Some(raw) => Some(validation::body(raw)?),
+            None => None,
+        };
 
-    let resulting_body = new_body.clone().unwrap_or_else(|| existing.body.clone());
-    let resulting_image_id: Option<ImageId> = match &request.image_media_id {
-        Some(Some(id)) => Some(id.clone()),
-        Some(None) => None,
-        None => existing.image_media_id.clone(),
-    };
-    validation::require_body_or_image(Some(resulting_body.as_str()), resulting_image_id.as_ref())?;
+        let resulting_body = new_body.clone().unwrap_or_else(|| existing.body.clone());
+        let resulting_image_id: Option<ImageId> = match &request.image_media_id {
+            Some(Some(id)) => Some(id.clone()),
+            Some(None) => None,
+            None => existing.image_media_id.clone(),
+        };
+        validation::require_body_or_image(
+            Some(resulting_body.as_str()),
+            resulting_image_id.as_ref(),
+        )?;
 
-    let mut attach_image_id: Option<ImageId> = None;
-    let mut detach_image_id: Option<ImageId> = None;
-    if let Some(image_change) = &request.image_media_id {
-        match image_change {
-            Some(new_id) if existing.image_media_id.as_ref() != Some(new_id) => {
-                validate_comment_image(
+        let mut attach_image_id: Option<ImageId> = None;
+        let mut detach_image_id: Option<ImageId> = None;
+        if let Some(image_change) = &request.image_media_id {
+            match image_change {
+                Some(new_id) if existing.image_media_id.as_ref() != Some(new_id) => {
+                    validate_comment_image(
+                        state,
+                        caller,
+                        group_id,
+                        cycle_id,
+                        question_id,
+                        new_id,
+                        Some(comment_id),
+                    )
+                    .await?;
+                    attach_image_id = Some(new_id.clone());
+                    detach_image_id = existing.image_media_id.clone();
+                }
+                Some(_unchanged) => {}
+                None => detach_image_id = existing.image_media_id.clone(),
+            }
+        }
+
+        let loc = CommentLocation {
+            group_id,
+            cycle_id,
+            question_id,
+            answer_user_id: &answer_user_id,
+            comment_id,
+            created_at: existing.created_at,
+        };
+
+        let update = engagement::update_comment(
+            &state.repo,
+            &loc,
+            new_body.as_deref(),
+            request.image_media_id.as_ref().map(Option::as_ref),
+            Utc::now(),
+            existing.image_media_id.as_ref(),
+            detach_image_id.as_ref(),
+            attach_image_id.as_ref(),
+        )
+        .await;
+        match update {
+            Ok(()) => break,
+            Err(e) if e.is_lost_race() => {
+                // Deleted meanwhile → 404 from `load_live_comment`; image
+                // changed meanwhile → retry against the fresh state;
+                // otherwise the new image was claimed by another comment.
+                let current = load_live_comment(
                     state,
-                    caller,
                     group_id,
                     cycle_id,
                     question_id,
-                    new_id,
-                    Some(comment_id),
+                    &answer_user_id,
+                    comment_id,
                 )
                 .await?;
-                attach_image_id = Some(new_id.clone());
-                detach_image_id = existing.image_media_id.clone();
+                if current.image_media_id == existing.image_media_id {
+                    return Err(ApiError::invalid_field(
+                        "imageMediaId",
+                        "image is already attached to another comment",
+                    ));
+                }
+                if attempts >= COMMENT_WRITE_ATTEMPTS {
+                    tracing::error!(group_id = %group_id, "comment update kept losing races");
+                    return Err(ApiError::internal("failed to update comment"));
+                }
             }
-            Some(_unchanged) => {}
-            None => detach_image_id = existing.image_media_id.clone(),
-        }
-    }
-
-    let now = Utc::now();
-    let loc = CommentLocation {
-        group_id,
-        cycle_id,
-        question_id,
-        answer_user_id: &answer_user_id,
-        comment_id,
-        created_at: existing.created_at,
-    };
-
-    let update = engagement::update_comment(
-        &state.repo,
-        &loc,
-        new_body.as_deref(),
-        request.image_media_id.as_ref().map(Option::as_ref),
-        now,
-        detach_image_id.as_ref(),
-        attach_image_id.as_ref(),
-    )
-    .await;
-    match update {
-        Ok(()) => {}
-        Err(e) if e.is_lost_race() => {
-            // Deleted meanwhile → 404 from `load_live_comment`; otherwise the
-            // new image was claimed by another comment.
-            load_live_comment(
-                state,
-                group_id,
-                cycle_id,
-                question_id,
-                &answer_user_id,
-                comment_id,
-            )
-            .await?;
-            return Err(ApiError::invalid_field(
-                "imageMediaId",
-                "image is already attached to another comment",
-            ));
-        }
-        Err(e) => {
-            tracing::error!(error = ?e, group_id = %group_id, "comment update failed");
-            return Err(ApiError::internal("failed to update comment"));
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %group_id, "comment update failed");
+                return Err(ApiError::internal("failed to update comment"));
+            }
         }
     }
 
@@ -280,52 +301,63 @@ pub async fn delete_comment(
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
 
-    let existing = engagement::get_comment_by_id(
-        &state.repo,
-        group_id,
-        cycle_id,
-        question_id,
-        &answer_user_id,
-        comment_id,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = ?e, group_id = %group_id, "comment lookup failed");
-        ApiError::internal("failed to load comment")
-    })?
-    .ok_or_else(|| ApiError::not_found("comment not found"))?;
+    // Retried when the soft delete lost a race to a concurrent edit that
+    // changed the comment's image: its transaction is conditioned on the
+    // image read here, so it never releases an image the comment no longer
+    // holds (which would strand the new one, claimed by a `[deleted]` row).
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let existing = engagement::get_comment_by_id(
+            &state.repo,
+            group_id,
+            cycle_id,
+            question_id,
+            &answer_user_id,
+            comment_id,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "comment lookup failed");
+            ApiError::internal("failed to load comment")
+        })?
+        .ok_or_else(|| ApiError::not_found("comment not found"))?;
 
-    if existing.deleted_at.is_some() {
-        return Ok(());
+        if existing.deleted_at.is_some() {
+            return Ok(());
+        }
+
+        let is_admin = membership.role == Role::Admin;
+        if existing.author_user_id != *caller && !is_admin {
+            return Err(ApiError::forbidden(
+                "only the comment's author or a group admin can delete it",
+            ));
+        }
+
+        let loc = CommentLocation {
+            group_id,
+            cycle_id,
+            question_id,
+            answer_user_id: &answer_user_id,
+            comment_id,
+            created_at: existing.created_at,
+        };
+        match engagement::soft_delete_comment(
+            &state.repo,
+            &loc,
+            Utc::now(),
+            existing.image_media_id.as_ref(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) if e.is_lost_race() && attempts < COMMENT_WRITE_ATTEMPTS => {}
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %group_id, "comment soft-delete failed");
+                return Err(ApiError::internal("failed to delete comment"));
+            }
+        }
     }
-
-    let is_admin = membership.role == Role::Admin;
-    if existing.author_user_id != *caller && !is_admin {
-        return Err(ApiError::forbidden(
-            "only the comment's author or a group admin can delete it",
-        ));
-    }
-
-    let loc = CommentLocation {
-        group_id,
-        cycle_id,
-        question_id,
-        answer_user_id: &answer_user_id,
-        comment_id,
-        created_at: existing.created_at,
-    };
-    engagement::soft_delete_comment(
-        &state.repo,
-        &loc,
-        Utc::now(),
-        existing.image_media_id.as_ref(),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = ?e, group_id = %group_id, "comment soft-delete failed");
-        ApiError::internal("failed to delete comment")
-    })?;
-    Ok(())
 }
 
 /// `GET .../reactions` (§8.5). AP19.

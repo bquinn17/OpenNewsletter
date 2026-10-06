@@ -1,7 +1,7 @@
 //! Comments and reactions (AP18, AP19; `plans/03-api-contract.md` §8).
 
 use crate::error::{self, RepoError};
-use crate::keys::{attr, comment_sk, engagement_pk, reaction_sk};
+use crate::keys::{attr, comment_sk, engagement_pk, reaction_sk, COMMENT_SK_PREFIX};
 use crate::media;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
@@ -38,7 +38,7 @@ pub async fn list_comments(
                 answer_user_id,
             )),
         )
-        .expression_attribute_values(":prefix", AttributeValue::S("C#".into()))
+        .expression_attribute_values(":prefix", AttributeValue::S(COMMENT_SK_PREFIX.into()))
         .send()
         .await?;
     let items = resp.items.unwrap_or_default();
@@ -105,7 +105,7 @@ pub async fn list_comments_page(
                 answer_user_id,
             )),
         )
-        .expression_attribute_values(":prefix", AttributeValue::S("C#".into()))
+        .expression_attribute_values(":prefix", AttributeValue::S(COMMENT_SK_PREFIX.into()))
         .limit(limit);
     if let Some(key) = exclusive_start_key {
         request = request.set_exclusive_start_key(Some(key));
@@ -153,7 +153,7 @@ pub async fn get_comment_by_id(
                     answer_user_id,
                 )),
             )
-            .expression_attribute_values(":prefix", AttributeValue::S("C#".into()))
+            .expression_attribute_values(":prefix", AttributeValue::S(COMMENT_SK_PREFIX.into()))
             .expression_attribute_values(":cid", AttributeValue::S(comment_id.to_string()));
         if let Some(key) = exclusive_start_key.take() {
             request = request.set_exclusive_start_key(Some(key));
@@ -271,14 +271,36 @@ fn comment_update_builder(repo: &Repo, loc: &CommentLocation<'_>) -> UpdateBuild
         )
 }
 
+/// Condition (plus its placeholder value) that the comment row still holds
+/// `expected` as its image. Both comment writes release the image they read
+/// earlier with an unconditioned detach, so without this a write built on a
+/// stale read would release an image the comment no longer holds — and
+/// leave the one it does hold claimed by a `[deleted]` row forever.
+/// `image_media_id` is stored as an explicit NULL by `to_item` when absent,
+/// hence both forms for `None`.
+fn image_unchanged_condition(expected: Option<&ImageId>) -> (&'static str, AttributeValue) {
+    match expected {
+        Some(id) => (
+            "image_media_id = :expected_image",
+            AttributeValue::S(id.to_string()),
+        ),
+        None => (
+            "(attribute_not_exists(image_media_id) OR image_media_id = :expected_image)",
+            AttributeValue::Null(true),
+        ),
+    }
+}
+
 /// `PATCH .../comments/{commentId}` (§8.3). `body` absent leaves it
-/// unchanged. `detach_image_id`/`attach_image_id` are resolved by the
-/// handler (which already knows the comment's previous image and the
-/// validated new one) — this just builds the transaction: the comment
-/// update, plus a release on the old image and/or a conditioned claim on the
-/// new one, whichever apply. A cancelled transaction means either the new
-/// image lost a race to another comment or the comment was soft-deleted
-/// concurrently; the handler re-reads the comment to tell which.
+/// unchanged. `current_image_id` is the image the handler read on the
+/// comment; the write only applies if that's still the case.
+/// `detach_image_id`/`attach_image_id` are resolved by the handler (which
+/// already knows the comment's previous image and the validated new one) —
+/// this just builds the transaction: the comment update, plus a release on
+/// the old image and/or a conditioned claim on the new one, whichever apply.
+/// A cancelled transaction means the new image lost a race to another
+/// comment, the comment was soft-deleted concurrently, or its image changed
+/// since the handler read it; the handler re-reads the comment to tell which.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_comment(
     repo: &Repo,
@@ -286,6 +308,7 @@ pub async fn update_comment(
     body: Option<&str>,
     set_image_media_id: Option<Option<&ImageId>>,
     edited_at: DateTime<Utc>,
+    current_image_id: Option<&ImageId>,
     detach_image_id: Option<&ImageId>,
     attach_image_id: Option<&ImageId>,
 ) -> Result<(), RepoError> {
@@ -317,13 +340,16 @@ pub async fn update_comment(
     // A concurrent soft delete must win: without this, an edit landing just
     // after it would write a body back into the `[deleted]` row. `deleted_at`
     // is stored as an explicit NULL by `to_item`, hence both forms.
+    let (image_condition, expected_image) = image_unchanged_condition(current_image_id);
     let comment_update = builder
         .update_expression(expression)
-        .condition_expression(
-            "attribute_exists(#pk) AND (attribute_not_exists(deleted_at) OR deleted_at = :null)",
-        )
+        .condition_expression(format!(
+            "attribute_exists(#pk) AND (attribute_not_exists(deleted_at) OR deleted_at = :null) \
+             AND {image_condition}"
+        ))
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":null", AttributeValue::Null(true))
+        .expression_attribute_values(":expected_image", expected_image)
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
@@ -348,17 +374,24 @@ pub async fn update_comment(
 }
 
 /// `DELETE .../comments/{commentId}` (§8.4) — soft delete. `image_id` is the
-/// comment's previous image (if any), released in the same transaction.
+/// image the handler read on the comment (if any), released in the same
+/// transaction. The delete only applies while the comment still holds
+/// exactly that image; a cancelled transaction means an edit changed it (or
+/// another delete already landed) and the handler should re-read and retry.
 pub async fn soft_delete_comment(
     repo: &Repo,
     loc: &CommentLocation<'_>,
     deleted_at: DateTime<Utc>,
     image_id: Option<&ImageId>,
 ) -> Result<(), RepoError> {
+    let (image_condition, expected_image) = image_unchanged_condition(image_id);
     let comment_update = comment_update_builder(repo, loc)
         .update_expression("SET deleted_at = :t, body = :empty REMOVE image_media_id")
+        .condition_expression(format!("attribute_exists(#pk) AND {image_condition}"))
+        .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":t", AttributeValue::S(deleted_at.to_rfc3339()))
         .expression_attribute_values(":empty", AttributeValue::S("".into()))
+        .expression_attribute_values(":expected_image", expected_image)
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 

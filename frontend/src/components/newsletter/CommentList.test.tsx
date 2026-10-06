@@ -25,6 +25,34 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
+// Stands in for the real uploader (S3/polling): keeps its own image list, as
+// the real one does, so a test can see whether the parent remounted it.
+vi.mock("../responses/ImageUploader", async () => {
+  const { useState } = await import("react");
+  return {
+    ImageUploader: ({
+      onChange,
+    }: {
+      onChange?: (images: { imageId: string; status: "ready" }[]) => void;
+    }) => {
+      const [attached, setAttached] = useState<string | null>(null);
+      return attached ? (
+        <span>attached {attached}</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setAttached("img-new");
+            onChange?.([{ imageId: "img-new", status: "ready" }]);
+          }}
+        >
+          Attach test image
+        </button>
+      );
+    },
+  };
+});
+
 vi.mock("../../utils/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/media")>();
   return { ...actual, ensureCookie: vi.fn().mockResolvedValue(undefined) };
@@ -184,6 +212,97 @@ describe("CommentList", () => {
       }),
     );
     await waitFor(() => expect(textarea).toHaveValue(""));
+  });
+
+  it("resets the uploader after posting a comment with an image", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.createComment).mockResolvedValue(
+      comment({ commentId: "new2", authorUserId: "u_quinn", displayName: "Quinn", body: "" }),
+    );
+    renderList([]);
+
+    await user.click(await screen.findByRole("button", { name: "Attach test image" }));
+    expect(screen.getByText("attached img-new")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Post" }));
+
+    await waitFor(() =>
+      expect(api.engagement.createComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", {
+        body: "",
+        imageMediaId: "img-new",
+      }),
+    );
+    // A fresh, empty uploader — the posted image no longer fills its slot.
+    expect(await screen.findByRole("button", { name: "Attach test image" })).toBeInTheDocument();
+    expect(screen.queryByText("attached img-new")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Post" })).toBeDisabled();
+  });
+
+  it("replaces a comment's image when the author removes it and uploads another", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.patchComment).mockResolvedValue(
+      comment({ commentId: "mine", authorUserId: "u_quinn", displayName: "Quinn", body: "" }),
+    );
+    const mine = comment({
+      commentId: "mine",
+      authorUserId: "u_quinn",
+      displayName: "Quinn",
+      body: "",
+      image: {
+        imageId: "img-old",
+        thumbUrl: "https://cdn.example.com/thumb.webp",
+        displayUrl: "https://cdn.example.com/display.webp",
+        width: 800,
+        height: 600,
+        caption: null,
+      },
+    });
+    renderList([mine]);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Remove image" }));
+    // The composer has its own uploader; the edit form's comes first in the DOM.
+    await user.click(screen.getAllByRole("button", { name: "Attach test image" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.engagement.patchComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine", {
+        body: "",
+        imageMediaId: "img-new",
+      }),
+    );
+  });
+
+  it("sends an explicit null when the author removes the image without replacing it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.patchComment).mockResolvedValue(
+      comment({ commentId: "mine", authorUserId: "u_quinn", displayName: "Quinn", body: "Text" }),
+    );
+    const mine = comment({
+      commentId: "mine",
+      authorUserId: "u_quinn",
+      displayName: "Quinn",
+      body: "Text",
+      image: {
+        imageId: "img-old",
+        thumbUrl: "https://cdn.example.com/thumb.webp",
+        displayUrl: "https://cdn.example.com/display.webp",
+        width: 800,
+        height: 600,
+        caption: null,
+      },
+    });
+    renderList([mine]);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Remove image" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.engagement.patchComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine", {
+        body: "Text",
+        imageMediaId: null,
+      }),
+    );
   });
 
   it("lets the author edit their own comment but not someone else's", async () => {

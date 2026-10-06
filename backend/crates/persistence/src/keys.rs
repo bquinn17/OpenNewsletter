@@ -239,8 +239,16 @@ pub fn engagement_pk(
     )
 }
 
+/// Every `Comment` sk starts with this; queries of an engagement partition
+/// filter on it to skip reaction rows.
+pub const COMMENT_SK_PREFIX: &str = "C#";
+
 pub fn comment_sk(created_at: DateTime<Utc>, comment_id: &domain::CommentId) -> String {
-    format!("C#{}#{}", key_timestamp(created_at), comment_id)
+    format!(
+        "{COMMENT_SK_PREFIX}{}#{}",
+        key_timestamp(created_at),
+        comment_id
+    )
 }
 
 pub fn reaction_sk(reactor_user_id: &UserId, emoji: &str) -> String {

@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::{TimeZone, Utc};
-use domain::{CycleId, GroupId, QuestionId, UserId};
+use domain::{CycleId, GroupId, ImageId, QuestionId, UserId};
 use persistence::engagement::{self, CommentLocation};
 use pretty_assertions::assert_eq;
 
@@ -80,16 +80,34 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
     let edited_at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
 
     // A live comment edits fine.
-    engagement::update_comment(&repo, &loc, Some("edited"), None, edited_at, None, None)
-        .await
-        .unwrap();
+    engagement::update_comment(
+        &repo,
+        &loc,
+        Some("edited"),
+        None,
+        edited_at,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     engagement::soft_delete_comment(&repo, &loc, edited_at, None)
         .await
         .unwrap();
-    let err = engagement::update_comment(&repo, &loc, Some("revived"), None, edited_at, None, None)
-        .await
-        .unwrap_err();
+    let err = engagement::update_comment(
+        &repo,
+        &loc,
+        Some("revived"),
+        None,
+        edited_at,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(
         err.is_lost_race(),
         "expected a cancelled transaction, got {err:?}"
@@ -105,6 +123,101 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
     .await
     .unwrap();
     assert_eq!(comments[0].body, "");
+}
+
+#[tokio::test]
+async fn soft_delete_refuses_a_stale_image_and_leaves_the_comment_live() {
+    // A delete that read image A must not land after an edit swapped the
+    // comment to image B: it would release A and strand B's claim on a
+    // `[deleted]` row.
+    let (_c, repo) = common::make_repo().await;
+    let mut c = common::comment("g1", "202606", "q1", "u1", "u2", "cmt-stale-del");
+    c.image_media_id = Some(ImageId::new("img-b"));
+    engagement::put_comment(&repo, &c).await.unwrap();
+    let loc = CommentLocation {
+        group_id: &GroupId::new("g1"),
+        cycle_id: &CycleId::new("202606"),
+        question_id: &QuestionId::new("q1"),
+        answer_user_id: &UserId::new("u1"),
+        comment_id: &c.comment_id,
+        created_at: c.created_at,
+    };
+    let at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+
+    for stale in [Some(ImageId::new("img-a")), None] {
+        let err = engagement::soft_delete_comment(&repo, &loc, at, stale.as_ref())
+            .await
+            .unwrap_err();
+        assert!(
+            err.is_lost_race(),
+            "expected a cancelled transaction, got {err:?}"
+        );
+    }
+    let comments = engagement::list_comments(
+        &repo,
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        &UserId::new("u1"),
+    )
+    .await
+    .unwrap();
+    assert!(comments[0].deleted_at.is_none());
+    assert_eq!(comments[0].image_media_id, Some(ImageId::new("img-b")));
+
+    // With the image it actually holds, the delete goes through.
+    engagement::soft_delete_comment(&repo, &loc, at, Some(&ImageId::new("img-b")))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn update_refuses_a_stale_image() {
+    let (_c, repo) = common::make_repo().await;
+    let mut c = common::comment("g1", "202606", "q1", "u1", "u2", "cmt-stale-edit");
+    c.image_media_id = Some(ImageId::new("img-b"));
+    engagement::put_comment(&repo, &c).await.unwrap();
+    let loc = CommentLocation {
+        group_id: &GroupId::new("g1"),
+        cycle_id: &CycleId::new("202606"),
+        question_id: &QuestionId::new("q1"),
+        answer_user_id: &UserId::new("u1"),
+        comment_id: &c.comment_id,
+        created_at: c.created_at,
+    };
+    let at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+    let stale = ImageId::new("img-a");
+
+    let err = engagement::update_comment(
+        &repo,
+        &loc,
+        None,
+        Some(None),
+        at,
+        Some(&stale),
+        Some(&stale),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.is_lost_race(),
+        "expected a cancelled transaction, got {err:?}"
+    );
+
+    let current = ImageId::new("img-b");
+    engagement::update_comment(
+        &repo,
+        &loc,
+        Some("still here"),
+        None,
+        at,
+        Some(&current),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

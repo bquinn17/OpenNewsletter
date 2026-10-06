@@ -21,7 +21,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M7** | **Frontend skeleton + auth** | 🟡 **code-complete, deploy unverified** | See "M7 detail" and "Post-M7 gap pass" below. 28 frontend, 217 backend and 42 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt, clippy, ruff (check + format), mypy and `cdk synth` are all clean. The Google sign-in / redeem / logout gate needs a deployed stack (B5). |
 | **M8** | **Media pipeline** | 🟡 **code-complete, deploy unverified** | See "M8 detail" below. 308 backend, 53 CDK and 52 frontend tests green; fmt, clippy, ruff, typecheck, ESLint, Prettier, `vite build` and `cdk synth` (dev + prod) clean. The 5 MB JPEG upload → thumbnail → reload-via-CloudFront gate needs a deployed stack (B5) and an arm64 build of `image-process` (B6). |
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
-| **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 361 backend, 54 CDK and 163 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
+| **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
 | M11 | Notifications | ⬜ | |
 | M12 | Admin UI | ⬜ | |
 | M13 | Hardening | ⬜ | |
@@ -696,6 +696,12 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 - The `ApiStack` docstring misattributed which milestone added which Lambda.
 - **Clippy 1.99's new `double_must_use` broke `-D warnings` in `lambda-image-process`.** This wasn't an M10 change; see Known gaps.
 
+### Bugs caught in post-M10 code review (fixed, with regression tests)
+- **Replacing a comment's image sent `imageMediaId: null`.** In the edit form, "Remove image" followed by a new upload dropped the image, or got a 422 if the text was empty. A freshly uploaded image now wins over the removal flag (`CommentList.tsx`).
+- **The comment composer's uploader kept the posted image.** Its single slot stayed full, removing the image got `IMAGE_IN_USE`, and the next comment could re-send the image and get a 422. The uploader is now remounted (fresh `key`) after a successful post.
+- **A delete racing an image change could strand an image.** A delete that read image A before an edit swapped in B released A and left B claimed by a `[deleted]` row. Both `soft_delete_comment` and `update_comment` are now conditioned on the comment still holding the image that was read; the handlers re-read and retry (`COMMENT_WRITE_ATTEMPTS`).
+- **A well-formed but foreign cursor returned 500.** A cursor from another answer, or a hand-crafted one, reached DynamoDB and came back as a `ValidationException`. `persistence::cursor::decode_scoped` now checks the key is in the listing's own partition and `C#` range, so it gets a 422 on `cursor`.
+
 ### Decisions (recorded in `03` §8/§9.4/§13, `09` §1.1/§1.5/§2.3/§2.4, `02` §2.10)
 - **Engagement routes are nested under `questions/{questionId}`.** Comment and reaction rows are keyed on `(question, answerUser)`, and `responseId` alone has no index. The answer is resolved by matching `response_id` among that question's answers, and must be a published text answer, otherwise 404.
 - One `CommentResponse` (`displayName`, not `authorDisplayName`) is used both inline and on the engagement routes. Soft-deleted comments are returned with `deletedAt` set, an empty body and a null image.
@@ -703,6 +709,8 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 - **PATCH semantics:** an absent field is left unchanged, and `imageMediaId: null` removes the image. Only the author can edit; admins get 403.
 - Reaction PUT and DELETE return the updated `ReactionsResponse`.
 - No cross-request cache for author names (see Known gaps).
+- **Comment writes are conditioned on the image they read,** and retried up to 3 times on a lost race (`09` §1.5).
+- **Out-of-scope pagination cursors are a 422,** the same as malformed ones (`03` §1).
 
 ### Tests
 - Backend 361 (was 308):
@@ -711,6 +719,7 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
   - contract-table rows for all seven routes
   - the media in-use test
   - the persistence race regression
+- Post-review fixes: backend +4 (`cursor` scope 2, persistence stale-image races 2; the handler cursor test was extended), frontend +3 (`CommentList`: image replace, explicit-null removal, composer reset). Totals: backend 365, frontend 166.
 - CDK 54 (was 53): the new engagement env test. The Apple-IdP removal renamed an existing test but added none.
 - Frontend 163 (was 116):
   - `emoji` 14 and `mockEngagement` 11

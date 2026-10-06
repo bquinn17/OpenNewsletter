@@ -8,6 +8,7 @@
 
 mod common;
 
+use aws_sdk_dynamodb::types::AttributeValue;
 use domain::api::{CreateCommentRequest, PatchCommentRequest};
 use domain::{
     ApiErrorCode, CommentId, CycleId, GroupId, MediaStatus, QuestionId, ResponseId, Role,
@@ -727,6 +728,41 @@ async fn list_rejects_an_invalid_cursor_and_an_out_of_range_limit() {
     .expect_err("invalid cursor");
     assert_eq!(err.code, ApiErrorCode::ValidationFailed);
     assert_eq!(err.field_errors[0].field, "cursor");
+
+    // Well-formed cursors that DynamoDB would reject (another answer's
+    // partition, a non-comment sk, a hand-crafted key) are a 422 too, not a 500.
+    let other_answer_pk = persistence::keys::engagement_pk(
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &domain::UserId::new("u9"),
+    );
+    let own_pk = persistence::keys::engagement_pk(&group_id, &cycle_id, &question_id, &caller);
+    for (pk, sk) in [
+        (other_answer_pk.as_str(), "C#2026-06-05T00:00:00.000Z#c1"),
+        (own_pk.as_str(), "R#u1#x"),
+        ("nonsense", "nonsense"),
+    ] {
+        let key = std::collections::HashMap::from([
+            ("pk".to_owned(), AttributeValue::S(pk.to_owned())),
+            ("sk".to_owned(), AttributeValue::S(sk.to_owned())),
+        ]);
+        let cursor = persistence::cursor::encode(&key).unwrap();
+        let err = handlers::list_comments(
+            &state,
+            &caller,
+            &group_id,
+            &cycle_id,
+            &question_id,
+            &response_id,
+            50,
+            Some(&cursor),
+        )
+        .await
+        .expect_err("out-of-scope cursor");
+        assert_eq!(err.code, ApiErrorCode::ValidationFailed, "{pk} / {sk}");
+        assert_eq!(err.field_errors[0].field, "cursor");
+    }
 }
 
 /// The check order shared by all seven engagement routes
