@@ -4,6 +4,7 @@ import { ApiError } from "./client";
 import { mockFetch } from "./mockTransport";
 
 type ConfigResponse = components["schemas"]["ConfigResponse"];
+type GroupResponse = components["schemas"]["GroupResponse"];
 type RedeemResponse = components["schemas"]["RedeemResponse"];
 
 describe("mockFetch", () => {
@@ -39,6 +40,20 @@ describe("mockFetch", () => {
       status: 404,
       code: "NOT_FOUND",
     });
+  });
+
+  it("403s when a non-admin removes another member, before looking up the target", async () => {
+    // `g_meeple`: the caller is a plain member and Tara is the admin.
+    await expect(mockFetch("DELETE", "/groups/g_meeple/members/u_m_tara")).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    });
+    await expect(mockFetch("DELETE", "/groups/g_meeple/members/u_nobody")).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    });
+    const group = (await mockFetch("GET", "/groups/g_meeple")) as GroupResponse;
+    expect(group.members.some((m) => m.userId === "u_m_tara")).toBe(true);
   });
 
   describe("media routes", () => {

@@ -361,3 +361,86 @@ describe("api.push", () => {
     expect(requestInit.body).toBe(JSON.stringify({ cycleOpen: true, deadlineReminders: false }));
   });
 });
+
+describe("api admin routes", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    mockedManager.getUser.mockResolvedValue(null);
+  });
+
+  it("POSTs a new invite to /admin/invites", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse(201, {
+        code: "ABCD-EFGH-JKMN-PQRS",
+        groupId: "g1",
+        expiresAt: "2026-02-01T00:00:00Z",
+        roleOnRedeem: "member",
+      }),
+    );
+
+    await api.createInvite({ groupId: "g1", ttlDays: 7, roleOnRedeem: "member" });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/admin/invites");
+    expect(requestInit.method).toBe("POST");
+    expect(requestInit.body).toBe(
+      JSON.stringify({ groupId: "g1", ttlDays: 7, roleOnRedeem: "member" }),
+    );
+  });
+
+  it("GETs /admin/groups/{groupId}/invites", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }));
+
+    await api.listInvites("g1");
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain("/admin/groups/g1/invites");
+  });
+
+  it("POSTs to /admin/invites/{code}/revoke with the code URL-encoded", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(api.revokeInvite("AB CD/EF")).resolves.toBeUndefined();
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`/admin/invites/${encodeURIComponent("AB CD/EF")}/revoke`);
+    expect(requestInit.method).toBe("POST");
+  });
+
+  it("PATCHes a member's role", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        userId: "u1",
+        displayName: "Sam",
+        role: "admin",
+        avatarColor: "teal",
+        avatarUrl: null,
+        joinedAt: "2026-01-01T00:00:00Z",
+        editionsAnswered: 0,
+      }),
+    );
+
+    await api.patchMember("g1", "u1", { role: "admin" });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/groups/g1/members/u1");
+    expect(requestInit.method).toBe("PATCH");
+    expect(requestInit.body).toBe(JSON.stringify({ role: "admin" }));
+  });
+
+  it("PATCHes a group's settings", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse(200, { groupId: "g1" }));
+
+    await api.patchGroup("g1", { name: "New name" });
+
+    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/groups/g1");
+    expect(requestInit.method).toBe("PATCH");
+    expect(requestInit.body).toBe(JSON.stringify({ name: "New name" }));
+  });
+});

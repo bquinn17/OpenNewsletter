@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Pinned CDK CLI without a global install; `aws-cdk@2`, not `cdk`, so npx can't resolve a global binary (plans/13-dev-environments.md §0).
+exec npx --yes aws-cdk@2 "$@"

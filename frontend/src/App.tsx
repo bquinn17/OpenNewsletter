@@ -13,7 +13,6 @@ import { HomePage } from "./pages/HomePage";
 import { JoinPage } from "./pages/JoinPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { GroupRedirect } from "./pages/GroupRedirect";
-import { PendingMilestonePage } from "./pages/PendingMilestonePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ErrorPage } from "./pages/ErrorPage";
 import { RequireMembership } from "./routes/RequireMembership";
@@ -52,16 +51,7 @@ const router = createBrowserRouter([
               { path: "n/:cycleId/respond", element: <Navigate to=".." replace /> },
               {
                 element: <RequireGroupAdmin />,
-                children: [
-                  {
-                    path: "admin",
-                    element: env.useMocks ? (
-                      <GroupAdminPage />
-                    ) : (
-                      <PendingMilestonePage message="Group administration arrives in a later release." />
-                    ),
-                  },
-                ],
+                children: [{ path: "admin", element: <GroupAdminPage /> }],
               },
             ],
           },

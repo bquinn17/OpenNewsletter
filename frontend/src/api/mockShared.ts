@@ -74,6 +74,109 @@ export const PUBLISHED_CYCLE_ID = monthCycleId(-1);
 /** An older published cycle (only `g_trail` has two). */
 export const PUBLISHED_CYCLE_ID_2 = monthCycleId(-2);
 
+/**
+ * The fixture groups, keyed by `groupId`. Shared (not copied) between
+ * `mockTransport.ts` (`GET`/`DELETE` routes) and `mockAdmin.ts` (the M12
+ * admin routes), so a settings/member/invite change made through one is
+ * immediately visible through the other.
+ */
+export const groups: Record<string, S["GroupResponse"]> = {
+  g_trail: {
+    groupId: "g_trail",
+    name: "Trail Crew",
+    timezone: "America/New_York",
+    gradient: "grape-sky",
+    cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+    notificationSettings: { offsetsHoursBeforeClose: [96, 48, 24], onCycleOpen: true },
+    memberCount: 2,
+    memberSoftCap: 50,
+    createdAt: "2025-01-12T00:00:00Z",
+    members: [
+      {
+        userId: CALLER_ID,
+        displayName: "Quinn",
+        role: "admin",
+        avatarColor: "teal",
+        avatarUrl: null,
+        joinedAt: "2025-01-12T00:00:00Z",
+        editionsAnswered: 5,
+      },
+      {
+        userId: "u_sam",
+        displayName: "Sam",
+        role: "member",
+        avatarColor: "red",
+        avatarUrl: null,
+        joinedAt: "2025-01-12T00:00:00Z",
+        editionsAnswered: 5,
+      },
+    ],
+  },
+  g_game: {
+    groupId: "g_game",
+    name: "Game Night Gang",
+    timezone: "America/New_York",
+    gradient: "ocean-dusk",
+    cycleSettings: { questionsPerCycle: 4, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+    notificationSettings: { offsetsHoursBeforeClose: [48, 24], onCycleOpen: true },
+    memberCount: 1,
+    memberSoftCap: 50,
+    createdAt: "2025-08-01T00:00:00Z",
+    members: [
+      {
+        userId: CALLER_ID,
+        displayName: "Quinn",
+        role: "member",
+        avatarColor: "teal",
+        avatarUrl: null,
+        joinedAt: "2025-08-01T00:00:00Z",
+        editionsAnswered: 2,
+      },
+    ],
+  },
+  g_meeple: {
+    groupId: "g_meeple",
+    name: "Meeple Mailbox",
+    timezone: "America/New_York",
+    gradient: "forest-mint",
+    cycleSettings: { questionsPerCycle: 8, votesPerUserPerCycle: 4, responseWindowDays: 7 },
+    notificationSettings: { offsetsHoursBeforeClose: [72, 24], onCycleOpen: true },
+    memberCount: 2,
+    memberSoftCap: 50,
+    createdAt: "2024-08-01T00:00:00Z",
+    members: [
+      {
+        userId: CALLER_ID,
+        displayName: "Quinn",
+        role: "member",
+        avatarColor: "teal",
+        avatarUrl: null,
+        joinedAt: "2024-08-01T00:00:00Z",
+        editionsAnswered: 9,
+      },
+      {
+        userId: "u_m_tara",
+        displayName: "Tara",
+        role: "admin",
+        avatarColor: "orange",
+        avatarUrl: null,
+        joinedAt: "2024-08-01T00:00:00Z",
+        editionsAnswered: 9,
+      },
+    ],
+  },
+};
+
+/** Whether `userId` holds the `admin` role in `groupId` — the mock's stand-in for `require_membership(.., true)`. */
+export function isAdminOf(groupId: string, userId: string): boolean {
+  return groups[groupId]?.members.some((m) => m.userId === userId && m.role === "admin") ?? false;
+}
+
+/** Whether `group` has an admin other than `excludingUserId` — the LAST_ADMIN witness check (`group_routes.rs::admin_witness`). */
+export function hasOtherAdmin(group: S["GroupResponse"], excludingUserId: string): boolean {
+  return group.members.some((m) => m.role === "admin" && m.userId !== excludingUserId);
+}
+
 export const newsletters: Record<string, S["NewsletterSummary"][]> = {
   g_trail: [
     {

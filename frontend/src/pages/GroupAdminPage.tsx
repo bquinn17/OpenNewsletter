@@ -1,180 +1,278 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import clsx from "clsx";
-import {
-  useConfig,
-  useCreateInvite,
-  useGroup,
-  useInvites,
-  useRemoveMember,
-  useRevokeInvite,
-  useUpdateGroup,
-  useUpdateMemberRole,
-} from "../mocks/legacyQueries";
+import { useGroup, useInvites, useMe } from "../api/queries";
+import { useCreateInvite, useKickMember, usePatchMember, useRevokeInvite } from "../api/mutations";
+import { ApiError } from "../api/client";
 import { useToasts } from "../state/toast";
 import { PageHeader } from "../components/layout/PageHeader";
+import { GroupSettingsForm } from "../components/admin/GroupSettingsForm";
 import { Avatar } from "../components/ui/Avatar";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Pill } from "../components/ui/Pill";
+import { Spinner } from "../components/ui/Spinner";
+import { useDismissableMenu } from "../components/ui/useDismissableMenu";
+import { avatarColorClass } from "../utils/avatarColor";
 import { formatRelative } from "../utils/dates";
-import type { Group } from "../mocks/types";
+import { inviteUrl } from "../utils/inviteUrl";
+import type { components } from "../types/api";
+
+type S = components["schemas"];
+type GroupResponse = S["GroupResponse"];
+type MemberResponse = S["MemberResponse"];
+type InviteSummary = S["InviteSummary"];
 
 type Tab = "members" | "invites" | "settings";
 
+const TABS: { id: Tab; label: string }[] = [
+  { id: "members", label: "Members" },
+  { id: "invites", label: "Invites" },
+  { id: "settings", label: "Settings" },
+];
+
+/** A 409's `LAST_ADMIN` gets a friendly, specific message; anything else falls back to `fallback`. */
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.code === "LAST_ADMIN") {
+    return "A group needs at least one admin — promote someone else first.";
+  }
+  return fallback;
+}
+
 export function GroupAdminPage() {
   const { groupId = "" } = useParams();
-  const { data: group } = useGroup(groupId);
   const [tab, setTab] = useState<Tab>("members");
+  const group = useGroup(groupId);
 
-  if (!group) return null;
+  if (group.isLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (group.isError || !group.data) {
+    return (
+      <div className="bg-cream pb-12">
+        <PageHeader eyebrow="Admin" title="Couldn't load" back="/settings" />
+        <div className="px-5 pt-8 text-center">
+          <div className="mb-3 text-5xl">😬</div>
+          <p className="font-semibold text-ink">Couldn&apos;t load this group&apos;s admin page.</p>
+          <button
+            onClick={() => group.refetch()}
+            className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-cream pb-12">
-      <PageHeader eyebrow="Admin" title={group.name} back="/settings" />
-      <div className="no-scrollbar flex gap-1 overflow-x-auto px-4 pb-2 text-sm">
-        {(["members", "invites", "settings"] as Tab[]).map((t) => (
+      <PageHeader eyebrow="Admin" title={group.data.name} back="/settings" />
+      <div
+        role="tablist"
+        aria-label="Admin sections"
+        className="no-scrollbar flex gap-1 overflow-x-auto px-4 pb-2 pt-3 text-sm"
+      >
+        {TABS.map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={t.id}
+            role="tab"
+            id={`admin-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`admin-tabpanel-${t.id}`}
+            onClick={() => setTab(t.id)}
             className={clsx(
-              "rounded-full px-3 py-1.5 font-semibold capitalize",
-              tab === t ? "bg-ink text-cream" : "border border-line bg-white",
+              "rounded-full px-3 py-1.5 font-semibold",
+              tab === t.id ? "bg-ink text-cream" : "border border-line bg-white",
             )}
           >
-            {t}
+            {t.label}
           </button>
         ))}
       </div>
 
-      {tab === "members" && <MembersTab group={group} groupId={groupId} />}
-      {tab === "invites" && <InvitesTab groupId={groupId} />}
-      {tab === "settings" && <SettingsTab group={group} groupId={groupId} />}
+      <div role="tabpanel" id={`admin-tabpanel-${tab}`} aria-labelledby={`admin-tab-${tab}`}>
+        {tab === "members" && <MembersTab group={group.data} />}
+        {tab === "invites" && <InvitesTab groupId={groupId} group={group.data} />}
+        {tab === "settings" && <GroupSettingsForm group={group.data} />}
+      </div>
     </div>
   );
 }
 
-function MembersTab({ group, groupId }: { group: Group; groupId: string }) {
-  const { data: config } = useConfig();
-  const updateRole = useUpdateMemberRole(groupId);
-  const removeMember = useRemoveMember(groupId);
+function MembersTab({ group }: { group: GroupResponse }) {
+  const me = useMe();
+  const patchMember = usePatchMember(group.groupId);
+  const kickMember = useKickMember(group.groupId);
   const pushToast = useToasts((s) => s.push);
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [openMenuUserId, setOpenMenuUserId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<MemberResponse | null>(null);
+
+  async function handleMakeAdmin(member: MemberResponse) {
+    try {
+      await patchMember.mutateAsync({ userId: member.userId, role: "admin" });
+      pushToast(`${member.displayName} is now an admin.`, "success");
+    } catch (error) {
+      pushToast(errorMessage(error, "Couldn't update that member's role."), "error");
+    }
+    setOpenMenuUserId(null);
+  }
+
+  async function handleMakeMember(member: MemberResponse) {
+    try {
+      await patchMember.mutateAsync({ userId: member.userId, role: "member" });
+      pushToast(`${member.displayName} is now a member.`, "success");
+    } catch (error) {
+      pushToast(errorMessage(error, "Couldn't update that member's role."), "error");
+    }
+    setOpenMenuUserId(null);
+  }
+
+  async function handleRemove() {
+    if (!removeTarget) return;
+    try {
+      await kickMember.mutateAsync(removeTarget.userId);
+      pushToast(`Removed ${removeTarget.displayName}.`, "default");
+    } catch (error) {
+      pushToast(errorMessage(error, "Couldn't remove that member."), "error");
+    } finally {
+      setRemoveTarget(null);
+      setOpenMenuUserId(null);
+    }
+  }
 
   return (
     <div className="px-5 pt-4">
-      <div className="mb-2 flex items-baseline justify-between">
-        <div className="text-xs font-bold uppercase tracking-widest text-inkmuted">
-          {group.members.length} of {group.memberSoftCap} members
-        </div>
+      <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">
+        {group.memberCount} of {group.memberSoftCap} members
       </div>
       <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
-        {group.members.map((m) => {
-          const isMe = config?.user.userId === m.userId;
-          return (
-            <div key={m.userId} className="relative flex items-center gap-3 p-4">
-              <Avatar name={m.displayName} color={m.avatarColor} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  {m.displayName}
-                  {isMe && <span className="text-[10px] text-inkmuted">(you)</span>}
-                  {m.role === "admin" && (
-                    <Pill tone="coral" className="!px-1.5 !py-0.5 !text-[10px]">
-                      admin
-                    </Pill>
-                  )}
-                </div>
-                <div className="text-xs text-inkmuted">
-                  {m.editionsAnswered > 0
-                    ? `${m.editionsAnswered} editions answered`
-                    : `joined ${formatRelative(m.joinedAt)} · pending first answer`}
-                </div>
-              </div>
-              <MemberMenu
-                open={openMenu === m.userId}
-                onOpenChange={(o) => setOpenMenu(o ? m.userId : null)}
-                disabled={updateRole.isPending || removeMember.isPending}
-                onMakeAdmin={
-                  m.role === "member"
-                    ? async () => {
-                        await updateRole.mutateAsync({ userId: m.userId, role: "admin" });
-                        pushToast(`${m.displayName} is now an admin.`, "success");
-                        setOpenMenu(null);
-                      }
-                    : undefined
-                }
-                onMakeMember={
-                  m.role === "admin" && !isMe
-                    ? async () => {
-                        await updateRole.mutateAsync({ userId: m.userId, role: "member" });
-                        pushToast(`${m.displayName} is now a member.`, "success");
-                        setOpenMenu(null);
-                      }
-                    : undefined
-                }
-                onRemove={
-                  !isMe
-                    ? async () => {
-                        if (!confirm(`Remove ${m.displayName} from ${group.name}?`)) return;
-                        await removeMember.mutateAsync(m.userId);
-                        pushToast(`Removed ${m.displayName}.`, "default");
-                        setOpenMenu(null);
-                      }
-                    : undefined
-                }
-              />
-            </div>
-          );
-        })}
+        {group.members.map((member) => (
+          <MemberRow
+            key={member.userId}
+            member={member}
+            isMe={me.data?.userId === member.userId}
+            menuOpen={openMenuUserId === member.userId}
+            onMenuOpenChange={(open) => setOpenMenuUserId(open ? member.userId : null)}
+            disabled={patchMember.isPending || kickMember.isPending}
+            onMakeAdmin={member.role === "member" ? () => void handleMakeAdmin(member) : undefined}
+            onMakeMember={member.role === "admin" ? () => void handleMakeMember(member) : undefined}
+            onRemove={() => setRemoveTarget(member)}
+          />
+        ))}
       </div>
+
+      <ConfirmDialog
+        open={!!removeTarget}
+        title={removeTarget ? `Remove ${removeTarget.displayName} from the group?` : ""}
+        message="They'll lose access to this group's newsletters and need a new invite to rejoin."
+        confirmLabel="Remove"
+        tone="danger"
+        busy={kickMember.isPending}
+        onConfirm={handleRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }
 
-function MemberMenu({
-  open,
-  onOpenChange,
+function MemberRow({
+  member,
+  isMe,
+  menuOpen,
+  onMenuOpenChange,
   disabled,
   onMakeAdmin,
   onMakeMember,
   onRemove,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  member: MemberResponse;
+  isMe: boolean;
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
   disabled: boolean;
   onMakeAdmin?: () => void;
   onMakeMember?: () => void;
-  onRemove?: () => void;
+  onRemove: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open, onOpenChange]);
-
-  const hasActions = !!(onMakeAdmin || onMakeMember || onRemove);
+  const close = useCallback(() => onMenuOpenChange(false), [onMenuOpenChange]);
+  useDismissableMenu(ref, menuOpen, close);
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => hasActions && onOpenChange(!open)}
-        disabled={disabled || !hasActions}
-        className="h-8 w-8 rounded-full text-inkmuted hover:bg-cream disabled:opacity-30"
-        aria-label="Member options"
-      >
-        ⋯
-      </button>
-      {open && (
-        <div className="absolute right-0 top-9 z-30 w-48 animate-pop rounded-2xl border border-line bg-white p-1 shadow-pop">
-          {onMakeAdmin && <MenuItem onClick={onMakeAdmin}>Make admin</MenuItem>}
-          {onMakeMember && <MenuItem onClick={onMakeMember}>Make member</MenuItem>}
-          {onRemove && (
-            <MenuItem onClick={onRemove} danger>
-              Remove from group
-            </MenuItem>
+    <div className="flex items-center gap-3 p-4">
+      <Avatar
+        name={member.displayName}
+        url={member.avatarUrl}
+        colorClassName={avatarColorClass(member.avatarColor)}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          {member.displayName}
+          {isMe && <span className="text-[10px] font-normal text-inkmuted">(you)</span>}
+          {member.role === "admin" && (
+            <Pill tone="coral" className="!px-1.5 !py-0.5 !text-[10px]">
+              admin
+            </Pill>
+          )}
+        </div>
+        <div className="text-xs text-inkmuted">
+          {member.editionsAnswered > 0
+            ? `${member.editionsAnswered} editions answered`
+            : `joined ${formatRelative(member.joinedAt)} · pending first answer`}
+        </div>
+      </div>
+
+      {/* The caller's own row has no menu — leaving a group lives in Settings
+          → Your groups, and self-demotion is out of scope (`04` §7.7). */}
+      {!isMe && (
+        <div ref={ref} className="relative">
+          <button
+            onClick={() => onMenuOpenChange(!menuOpen)}
+            disabled={disabled}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={`Options for ${member.displayName}`}
+            className="h-8 w-8 rounded-full text-inkmuted hover:bg-cream disabled:opacity-30"
+          >
+            ⋯
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-9 z-30 w-48 animate-pop rounded-2xl border border-line bg-white p-1 shadow-pop"
+            >
+              {onMakeAdmin && (
+                <button
+                  role="menuitem"
+                  onClick={onMakeAdmin}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-cream"
+                >
+                  Make admin
+                </button>
+              )}
+              {onMakeMember && (
+                <button
+                  role="menuitem"
+                  onClick={onMakeMember}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-cream"
+                >
+                  Make member
+                </button>
+              )}
+              <button
+                role="menuitem"
+                onClick={onRemove}
+                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-coral hover:bg-cream"
+              >
+                Remove from group
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -182,244 +280,226 @@ function MemberMenu({
   );
 }
 
-function MenuItem({
-  onClick,
-  danger,
-  children,
-}: {
-  onClick: () => void;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        "w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-cream",
-        danger && "text-coral",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
+const INVITE_ROLE_OPTIONS: { value: S["Role"]; label: string }[] = [
+  { value: "member", label: "Member" },
+  { value: "admin", label: "Admin" },
+];
+// Server max is `INVITE_MAX_TTL_DAYS` = 90 (`shared/src/config.rs`).
+const INVITE_TTL_OPTIONS = [1, 3, 7, 14, 30, 90];
+const DEFAULT_TTL_DAYS = 7;
 
-function InvitesTab({ groupId }: { groupId: string }) {
-  const { data: invites = [] } = useInvites(groupId);
-  const create = useCreateInvite(groupId);
-  const revoke = useRevokeInvite(groupId);
+type DecoratedInvite = InviteSummary & { expired: boolean };
+
+function InvitesTab({ groupId, group }: { groupId: string; group: GroupResponse }) {
+  const invitesQuery = useInvites(groupId);
+  const createInvite = useCreateInvite(groupId);
+  const revokeInvite = useRevokeInvite(groupId);
   const pushToast = useToasts((s) => s.push);
+  const [role, setRole] = useState<S["Role"]>("member");
+  const [ttlDays, setTtlDays] = useState(DEFAULT_TTL_DAYS);
+  const [justCreated, setJustCreated] = useState<S["CreateInviteResponse"] | null>(null);
 
-  const handleCopy = async (code: string) => {
+  async function handleCreate() {
     try {
-      await navigator.clipboard.writeText(`https://opennewsletter.example.com/join?code=${code}`);
-      pushToast("Invite link copied.", "success");
+      const invite = await createInvite.mutateAsync({ groupId, roleOnRedeem: role, ttlDays });
+      setJustCreated(invite);
     } catch {
-      pushToast("Couldn't copy — long-press to select.", "error");
+      pushToast("Couldn't create that invite. Try again.", "error");
     }
-  };
+  }
+
+  async function handleRevoke(code: string) {
+    try {
+      await revokeInvite.mutateAsync(code);
+      pushToast("Invite revoked.", "default");
+      if (justCreated?.code === code) setJustCreated(null);
+    } catch {
+      pushToast("Couldn't revoke that invite. Try again.", "error");
+    }
+  }
+
+  const now = Date.now();
+  const decorated: DecoratedInvite[] = (invitesQuery.data?.items ?? []).map((invite) => ({
+    ...invite,
+    expired: invite.status === "pending" && new Date(invite.expiresAt).getTime() <= now,
+  }));
+  const sorted = [...decorated].sort((a, b) => {
+    const aActive = a.status === "pending" && !a.expired;
+    const bActive = b.status === "pending" && !b.expired;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    return b.createdAt.localeCompare(a.createdAt);
+  });
 
   return (
     <div className="px-5 pt-4">
-      <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">
-        Open invites
-      </div>
-      <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
-        {invites.map((inv) => {
-          const used = inv.status === "consumed";
-          return (
-            <div
-              key={inv.code}
-              className={clsx("flex items-center gap-3 p-4", used && "opacity-60")}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleCreate();
+        }}
+        className="mb-4 space-y-3 rounded-3xl border border-line bg-white p-4 shadow-soft"
+      >
+        <div className="flex gap-3">
+          <label className="flex-1 text-sm">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-widest text-inkmuted">
+              Role
+            </span>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as S["Role"])}
+              className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm"
             >
-              <div
-                className={clsx(
-                  "rounded-lg bg-cream px-2 py-1 font-mono text-sm",
-                  used && "line-through",
-                )}
-              >
-                {inv.code}
-              </div>
-              <div className="flex-1 text-xs text-inkmuted">
-                {used
-                  ? `used by ${inv.consumedByName ?? "—"} · ${formatRelative(inv.consumedAt!)}`
-                  : `expires ${formatRelative(inv.expiresAt)} · ${inv.roleOnRedeem}`}
-              </div>
-              {used ? (
-                <span className="text-xs text-inkmuted">used</span>
-              ) : inv.status === "revoked" ? (
-                <span className="text-xs text-inkmuted">revoked</span>
-              ) : (
-                <>
-                  <button
-                    onClick={() => handleCopy(inv.code)}
-                    className="text-xs font-semibold text-grape"
-                  >
-                    Copy
-                  </button>
-                  <button
-                    onClick={() => revoke.mutate(inv.code)}
-                    className="text-xs font-semibold text-coral"
-                  >
-                    Revoke
-                  </button>
-                </>
-              )}
-            </div>
-          );
-        })}
-        {invites.length === 0 && <div className="p-4 text-sm text-inkmuted">No invites yet.</div>}
-      </div>
-      <div className="mt-3 flex gap-2">
-        <Button onClick={() => create.mutate("member")} disabled={create.isPending}>
-          ＋ Member invite
+              {INVITE_ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex-1 text-sm">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-widest text-inkmuted">
+              Expires in
+            </span>
+            <select
+              value={ttlDays}
+              onChange={(e) => setTtlDays(Number(e.target.value))}
+              className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm"
+            >
+              {INVITE_TTL_OPTIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d} day{d === 1 ? "" : "s"}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <Button type="submit" disabled={createInvite.isPending} className="w-full">
+          {createInvite.isPending ? "Creating…" : "Create invite"}
         </Button>
-        <Button variant="ghost" onClick={() => create.mutate("admin")} disabled={create.isPending}>
-          ＋ Admin invite
-        </Button>
-      </div>
-    </div>
-  );
-}
+      </form>
 
-function SettingsTab({ group, groupId }: { group: Group; groupId: string }) {
-  const update = useUpdateGroup(groupId);
-  const pushToast = useToasts((s) => s.push);
+      {justCreated && <NewInvite invite={justCreated} onDismiss={() => setJustCreated(null)} />}
 
-  const setCycle = (patch: Partial<Group["cycleSettings"]>) =>
-    update.mutate({ cycleSettings: { ...group.cycleSettings, ...patch } });
-  const setNotifications = (patch: Partial<Group["notificationSettings"]>) =>
-    update.mutate({ notificationSettings: { ...group.notificationSettings, ...patch } });
-
-  return (
-    <div className="space-y-4 px-5 pt-4">
-      <Section title="Cycle">
-        <NumberField
-          label="Questions per cycle"
-          value={group.cycleSettings.questionsPerCycle}
-          min={1}
-          max={20}
-          onSave={(v) => setCycle({ questionsPerCycle: v })}
-        />
-        <NumberField
-          label="Votes per user per cycle"
-          value={group.cycleSettings.votesPerUserPerCycle}
-          min={1}
-          max={20}
-          onSave={(v) => setCycle({ votesPerUserPerCycle: v })}
-        />
-        <NumberField
-          label="Response window (days)"
-          value={group.cycleSettings.responseWindowDays}
-          min={1}
-          max={30}
-          onSave={(v) => setCycle({ responseWindowDays: v })}
-        />
-        <ReadOnlyField label="Timezone" value={group.timezone} />
-      </Section>
-      <Section title="Notifications">
-        <ReadOnlyField
-          label="Reminders before deadline"
-          value={`${group.notificationSettings.offsetsHoursBeforeClose.join("h, ")}h`}
-        />
-        <ToggleField
-          label="Send when cycle opens"
-          value={group.notificationSettings.onCycleOpen}
-          onChange={(v) => {
-            setNotifications({ onCycleOpen: v });
-            pushToast(`Cycle-open notifications ${v ? "on" : "off"}.`, "default");
-          }}
-        />
-      </Section>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-2 ml-1 text-xs font-bold uppercase tracking-widest text-inkmuted">
-        {title}
-      </div>
       <div className="divide-y divide-line rounded-3xl border border-line bg-white shadow-soft">
-        {children}
+        {sorted.map((invite) => (
+          <InviteRow
+            key={invite.code}
+            invite={invite}
+            group={group}
+            onRevoke={() => void handleRevoke(invite.code)}
+            revoking={revokeInvite.isPending}
+          />
+        ))}
+        {sorted.length === 0 && <div className="p-4 text-sm text-inkmuted">No invites yet.</div>}
       </div>
     </div>
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+async function copyInviteLink(
+  code: string,
+  pushToast: (message: string, tone?: "default" | "success" | "error") => void,
+): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(inviteUrl(code));
+    pushToast("Invite link copied.", "success");
+  } catch {
+    pushToast("Couldn't copy — long-press to select.", "error");
+  }
+}
+
+function NewInvite({
+  invite,
+  onDismiss,
+}: {
+  invite: S["CreateInviteResponse"];
+  onDismiss: () => void;
+}) {
+  const pushToast = useToasts((s) => s.push);
+  const url = inviteUrl(invite.code);
+
   return (
-    <div className="flex items-center gap-3 p-4">
-      <div className="flex-1 text-sm">{label}</div>
-      <div className="text-sm font-semibold text-inkmuted">{value}</div>
+    <div className="mb-4 rounded-3xl border border-grape/30 bg-grape/5 p-4">
+      <div className="text-sm font-semibold text-grape">Invite created</div>
+      <label htmlFor="new-invite-url" className="sr-only">
+        Invite link
+      </label>
+      <input
+        id="new-invite-url"
+        readOnly
+        value={url}
+        onFocus={(e) => e.target.select()}
+        className="mt-2 w-full rounded-2xl border border-line bg-white px-3 py-2 text-xs"
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <button onClick={onDismiss} className="text-xs font-semibold text-inkmuted">
+          Dismiss
+        </button>
+        <Button type="button" size="sm" onClick={() => void copyInviteLink(invite.code, pushToast)}>
+          Copy
+        </Button>
+      </div>
     </div>
   );
 }
 
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  onSave,
+function InviteRow({
+  invite,
+  group,
+  onRevoke,
+  revoking,
 }: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onSave: (v: number) => void;
+  invite: DecoratedInvite;
+  group: GroupResponse;
+  onRevoke: () => void;
+  revoking: boolean;
 }) {
-  const [local, setLocal] = useState(String(value));
-  useEffect(() => setLocal(String(value)), [value]);
+  const pushToast = useToasts((s) => s.push);
+  const active = invite.status === "pending" && !invite.expired;
 
-  function commit() {
-    const next = Number.parseInt(local, 10);
-    if (Number.isNaN(next)) {
-      setLocal(String(value));
-      return;
-    }
-    const clamped = Math.max(min, Math.min(max, next));
-    setLocal(String(clamped));
-    if (clamped !== value) onSave(clamped);
+  if (active) {
+    return (
+      <div className="flex items-center gap-3 p-4">
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-sm">{invite.code}</div>
+          <div className="text-xs capitalize text-inkmuted">
+            {invite.roleOnRedeem} · expires {formatRelative(invite.expiresAt)}
+          </div>
+        </div>
+        <button
+          onClick={() => void copyInviteLink(invite.code, pushToast)}
+          className="shrink-0 text-xs font-semibold text-grape"
+        >
+          Copy
+        </button>
+        <button
+          onClick={onRevoke}
+          disabled={revoking}
+          className="shrink-0 text-xs font-semibold text-coral disabled:opacity-50"
+        >
+          Revoke
+        </button>
+      </div>
+    );
+  }
+
+  if (invite.status === "consumed") {
+    const consumedByName =
+      group.members.find((m) => m.userId === invite.consumedBy)?.displayName ?? "a former member";
+    return (
+      <div className="p-4 text-sm text-inkmuted opacity-60">
+        <div className="font-mono">{invite.code}</div>
+        <div className="text-xs">
+          used by {consumedByName} · {formatRelative(invite.consumedAt!)}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex items-center gap-3 p-4">
-      <div className="flex-1 text-sm">{label}</div>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        className="w-20 rounded-xl border border-line bg-cream px-3 py-1.5 text-right text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-coral/30"
-      />
-    </div>
-  );
-}
-
-function ToggleField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3 p-4">
-      <div className="flex-1 text-sm">{label}</div>
-      <button
-        onClick={() => onChange(!value)}
-        className={`toggle ${value ? "on" : ""}`}
-        aria-label={`Toggle ${label}`}
-      />
+    <div className="p-4 text-sm text-inkmuted opacity-60">
+      <div className="font-mono">{invite.code}</div>
+      <div className="text-xs">{invite.expired ? "expired" : "revoked"}</div>
     </div>
   );
 }

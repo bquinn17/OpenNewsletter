@@ -23,11 +23,11 @@ blockers resolve. Authoritative milestone definitions live in
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
 | **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
 | **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 430 backend (427 + 3 from the post-M11 review fixes), 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
-| M12 | Admin UI | ⬜ | |
+| **M12** | **Admin UI** | 🟡 **code-complete, deploy unverified** | See "M12 detail" below. 265 frontend (was 220), 431 backend (+1) and 68 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt and clippy (`-D warnings`) are clean. The create-invite → share → new-member-appears gate needs a deployed stack (B5). |
 | M13 | Hardening | ⬜ | |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M11 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M12 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -458,7 +458,11 @@ Still outstanding: Google + Facebook OAuth app registrations, the real CloudFron
    - tick to publish → the publication push arrives; tapping it opens the edition
    - turn a group's "Deadline reminders" off and confirm that member is skipped
    - check the `PushFailureRate` alarm and the `PushSent`/`PushFailed` EMF metrics exist in CloudWatch
-11. **Begin M12** (Admin UI). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+11. **M12 gate**: after deploy, as a group admin open Settings → Your groups → Manage:
+   - Invites: create a member invite, copy the URL, and open it in another browser signed in as a second Google account → the new member appears on the Members tab, and the invite shows "used by {name}"
+   - make them admin, then member again; remove them through the confirm dialog
+   - Settings: rename the group and change its gradient → Home and the group switcher pick it up without a reload
+12. **Begin M13** (Hardening). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
@@ -472,8 +476,7 @@ Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environm
 - **Comment author names: no cross-request cache.** `09` §1.5 suggests a 60s per-cold-start user cache. M10 does one deduped `BatchGetItem` per request instead. Add the cache if user reads show up as hot.
 - **`get_comment_by_id` walks the answer's whole `C#` range with a filter**, because there's no index on `comment_id`. That's fine at expected thread sizes; revisit if threads get long.
 - **The comment composer's image upload and the `[deleted]` placeholder** are only exercised in mock mode and component tests, since there's no deploy yet (M10 gate).
-- **Legacy mock query keys collide with real ones in mock mode.** `src/mocks/legacyQueries.ts` still caches `["config"]` and `["group", g]` with the legacy shapes, and `GroupAdminPage` (M12) uses them. With `VITE_USE_MOCKS=true`, opening the admin page can poison the real `/config` cache for the session. This goes away when M12 migrates the page.
-- **`utils/avatar.ts#avatarClasses` uses the legacy colour slugs** (coral/grape/mint…), not the API's `AvatarColorSlug` set. New M9 code uses `utils/avatarColor.ts`. `Avatar`'s `color` prop still falls back to the legacy table, so callers should pass `colorClassName`. Remove the legacy table with the last legacy page.
+- **No invite pagination.** `GET /admin/groups/{g}/invites` takes no cursor and always returns `nextCursor: null`. Every invite comes back, including consumed/revoked ones until their DynamoDB TTL (expiry + 30 days) removes them. Fine at expected volumes.
 - **`RespondPage` has no markdown formatting toolbar** (the legacy page had bold/italic/list buttons). The spec only requires Write/Preview. Add it if users ask.
 - **No "hype check" banner** (`04` §14a `utils/hype.ts`) and no recurring-question helper text (`utils/recurring.ts`). Both are optional decoration and not built.
 
@@ -483,6 +486,38 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth (the `NOTIFIED#…`/`TICK#NOTIFY` rows) is resolved: M11 writes them.
 - **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
+
+---
+
+## M12 detail — what landed (2026-10-06)
+
+Frontend-only apart from one backend validation fix: every admin route already existed in the backend and in `shared/openapi.yaml`. The lead settled the semantics up front (recorded in `04` §7.7/§16), a Sonnet agent built it, and the lead reviewed it and re-ran every check.
+
+### Frontend
+- **`pages/GroupAdminPage`** is on the real API and routed unconditionally under `RequireGroupAdmin`. It has three accessible tabs (`tablist`/`tab`/`tabpanel`):
+  - **Members**: avatar, role pill and the "N of cap" line. A row menu offers make admin, make member and remove; remove goes through `ConfirmDialog`. The caller's own row has no menu.
+  - **Invites**: create with role + TTL (1/3/7/14/30/90 days), then show the copyable URL. The list shows active, expired (derived client-side), revoked and consumed invites, with "used by {name}" or "a former member". Revoke is a direct action.
+  - **Settings**: `components/admin/GroupSettingsForm` (react-hook-form + zod) covers name, gradient swatches, timezone (`Intl.supportedValuesOf`), cycle settings, reminder offsets, `onCycleOpen` and `memberSoftCap`. Its client validation mirrors `lambda-groups/src/validation.rs`. It sends only the changed fields and renders the server's `fieldErrors` inline.
+- **Data layer**:
+  - `api/client.ts` gained `createInvite`, `listInvites`, `revokeInvite`, `patchMember` and `patchGroup`.
+  - `queries.ts` gained `useInvites` and `queryKeys.invites`.
+  - `mutations.ts` gained `useCreateInvite`, `useRevokeInvite`, `usePatchMember`, `useKickMember` and `usePatchGroup`. `usePatchGroup` invalidates `/config` and the group's newsletter list.
+- **`utils/inviteUrl.ts`** builds the join link from `window.location.origin` + `BASE_URL`. This replaces the legacy hardcoded `opennewsletter.example.com`.
+- **Mock mode**:
+  - `api/mockAdmin.ts` serves the five admin routes.
+  - The mock `groups` fixture moved to `mockShared.ts` so admin edits show up in `GET /groups/{g}`.
+  - Mock `/config` now derives membership name/gradient/timezone from the live fixture.
+- **Legacy removal (`04` §16 complete)**: deleted `src/mocks/` and `PendingMilestonePage`, plus the legacy colour table in `utils/avatar.ts` and `Avatar`'s `color` prop. This clears two Known gaps: the `["config"]`/`["group", g]` mock-cache collision and the legacy avatar slugs.
+
+### Bugs found (fixed)
+- **Mock `removeMember` hardcoded `LAST_ADMIN` for `g_trail`.** Every mock kick in that group would have failed. It now mirrors the backend's `admin_witness` rule: only a self-removal or self-demotion by the sole admin gets 409. The lead checked this against `group_routes.rs`.
+- **Group-name 422s were reported against `displayName`.** `group_patch` reused the `/me` validator. It is now split into `name_field(raw, field)`, so the field is `name`, with a regression test (`blank_group_name_is_reported_against_name`). The form still aliases `displayName` → `name` as well, which is harmless.
+- **Save stayed enabled after a reverted edit.** The settings form compared raw string inputs with numeric baselines. Both sides are now normalised, with a test.
+
+### Tests
+- **Frontend: 265 (was 220).** +15 `GroupAdminPage`, +20 `mockAdmin`, +6 client path/body, +5 `inviteUrl`. Some legacy-only coverage went with the deleted files.
+- **Backend: 431** (+1 for the validation regression test). The full `--no-fail-fast` run had one DynamoDB Local "create table" flake (`promotion_is_idempotent_across_rapid_reruns`, under load), and it passed on a solo re-run. That is the known overload flake, not a regression.
+- **CDK: 68**, unchanged.
 
 ---
 
@@ -795,17 +830,20 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 
 ---
 
-## Handoff — starting M12 (Admin UI)
+## Handoff — starting M13 (Hardening)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M12, `04` (the GroupAdmin page and §16 legacy-mock migration) and the admin routes in `03` (groups, members, invites, cycle settings).
-2. **Know the M12 scope.**
-   - `GroupAdminPage` is still on the legacy `src/mocks/` layer and only routes in mock mode. Migrating it removes the legacy `["config"]`/`["group", g]` query-key collision (Known gaps).
-   - Group notification settings (`notificationSettings.onCycleOpen`, `offsetsHoursBeforeClose`) are read by M11's fan-outs; the admin UI is where they get edited.
-   - Check which admin routes exist in `shared/openapi.yaml` before writing any; anything new goes into the YAML, `ROUTE_TABLE` and `codegen_types.sh` in the same change.
-3. **Verify** with the commands in `CLAUDE.md`. Baselines: 427 backend, 68 CDK, 220 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`). Put `infra/.venv/bin` first on `PATH` for `cdk synth`. If DynamoDB Local tests fail at "create table" with `IncompleteMessage`, the machine was overloaded (don't build in parallel with the test run); re-run with `--no-fail-fast`.
-4. **Suggested split:** M12 is mostly frontend. The lead writes any contract changes first, then a Sonnet frontend agent, and a backend agent only if routes are missing.
+1. **Orient.** Read `CLAUDE.md`, then `12` M13 and `11` §2–§4 (the test pyramid and the four CI workflows). M13 is mostly gap-filling, not new product surface.
+2. **Know the M13 scope.**
+   - Diff `11` §2–§4's test lists against what exists and fill the gaps.
+   - Get all four GitHub Actions workflows green. There is no `frontend-deploy.yml` yet; it should include the `04` §14.5 `404.html` copy (Known gaps).
+   - Playwright: set up E2E (`04` §1), including the build-only CSP `<meta>` (`04` §12.1/§13) verified by a Playwright test.
+   - Write `docs/smoke.md`. Alarms → SNS → email is already wired (`ALARM_EMAIL` set); confirm it once deployed.
+   - Optional, from Known gaps: a push-endpoint host allowlist and the comment-author cache.
+   - The deploy-shaped deliverables (smoke run, 5-min E2E against dev) need B5 cleared. Do the code-side work first.
+3. **Verify** with the commands in `CLAUDE.md`. Baselines: 431 backend, 68 CDK, 265 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`). Put `infra/.venv/bin` first on `PATH` for `cdk synth`. If DynamoDB Local tests fail at "create table" with `IncompleteMessage`, the machine was overloaded (don't build in parallel with the test run); re-run with `--no-fail-fast`.
+4. **Suggested split:** a frontend agent (Playwright + CSP), an infra/CI agent (workflows; Haiku is enough), and the lead on the `11` test-gap audit and `docs/smoke.md`.
 
 ---
 

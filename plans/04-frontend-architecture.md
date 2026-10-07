@@ -374,6 +374,14 @@ Tabs:
 
 There is no Curate tab in v1 — admins do not override voting outcomes. See `06-newsletter-lifecycle.md` §7. The admin page has exactly three tabs (Members / Invites / Settings) and the `CurateQuestionsForm` component does not exist.
 
+**Decided in M12:**
+- **Members.** The caller's own row has no actions. Leaving is in Settings → Your groups, and self-demotion is out of scope. Kick goes through `ConfirmDialog`. A 409 `LAST_ADMIN` shows a friendly toast.
+- **Invite URL.** Built from the running app as `window.location.origin + import.meta.env.BASE_URL + "join?code=…"` (`utils/inviteUrl.ts`). No hardcoded domain.
+- **Invite TTL.** Picked from 1/3/7/14/30/90 days. The default is 7 (`INVITE_DEFAULT_TTL_DAYS`) and 90 is the server max.
+- **Expired invites.** The API's `InviteStatus` has no `expired`. The UI derives it as `pending && expiresAt <= now`.
+- **Consumed invites.** These show the consumer's `displayName` from `GET /groups/{g}` members, or "a former member" if they've left.
+- **Settings form.** One form with an explicit Save, covering name, gradient, timezone, cycle settings, reminder offsets, `onCycleOpen` and `memberSoftCap`. It sends only the changed top-level fields; a changed `cycleSettings`/`notificationSettings` goes as the whole sub-object. On success it invalidates `/config`, because memberships carry the group's name/gradient/timezone. It also invalidates the newsletter list, because a timezone or window change can reschedule the voting cycle (`06` §6).
+
 ### 7.8 JoinPage `/join?code=...`
 
 If unauthenticated: stash the code in sessionStorage (and in the OIDC `state` data via `login()`) and redirect to login. On `/auth/callback`, after token exchange, the SPA pulls the code back out and navigates to `/join?code=…`, which is now authenticated and redeems it — one redemption code path, not two.
@@ -623,3 +631,5 @@ Commit `91188ba` shipped a full mock-only UI on hand-written types before the re
 The router renders a legacy page only when `VITE_USE_MOCKS=true`. Against a real API, each of those routes renders `PendingMilestonePage`. Each later milestone (M9 newsletter/candidates, M10 engagement, M12 admin) migrates its pages onto `api/queries.ts` + `types/api.ts` and deletes the legacy code it replaces. `src/mocks/` is deleted when it is empty.
 
 **M9 status:** `CandidatesPage`, `SuggestPage`, `NewsletterPage` and `RespondPage` (plus `AnswerCard`, `PollWidget`, `AskedBy`) are on the real API and routed unconditionally. Their mock routes live in `api/mockCandidates.ts` / `api/mockNewsletters.ts`, which share `api/mockShared.ts`. What remains legacy is `GroupAdminPage` (M12) and `CommentList`/`ReactionBar`/`EmojiPickerPopover` (M10).
+
+**M12 status:** `GroupAdminPage` is on the real API and routed unconditionally, with its mock routes in `api/mockAdmin.ts`. It was the last legacy consumer, so `src/mocks/`, `PendingMilestonePage` and the legacy avatar colour table are deleted. The transition is complete.

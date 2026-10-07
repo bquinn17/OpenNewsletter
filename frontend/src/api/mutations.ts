@@ -341,3 +341,70 @@ export function usePutPushPreference(groupId: string) {
     },
   });
 }
+
+// ---- Group admin (M12 — `03-api-contract.md` §3/§4) -----------------------
+
+/** Creates an invite for the given group (`GroupAdminPage`'s Invites tab). */
+export function useCreateInvite(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: S["CreateInviteRequest"]) => api.createInvite(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.invites(groupId) }),
+  });
+}
+
+/** Revokes a pending invite. Idempotent — revoking an already-revoked code still succeeds. */
+export function useRevokeInvite(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) => api.revokeInvite(code),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.invites(groupId) }),
+  });
+}
+
+/**
+ * Changes a member's role. The page surfaces `LAST_ADMIN` with its own
+ * friendly copy and toasts success/failure itself — suppress the generic
+ * global toast to avoid showing both.
+ */
+export function usePatchMember(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: S["Role"] }) =>
+      api.patchMember(groupId, userId, { role }),
+    meta: { silent: true },
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.group(groupId) }),
+  });
+}
+
+/** Removes a member from the group (admin "Remove from group" action). Same toast convention as `usePatchMember`. */
+export function useKickMember(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.removeMember(groupId, userId),
+    meta: { silent: true },
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.group(groupId) }),
+  });
+}
+
+/**
+ * Updates group settings (name/gradient/timezone/cycle/notification settings/
+ * member cap). The form renders its own field and form-level errors —
+ * suppress the generic global toast to avoid showing both.
+ */
+export function usePatchGroup(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: S["PatchGroupRequest"]) => api.patchGroup(groupId, body),
+    meta: { silent: true },
+    onSuccess: (data) => {
+      qc.setQueryData(queryKeys.group(groupId), data);
+      // Memberships denormalize groupName/gradient/timezone; the server
+      // reads the group row live, so a refetch picks up the new values.
+      qc.invalidateQueries({ queryKey: queryKeys.config });
+      // A timezone/responseWindowDays change can reschedule the voting
+      // cycle's dates (`06-newsletter-lifecycle.md` §6).
+      qc.invalidateQueries({ queryKey: queryKeys.newsletters(groupId) });
+    },
+  });
+}

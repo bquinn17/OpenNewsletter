@@ -1,4 +1,5 @@
 import type { components } from "../types/api";
+import { mockAdminRoute } from "./mockAdmin";
 import { mockCandidateRoute } from "./mockCandidates";
 import { mockEngagementRoute } from "./mockEngagement";
 import { mockNewsletterRoute } from "./mockNewsletters";
@@ -6,6 +7,9 @@ import { mockPushRoute } from "./mockPush";
 import {
   CALLER_ID,
   fail,
+  groups,
+  hasOtherAdmin,
+  isAdminOf,
   newsletters,
   NO_MOCK_ROUTE,
   type Method,
@@ -56,93 +60,6 @@ let memberships: S["MembershipSummary"][] = [
   },
 ];
 
-const groups: Record<string, S["GroupResponse"]> = {
-  g_trail: {
-    groupId: "g_trail",
-    name: "Trail Crew",
-    timezone: "America/New_York",
-    gradient: "grape-sky",
-    cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 4 },
-    notificationSettings: { offsetsHoursBeforeClose: [96, 48, 24], onCycleOpen: true },
-    memberCount: 2,
-    memberSoftCap: 50,
-    createdAt: "2025-01-12T00:00:00Z",
-    members: [
-      {
-        userId: CALLER_ID,
-        displayName: "Quinn",
-        role: "admin",
-        avatarColor: "teal",
-        avatarUrl: null,
-        joinedAt: "2025-01-12T00:00:00Z",
-        editionsAnswered: 5,
-      },
-      {
-        userId: "u_sam",
-        displayName: "Sam",
-        role: "admin",
-        avatarColor: "red",
-        avatarUrl: null,
-        joinedAt: "2025-01-12T00:00:00Z",
-        editionsAnswered: 5,
-      },
-    ],
-  },
-  g_game: {
-    groupId: "g_game",
-    name: "Game Night Gang",
-    timezone: "America/New_York",
-    gradient: "ocean-dusk",
-    cycleSettings: { questionsPerCycle: 4, votesPerUserPerCycle: 3, responseWindowDays: 4 },
-    notificationSettings: { offsetsHoursBeforeClose: [48, 24], onCycleOpen: true },
-    memberCount: 1,
-    memberSoftCap: 50,
-    createdAt: "2025-08-01T00:00:00Z",
-    members: [
-      {
-        userId: CALLER_ID,
-        displayName: "Quinn",
-        role: "member",
-        avatarColor: "teal",
-        avatarUrl: null,
-        joinedAt: "2025-08-01T00:00:00Z",
-        editionsAnswered: 2,
-      },
-    ],
-  },
-  g_meeple: {
-    groupId: "g_meeple",
-    name: "Meeple Mailbox",
-    timezone: "America/New_York",
-    gradient: "forest-mint",
-    cycleSettings: { questionsPerCycle: 8, votesPerUserPerCycle: 4, responseWindowDays: 7 },
-    notificationSettings: { offsetsHoursBeforeClose: [72, 24], onCycleOpen: true },
-    memberCount: 2,
-    memberSoftCap: 50,
-    createdAt: "2024-08-01T00:00:00Z",
-    members: [
-      {
-        userId: CALLER_ID,
-        displayName: "Quinn",
-        role: "member",
-        avatarColor: "teal",
-        avatarUrl: null,
-        joinedAt: "2024-08-01T00:00:00Z",
-        editionsAnswered: 9,
-      },
-      {
-        userId: "u_m_tara",
-        displayName: "Tara",
-        role: "admin",
-        avatarColor: "orange",
-        avatarUrl: null,
-        joinedAt: "2024-08-01T00:00:00Z",
-        editionsAnswered: 9,
-      },
-    ],
-  },
-};
-
 function handleGetConfig(): S["ConfigResponse"] {
   return {
     userId: me.userId,
@@ -153,7 +70,16 @@ function handleGetConfig(): S["ConfigResponse"] {
     vapidPublicKey:
       "BJTfWJoykcXuskzxVht3DnGpI07IIX8QCxj668lx_G0GgtvMi_mAFvD0_r6Z5Hvy3QRzrVQJrXo7NUUc9Nnix40",
     groupDefaults: {},
-    memberships: [...memberships],
+    // The real server computes these fields from the live group row rather
+    // than a denormalized copy (`03-api-contract.md` §4) — read `groups` live
+    // here too, so a `patchGroup` is immediately visible after invalidating
+    // `/config`.
+    memberships: memberships.map((m) => {
+      const group = groups[m.groupId];
+      return group
+        ? { ...m, groupName: group.name, gradient: group.gradient, timezone: group.timezone }
+        : m;
+    }),
   };
 }
 
@@ -177,15 +103,28 @@ function handleGetGroup(groupId: string): S["GroupResponse"] {
 function handleRemoveMember(groupId: string, userId: string): undefined {
   const group = groups[groupId];
   if (!group) fail(404, "NOT_FOUND", `group ${groupId} not found`);
-  // Simplified fixture rule: g_trail is always "the caller's only-admin group".
-  if (groupId === "g_trail") fail(409, "LAST_ADMIN", "the last admin can't leave their group");
 
-  const memberIndex = group.members.findIndex((m) => m.userId === userId);
-  if (memberIndex === -1) fail(404, "NOT_FOUND", `member ${userId} not found in group ${groupId}`);
+  // Mirrors `group_routes.rs::remove_member`: leaving needs membership,
+  // removing someone else needs admin — checked before the target lookup.
+  const isSelf = userId === CALLER_ID;
+  const callerIsMember = group.members.some((m) => m.userId === CALLER_ID);
+  if (!callerIsMember || (!isSelf && !isAdminOf(groupId, CALLER_ID))) {
+    fail(403, "FORBIDDEN", `not ${isSelf ? "a member" : "an admin"} of ${groupId}`);
+  }
 
-  group.members.splice(memberIndex, 1);
+  const member = group.members.find((m) => m.userId === userId);
+  if (!member) fail(404, "NOT_FOUND", `member ${userId} not found in group ${groupId}`);
+
+  // Mirrors `group_routes.rs::admin_witness`: an admin removing someone ELSE
+  // is their own witness (they remain), so only a self-removal of the sole
+  // admin needs the LAST_ADMIN guard.
+  if (isSelf && member.role === "admin" && !hasOtherAdmin(group, userId)) {
+    fail(409, "LAST_ADMIN", "a group must keep at least one admin");
+  }
+
+  group.members = group.members.filter((m) => m.userId !== userId);
   group.memberCount = group.members.length;
-  if (userId === CALLER_ID) memberships = memberships.filter((m) => m.groupId !== groupId);
+  if (isSelf) memberships = memberships.filter((m) => m.groupId !== groupId);
   return undefined;
 }
 
@@ -461,6 +400,7 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
     mockNewsletterRoute,
     mockEngagementRoute,
     mockPushRoute,
+    mockAdminRoute,
   ]) {
     const result = route(request);
     if (result !== NO_MOCK_ROUTE) return result;

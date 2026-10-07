@@ -160,6 +160,19 @@ export const api = {
       method: "DELETE",
     }),
 
+  patchMember: (
+    groupId: string,
+    userId: string,
+    body: S["PatchMemberRequest"],
+  ): Promise<S["MemberResponse"]> =>
+    apiFetch(`/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body,
+    }),
+
+  patchGroup: (groupId: string, body: S["PatchGroupRequest"]): Promise<S["GroupResponse"]> =>
+    apiFetch(groupPath(groupId), { method: "PATCH", body }),
+
   listNewsletters: (
     groupId: string,
     params?: { status?: S["NewsletterStatus"]; limit?: number; cursor?: string },
@@ -226,6 +239,15 @@ export const api = {
 
   redeemInvite: (code: string): Promise<S["RedeemResponse"]> =>
     apiFetch("/invites/redeem", { method: "POST", body: { code } }),
+
+  createInvite: (body: S["CreateInviteRequest"]): Promise<S["CreateInviteResponse"]> =>
+    apiFetch("/admin/invites", { method: "POST", body }),
+
+  listInvites: (groupId: string): Promise<S["InviteListResponse"]> =>
+    apiFetch(`/admin/groups/${encodeURIComponent(groupId)}/invites`),
+
+  revokeInvite: (code: string): Promise<void> =>
+    apiFetch(`/admin/invites/${encodeURIComponent(code)}/revoke`, { method: "POST" }),
 
   media: {
     createUpload: (body: S["CreateUploadRequest"]): Promise<S["CreateUploadResponse"]> =>

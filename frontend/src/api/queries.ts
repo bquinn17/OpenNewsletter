@@ -13,6 +13,7 @@ export const queryKeys = {
   candidates: (groupId: string, sort: CandidateSort) => ["candidates", groupId, sort] as const,
   myResponse: (groupId: string, cycleId: string, questionId: string) =>
     ["myResponse", groupId, cycleId, questionId] as const,
+  invites: (groupId: string) => ["invites", groupId] as const,
   pushSubscriptions: ["pushSubscriptions"] as const,
   pushPreferences: ["pushPreferences"] as const,
 };
@@ -70,6 +71,16 @@ export function useCandidates(groupId: string | undefined, sort: CandidateSort =
   return useQuery({
     queryKey: queryKeys.candidates(groupId ?? "", sort),
     queryFn: () => api.listCandidates(groupId!, { sort }),
+    enabled: !!groupId,
+    staleTime: 30_000,
+  });
+}
+
+/** A group's invites (Admin → Invites tab). Caller must be a group admin. */
+export function useInvites(groupId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.invites(groupId ?? ""),
+    queryFn: () => api.listInvites(groupId!),
     enabled: !!groupId,
     staleTime: 30_000,
   });

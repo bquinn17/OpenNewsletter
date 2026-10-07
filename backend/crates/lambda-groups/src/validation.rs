@@ -11,17 +11,23 @@ use shared::config::{
 };
 
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
+    name_field(raw, "displayName")
+}
+
+/// Trims and length-checks a user-facing name, reporting failures against
+/// `field` — `displayName` on `/me`, `name` on a group.
+fn name_field(raw: &str, field: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ApiError::invalid_field(
-            "displayName",
-            "displayName must not be blank",
+            field,
+            format!("{field} must not be blank"),
         ));
     }
     if trimmed.chars().count() > MAX_DISPLAY_NAME_CHARS {
         return Err(ApiError::invalid_field(
-            "displayName",
-            format!("displayName must be at most {MAX_DISPLAY_NAME_CHARS} characters"),
+            field,
+            format!("{field} must be at most {MAX_DISPLAY_NAME_CHARS} characters"),
         ));
     }
     Ok(trimmed.to_owned())
@@ -145,7 +151,7 @@ pub fn group_patch(current: &Group, request: PatchGroupRequest) -> Result<GroupP
     let mut patch = GroupPatch::default();
 
     if let Some(name) = request.name {
-        patch.name = Some(display_name(&name)?);
+        patch.name = Some(name_field(&name, "name")?);
     }
     if let Some(tz) = request.timezone {
         timezone(&tz)?;
@@ -209,6 +215,15 @@ mod tests {
     fn over_long_display_name_is_rejected() {
         let err = display_name(&"a".repeat(MAX_DISPLAY_NAME_CHARS + 1)).expect_err("too long");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn blank_group_name_is_reported_against_name() {
+        let group = persistence::test_factories::group("g_name", "u_admin");
+        let request: PatchGroupRequest =
+            serde_json::from_str(r#"{"name": "   "}"#).expect("valid request JSON");
+        let err = group_patch(&group, request).expect_err("blank group name");
+        assert_eq!(err.field_errors[0].field, "name");
     }
 
     #[test]
