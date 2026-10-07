@@ -11,7 +11,7 @@ This document is the source of truth for how a Newsletter (cycle) progresses fro
 | `voting` | Group members are suggesting and upvoting candidate questions. No locked questions yet. | `/g/:g/upcoming` |
 | `open` | Locked questions are set; response window is active. Members write/edit drafts; only their own drafts are visible. | `/g/:g/n/:c` (open layout) |
 | `published` | Response window closed. Answers are visible to everyone. Comments and reactions enabled. | `/g/:g/n/:c` (published layout) |
-| `archived` | Long-past edition moved out of hot storage. Read-only via archive blob. (Deferred — see `10-archival.md`.) | 410 with archive link |
+| `archived` | Long-past edition moved out of hot storage. Read-only via archive blob. (Deferred — see `10-archival.md`.) | 410 `NEWSLETTER_ARCHIVED`; the SPA shows an "archived" state |
 
 ---
 
@@ -22,11 +22,11 @@ Every Newsletter row carries six timestamps:
 | Field | Set when | Meaning |
 |---|---|---|
 | `voteWindowOpenAt` | created | Earliest time candidates can be suggested for this cycle |
-| `voteWindowCloseAt` | created | == `responseOpenAt`. Voting freezes at this instant. |
-| `responseOpenAt` | created | When the cycle transitions `voting → open` |
-| `responseCloseAt` | created | When the cycle transitions `open → published` |
+| `voteWindowCloseAt` | created, or recomputed by a `timezone` settings change on the current `voting` cycle (§6, D10) | == `responseOpenAt`. Voting freezes at this instant. |
+| `responseOpenAt` | created, or recomputed by a `timezone` settings change on the current `voting` cycle (§6, D10) | When the cycle transitions `voting → open` |
+| `responseCloseAt` | created, or recomputed by a `responseWindowDays`/`timezone` settings change on the current `voting` or `open` cycle (§6, D10) | When the cycle transitions `open → published` |
 | `publishedAt` | on publish | Actual transition timestamp (≈ `responseCloseAt`) |
-| `nextTransitionAt` | on every state change | The next instant any automatic action is due. Drives GSI2 query. |
+| `nextTransitionAt` | on every state change, or recomputed alongside the fields above (§6, D10) | The next instant any automatic action is due. Drives GSI2 query. |
 
 `nextTransitionAt` always equals one of:
 - in `voting` → `responseOpenAt`
@@ -79,7 +79,7 @@ E.g., a cycle whose `responseOpenAt` is 2026-06-01T00:00 in `America/New_York` h
 
 ### 4.2 Default schedule per group
 
-Given group settings `responseWindowDays` (default 4) and `timezone` (default `America/New_York`):
+Given group settings `responseWindowDays` (default **7**, `DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`; decided 2026-10-07, lands in M13.5 — was 4) and `timezone` (default `America/New_York`):
 
 ```
 voteWindowOpenAt   = the instant the cycle row is created
@@ -140,10 +140,8 @@ The tick is idempotent: if a previous run started but didn't finish, the next ru
 
 ```
 group = get_group(nl.groupId)
-chosen = query GSI1
-   gsi1pk = "GROUP#{nl.groupId}#CYCLE#{nl.cycleId}#VOTES"
-   ScanIndexForward = false
-   Limit = group.cycleSettings.questionsPerCycle
+pool = query AP10   # pk=GROUP#{nl.groupId}#CYCLE#{nl.cycleId}, begins_with(sk, "QC#") — bounded by group membership
+chosen = sort(pool, key=(-vote_count, submitted_at, question_id))[: group.cycleSettings.questionsPerCycle]
 
 # Admins cannot override the voting outcome — see §7.
 
@@ -173,15 +171,50 @@ items = [
 write_transact(items)
 
 # Outside the transaction (best-effort):
-create_next_voting_cycle(group, after=nl.responseCloseAt)
+create_next_voting_cycle(group, after=nl.cycleId)
 fanout_cycle_open_notification(nl)   # see 07-notifications.md
 ```
 
+**Promotion order: oldest wins ties** (decided 2026-10-07; lands in M13.5, D4 — replaces the earlier GSI1-driven selection above). Candidates are ranked by `vote_count` DESC, then `submitted_at` ASC (oldest first), then `question_id` ASC as a final tiebreak. `promote_and_open` reads the full candidate pool via AP10 (bounded by group membership, not a scan) and sorts in memory, rather than using GSI1's `#VOTES` index (AP11): that index's `ScanIndexForward=false` order breaks vote-count ties *newest*-first, which doesn't match the "oldest wins" rule. `GET …/candidate-questions?sort=top` (`03` §6.1) uses the identical comparator so the UI's "top" ordering always agrees with what actually gets promoted. GSI1 `#VOTES` keys are still written on every vote (`02` §4 #1/#2); nothing currently reads them. 0-vote candidates still fill any remaining slots.
+
 If `TransactWriteItems` fails because the cycle's status changed concurrently (another tick in-flight), this run drops the item — the other run owns the transition.
 
-If `chosen` is empty (no candidate questions submitted): the cycle still transitions to `open` with `lockedQuestionIds = []`. The UI shows an empty state ("Nobody suggested questions this month — see you next time!"). Members still get the cycle-open notification but it includes a note. The cycle then auto-publishes 4 days later as an empty edition.
+If `chosen` is empty (no candidate questions submitted): the cycle still transitions to `open` with `lockedQuestionIds = []`. The UI shows an empty state ("Nobody suggested questions this month — see you next time!"). Members still get the cycle-open notification but it includes a note. The cycle then auto-publishes 7 days later (decided 2026-10-07, D3 — was 4 days) as an empty edition.
 
 ### 5.3 `publish(nl)`
+
+**Auto-publish non-empty drafts first** (decided 2026-10-07; lands in M13.5, D2; `02` §4 #4a). This step runs **before** the status-flip transaction below, and is the reason `publish(nl)` is crash-safe/idempotent across re-runs:
+
+```
+for q in locked_questions(nl):
+    for answer in query_answers(nl.groupId, nl.cycleId, q.questionId):   # AP14
+        if answer.status != "draft":
+            continue
+        is_non_empty = (
+            (q.kind == "text" and (answer.body.strip() or answer.imageMediaIds)) or
+            (q.kind == "poll" and answer.pollOptionId is not None)
+        )
+        if not is_non_empty:
+            continue   # empty drafts stay draft forever (§7, 02 §7)
+        # One TransactWriteItems PER DRAFT, not one big transaction for the
+        # whole cycle: members × questions rows can exceed the 100-item cap.
+        publish_draft = Update(answer,
+            Condition: status="draft",
+            Set: status="published", publishedAt=nl.responseCloseAt)
+        try:
+            TransactWriteItems([publish_draft,
+                                *editions_answered_bump(answer.userId, nl.cycleId)])  # same guard as 02 §4 #4
+        except TransactionCanceled as e:
+            if e.only_failed("editions_answered_bump"):
+                # member already counted this cycle: publish without the bump
+                TransactWriteItems([publish_draft])
+            elif e.failed("publish_draft"):
+                pass   # already published by an earlier pass (crash-recovery re-run): harmless
+            else:
+                raise
+```
+
+Then the status flip:
 
 ```
 items = [
@@ -199,13 +232,18 @@ write_transact(items)
 fanout_publication_notification(nl)
 ```
 
+Because auto-publish runs before this condition-guarded flip, a tick that crashes partway through the draft-sweep leaves `nl.status` at `open`: the next tick's GSI2 query finds the cycle again and redoes the sweep (rows it already flipped just fail their `status="draft"` condition and are skipped). There is no race with a user's own save: `PUT my-response` already refuses writes once `now >= responseCloseAt` (`03` §7.3), even while `nl.status` still reads `open` in the gap before this tick runs, so the last successful save is exactly what the sweep above sees.
+
 ARCHIVE_SENTINEL = a far-future ISO date (e.g., `9999-12-31T00:00:00Z`) so the row sits at the end of GSI2 and is ignored by the tick query. When the archival job is implemented, it will rewrite this for cycles older than the cutoff.
 
 ### 5.4 `create_next_voting_cycle(group, after)`
 
+`after` is the current cycle's `cycleId` (`yyyymm`) — the parameter is named for what it anchors on, per the fix described below, not for a point in time.
+
 ```
-next_cycle_id = first_day_of_month_after(after, group.timezone) -> "yyyymm"
-next_response_open = first_day_of_month_at_midnight(group.timezone, ymd) -> UTC
+after_month_start = first_day_of_month_at_midnight(group.timezone, after.yyyymm) -> UTC
+next_cycle_id = first_day_of_month_after(after_month_start, group.timezone) -> "yyyymm"
+next_response_open = first_day_of_month_at_midnight(group.timezone, next_cycle_id) -> UTC
 next_response_close = next_response_open + group.cycleSettings.responseWindowDays
 
 put_if_not_exists(Newsletter(
@@ -225,6 +263,8 @@ put_if_not_exists(Newsletter(
 ```
 
 `put_if_not_exists` (`ConditionExpression: attribute_not_exists(pk)`) guards against duplicate creation if two tick runs race.
+
+The next cycle is anchored on the current cycle's **`cycleId`**, not on one of its timestamps. Anchoring on `responseCloseAt` skips a month: a 28-day window (`MAX_RESPONSE_WINDOW_DAYS`) opening Feb 1 in a non-leap year closes at Mar 1 00:00, and "the first of the month after" that is Apr 1. `responseOpenAt` would fix that case, but the dev-only deadline rewind (`03` §11a.1) moves a voting cycle's `responseOpenAt` back by an arbitrary amount, which could land the "next" cycle on the current cycle's own `cycleId`. The `yyyymm` is fixed at creation, so it always yields the following month. Implemented as `shared::cycle_time::cycle_month_start`.
 
 ### 5.5 Time math (Rust)
 
@@ -248,18 +288,27 @@ DST transitions in the group's timezone are handled by `chrono-tz`. The contract
 
 ## 6. Settings changes mid-cycle
 
-When admins `PATCH /groups/{g}` to change `responseWindowDays`, `questionsPerCycle`, or `timezone`:
+**Rewritten 2026-10-07; lands in M13.5 (D10).** Settings now apply to the *current* cycle wherever that's technically possible, rather than waiting for a cycle created after the change. This replaces the old "only cycles created after the change" / "two cycles out" rule (previous text preserved in git history).
 
-- Settings apply **only to cycles created after the change.**
-- Currently-active cycles keep their pre-computed timestamps.
-- The next cycle (in `voting`) gets its timestamps recomputed if it has no votes yet. If it already has candidate activity, the change applies starting two cycles out (avoid disorienting users mid-vote).
-- This logic lives in `lambda-groups` `patch_group` handler.
+When admins `PATCH /groups/{g}`, each field's rule is independent:
 
-If the timezone changes, the upcoming `voting` cycle's `responseOpenAt` may shift by hours. Acceptable, documented in admin UI ("Timezone changes affect the next cycle's open time").
+- **`questionsPerCycle`** — read at promotion time (`§5.2`), so it applies to the current `voting` cycle's next promotion. An already-`open` cycle's questions are locked and unaffected — there's nothing left to apply it to.
+- **`votesPerUserPerCycle`** — read live by the vote-cast transaction (`02` §4 #1), so it applies immediately, including to votes already in flight. Lowering it below a member's existing vote count doesn't retract those votes; the member simply can't cast more until they're back under the cap.
+- **`responseWindowDays`**:
+  - Current `voting` cycle: recompute `responseCloseAt` (and `nextTransitionAt`, since it still equals `responseOpenAt` while voting — GSI2 keys are unaffected) **regardless of candidate activity**. The old "only if the cycle has no votes yet" gate is gone.
+  - Current `open` cycle: recompute `responseCloseAt = responseOpenAt + days` and its GSI2 keys (`gsi2sk`) **only if the new close is still in the future**. If the recomputed close would be in the past, the request is rejected: 422 `VALIDATION_FAILED` with a `fieldErrors` entry on `cycleSettings.responseWindowDays` ("would close the open cycle in the past") — see `03` §4.3. Reminder markers already claimed (`NOTIFIED#CLOSE#{offset}`) stay claimed; extending the window doesn't re-send a reminder that already went out.
+- **`timezone`** — recompute the current `voting` cycle's `responseOpenAt`/`voteWindowCloseAt`/`responseCloseAt`/`nextTransitionAt` regardless of candidate activity, **except** when the recomputed value would change the cycle's `cycleId` (candidates are keyed by cycle id, `02` §2.6) — in that case the row is left untouched and the change applies starting from the next cycle, same as the old escape hatch. An `open` cycle's instants are never touched by a timezone change (its `cycleId` is already fixed and its clock has already started).
+- **`notificationSettings` and `memberSoftCap`** — already read live at the point of use; no change needed here.
 
-**Implementation note (M5):** "no candidate activity" is checked with `questions::list_candidates` on the current `voting` cycle. When it's empty, `patch_group` recomputes that cycle's `responseOpenAt`/`voteWindowCloseAt`/`responseCloseAt`/`nextTransitionAt` (and GSI2 keys) in place via `newsletters::write_status_transition`. The "two cycles out" case needs no special-cased code: `create_next_voting_cycle` always reads the group's settings fresh at the moment it runs, so a settings change simply takes effect the next time a `voting` cycle transitions to `open` and the following cycle is created.
+This logic lives in `lambda-groups`'s `patch_group` handler.
 
-`cycleId` is derived from the recomputed `responseOpenAt` and is also the row's partition key (`sk = NL#{cycleId}`). A timezone change can, in principle, shift which local month a given creation instant (`voteWindowOpenAt`) falls into, changing the recomputed `cycleId`. Rather than move the row to a new key — which would orphan anything already referencing the old `cycleId` mid-request — `patch_group` compares the recomputed `cycleId` to the existing one and, if they differ, leaves the cycle's row completely untouched (the setting still applies starting two cycles out, per above). This is a deliberate simplification: it means a timezone change can occasionally take one cycle longer than the "one no-candidates cycle" description above suggests, which is judged less surprising than a cycle's identity changing under a user's feet.
+If the timezone changes, the upcoming `voting` cycle's `responseOpenAt` may shift by hours. Acceptable, documented in admin UI ("Timezone changes affect the current voting cycle's open time").
+
+**Implementation notes, carried forward from M5 and updated for D10:**
+- `responseWindowDays` on the current `voting` cycle recomputes via `newsletters::write_status_transition` the same way the old "no candidate activity" path did — the difference is the gate is gone, not the mechanism.
+- `responseWindowDays` on the current `open` cycle is a new code path: recompute-if-future-else-422, distinct from the `voting`-cycle path above.
+- `cycleId` is derived from the recomputed `responseOpenAt` and is also the row's partition key (`sk = NL#{cycleId}`). A timezone change can, in principle, shift which local month a given creation instant falls into, changing the recomputed `cycleId`. Rather than move the row to a new key — which would orphan anything already referencing the old `cycleId` mid-request — `patch_group` compares the recomputed `cycleId` to the existing one and, if they differ, leaves the cycle's row completely untouched (the setting applies starting next cycle, per above). This is a deliberate simplification: it means a timezone change can occasionally take one cycle longer than the "applies now" rule above suggests, which is judged less surprising than a cycle's identity changing under a user's feet. (Unchanged from the pre-D10 text — this escape hatch was already timezone-specific, not a "two cycles out" blanket rule.)
+- The admin Settings form copy changes to reflect "applies now" semantics instead of "applies to future cycles."
 
 ---
 
@@ -277,15 +326,15 @@ The simpler rule is intentional: every member's vote counts equally and the sche
 |---|---|
 | Two tick instances run simultaneously | DDB transactions with `Condition: status="X"` ensure only one wins. Loser's transact returns `TransactionCanceledException` and is logged at INFO. |
 | User submits/votes between the tick deciding to promote and the transaction committing | The transaction reads candidate snapshots before `TransactWriteItems`. A new vote that arrives mid-flight is simply not reflected in the chosen set. Users may notice a candidate they voted for "just barely" missed the cut — acceptable UX. |
-| Cycle-tick runs while a user is publishing a draft | `PUT my-response` checks `Newsletter.status = open` inside its transaction (one of its precondition reads). If the cycle has just transitioned to `published`, the user gets `CYCLE_NOT_OPEN` 409 and their draft remains unpublished forever. SPA shows "This cycle has closed — your draft was not published." |
-| Notification fan-out runs twice | Idempotency markers `NOTIFIED#OPEN` / `NOTIFIED#CLOSE#{offset}` prevent duplicates. See `07-notifications.md`. |
+| Cycle-tick runs while a user is publishing a draft | `PUT my-response` checks `Newsletter.status = open` **and** `now < responseCloseAt` inside its transaction (one of its precondition reads). If the cycle has just transitioned to `published` — or even while it still reads `open` but the deadline has passed — the user gets `CYCLE_NOT_OPEN` 409. Updated 2026-10-07 (D2, lands in M13.5): the save that was refused is lost, but it no longer means the answer never appears — the *last save that succeeded* is what `publish(nl)`'s auto-publish sweep (§5.3) picks up, and if that save was non-empty it gets published automatically. SPA shows "This cycle has closed — your edit was not saved" for the refused save itself. |
+| Notification fan-out runs twice | Idempotency markers `NOTIFIED#OPEN` / `NOTIFIED#CLOSE#{offset}` / `NOTIFIED#PUBLISH`, claimed before sending, prevent duplicates. See `07-notifications.md`. |
 
 ---
 
 ## 9. Empty-cycle edge cases
 
-- **No candidate questions, no votes**: cycle transitions to `open` with empty `lockedQuestionIds`; transitions to `published` empty 4 days later. The UI renders an empty-state for both.
-- **No responses**: cycle transitions to `published` with no answers. UI renders "No one responded this month." Comments/reactions still allowed (on poll questions if any) but irrelevant.
+- **No candidate questions, no votes**: cycle transitions to `open` with empty `lockedQuestionIds`; transitions to `published` empty 7 days later (decided 2026-10-07, D3 — was 4 days). The UI renders an empty-state for both.
+- **No responses**: cycle transitions to `published` with no answers (the auto-publish sweep in §5.3 has nothing non-empty to find). UI renders "No one responded this month." There is nothing to comment on or react to: engagement targets published text answers only (`03` §8, `09` §3).
 - **Group with 1 member**: works fine. The member can vote on their own questions, write their own answers, comment on themselves. Slightly silly, never broken.
 
 ---
@@ -295,9 +344,9 @@ The simpler rule is intentional: every member's vote counts equally and the sche
 In `persistence/newsletters.rs`:
 
 - `find_voting_cycle(group_id) -> Option<Newsletter>` — returns the current `voting` cycle for a group. Used by candidate question endpoints to determine "the next cycle".
-- `find_or_open_cycle(group_id) -> Option<Newsletter>` — returns the current `open` cycle or None.
+- `find_open_cycle(group_id) -> Option<Newsletter>` — returns the current `open` cycle or None.
 - `list_recent(group_id, limit, cursor) -> (Vec<Newsletter>, Option<Cursor>)` — for `/groups/{g}/newsletters`.
-- `recompute_my_counts(group_id, cycle_id, user_id) -> (drafts: usize, published: usize)` — uses AP15.
+- The per-user draft/published counts come from `responses::list_my_responses_in_cycle` (AP15, filtered by group; `02` §3).
 
 ---
 
@@ -305,14 +354,16 @@ In `persistence/newsletters.rs`:
 
 Specified in detail in `11-testing-ci-cd.md`. The lifecycle-specific integration tests:
 
-1. Tick promotes top-N candidates correctly.
+1. Tick promotes top-N candidates correctly, in `vote_count` DESC / `submitted_at` ASC / `question_id` ASC order (D4) — including a tie-vote case where an older candidate must win over a newer one with the same count.
 2. Tick auto-publishes at deadline.
 3. Tick is idempotent across rapid re-runs.
 4. Empty-candidate cycle still opens and publishes.
-5. Settings change mid-cycle applies to N+2 cycle, not the in-flight one.
+5. Settings change applies to the current cycle per §6 (updated 2026-10-07, D10 — was "applies to N+2 cycle, not the in-flight one"): a `voting`-cycle `responseWindowDays`/`timezone` change recomputes its timestamps regardless of candidate activity; an `open`-cycle `responseWindowDays` change recomputes `responseCloseAt` when the new value is still in the future, and is rejected with 422 when it would land in the past.
 6. Membership-cap enforcement at invite redemption.
 7. Concurrent vote casting + admin candidate deletion produces consistent state.
 8. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary.
+9. A 28-day window opening Feb 1 in a non-leap year seeds a March cycle, not April (§5.4).
+10. Auto-publish (added 2026-10-07; lands in M13.5, D2): at close, a non-empty text draft and a non-empty poll draft both end up `published` with `publishedAt = responseCloseAt` and the `editionsAnswered` bump applied once; an empty draft stays `draft`; a crash between two drafts' auto-publish transactions (simulated by killing the tick mid-sweep) leaves the cycle `open`, and a re-run completes the remaining drafts without double-bumping `editionsAnswered` for the ones already flipped.
 
 (There is deliberately no "admin curation override" test — that feature does not exist; see §7.)
 

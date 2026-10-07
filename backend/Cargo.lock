@@ -2674,6 +2674,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "base64 0.22.1",
  "chrono",
+ "chrono-tz",
  "domain",
  "lambda-cycle-tick",
  "lambda_http",

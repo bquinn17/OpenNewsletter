@@ -49,12 +49,14 @@ Lifecycle integration suite (matches `06-newsletter-lifecycle.md` §11):
 2. Tick auto-publishes at deadline.
 3. Tick is idempotent under rapid re-runs (run loop 5x, assert single transition).
 4. Empty-candidate cycle still opens and publishes empty.
-5. Settings change mid-cycle applies to N+2.
+5. Settings change applies to the current cycle per `06-newsletter-lifecycle.md` §6 (**decided 2026-10-07; lands in M13.5** — supersedes "applies at N+2").
 6. Membership cap enforced.
 7. Concurrent vote-cast and admin-delete-candidate produce consistent state.
 8. DST boundary in `America/New_York` cycle creation.
+9. **(decided 2026-10-07; lands in M13.5)** Non-empty drafts (text and poll) auto-publish when the response window closes; empty drafts stay `draft` (D2).
+10. **(decided 2026-10-07; lands in M13.5)** A bound invite (`Invite.bound_email`) redeems only when the ID token's `email` matches it (lowercased) and `email_verified` is true; otherwise 403 `INVITE_EMAIL_MISMATCH` (D5).
 
-Image-pipeline integration suite (matches `08-media-uploads.md` §10) running against `lambda-image-process` directly with sample fixtures in `backend/tests/fixtures/images/`.
+Image-pipeline integration suite (matches `08-media-uploads.md` §10) running against `lambda-image-process` directly with sample fixtures in `backend/tests/fixtures/images/`. **Decided 2026-10-07; lands in M13.5:** add coverage for real deletion (`DELETE /uploads/{id}` removes the original, both variants, and the row; a repeat `DELETE` is idempotent 204) per `08-media-uploads.md` §8.0 (D8).
 
 ### 2.3 Contract test
 
@@ -115,9 +117,7 @@ The original plan was MSW handlers generated from the OpenAPI spec. M7–M9 inst
 
 ### 4.3 Playwright E2E
 
-Run against:
-- A fully deployed `dev` stack (CI's deploy-and-test job)
-- OR a docker-compose stack (DDB-local + a single in-process Rust server) for fast local runs
+Run against either a mock-mode production build (no backend) or a deployed `dev` stack. There is no docker-compose or in-process server option; see the two projects below.
 
 Golden-path tests (≤10):
 1. Sign in → land on home → see no groups → redeem invite → see group.
@@ -165,39 +165,23 @@ Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` rou
 
 ## 6. GitHub Actions workflows
 
-**Decided M13: deploy-shaped steps are switched on by repo variables.** Until M14, `main` must stay green without AWS credentials:
-- `frontend-deploy.yml` runs only when `vars.FRONTEND_DEPLOY_ENABLED == 'true'`.
-- `backend-deploy.yml` runs only when `vars.BACKEND_DEPLOY_ENABLED == 'true'`.
-- `infra-ci.yml`'s `cdk diff` step runs only when `vars.AWS_DIFF_ROLE_ARN` is set.
-- `e2e.yml`'s `dev` project skips unless `vars.E2E_BASE_URL` is set.
+**Decided 2026-10-07; lands in M13.5.** `deploy.yml` (§6.4) replaces `frontend-deploy.yml` and `backend-deploy.yml`: one workflow deploys the backend to `dev` on every push to `main`, then — behind a manual promotion gate — deploys the backend to `prod` and publishes the frontend to `gh-pages`, both from the same commit SHA. Repo variables collapse accordingly: `BACKEND_DEPLOY_ENABLED`/`FRONTEND_DEPLOY_ENABLED` become one `DEPLOY_ENABLED` (gates the dev auto-deploy); the prod leg is gated by the GitHub Environment approval instead of a variable. `infra-ci.yml`'s `cdk diff` step still runs only when `vars.AWS_DIFF_ROLE_ARN` is set, and `e2e.yml`'s `dev` project still skips unless `vars.E2E_BASE_URL` is set.
 
-OIDC roles for both (`GithubDeployRole` on `main`, `GithubDiffRole` on pull requests) live in `CiStack` (`infra/opennewsletter/ci_stack.py`). They only assume the CDK bootstrap roles. The variable and secret list is in [`.github/workflows/README.md`](../.github/workflows/README.md).
+OIDC roles (`GithubDeployRole` on `main`, `GithubDiffRole` on pull requests) live in `CiStack` (`infra/opennewsletter/ci_stack.py`). They only assume the CDK bootstrap roles. The variable and secret list is in [`.github/workflows/README.md`](../.github/workflows/README.md).
 
 ### 6.1 `frontend-ci.yml`
 
 Triggers: PRs touching `frontend/**` or shared types.
 
 Steps:
-1. Setup Node 20.
+1. Set up Node from `.nvmrc` (24 since 2026-10-07). Every workflow uses `node-version-file: .nvmrc`.
 2. `npm ci`.
 3. `npm run typecheck`, `npx eslint .`, `npx prettier --check .`.
 4. `npm run test:coverage` (Vitest with `--coverage`).
 5. `npm run build`.
 6. Upload coverage artifact.
 
-### 6.2 `frontend-deploy.yml`
-
-Triggers: push to `main`, paths `frontend/**`.
-
-Steps:
-1. Build (`npm run build` with prod env vars from secrets).
-2. Add `CNAME` file with the custom domain.
-3. Copy `dist/index.html` → `dist/404.html`.
-4. Push `dist/` to `gh-pages` branch (use `peaceiris/actions-gh-pages`).
-
-Secrets needed: `VITE_API_BASE_URL`, `VITE_CDN_BASE_URL`, `VITE_COGNITO_*`.
-
-### 6.3 `backend-ci.yml`
+### 6.2 `backend-ci.yml`
 
 Triggers: PRs touching `backend/**`.
 
@@ -208,16 +192,7 @@ Steps:
 4. `cargo test --workspace` — the `testcontainers` crate starts DynamoDB Local itself (§2.4); the runner just needs Docker, no service-container setup step.
 5. `cargo lambda build --release --arm64` (sanity: ensures all crates compile to lambda artifacts).
 
-### 6.4 `backend-deploy.yml`
-
-Triggers: push to `main`, paths `backend/**` or `infra/**`.
-
-Steps:
-1. Build all Lambdas via `cargo lambda build --release --arm64`.
-2. Configure AWS credentials (OIDC role assumption — no long-lived access keys).
-3. `cdk deploy --context env=prod --all --require-approval never`.
-
-### 6.5 `infra-ci.yml`
+### 6.3 `infra-ci.yml`
 
 Triggers: PRs touching `infra/**`.
 
@@ -228,7 +203,28 @@ Steps:
 4. `cdk synth --context env=dev` (smoke).
 5. `cdk diff --context env=prod` against the live stacks (read-only). Posts diff as PR comment.
 
-### 6.6 `e2e.yml`
+### 6.4 `deploy.yml` — dev auto-deploy + gated prod promotion (decided 2026-10-07; lands in M13.5)
+
+Triggers: push to `main`.
+
+**Dev job** (gated by `vars.DEPLOY_ENABLED == 'true'`):
+1. Set up Rust + `cargo-lambda`; build all Lambdas (`cargo lambda build --release --arm64`) and upload them as a workflow artifact — built once here, reused by the prod job below.
+2. Configure AWS credentials via OIDC (`GithubDeployRole`).
+3. `cdk deploy --context env=dev --all --require-approval never`.
+4. (Later: run the Playwright `dev` project here.)
+
+Dev has no hosted frontend — GitHub Pages serves `prod` only; dev is exercised via `make fe`.
+
+**`promote-prod` job** (needs: the dev job; `environment: production`, gated by a required reviewer — see `.github/workflows/README.md` for the private-repo fallback):
+1. Download the Lambda artifact the dev job built (no rebuild, so what gets promoted is exactly what ran in dev).
+2. `cdk deploy --context env=prod --all --require-approval never`.
+3. `npm run build` with prod `VITE_*` env from secrets.
+4. Add `CNAME`, copy `dist/index.html` → `dist/404.html`.
+5. Push `dist/` to `gh-pages` (`peaceiris/actions-gh-pages`).
+
+Backend and frontend are always promoted together from one SHA, backend first — never a lone frontend publish. This makes the `coding-standards.md` §8 **expand → contract** rule load-bearing: a route or field can be removed or renamed only after the frontend release that stopped depending on it has shipped, because an installed PWA keeps running its previous frontend until its service worker updates. The SW is configured to activate new versions promptly (`skipWaiting`/`clients.claim()`, or `vite-plugin-pwa`'s `autoUpdate` — `04-frontend-architecture.md` §5.2) so a client picks up a new frontend release on its next load.
+
+### 6.5 `e2e.yml`
 
 Triggers: nightly (cron) + manual.
 
@@ -268,26 +264,22 @@ Coverage is reported, not gated — failing only if it drops more than 5pp from 
 
 ## 9. Test data factories
 
-`backend/crates/persistence/src/test_factories.rs` (gated under `#[cfg(test)]`): builders for every entity, with sensible defaults. Used by all integration tests.
+`backend/crates/persistence/src/test_factories.rs` (gated `#[cfg(any(test, feature = "test-utils"))]`, so other crates' tests enable `test-utils`): builders for every entity, with sensible defaults. Used by the integration tests.
 
-`frontend/tests/factories.ts`: TypeScript counterparts, used by Vitest component tests.
+The frontend has no shared factory module. Vitest fixtures are written inline and typed against `types/api.ts` (§4.2).
 
 ---
 
 ## 10. Fixtures
 
-- `backend/tests/fixtures/images/` — sample JPEG, PNG, WebP, animated GIF, large (16 MB rejection), corrupt.
-- `frontend/tests/fixtures/` — sample API responses keyed by route.
+- `lambda-image-process`'s tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code rather than from checked-in files.
+- Frontend sample data lives in the `api/mock*.ts` mock routes and in each test file.
 
 ---
 
 ## 11. Observability validation
 
-A small CI step asserts:
-- Every Lambda emits at least one structured log line per invocation (via a CloudWatch Insights query against the `dev` stack).
-- The custom EMF metrics namespace `OpenNewsletter/dev` is populated after a smoke run.
-
-This is part of the nightly `e2e.yml`, not per-PR.
+**Not built.** The plan was a nightly `e2e.yml` step asserting that every Lambda logs at least one structured line per invocation (CloudWatch Insights against `dev`) and that the `OpenNewsletter/dev` EMF namespace is populated after a smoke run. For now, `docs/smoke.md` covers checking the push EMF metrics by hand.
 
 ---
 
@@ -307,13 +299,15 @@ When changing an existing key shape: don't. Add a new attribute or new key, dual
 
 ## 13. Manual smoke runbook
 
-After every prod deploy:
+**Decided 2026-10-07; lands in M13.5:** the promotion gate (§6.4) makes it practical to smoke dev first, then prod — a reviewer can smoke-test what's about to be promoted on `dev` before approving `promote-prod`, then re-run the same checklist against `prod` once it ships. `docs/smoke.md` covers both, parameterized by `ENV=dev|prod`.
+
+After every prod deploy (and now, before approving a promotion):
 1. Sign in.
 2. Generate an invite (admin tab).
 3. Redeem in incognito with a different account.
 4. Suggest a candidate, vote on it.
-5. Trigger cycle-tick manually (operator-only Lambda invoke) to advance state.
-6. Save a draft, publish, comment, react.
+5. Save a draft and publish it, in whichever cycle is `open`. Prod has no dev tick routes, and invoking cycle-tick directly only performs transitions that are already due. So in prod, commenting and reacting can only be smoke-tested on an edition that is already published.
+6. Comment and react on a published edition, if one exists.
 7. Send a test push to self.
 
 A single Markdown checklist `docs/smoke.md` lives in the repo with these steps.

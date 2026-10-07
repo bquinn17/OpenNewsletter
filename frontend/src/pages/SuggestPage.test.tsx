@@ -102,14 +102,14 @@ describe("SuggestPage", () => {
     );
   });
 
-  it("rejects duplicate poll option labels before submitting", async () => {
+  it("rejects duplicate poll option labels, ignoring case, before submitting", async () => {
     const user = userEvent.setup();
     renderPage();
 
     await user.type(screen.getByLabelText("Your question"), "Which trail next?");
     await user.click(screen.getByRole("button", { name: /Poll/ }));
     await user.type(screen.getByPlaceholderText("Option 1"), "Mt Si");
-    await user.type(screen.getByPlaceholderText("Option 2"), "Mt Si");
+    await user.type(screen.getByPlaceholderText("Option 2"), "mt si");
 
     expect(await screen.findByText(/already an option/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();

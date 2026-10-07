@@ -20,7 +20,7 @@ These are non-negotiable preamble for every milestone below. The pre-flight chec
 - `CLAUDE.md` summarizing repo conventions for AI assistants (use the same language as `00-overview.md`).
 - `.gitignore` covering `node_modules/`, `target/`, `cdk.out/`, `.env*`, `*.pem`, `dist/`.
 - `.editorconfig` (2-space JS/Py/Yaml, 4-space Rust, LF line endings).
-- `.nvmrc` (20), `rust-toolchain.toml` (1.79+ stable), `infra/runtime.txt` (3.12).
+- `.nvmrc` (20 at the time; now 24), `rust-toolchain.toml` (1.79+ stable at the time; now pinned to 1.99.0), `infra/runtime.txt` (3.12).
 
 **Done when**: `tree -L 2 .` matches the layout in `00-overview.md` §4.
 
@@ -67,7 +67,7 @@ Read: `01-infrastructure-cdk.md`.
 - `infra/` CDK Python project with `cdk.json`, `requirements.txt`, `app.py`.
 - `infra/opennewsletter/config.py` with `EnvConfig` dataclass and dev/prod loaders.
 - `DataStack` — DynamoDB table + GSIs.
-- `AuthStack` — Cognito user pool + 3 IdPs + app client + hosted UI domain (use placeholder secret ARNs from M1; refresh once the operator finalizes).
+- `AuthStack` — Cognito user pool + 2 IdPs (Google, Facebook) + app clients + hosted UI domain (use placeholder secret ARNs from M1; refresh once the operator finalizes).
 - `MediaPersistentStack` — S3 buckets + CloudFront + KeyGroup.
 - `MediaPipelineStack` — `lambda-image-process` (the Lambda code can be a stub at this point; replaced in M8) and its S3 event subscription.
 - `FrontendStack` — ACM cert and DNS records.
@@ -90,7 +90,7 @@ Read: [`13-dev-environments.md`](13-dev-environments.md).
 - `scripts/write_frontend_env.py` — reads `cdk.out/dev-outputs.json`, writes `frontend/.env.dev` with API/CDN/Cognito values per [`13-dev-environments.md` §7](13-dev-environments.md).
 - Dev-environment removal-policy overrides applied across all CDK stacks per [`01-infrastructure-cdk.md` §10.5](01-infrastructure-cdk.md).
 - `MediaStack` split into `MediaPersistentStack` + `MediaPipelineStack` per [`01-infrastructure-cdk.md` §5](01-infrastructure-cdk.md).
-- `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations land in M5/M9; the routes exist now so manual testing has a fast-forward path.
+- `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations landed in M5 (cycle) and M11 (notify); the routes exist now so manual testing has a fast-forward path.
 - AWS Budgets alarm at $10/mo wired to `config.alarm_email`.
 
 **Done when**: `make deploy-dev && make seed && make fe`, sign in via the `/admin/bootstrap-login` route as the seeded admin, and see the seeded group's home page. `make redeploy-volatile` succeeds end-to-end (proves the dev removal-policy overrides are correct).
@@ -187,7 +187,7 @@ Read: `04-frontend-architecture.md`, `05-auth-flow.md`.
 Read: `08-media-uploads.md`.
 
 **Deliverables**:
-- `lambda-media` with all four routes (`/uploads`, `/uploads/{id}/complete`, `/uploads/{id}`, `/uploads/{id}` DELETE, `/media-cookie`).
+- `lambda-media` with all nine routes (`POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{id}`, `POST /uploads/{id}/complete`, `GET /media-cookie`, and the three `/avatars` routes; `03` §9).
 - `lambda-image-process` real implementation (replacing the M3 stub) — reads originals, generates display + thumb WebP/GIF, writes to processed bucket, marks DDB row ready.
 - `frontend/src/components/responses/ImageUploader.tsx` with the drag-drop, presign, PUT, poll loop.
 - CloudFront signed-cookie issuance integrated end-to-end (frontend `ensureCookie`, sets `credentials: include`).
@@ -256,7 +256,7 @@ Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
 
 **Deliverables**:
 - All tests in `11-testing-ci-cd.md` §2–§4 implemented (gaps from prior milestones filled).
-- All four GitHub Actions workflows green on `main`.
+- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; `11` §6).
 - Monitoring alarms wired to a working SNS topic + email.
 - CSP set on the frontend; verified by a Playwright test.
 - Manual smoke runbook (`docs/smoke.md`) executed and observed clean.
@@ -266,12 +266,67 @@ Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
 
 ---
 
+## Milestone 13.5 — Plan-review follow-ups (2 days)
+
+Read: the "Plan review (2026-10-07)" section of `PROGRESS.md`. Then read each plan section named below; every one is marked "decided 2026-10-07".
+
+**Goal**: implement the owner's 2026-10-07 decisions before the first prod deploy. Several of them change prod-only setup (secrets, alarms, budget, bootstrap, deploy gate), which is far cheaper to do before prod exists.
+
+**Deliverables** (split by directory for parallel agents, per `CLAUDE.md`):
+- **Auth (D1, D5)**:
+  - Frontend:
+    - tokens move to `localStorage`
+    - logout revokes the refresh token via `/oauth2/revoke` (`04` §6, `05` §8)
+  - Backend:
+    - `Invite.bound_email` and optional `boundEmail` on `POST /admin/invites`
+    - `POST /invites/redeem` checks `email` and `email_verified`; a mismatch is 403 `INVITE_EMAIL_MISMATCH` (`02` §2.4, `03` §3, `05` §4)
+  - Infra:
+    - Google `email_verified` attribute mapping
+    - the `admin-bootstrap` client is dev-only, and the prod authorizer audience is the frontend client only
+  - Script: `bootstrap_admin.py` prod mode (`BOOTSTRAP_ADMIN_EMAIL`, no Cognito user, an email-bound admin invite; `05` §9)
+- **Auto-publish (D2)**:
+  - `lambda-cycle-tick` `publish(nl)` auto-publishes non-empty drafts before the status flip (`06` §5.3).
+  - Reminder and publication counts include non-empty drafts (`07` §5.1, §7.2).
+  - Frontend: the RespondPage auto-publish warning and DraftStatusBadge copy; a poll pick saves immediately as a draft (`04` §7.3).
+- **Window and promotion (D3, D4)**:
+  - `DEFAULT_RESPONSE_WINDOW_DAYS = 7`
+  - promotion and `sort=top` order by votes desc, then oldest first (`06` §5.2, `03` §6.1)
+- **Settings apply now (D10)**: `PATCH /groups/{g}` reschedules the current `voting` cycle regardless of candidates, and moves an `open` cycle's close when it's still in the future, else 422 (`06` §6). Update the admin Settings copy.
+- **Real media deletion (D8)**:
+  - Backend: a shared delete helper (S3 objects + CloudFront invalidation + row) used by `DELETE /uploads`, comment image release, and avatar delete/replace (`03` §9.4/§9.7, `08` §8).
+  - Infra:
+    - IAM for the media, engagement and groups Lambdas
+    - no bucket versioning
+  - Frontend: permanent-delete `ConfirmDialog`s (`04` §7.3/§7.6, `09` §1).
+- **Cost (D7)**:
+  - One Secrets Manager secret per env (`app_secret_arn`); migrate the four dev secrets, then delete them.
+  - Prod-only alarms, at most 10 alarm metrics.
+  - One account-wide $5 budget in `CiStack`.
+  - DynamoDB on an AWS-owned key (`01` §2/§3.1/§9/§12).
+- **Deploy gate (D6)**:
+  - One `deploy.yml`: `main` → dev automatically, then a `promote-prod` job behind the `production` environment that deploys the backend, then the frontend, from the same SHA (`11` §6).
+  - The service worker activates updates promptly.
+  - The expand → contract API rule goes in `coding-standards.md` §8.
+- OpenAPI, `ROUTE_TABLE` and `frontend/src/types/api.ts` updated for `boundEmail` and the new error code.
+
+**Done when**: all checks are green (fmt, clippy, `cargo test --workspace`, `pytest infra/tests`, ruff, mypy, `cdk synth` dev + prod, and the frontend checks), plus integration tests for:
+- auto-publish (including a crash-and-rerun)
+- the tie order
+- bound-invite accept and reject
+- an open-cycle window change
+- media deletion removing the objects and the row
+
+The deploy-shaped checks join the M14 gate.
+
+---
+
 ## Milestone 14 — Production deploy (½ day)
 
 **Deliverables**:
 - `cdk deploy --context env=prod --all` runs clean.
 - DNS records swung to prod.
-- Bootstrap admin + first invite flow exercised in prod.
+- Bootstrap admin flow exercised in prod: `bootstrap_admin.py --env prod` with `BOOTSTRAP_ADMIN_EMAIL` prints an email-bound admin invite, and the owner redeems it by signing in with Google (`05` §9).
+- First promotion through the `production` environment gate (`11` §6).
 - Push notifications tested in prod.
 - README updated with prod URLs.
 
@@ -317,7 +372,8 @@ If you find a gap (a behavior not specified anywhere): pick the simplest, most b
 | 11 Notifications | 1.0 |
 | 12 Admin UI | 0.5 |
 | 13 Hardening | 1.0 |
+| 13.5 Plan-review follow-ups | 2.0 |
 | 14 Prod deploy | 0.5 |
-| **Total** | **~16 days** |
+| **Total** | **~18 days** |
 
 This is "focused engineer time," not calendar time.

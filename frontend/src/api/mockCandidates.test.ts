@@ -124,12 +124,12 @@ describe("mockCandidateRoute", () => {
     }
   });
 
-  it("rejects duplicate poll option labels", () => {
+  it("rejects duplicate poll option labels, ignoring case", () => {
     try {
       createCandidate("g_trail", {
         kind: "poll",
         prompt: "Which spot should we go to next?",
-        pollOptions: [{ label: "Mt Si" }, { label: "Mt Si" }],
+        pollOptions: [{ label: "Mt Si" }, { label: "mt SI" }],
         isAnonymous: false,
       });
       expect.fail("expected a VALIDATION_FAILED error");

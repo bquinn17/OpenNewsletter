@@ -152,8 +152,7 @@ async fn promote_and_open(
         to: "open",
     }];
 
-    if let Some(created) =
-        create_next_voting_cycle(repo, &nl.group_id, &group, nl.response_close_at).await
+    if let Some(created) = create_next_voting_cycle(repo, &nl.group_id, &group, &nl.cycle_id).await
     {
         transitions.push(Transition {
             group_id: nl.group_id.to_string(),
@@ -166,13 +165,14 @@ async fn promote_and_open(
     transitions
 }
 
-/// §5.4, best-effort. Returns the new cycle's id when this call actually
-/// created it (as opposed to losing a create race, or failing outright).
+/// §5.4, best-effort: creates the cycle for the month after `current`.
+/// Returns the new cycle's id when this call actually created it (as opposed
+/// to losing a create race, or failing outright).
 async fn create_next_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
     group: &domain::Group,
-    after: DateTime<Utc>,
+    current: &CycleId,
 ) -> Option<CycleId> {
     let tz: Tz = match group.timezone.parse() {
         Ok(tz) => tz,
@@ -180,6 +180,10 @@ async fn create_next_voting_cycle(
             tracing::error!(group_id = %group_id, timezone = %group.timezone, "group has an invalid timezone; cannot create its next voting cycle");
             return None;
         }
+    };
+    let Some(after) = shared::cycle_time::cycle_month_start(current, tz) else {
+        tracing::error!(group_id = %group_id, cycle_id = %current, "cycle id is not a valid yyyymm; cannot create its next voting cycle");
+        return None;
     };
 
     match newsletters::create_next_voting_cycle(

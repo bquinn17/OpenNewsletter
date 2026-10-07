@@ -56,7 +56,7 @@ Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/1
 
 ## What this app is
 
-OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce a monthly newsletter. Members suggest and upvote candidate questions between cycles; on the 1st of each month the top-voted questions promote into an active newsletter and a 4-day response window opens; at close, the edition auto-publishes and comments/reactions become available.
+OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce a monthly newsletter. Members suggest and upvote candidate questions between cycles; on the 1st of each month the top-voted questions promote into an active newsletter and a 7-day response window opens; at close, non-empty drafts auto-publish, the edition publishes, and comments/reactions become available.
 
 ## Architectural principles (must hold)
 
@@ -97,7 +97,7 @@ Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/A
 Update it at the end of every milestone; its last section says how.
 
 Standing rules learned the hard way:
-- **API contract changes:** every new or changed route updates [`shared/openapi.yaml`](shared/openapi.yaml) and `ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs` in the same change. Then re-run `scripts/codegen_types.sh` to regenerate `frontend/src/types/api.ts`.
+- **API contract changes:** every new or changed route updates [`shared/openapi.yaml`](shared/openapi.yaml) and `ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs` in the same change. Then re-run `scripts/codegen_types.sh` to regenerate `frontend/src/types/api.ts`. Changes are **expand → contract**: the backend must keep serving the previous frontend release (installed PWAs run old code until their service worker updates), so a field or route is removed only in a later release, after the frontend that stops using it has shipped.
 - **Crate template:** new Lambda crates copy the layout of `lambda-questions` / `lambda-responses`: `lib.rs`, `router.rs`, `handlers.rs`, `state.rs`, `validation.rs`, and DynamoDB Local tests under `tests/`. The binary is named `<name>-api`. Wire it in `infra/opennewsletter/api_stack.py` and add a `FUNCTION_<binary>` entry to the `Makefile`.
 - **Key timestamps:** every timestamp in a key attribute goes through `persistence::keys::key_timestamp`.
 - **Test group IDs:** integration tests use unique group IDs, because the membership cache is process-wide.

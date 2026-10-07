@@ -2,6 +2,8 @@
 
 Run this after every deploy to `dev` that touches more than one stack, and after every `prod` deploy (`plans/11-testing-ci-cd.md` §13). It takes about 15 minutes and two accounts. Tick off each step; if one fails, stop and look at CloudWatch Logs for the Lambda behind it before going further.
 
+**Decided 2026-10-07; lands in M13.5 (D6):** the `promote-prod` gate makes **dev first, then prod** the normal order — run this checklist against `dev` before approving the promotion, then run it again against `prod` once that promotion ships. Set `ENV=dev` for the first pass and `ENV=prod` for the second.
+
 Set these once per run (`ENV` is `dev` or `prod`):
 
 ```sh
@@ -10,7 +12,7 @@ API=$(jq -r ".\"ApiStack-$ENV\".ApiEndpoint" infra/cdk.out/$ENV-outputs.json)
 ```
 
 You need:
-- **Account A**: a group admin, either the `bootstrap_admin.py` user or a Google account already in a group.
+- **Account A**: a group admin. In `dev` this is the `bootstrap_admin.py` password user (or a Google account already in a group). In `prod` there is no password auth — **Account A is the email the prod admin invite is bound to** (`BOOTSTRAP_ADMIN_EMAIL`, decided 2026-10-07 D5), signed in with Google; see step 1 below.
 - **Account B**: a second Google account that isn't in that group. Use it from a private window or a second browser.
 - A browser that can receive Web Push. Desktop Chrome is the quickest.
 
@@ -18,7 +20,7 @@ You need:
 
 ## 1. Sign in
 
-- [ ] Open the frontend (`make fe` → `http://localhost:5173` for dev, or the prod domain) and sign in as **A** with Google.
+- [ ] Open the frontend (`make fe` → `http://localhost:5173` for dev, or the prod domain) and sign in as **A**. In `dev`, this can be the `bootstrap_admin.py` password user via `/admin/bootstrap-login`, or Google. In `prod` (**decided 2026-10-07; lands in M13.5, D5**), there's no password login: the first time, open the `/join?code=…` URL `scripts/bootstrap_admin.py --env prod` printed and sign in with **Google** using `BOOTSTRAP_ADMIN_EMAIL` exactly — the invite is bound to that email and only redeems for a matching, `email_verified` Google sign-in (`docs/RUNBOOK.md` M14). After that first redemption, A signs in with Google normally.
 - [ ] Home lists A's group with its gradient. There are no console errors, including no `Content-Security-Policy` violations (prod build only).
 
 ## 2. Generate an invite

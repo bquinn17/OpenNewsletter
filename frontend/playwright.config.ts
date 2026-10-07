@@ -13,7 +13,7 @@ import { defineConfig, devices } from "@playwright/test";
  *   step. Only the `dev` project runs, against `e2e/dev/**`. Those tests
  *   need a signed-in session a deployed Cognito pool provides — blocked on
  *   operator setup — so they're scaffolded with `test.skip` guards rather
- *   than faked (see `e2e/dev/README` comment in each file).
+ *   than faked (see the header comment in `e2e/dev/golden-paths.spec.ts`).
  */
 const baseURL = process.env.E2E_BASE_URL;
 

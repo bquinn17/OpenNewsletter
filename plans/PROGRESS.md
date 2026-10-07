@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-07. Working document — update as milestones complete or
+Snapshot as of 2026-10-07 (plan review + owner decisions). Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -11,7 +11,7 @@ blockers resolve. Authoritative milestone definitions live in
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
-| M1 | Operator prerequisites | 🟡 partial | Domain, Cognito domain prefix, `cdk bootstrap`, IAM user credentials, and VAPID secret are done. Google/Facebook OAuth apps and the real CloudFront signing keypair still owed by the operator (B5). No Apple IdP — dropped (see B5 decision). |
+| M1 | Operator prerequisites | 🟡 partial | Domain, Cognito domain prefix, `cdk bootstrap`, IAM user credentials, and all four Secrets Manager entries (Google, Facebook, VAPID, CDN signing) exist; re-checked 2026-10-07. Still to do (B5): confirm the OAuth secrets' contents and redirect URIs, and replace the EC CloudFront keypair with RSA-2048. No Apple IdP — dropped (see B5 decision). |
 | **M2** | **Backend foundations (domain + persistence)** | ✅ **done** | See "M2 detail" below. All 64 tests green (`cargo test -p persistence`), fmt + clippy clean. Small follow-ups from the 2026-08-09 plan reconciliation listed under "M2 follow-ups". |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
@@ -23,8 +23,9 @@ blockers resolve. Authoritative milestone definitions live in
 | **M9** | **Newsletter UI** | 🟡 **code-complete, deploy unverified** | See "M9 detail" below. 116 frontend tests green (was 52). typecheck, ESLint (0 problems), Prettier and `vite build` are clean. Backend (308) and CDK (53) are unchanged, since M9 touched only `frontend/` and `plans/`. The simulated-month gate needs a deployed stack (B5). |
 | **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
 | **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 430 backend (427 + 3 from the post-M11 review fixes), 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
-| **M12** | **Admin UI** | 🟡 **code-complete, deploy unverified** | See "M12 detail" below. 265 frontend (was 220), 431 backend (+1) and 68 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt and clippy (`-D warnings`) are clean. The create-invite → share → new-member-appears gate needs a deployed stack (B5). |
+| **M12** | **Admin UI** | 🟡 **code-complete, deploy unverified** | See "M12 detail" below. 267 frontend (was 220; first recorded as 265, recounted in M13), 431 backend (+1) and 68 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt and clippy (`-D warnings`) are clean. The create-invite → share → new-member-appears gate needs a deployed stack (B5). |
 | **M13** | **Hardening** | 🟡 **code-complete, deploy unverified** | See "M13 detail" below. 444 backend (+13), 86 CDK (+18), 293 frontend Vitest (+26) and 7 Playwright tests green. fmt, clippy (`-D warnings`), `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `cdk synth` (dev + prod) and `actionlint` are clean. The six workflows haven't run on GitHub yet (nothing pushed). The smoke run, the dev-stack E2E and the alarm-email check need a deployed stack (B5). |
+| M13.5 | Plan-review follow-ups | ⬜ **next** | Implements the 2026-10-07 owner decisions (`12` M13.5). Code-only, so it isn't blocked on B5. |
 | M14 | Production deploy | ⬜ | |
 
 M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M13 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
@@ -42,7 +43,43 @@ A full consistency pass was made over `plans/00`–`13` so the documents no long
 - **Dev media auth**: signed cookies can't cross raw AWS domains — dev uses signed-URL query params built from the `/media-cookie` JSON body (`08` §4.5).
 - **Upload size cap**: enforced by `lambda-image-process` (mark `failed` + delete original) — `s3:content-length-range` doesn't exist for presigned PUT (`08` §3.2).
 - **Reminder offsets**: capped at 168h (`MAX_REMINDER_OFFSET_HOURS`) so the notify-tick query window always covers them (`03` §4.3, `07` §7.1).
-- Smaller: error catalog gained `LAST_ADMIN`/`CANDIDATE_PROMOTED`; gradient + avatarColor slug sets enumerated in `03` §4.3/§2.3; emoji predicate unified on `09` §2.2; VAPID keys consumed via `from_base64`, no PEM (`07` §2/§10); `lambda-push` direct-invoke envelope specified (`07` §6); `ApiStack`/`NotificationsStack` creation assigned to M4/M5 in `12`; CDK-test Lambda count corrected to 8 in `11` §3; `backend-ci` uses `cargo test --features integration` (no manual DDB-local step); dev uses raw AWS endpoints in `00` §7 and `03` §1; `voteWindowOpenAt` is informational-only (`06` §4.2); dev tick route body takes `groupId` (`03` §11a.1); `sub` vs `userId` confusion fixed in code sketches (`02` §6, `08` §4.3, `09` §1.4/§4.1); CSP concretely specified as a meta tag (`04` §12.1).
+- Smaller: error catalog gained `LAST_ADMIN`/`CANDIDATE_PROMOTED`; gradient + avatarColor slug sets enumerated in `03` §4.3/§2.3; emoji predicate unified on `09` §2.2; VAPID keys consumed via `from_base64`, no PEM (`07` §2/§10); `lambda-push` direct-invoke envelope specified (`07` §6); `ApiStack`/`NotificationsStack` creation assigned to M4/M5 in `12`; CDK-test Lambda count corrected to 8 in `11` §3; `backend-ci` uses `cargo test --features integration` (no manual DDB-local step; *superseded M13: the flag was never built, and CI runs plain `cargo test --workspace`*); dev uses raw AWS endpoints in `00` §7 and `03` §1; `voteWindowOpenAt` is informational-only (`06` §4.2); dev tick route body takes `groupId` (`03` §11a.1); `sub` vs `userId` confusion fixed in code sketches (`02` §6, `08` §4.3, `09` §1.4/§4.1); CSP concretely specified as a meta tag (`04` §12.1).
+
+---
+
+## Plan review (2026-10-07)
+
+A read-through of `plans/00`–`13` after M13. Stale text was corrected to match the code. Decisions and bugs are listed below and are still open.
+
+**Stale text fixed:**
+- `05` dropped its leftover Apple IdP text (line 3, §9.2, the §10 checklist), which the M1 sweep had missed. It also gained the M7 invite-state mechanism (`oidc-client-ts` state data, not base64 in `state`). Its `JwtVerifier`/`run_local.sh` paragraph is gone, and the bootstrap transaction now lists the sub-lookup row and the first voting cycle.
+- `01`: marker keys, CORS headers (`*`), the dev CDN alias, Query rather than Scan, no Route53 cost, and the cycle-tick → push grant.
+- `02`: the §2.15 note now says M11 writes the `NOTIFIED#…` and `TICK/NOTIFY` rows.
+- `03`: status banner, `VALIDATION_ERROR` → `VALIDATION_FAILED`, the 20000-char example, the §7.4 title, `askedBy` examples, the §13 enforcement pointer, and the media-deletion claim.
+- `04`: layout tree rebuilt from the real `frontend/`, plus Node 24, no Stylelint, no route loaders or `date-fns-tz`, the emoji picker, "PWA done", stores, and axe not wired.
+- `06`, `07`, `09`, `10`, `11`, `12`, `13` and `coding-standards.md`: references to things renamed, dropped or never built (`ci-pr-*` stacks, Google sign-in in E2E, `src/mocks/`, Lambda function names, `py_vapid`, `authorDisplayName`). Also prod smoke steps that can't advance a cycle.
+- `05` §4.2 now returns 400 for a revoked invite, matching the catalog. `05` §12 no longer claims a per-user redeem rate limit (HTTP APIs can't do one).
+- `06` §9 no longer says poll questions can be commented on. Engagement targets published text answers only, as `03` §8 and `09` §3 say.
+- Left alone: the `opennewsletter.example.com` placeholders. They match `config.py`'s defaults, and the real prod hostnames are M14's call.
+
+**Owner decisions (2026-10-07).** These are written into the plan docs as current design, marked "decided 2026-10-07; lands in M13.5". The code follows in **M13.5** (`12-build-order.md`).
+1. **Tokens go in `localStorage`**, so an installed PWA stays signed in. Logout revokes the refresh token (`04` §6, `05` §8/§12).
+2. **Non-empty drafts auto-publish at close.** The tick does this before flipping the status. The RespondPage warns while an answer is an unpublished draft. A poll pick saves as a draft immediately. Reminder counts include non-empty drafts (`06` §5.3, `07` §7.2, `04` §7.3).
+3. **The response window is 7 days by default**, and the `[96, 48, 24]` reminders all fire now. No further concerns: existing dev groups keep `4` until patched or reseeded, and the 1–28 day validation is unchanged (`06` §4.2).
+4. **Promotion order is votes desc, then the oldest suggestion.** 0-vote candidates still fill slots. Promotion reads the pool and sorts it in memory (`06` §5.2, `03` §6.1).
+5. **The prod bootstrap admin is an email-bound admin invite.** `BOOTSTRAP_ADMIN_EMAIL` → `bootstrap_admin.py --env prod` creates the group, the first cycle and an admin invite that only that verified email can redeem (via Google). The `admin-bootstrap` client becomes dev-only, so prod has no password auth (`05` §9).
+6. **Manual promotion gate.** One `deploy.yml`: `main` auto-deploys dev, then `promote-prod` runs behind the `production` environment and deploys the backend, then the frontend, from the same SHA. API changes are expand → contract, and the service worker updates promptly (`11` §6, `CLAUDE.md`, `coding-standards.md` §8).
+7. **Cost target ≈ $1–2/mo** (it was ≈ $8–9 as built): one secret per env, prod-only alarms within the free 10, one account-wide $5 budget in `CiStack`, and DynamoDB on an AWS-owned key (`01` §12).
+8. **Media deletes are real**: S3 objects, a CloudFront invalidation and the row. No bucket versioning. Permanent-delete warnings in the UI (`08` §8, `03` §9.4).
+9. **Shared-device privacy is accepted as-is.**
+10. **Settings changes apply to the current cycle where possible.** The voting cycle is rescheduled regardless of candidates. An open cycle's close moves if it's still in the future, otherwise 422 (`06` §6).
+11. **Flat comments, Web Push and the admin UI are confirmed.** Threaded comments and poll comments/reactions go to [`14-future-ideas.md`](14-future-ideas.md).
+12. **Per-PR `ci-pr-*` stacks** move to [`14-future-ideas.md`](14-future-ideas.md) §3.
+
+**Fixed in code:**
+- **Skipped month.** With `responseWindowDays = 28` in a non-leap February, the window closes Mar 1 00:00. `lambda-cycle-tick` anchored the next cycle on `response_close_at`, so it created April and skipped March. It now anchors on the current cycle's `cycleId` (`shared::cycle_time::cycle_month_start`, `06` §5.4). `response_open_at` was the suggested fix, but the dev tick's `advanceCycleClosesBy` rewinds a voting cycle's `response_open_at` by any amount, which could give the "next" cycle the current cycle's own id. The put would then fail as a lost race, and the group would have no voting cycle. Regression test: `cycle_time::a_full_length_february_window_does_not_skip_march`. `lambda-questions/tests/lifecycle.rs` now derives its cycle id from its dates instead of hardcoding `202606`, and asserts that the seeded cycle is the following month.
+- **Poll labels.** Duplicates are now rejected case-insensitively (Unicode lowercase of the trimmed label), as the original `09` §3.3 said. Both the backend and the frontend compared case-sensitively, and the doc had been changed to match the code. "Yes" and "yes" in one poll is confusing, so the code changed instead. Changed in `lambda-questions` validation, `SuggestQuestionForm` and the mock API, with tests in each.
+- Verified: 448 backend tests (+4) and 293 frontend Vitest tests pass. fmt, clippy (`-D warnings`), typecheck, ESLint, Prettier and `vite build` are clean.
 
 ---
 
@@ -270,7 +307,7 @@ Docs corrected alongside: `00` §4 repo layout (the media-stack split and `lambd
   - Publishing is sticky: `publish=false` after a publish updates content but stays `published`, with the original `publishedAt`.
   - The deadline is enforced by `responseCloseAt` as well as by status, so the ≤5-minute window before the tick runs is closed.
   - `responseId` is stable via `if_not_exists`.
-  - Kind mismatch → `VALIDATION_ERROR`.
+  - Kind mismatch → `VALIDATION_FAILED`.
   - Image IDs are de-duplicated before the ≤10 check.
   - Saves don't modify `ImageMedia` rows (question linkage is M8).
 - **OpenAPI** — 3 routes + `ResponseDto`/`MyResponsesList`/`SaveResponseRequest` in `shared/openapi.yaml`, `ROUTE_TABLE` rows, `frontend/src/types/api.ts` regenerated.
@@ -417,7 +454,7 @@ After M7, every known gap was worked through and two read-only review agents (ba
 **Updated 2026-10-05.** Progress so far: domain decided (`betterloop.site`, bought on Namecheap — DNS stays on Namecheap's nameservers, no Route53 hosted zone, so ACM validation CNAMEs get added there manually when `cdk deploy` prints them); Cognito domain prefix picked; AWS CLI credentials fixed to use IAM user `bquinn17` via `aws login` (was briefly root — see note below) with `AdministratorAccess` + `SignInLocalDevelopmentAccess`; `cdk bootstrap` done (`CDKToolkit` stack `CREATE_COMPLETE`); `cargo-lambda` installed on macOS (clears part of B6); VAPID keypair generated and stored at `opennewsletter/vapid/dev` (required fixing `scripts/generate_vapid_keys.py` — the `py-vapid` API it called, `public_key_urlsafe_base64()`/`private_key_urlsafe_base64()`, doesn't exist in the installed 1.9.4; replaced with direct RFC 8292 raw-point encoding via `cryptography`); `ALARM_EMAIL` set.
 
 **Re-assessed 2026-10-07.** All four secret ARNs in `.env.local` (`opennewsletter/oauth/google/dev`, `…/oauth/facebook/dev`, `…/vapid/dev`, `…/cdn-signing/dev`) now carry the random suffix AWS adds when a secret is created, so the secrets have been created. Their contents couldn't be checked: the `aws login` session had expired. What remains:
-- **CloudFront key-type mismatch (new, must fix before the M8 gate).** `infra/keys/cf-signing.pub.pem` was RSA-2048 until the M12 commit (2026-10-06) replaced it with an **EC P-256** key. `lambda-media` parses only RSA keys and signs RSA-SHA1 (`cloudfront.rs`), so if the private key in `opennewsletter/cdn-signing/dev` is also EC, every `GET /media-cookie` fails with `InvalidKey`. Regenerate the pair with `openssl genrsa 2048` per `infra/keys/README.md`. Also check it isn't the VAPID public key pasted by mistake: both are P-256.
+- **CloudFront key-type mismatch (new, must fix before the M8 gate).** `infra/keys/cf-signing.pub.pem` was RSA-2048 until the M12 commit (2026-10-06) replaced it with an **EC P-256** key. `lambda-media` parses only RSA keys and signs RSA-SHA1 (`cloudfront.rs`), so if the private key in `opennewsletter/cdn-signing/dev` is also EC, every `GET /media-cookie` fails with `InvalidKey`. **Root cause:** `docs/milestone-1-operator-runbook.md` §6 told the operator to generate ECDSA P-256, contradicting `05` §10 (RSA 2048). The runbook is corrected. **To fix:** regenerate RSA-2048 per the corrected §6 (`put-secret-value` overwrites the existing secret), then commit the new `.pub.pem`. **Alternative:** if CloudFront's ECDSA support is wanted, teach `cloudfront.rs` to sign ECDSA instead (`p256` is already in the tree via `lambda-push`). That would also drop the `rsa` crate and its timing advisory, but it's unverified against CloudFront and is a spec change to `05` §10/`08` §4.3.
 - **Confirm the OAuth secrets hold real client IDs and secrets**, and that each IdP app lists the Cognito hosted-UI redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
 - **Re-run `aws login`** before any deploy.
 
@@ -427,7 +464,7 @@ These don't block code work. They block every deploy gate (M3–M13).
 
 **Note — root-credential near-miss.** `aws login` was initially run while signed into the AWS Console as the **root** user, so it issued short-term rotating keys under the root identity rather than an IAM user. `aws login` works with any identity you authenticate as in the browser; it doesn't itself pick a non-root one. Fixed by attaching `AdministratorAccess` + `SignInLocalDevelopmentAccess` to `bquinn17` and re-running `aws login`, signing in as that IAM user. Worth calling out in `docs/milestone-1-operator-runbook.md` §"AWS account and credentials" if that section gets revised.
 
-### B6 — Lambda release builds (Windows/WSL2 only) + `cargo-lambda` not installed anywhere
+### B6 — Lambda release builds: stale artifacts on macOS, no release build on Windows/WSL2
 
 **Windows/WSL2**: `cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). That host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the test suite are unaffected. Fix: `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain; failing both, switch rustls to the `ring` backend.
 
@@ -444,8 +481,13 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
 
 ## Suggested next steps (in order)
 
-1. **Finish the M1 operator tasks** to clear B5: Google/Facebook OAuth apps, the real CloudFront keypair and their Secrets Manager entries. VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
-2. **Rebuild the Lambda artifacts** (`cargo lambda build --release --arm64`) so `engagement-api`, `push-api` and `notify-tick` get one, and `cycle-tick` picks up the M11 fan-out invoke (B6).
+1. **Finish the M1 operator tasks** to clear B5:
+   - **replace the EC CloudFront keypair with RSA-2048** (B5; corrected `docs/milestone-1-operator-runbook.md` §6)
+   - confirm the Google/Facebook secrets hold real client credentials and that both IdP apps list the Cognito `/oauth2/idpresponse` redirect
+   - `aws login` (the session had expired on 2026-10-07)
+
+   The four Secrets Manager entries, VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+2. **Rebuild every Lambda artifact** with `make build-lambdas` (`make deploy-dev` does it first). `push-api`, `notify-tick` and `cycle-tick` were built on 2026-10-06 and the rest on 2026-10-04, so all of them predate M13. `engagement-api` has never been built (B6).
 3. *(done 2026-10-05: CDK bootstrap)*
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
 5. **M6 gate**: after deploy, the curl save → save → publish dance against `PUT …/my-response` (`12` M6).
@@ -454,14 +496,14 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
    - redeem an invite made by `POST /admin/invites` and see the group on Home
    - log out
    Also try `/admin/bootstrap-login` with the `bootstrap_admin.py` credentials.
-7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build has only been compiled natively on macOS, never cross-compiled. Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403.
+7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build cross-compiled on macOS on 2026-10-04. Its first Linux build is `backend-ci`'s first run. The gate also needs the RSA CloudFront key (B5). Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403.
 8. **M9 gate**: after deploy, run a simulated month in the UI:
    - suggest and vote on candidates
    - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to promote and open
    - draft with images, reload, then publish text and poll answers
    - tick again to publish, then read the edition
 9. **M10 gate**: after deploy, two users comment on each other's published answers (one with an image), edit and delete a comment, and react with a ZWJ emoji (e.g. 👨‍👩‍👧‍👦) and a flag. An admin deletes the other user's comment. Check that API Gateway hands the Lambda the emoji path param decoded or encoded; the handler accepts both (`03` §8.6).
-10. **M11 gate**: after deploy, `cargo lambda build --release --arm64` for `push-api`, `notify-tick` and `cycle-tick` — all three cross-compiled cleanly on macOS 2026-10-06, artifacts in `backend/target/lambda/`. Then:
+10. **M11 gate**: after deploy, `cargo lambda build --release --arm64` for `push-api`, `notify-tick` and `cycle-tick` — all three cross-compiled cleanly on macOS 2026-10-06, but they predate M13's push allowlist, so rebuild them (step 2). Then:
    - enable notifications in Settings on a desktop Chrome and an installed iOS PWA; "Send test push" reaches both, and "My devices" lists both
    - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to open a cycle → the cycle-open push arrives once (retick: no duplicate)
    - rewind into the reminder window and `POST /admin/dev/tick/notify` → one reminder (the smallest due offset), not a burst
@@ -476,9 +518,10 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
    - Push a branch and confirm `frontend-ci`, `backend-ci` and `infra-ci` go green on GitHub. They've only been checked locally and with `actionlint`. The first real run of `cargo lambda build --release --arm64` on Linux, including `libwebp-sys`, happens in `backend-ci`.
    - After deploy, deploy `CiStack` (it's in `--all`), then paste its two role-ARN outputs into the repo variables listed in `.github/workflows/README.md`.
    - Run `docs/smoke.md` against dev.
-   - Confirm the SNS email subscription, and that the 17 alarms exist and sit in `OK`.
+   - Confirm the SNS email subscription. Before M13.5, all 17 alarms should exist and sit in `OK`; after M13.5, dev has no alarms and prod has at most 10 alarm metrics.
    - Fill in the `e2e/dev/` Playwright bodies once a Cognito test user exists (`E2E_USERNAME`/`E2E_PASSWORD`).
-13. **M14** (production deploy). See the Handoff below.
+13. **M13.5** (plan-review follow-ups). It's code work, so it can run before or alongside the B5 deploy steps above. See the Handoff below.
+14. **M14** (production deploy).
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
@@ -499,7 +542,7 @@ Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environm
 - **`RespondPage` has no markdown formatting toolbar** (the legacy page had bold/italic/list buttons). The spec only requires Write/Preview. Add it if users ask.
 - **No "hype check" banner** (`04` §14a `utils/hype.ts`) and no recurring-question helper text (`utils/recurring.ts`). Both are optional decoration and not built.
 
-The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What remains:
+The post-M7 gap pass (2026-09-27, above) cleared most of the earlier list. What remains:
 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
@@ -570,6 +613,21 @@ The lead settled the semantics first and recorded them in `11` §2.1/§2.4/§4.3
 ### Docs
 - **`docs/smoke.md`**: the `11` §13 checklist covering dev (with `advanceCycleClosesBy`) and prod (direct `aws lambda invoke`).
 - **README**: real Status, Local development and Contributing sections (the M13 done-when: clone → run → PR).
+- **Docs found out of date and fixed:**
+  - `docs/milestone-1-operator-runbook.md` §6 recommended an ECDSA CloudFront key; it now says RSA-2048 (see B5).
+  - `docs/RUNBOOK.md`:
+    - the IAM step now warns about root vs IAM-user `aws login`, and the "least-privilege is an M13 task" note is gone (CI uses the `CiStack` roles)
+    - the Route53 step now says a hosted zone is optional (`betterloop.site` is on Namecheap DNS)
+    - the CloudFront key step says RSA-2048
+    - new M13 steps for wiring GitHub Actions and checking the 17 alarms
+  - `11` §2.1 dropped the nonexistent `JwtVerifier`; §2.4/§6.3 dropped `--features integration`; §5.2 dropped stylelint; §6.1 uses `.nvmrc` instead of Node 20.
+  - `13` §10 test matrix: integration tests aren't opt-in, and Playwright runs locally.
+  - `04` §12.1/§13 document the CSP as built.
+  - `02` §2.2/§4 #4 document `last_answered_cycle`.
+  - `07` §3.1 documents the push host allowlist.
+  - The "Plan-set reconciliation" line about `--features integration` is marked superseded.
+  - The M12 frontend test count is corrected from 265 to 267.
+- **Owner change, same session:** macOS Node moved to 24 via nvm (`.nvmrc`), and `CLAUDE.md` gained the nvm loader prefix plus an `infra/bin/cdk` wrapper for `npx aws-cdk@2`. The workflows follow `.nvmrc`. `@types/node` is pinned at ^20, which is harmless; bump it with the next dependency sweep.
 
 ### Bugs found (fixed)
 - **`editions_answered` double-counted under concurrency** (found by the new concurrency test). The "first publish this cycle" check was only a handler pre-read, so two concurrent first publishes both bumped.
@@ -614,7 +672,7 @@ Frontend-only apart from one backend validation fix: every admin route already e
 - **Save stayed enabled after a reverted edit.** The settings form compared raw string inputs with numeric baselines. Both sides are now normalised, with a test.
 
 ### Tests
-- **Frontend: 265 (was 220).** +15 `GroupAdminPage`, +20 `mockAdmin`, +6 client path/body, +5 `inviteUrl`. Some legacy-only coverage went with the deleted files.
+- **Frontend: 267 (was 220; first recorded as 265, recounted in M13).** +15 `GroupAdminPage`, +20 `mockAdmin`, +6 client path/body, +5 `inviteUrl`. Some legacy-only coverage went with the deleted files.
 - **Backend: 431** (+1 for the validation regression test). The full `--no-fail-fast` run had one DynamoDB Local "create table" flake (`promotion_is_idempotent_across_rapid_reruns`, under load), and it passed on a solo re-run. That is the known overload flake, not a regression.
 - **CDK: 68**, unchanged.
 
@@ -797,7 +855,7 @@ Two Sonnet agents then ran in parallel: candidates/suggest, and newsletter/respo
   - a "used X of Y votes" line and an inline "Manage votes" panel with Remove buttons
   - un-voted buttons disabled at the cap
 - `CYCLE_NOT_VOTING` from the list call shows a calm "voting hasn't opened" state.
-- `SuggestPage`: react-hook-form + zod (text/poll, 2–6 options, "Ask anonymously"). It mirrors the server's trimming and **case-sensitive** duplicate-label rule. Server `fieldErrors` map onto fields.
+- `SuggestPage`: react-hook-form + zod (text/poll, 2–6 options, "Ask anonymously"). It mirrors the server's trimming and duplicate-label rule (case-sensitive at M9; case-insensitive since the 2026-10-07 plan review). Server `fieldErrors` map onto fields.
 
 ### Newsletter and Respond
 - `NewsletterPage`:
@@ -929,17 +987,20 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 
 ---
 
-## Handoff — starting M14 (Production deploy)
+## Handoff — starting M13.5 (Plan-review follow-ups)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, `12` M14 and `docs/RUNBOOK.md` §M14. M14 is almost entirely operator work. It can't start until B5 clears and the dev deploy gates (M3–M13, Suggested next steps 4–12) have been run.
-2. **Code-side prep that can happen now:**
-   - decide `.env.production` (`04` §13 left it to M14) or rely on the `VITE_*` secrets in `frontend-deploy.yml`
-   - replace `opennewsletter.example.com` in `12` M14 and `docs/RUNBOOK.md` with `betterloop.site`
+1. **Orient.** Read `CLAUDE.md`, `12` M13.5, and the "Plan review (2026-10-07)" section above. Every plan section that changes is marked "decided 2026-10-07; lands in M13.5". The design is settled; don't re-litigate it.
+2. **Split by directory**, per `CLAUDE.md`'s delegation pattern:
+   - **Backend**: auto-publish in `publish(nl)`, promotion order, D10 rescheduling in `patch_group`, bound invites + `INVITE_EMAIL_MISMATCH`, the shared media-delete helper, reading the one per-env secret, and `DEFAULT_RESPONSE_WINDOW_DAYS = 7`. Plus `shared/openapi.yaml`, `ROUTE_TABLE` and codegen.
+   - **Infra**: `app_secret_arn`, the Google `email_verified` mapping, the `admin-bootstrap` client and authorizer audience in dev only, delete IAM + `cloudfront:CreateInvalidation`, no bucket versioning, prod-only alarms (≤10 metrics), the $5 account budget in `CiStack`, the AWS-owned DynamoDB key, `deploy.yml` with the `production` environment, and `bootstrap_admin.py` prod mode.
+   - **Frontend**: `localStorage` tokens + refresh-token revocation, the auto-publish warning, poll picks saving as drafts, permanent-delete confirms, the admin Settings copy, and prompt SW updates.
+3. **Baselines**: 448 backend, 86 CDK, 293 Vitest, 7 Playwright; ESLint 0 problems.
+4. **After M13.5**, M14 (production deploy) follows the updated `12` M14 and `docs/RUNBOOK.md`. Its earlier prep items still apply:
+   - decide `.env.production` or rely on the deploy workflow's `VITE_*` secrets
+   - pick the real prod hostnames (`betterloop.site`) in place of the `opennewsletter.example.com` placeholders
    - check `config.py`'s prod values
-3. **Deploy path:** `cdk deploy --context env=prod --all` from a workstation the first time. Then set the repo variables and switch on `BACKEND_DEPLOY_ENABLED`/`FRONTEND_DEPLOY_ENABLED` so later deploys go through GitHub OIDC.
-4. **Verify** with `docs/smoke.md` against prod. Baselines: 444 backend, 86 CDK, 293 Vitest, 7 Playwright; ESLint 0 problems. Run `mypy --strict .` from `infra/`, as CI does.
 
 ---
 

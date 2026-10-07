@@ -29,6 +29,7 @@ base64.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+chrono-tz.workspace = true
 pretty_assertions.workspace = true
 cycle_tick = { path = "../lambda-cycle-tick", package = "lambda-cycle-tick" }
 persistence = { path = "../persistence", features = ["test-utils"] }

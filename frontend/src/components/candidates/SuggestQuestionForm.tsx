@@ -56,7 +56,9 @@ const schema = z
         ctx.addIssue({ code: "custom", path: ["pollOptions", i, "label"], message: "Required" });
         return;
       }
-      if (seen.has(label)) {
+      // Case-insensitive, matching the server (`09` §3.3).
+      const key = label.toLowerCase();
+      if (seen.has(key)) {
         ctx.addIssue({
           code: "custom",
           path: ["pollOptions", i, "label"],
@@ -64,7 +66,7 @@ const schema = z
         });
         return;
       }
-      seen.add(label);
+      seen.add(key);
     });
   });
 

@@ -12,6 +12,11 @@ to `.env.local` (gitignored) before starting.
 Milestone 1 can run in parallel with Milestone 2 — M2 (backend foundations)
 does not consume any of these ARNs.
 
+**Decided 2026-10-07; lands in M13.5 (D7):** steps 3–6 below collect
+credentials as before, but they're no longer each saved to their own Secrets
+Manager secret. Collect them, then do step 7, which combines everything into
+**one** secret per environment.
+
 ---
 
 ## 1. Decide on a domain
@@ -54,10 +59,8 @@ Client ID (Web).
 
 - Authorized redirect URI: the Cognito URI above.
 - Authorized JS origin: `https://opennewsletter.example.com`.
-- Create a Secrets Manager secret `opennewsletter/oauth/google/dev` with
-  `{"clientId": "...", "clientSecret": "..."}`.
-
-**`.env.local`**: `GOOGLE_OAUTH_SECRET_ARN`.
+- Record the client ID and secret — they go into the combined secret in
+  step 7, not a dedicated Secrets Manager secret (decided 2026-10-07, D7).
 
 (No Apple Sign In step — dropped. Apple Developer membership is $99/yr,
 which the owner declined; see decision in `plans/PROGRESS.md`.)
@@ -69,10 +72,7 @@ which the owner declined; see decision in `plans/PROGRESS.md`.)
 Meta for Developers → Create App → Add Facebook Login product.
 
 - Valid OAuth Redirect URI: Cognito URI above.
-- Secrets Manager `opennewsletter/oauth/facebook/dev` with
-  `{"clientId","clientSecret"}`.
-
-**`.env.local`**: `FACEBOOK_OAUTH_SECRET_ARN`.
+- Record the app ID and secret for step 7 (decided 2026-10-07, D7).
 
 ---
 
@@ -81,42 +81,116 @@ Meta for Developers → Create App → Add Facebook Login product.
 ```sh
 pip install py-vapid
 python scripts/generate_vapid_keys.py --subject mailto:you@example.com --out vapid.json
-aws secretsmanager create-secret --name opennewsletter/vapid/dev \
-  --secret-string file://vapid.json
-rm vapid.json
 ```
 
-**`.env.local`**: `VAPID_SECRET_ARN`.
+Keep `vapid.json` around for step 7 instead of creating `opennewsletter/vapid/dev`
+directly (decided 2026-10-07, D7); delete it once folded into the combined secret.
 
 ---
 
 ## 6. CloudFront signing keypair
 
-CloudFront signed URLs/cookies accept either RSA 2048 or ECDSA P-256 keys;
-EC is smaller/faster to generate and works the same way with the CDK
-`PublicKey`/`KeyGroup` constructs:
+Use **RSA 2048**. `lambda-media` parses only RSA keys and signs the policy with RSA-SHA1 (`backend/crates/lambda-media/src/cloudfront.rs`, `plans/05-auth-flow.md` §10). An ECDSA key gets through `cdk deploy` but makes every `GET /media-cookie` fail. (Corrected 2026-10-07: this section used to recommend ECDSA P-256.)
 
 ```sh
-openssl ecparam -name prime256v1 -genkey -noout -out cf-signing.key
-openssl ec -in cf-signing.key -pubout -out infra/keys/cf-signing.pub.pem
-aws secretsmanager create-secret --name opennewsletter/cdn-signing/dev \
-  --secret-string file://cf-signing.key
-rm cf-signing.key   # never commit; only the .pub.pem is checked in
+openssl genrsa -out cf-signing.key 2048
+openssl rsa -in cf-signing.key -pubout -out infra/keys/cf-signing.pub.pem
 git add infra/keys/cf-signing.pub.pem
 ```
 
-(RSA 2048 via `openssl genrsa` / `openssl rsa -pubout` also works if you'd
-rather stick with that.)
-
-**`.env.local`**: `CDN_SIGNING_SECRET_ARN`.
+Keep `cf-signing.key` around for step 7 instead of creating
+`opennewsletter/cdn-signing/dev` directly (decided 2026-10-07, D7); delete it
+once folded into the combined secret. Never commit the private key — only
+the `.pub.pem` is checked in.
 
 ---
 
-## 7. Operator contact email
+## 7. Combine credentials into one Secrets Manager secret per env (decided 2026-10-07; lands in M13.5, D7)
 
-Used for AWS Budgets and CloudWatch alarm notifications.
+Steps 3–6 used to each get their own secret (4 per env). They now fold into
+**one** JSON secret, `opennewsletter/{env}`, with these keys:
+
+```json
+{
+  "google_client_id": "...",
+  "google_client_secret": "...",
+  "facebook_app_id": "...",
+  "facebook_app_secret": "...",
+  "vapid_public_key": "...",
+  "vapid_private_key": "...",
+  "vapid_subject": "mailto:you@example.com",
+  "cdn_signing_private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+}
+```
+
+Build it with `jq` from the pieces collected above (adjust field names to
+match `vapid.json`'s actual shape and `cf-signing.key`'s contents) and create
+the secret:
+
+```sh
+jq -n \
+  --arg google_client_id "$GOOGLE_CLIENT_ID" \
+  --arg google_client_secret "$GOOGLE_CLIENT_SECRET" \
+  --arg facebook_app_id "$FACEBOOK_APP_ID" \
+  --arg facebook_app_secret "$FACEBOOK_APP_SECRET" \
+  --arg vapid_public_key "$(jq -r .publicKey vapid.json)" \
+  --arg vapid_private_key "$(jq -r .privateKey vapid.json)" \
+  --arg vapid_subject "mailto:you@example.com" \
+  --arg cdn_signing_private_key "$(cat cf-signing.key)" \
+  '{google_client_id:$google_client_id, google_client_secret:$google_client_secret,
+    facebook_app_id:$facebook_app_id, facebook_app_secret:$facebook_app_secret,
+    vapid_public_key:$vapid_public_key, vapid_private_key:$vapid_private_key,
+    vapid_subject:$vapid_subject, cdn_signing_private_key:$cdn_signing_private_key}' \
+  > opennewsletter-dev-secret.json
+
+aws secretsmanager create-secret --name opennewsletter/dev \
+  --secret-string file://opennewsletter-dev-secret.json
+
+rm opennewsletter-dev-secret.json vapid.json cf-signing.key   # never commit any of these
+```
+
+**Migrating an existing dev setup:** if `opennewsletter/oauth/google/dev`,
+`opennewsletter/oauth/facebook/dev`, `opennewsletter/vapid/dev` and
+`opennewsletter/cdn-signing/dev` already exist from before M13.5, read each
+with `aws secretsmanager get-secret-value`, fold their values into the `jq`
+command above, create `opennewsletter/{env}`, update
+`infra/opennewsletter/config.py` and any CFN dynamic references to point at
+it (`{{resolve:secretsmanager:<arn>:SecretString:google_client_id}}` etc.),
+confirm the stack deploys clean against the new secret, then delete the four
+old secrets:
+
+```sh
+aws secretsmanager delete-secret --secret-id opennewsletter/oauth/google/dev
+aws secretsmanager delete-secret --secret-id opennewsletter/oauth/facebook/dev
+aws secretsmanager delete-secret --secret-id opennewsletter/vapid/dev
+aws secretsmanager delete-secret --secret-id opennewsletter/cdn-signing/dev
+```
+
+Repeat the same for `prod` (`opennewsletter/prod`) during M14.
+
+**`.env.local`**: `APP_SECRET_ARN` (replaces `GOOGLE_OAUTH_SECRET_ARN` /
+`FACEBOOK_OAUTH_SECRET_ARN` / `VAPID_SECRET_ARN` / `CDN_SIGNING_SECRET_ARN`).
+
+---
+
+## 8. Operator contact email
+
+Used for AWS Budgets notifications (one account-wide $5/mo budget as of
+M13.5, D7) and, in prod, CloudWatch alarm notifications (alarms are prod-only
+as of M13.5, D7).
 
 **`.env.local`**: `ALARM_EMAIL`.
+
+---
+
+## 9. Prod bootstrap admin email (decided 2026-10-07; lands in M13.5, D5)
+
+The email the prod bootstrap admin will sign in with via Google. Prod has no
+password auth — `scripts/bootstrap_admin.py --env prod` instead writes an
+admin invite bound to this email; see `docs/RUNBOOK.md` M14 "Bootstrap prod
+admin". Not needed for dev, which keeps password bootstrap.
+
+**`.env.local`**: `BOOTSTRAP_ADMIN_EMAIL`.
 
 ---
 

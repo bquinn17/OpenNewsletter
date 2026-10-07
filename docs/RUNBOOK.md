@@ -10,7 +10,7 @@ Reference plan: [`../plans/12-build-order.md`](../plans/12-build-order.md).
 ### AWS account and credentials
 
 1. Create (or designate) a personal AWS account. Both `dev` and `prod` stacks live in the same account, distinguished by the `-dev` / `-prod` suffix on stack names.
-2. Create an IAM user or SSO role with `AdministratorAccess` (scoped-down least-privilege is a M13 hardening task).
+2. Create an IAM user or SSO role with `AdministratorAccess` for your workstation. Sign in to the console as that user, **not root**, before running `aws login`; `aws login` issues keys for whichever identity the browser is signed in as. CI doesn't use these credentials: it assumes the OIDC roles in `CiStack` (see M13 below).
 3. Configure credentials locally:
    ```sh
    aws configure          # or export AWS_PROFILE=opennewsletter
@@ -45,13 +45,11 @@ See [`milestone-1-operator-runbook.md`](milestone-1-operator-runbook.md) for the
 
 Summary of steps (can run in parallel with M2/M3 code work):
 
-- [ ] Decide on a domain; create Route53 hosted zone; record `HOSTED_ZONE_ID`.
+- [ ] Decide on a domain. A Route53 hosted zone is optional: without one (the current setup, `betterloop.site` on Namecheap DNS), add the ACM validation CNAMEs at your registrar when `cdk deploy` prints them.
 - [ ] Pick a Cognito hosted-UI domain prefix (e.g. `opennewsletter-dev`).
-- [ ] Register Google OAuth 2.0 client; save credentials to Secrets Manager `opennewsletter/oauth/google/dev`.
-- [ ] Register Facebook Login app; save to `opennewsletter/oauth/facebook/dev`. (No Apple IdP — dropped, see `plans/PROGRESS.md` decisions; Apple Developer membership is $99/yr.)
-- [ ] Generate VAPID keys (`python scripts/generate_vapid_keys.py`); store in `opennewsletter/vapid/dev`.
-- [ ] Generate CloudFront signing keypair; commit `infra/keys/cf-signing.pub.pem`; store private key in `opennewsletter/cdn-signing/dev`.
-- [ ] Set `ALARM_EMAIL` in `.env.local` (receives AWS Budgets + CloudWatch alerts).
+- [ ] **(decided 2026-10-07; lands in M13.5, D7)** Register the Google OAuth 2.0 client and the Facebook Login app, generate VAPID keys, and generate the CloudFront signing keypair as before — but save them all as keys inside **one** combined Secrets Manager secret, `opennewsletter/dev`, instead of four separate secrets. See [`milestone-1-operator-runbook.md`](milestone-1-operator-runbook.md) for the exact `aws secretsmanager create-secret` shape and how to migrate the four existing dev secrets. (No Apple IdP — dropped, see `plans/PROGRESS.md` decisions; Apple Developer membership is $99/yr.)
+- [ ] Set `ALARM_EMAIL` in `.env.local` (receives the account-wide AWS Budgets alert; CloudWatch alarms are prod-only as of M13.5, D7).
+- [ ] Set `BOOTSTRAP_ADMIN_EMAIL` in `.env.local` for prod (decided 2026-10-07, D5) — the email the prod bootstrap admin invite is bound to; see M14 below.
 
 **`.env.local` must be populated with all ARNs before `make deploy-dev`.**
 
@@ -234,13 +232,22 @@ After M13 code lands:
 
 ### Execute the smoke runbook
 
-Follow [`smoke.md`](smoke.md) (created in M13). All steps must pass clean.
+Follow [`smoke.md`](smoke.md). All steps must pass clean.
+
+### Wire up GitHub Actions
+
+1. `CiStack` deploys with `--all`. Copy its outputs `GithubDeployRoleArn` and `GithubDiffRoleArn` into the repo variables `AWS_DEPLOY_ROLE_ARN` and `AWS_DIFF_ROLE_ARN`.
+2. Set the remaining repo variables and secrets listed in [`.github/workflows/README.md`](../.github/workflows/README.md). Leave `DEPLOY_ENABLED` unset until M14, and create the `production` environment with yourself as required reviewer. (Until M13.5 lands `deploy.yml`, the old workflows read `FRONTEND_DEPLOY_ENABLED`/`BACKEND_DEPLOY_ENABLED`.)
+3. Push a branch and confirm `frontend-ci`, `backend-ci` and `infra-ci` go green.
 
 ### Confirm monitoring alarms
 
-1. Go to AWS CloudWatch → Dashboards → `OpenNewsletter-dev`. Confirm metric widgets are populated.
-2. Go to AWS Budgets. Confirm the `OpenNewsletter-dev-monthly` budget exists at $10/mo with two alert thresholds.
-3. Manually trigger a CloudWatch alarm (or wait for a test condition) to confirm the SNS email fires to `ALARM_EMAIL`.
+**Decided 2026-10-07; lands in M13.5 (D7) — supersedes the counts below:** alarms move to **prod only** (≤10 alarm metrics total: Lambda error rate, API 5xx rate, DynamoDB throttles, push failure rate, `lambda-cycle-tick` errors). `dev` keeps its dashboard but has no alarms. The budget becomes **one account-wide $5/mo AWS Budget**, defined once in `CiStack`, not per-env in `MonitoringStack`.
+
+1. Go to AWS CloudWatch → Dashboards → `OpenNewsletter-dev`. Confirm metric widgets are populated. (No alarms to confirm here post-M13.5 — dev has none.)
+2. On `prod`, go to CloudWatch → Alarms. The ≤10 `OpenNewsletter-*-prod` alarm metrics should exist and sit in `OK` or `INSUFFICIENT_DATA`, not `ALARM`.
+3. Go to AWS Budgets. Confirm the single account-wide budget exists at $5/mo with alerts at 80% actual and 100% forecasted.
+4. Manually trigger a CloudWatch alarm (or wait for a test condition) to confirm the SNS email fires to `ALARM_EMAIL`.
 
 ---
 
@@ -248,27 +255,25 @@ Follow [`smoke.md`](smoke.md) (created in M13). All steps must pass clean.
 
 ### Repeat M1 for `prod`
 
-All the Secrets Manager secrets created in M1 must be duplicated for production:
-
-- `opennewsletter/oauth/google/prod`
-- `opennewsletter/oauth/facebook/prod`
-- `opennewsletter/vapid/prod`
-- `opennewsletter/cdn-signing/prod`
+**Decided 2026-10-07; lands in M13.5 (D7):** secrets are no longer duplicated as four separate secrets. Create **one** combined secret, `opennewsletter/prod`, with the same keys as `opennewsletter/dev` (`google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`, `vapid_public_key`, `vapid_private_key`, `vapid_subject`, `cdn_signing_private_key`) — see [`milestone-1-operator-runbook.md`](milestone-1-operator-runbook.md) for the exact shape.
 
 Update the Cognito redirect URIs on Google/Facebook to include the prod Cognito domain.
 
-Generate a **fresh** CloudFront signing keypair for prod (never share the dev private key):
+Generate a **fresh** CloudFront signing keypair for prod (never share the dev private key), and put it in the combined secret under `cdn_signing_private_key`:
 
 ```sh
 openssl genrsa -out cf-signing-prod.key 2048
 openssl rsa -pubout -in cf-signing-prod.key -out infra/keys/cf-signing-prod.pub.pem
-aws secretsmanager create-secret \
-  --name opennewsletter/cdn-signing/prod \
-  --secret-string file://cf-signing-prod.key
+# merge into the existing opennewsletter/prod secret rather than creating a new one —
+# see milestone-1-operator-runbook.md for the jq recipe
 rm cf-signing-prod.key
 ```
 
+Set `BOOTSTRAP_ADMIN_EMAIL` in the prod `.env.local`/config to the email the prod admin will sign in with (decided 2026-10-07, D5) — see "Bootstrap prod admin" below.
+
 ### Deploy prod stacks
+
+**Decided 2026-10-07; lands in M13.5 (D6):** prod deploys go through the `promote-prod` GitHub Actions job (gated by the `production` environment's required reviewer), not a manual `cdk deploy` from an operator's machine — see [`.github/workflows/README.md`](../.github/workflows/README.md) and `plans/11-testing-ci-cd.md` §6. The command below is for first bring-up before that workflow is wired, or for break-glass recovery:
 
 ```sh
 cd infra
@@ -290,13 +295,17 @@ api.opennewsletter.example.com  CNAME  <apigw-id>.execute-api.us-east-1.amazonaw
 
 ### Bootstrap prod admin
 
+**Decided 2026-10-07; lands in M13.5 (D5) — replaces the password-bootstrap flow used in dev.** In prod, `scripts/bootstrap_admin.py` creates no Cognito user: it writes the Group, the first `voting` Newsletter, and an admin invite bound to `BOOTSTRAP_ADMIN_EMAIL` (`Invite.bound_email`, lowercased; `role_on_redeem=admin`; 30-day TTL), then prints the `/join?code=…` URL.
+
 ```sh
 python scripts/bootstrap_admin.py \
   --env prod \
-  --admin-email YOUR_EMAIL \
+  --admin-email "$BOOTSTRAP_ADMIN_EMAIL" \
   --admin-display-name "Your Name" \
   --group-name "OpenNewsletter"
 ```
+
+Open the printed URL and sign in with **Google**, using that exact email — the invite's `bound_email` check requires the ID token's `email` (lowercased) to match and `email_verified` to be true, so Facebook (which doesn't supply `email_verified`) won't work for this redemption. The normal redeem path then creates the User + membership, same as any other invite. There is no password auth in prod and no `admin-bootstrap` Cognito client there (`plans/13-dev-environments.md` §6) — this invite-based flow is the only way to bootstrap the first prod admin.
 
 ### Smoke test production
 

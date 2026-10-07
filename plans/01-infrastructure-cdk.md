@@ -18,10 +18,11 @@ Region: **us-east-1**. Account: single personal AWS account for both `dev` and `
 | `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack` |
 | `FrontendStack` | ACM cert (`us-east-1`) + Route53 records (if Route53) | — |
 | `MonitoringStack` | CloudWatch dashboards + alarms | All others |
+| `CiStack` | Account-wide, unsuffixed (one per account, not per env): GitHub OIDC provider + deploy/diff roles (`11-testing-ci-cd.md` §6), and the account's one AWS Budget (§9.2a) | — |
 
 CDK app entry point: `infra/app.py`. Uses `--context env=<dev|prod>` to select environment-specific config from `infra/opennewsletter/config.py`.
 
-**Correction (M5)**: this table originally listed `NotificationsStack` as depending on `ApiStack` (presumably for a future `lambda:InvokeFunction` grant onto `lambda-push`). That's backwards for what M5 actually needed: `ApiStack` wires the dev-only `POST /admin/dev/tick/cycle` route (§6, §11a) directly to `NotificationsStack`'s `cycle-tick` Lambda, which requires `ApiStack` to receive that Lambda as a constructor parameter — i.e. `ApiStack` depends on `NotificationsStack`, not the reverse. `app.py` instantiates `NotificationsStack` before `ApiStack` accordingly. When `lambda-notify-tick` needs to invoke `lambda-push` in M11, resolve it the way `MediaPipelineStack` avoids its own cyclic dependency on `MediaPersistentStack` (§5, `media_pipeline_stack.py`): import the target Lambda by ARN/name (`aws_lambda.Function.from_function_attributes`) inside `NotificationsStack` rather than passing the live construct, so no CDK-level cycle is created.
+**Correction (M5)**: this table originally listed `NotificationsStack` as depending on `ApiStack` (presumably for a future `lambda:InvokeFunction` grant onto `lambda-push`). That's backwards for what M5 actually needed: `ApiStack` wires the dev-only `POST /admin/dev/tick/cycle` route (§6, §11a) directly to `NotificationsStack`'s `cycle-tick` Lambda, which requires `ApiStack` to receive that Lambda as a constructor parameter — i.e. `ApiStack` depends on `NotificationsStack`, not the reverse. `app.py` instantiates `NotificationsStack` before `ApiStack` accordingly. In M11 it was `lambda-cycle-tick`, not `lambda-notify-tick`, that needed to invoke `lambda-push` (notify-tick sends reminders in-process, §7.3). The grant is on an ARN built with `Stack.format_arn` inside `NotificationsStack`, rather than on the live `ApiStack` construct, so no CDK-level cycle is created (§7.2).
 
 ---
 
@@ -38,16 +39,14 @@ class EnvConfig:
     hosted_zone_id: str | None        # if Route53, else None (DNS managed externally)
     hosted_zone_name: str | None
     cognito_domain_prefix: str        # globally unique; e.g. "opennewsletter-prod"
-    google_client_id_secret_arn: str
-    google_client_secret_secret_arn: str
+    app_secret_arn: str               # ARN of the one per-env Secrets Manager secret (§7.1, §12); replaces the four *_secret_arn fields below (decided 2026-10-07; lands in M13.5)
     # No Apple IdP — dropped, see plans/PROGRESS.md decisions (M1).
-    facebook_app_id_secret_arn: str
-    facebook_app_secret_secret_arn: str
     log_retention_days: int           # 30 in dev, 90 in prod
     alarm_email: str | None
+    bootstrap_admin_email: str | None # prod only; target of the email-bound admin invite scripts/bootstrap_admin.py creates (05 §9; decided 2026-10-07; lands in M13.5)
 ```
 
-Provider OAuth credentials are pre-populated in AWS Secrets Manager out-of-band (not in CDK). `config.py` only stores ARNs.
+Provider OAuth credentials, VAPID keys, and the CloudFront signing key are pre-populated in AWS Secrets Manager out-of-band (not in CDK), as JSON keys inside the one per-env secret `opennewsletter/{env}` referenced by `app_secret_arn` (§7.1, §12; decided 2026-10-07; lands in M13.5 — previously four separate secrets, one per credential pair). `config.py` only stores the ARN.
 
 ---
 
@@ -62,7 +61,7 @@ Provider OAuth credentials are pre-populated in AWS Secrets Manager out-of-band 
 - **Streams**: **disabled in v1**. The only planned consumer is the archival Lambda (`10-archival.md`), which is deferred. Re-enable as `NEW_AND_OLD_IMAGES` when archival lands.
 - **Point-in-time recovery**: enabled in `prod`, disabled in `dev`
 - **Removal policy**: `RETAIN` in `prod`, `DESTROY` in `dev`
-- **Encryption**: AWS-managed KMS
+- **Encryption**: AWS-owned key (the free default; decided 2026-10-07; lands in M13.5 — was the AWS-managed `aws/dynamodb` KMS key, which bills per-key)
 
 ### 3.2 Global Secondary Indexes
 
@@ -104,13 +103,13 @@ See `02-data-model-dynamodb.md` for exact key compositions.
 
 ### 4.2 Identity Providers (federated)
 
-- **Google** — `UserPoolIdentityProviderGoogle`. Reads client ID/secret from Secrets Manager ARNs in config.
-- **Facebook** — `UserPoolIdentityProviderFacebook`.
+- **Google** — `UserPoolIdentityProviderGoogle`. Reads `google_client_id`/`google_client_secret` via CFN dynamic references against the app secret (`app_secret_arn`; decided 2026-10-07 — was a dedicated secret ARN pair), e.g. `{{resolve:secretsmanager:<app_secret_arn>:SecretString:google_client_id}}`.
+- **Facebook** — `UserPoolIdentityProviderFacebook`. Same pattern against `facebook_app_id`/`facebook_app_secret`.
 
 No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple
 Developer membership is $99/yr.
 
-For both: attribute mapping `email -> email`, `name -> name`.
+For both: attribute mapping `email -> email`, `name -> name`. Google additionally maps `email_verified -> email_verified` (decided 2026-10-07; lands in M13.5 — needed so `POST /invites/redeem` can check a bound invite's email-verified claim, `05` §4.2/§9). Facebook doesn't supply `email_verified`, so an email-bound invite can only be redeemed via Google.
 
 ### 4.3 App Clients
 
@@ -130,7 +129,7 @@ Two app clients on the same user pool:
 - **Auth flows**: `ALLOW_USER_PASSWORD_AUTH` + `ALLOW_REFRESH_TOKEN_AUTH`
 - **Supported IdPs**: Cognito only (no federation)
 - **Token validity**: same as `frontend`
-- In `prod` this client exists but is exercised once at first-admin bootstrap and then dormant; in `dev` it's the inner-loop sign-in path so we don't bounce through Google/Facebook for every iteration.
+- **Dev only** (decided 2026-10-07; lands in M13.5). Previously this client also existed in `prod` for the one-time bootstrap; prod bootstrap no longer creates a Cognito user at all — the operator redeems an email-bound admin invite via Google instead (`05` §9). So `admin-bootstrap` is created only when `env == dev`, it's the inner-loop sign-in path there so dev iteration doesn't bounce through Google/Facebook every time, and the `ApiStack` JWT authorizer's audience in `prod` is the `frontend` client alone (§6.1).
 
 ### 4.4 Hosted UI Domain
 
@@ -141,7 +140,7 @@ Two app clients on the same user pool:
 - `user_pool_id`
 - `user_pool_arn`
 - `user_pool_client_id` (the `frontend` client)
-- `user_pool_bootstrap_client_id` (the `admin-bootstrap` client)
+- `user_pool_bootstrap_client_id` (the `admin-bootstrap` client; dev only, decided 2026-10-07 — absent in prod)
 - `hosted_ui_domain`
 
 ---
@@ -160,11 +159,11 @@ In `prod` the split is structural-only; both stacks deploy together and behave i
 Two buckets, both private (Block Public Access fully on):
 
 - **`opennewsletter-media-originals-{env}-{accountId}`**
-  - Versioning: enabled in `prod`, disabled in `dev`
+  - Versioning: disabled in both envs (decided 2026-10-07; lands in M13.5 — was enabled in `prod`. Real delete (D8, `03` §9.4) only works cleanly without versioning: a delete on a versioned bucket just adds a delete marker and leaves the object recoverable, which defeats the point of a user-initiated permanent delete)
   - Lifecycle:
     - Abort incomplete multipart uploads after 1 day
     - Transition to `INTELLIGENT_TIERING` after 30 days
-  - CORS: allow `PUT` and `POST` from `https://{config.domain}` and `http://localhost:5173` in dev. Headers: `Content-Type`, `x-amz-content-sha256`, `x-amz-date`, `Authorization`. Expose: `ETag`.
+  - CORS: allow `PUT` and `POST` from `https://{config.domain}` and `http://localhost:5173` in dev. Allowed headers: `*`, because the presign decides which headers are signed (e.g. `x-amz-checksum-sha256`, `08` §3.2; decided M8). Expose: `ETag`.
   - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes `lambda-image-process`.
   - Encryption: SSE-S3.
 
@@ -194,7 +193,7 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
   - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key (private key in Secrets Manager) → enables **signed cookies** for tenant isolation. See `08-media-uploads.md` §6. (In dev the same key group is used but the SPA presents the signature as signed-URL query params — `08-media-uploads.md` §4.5.)
 - **Avatar behavior**: path pattern `/avatar/*` → `avatars-processed` bucket via OAC. `GET, HEAD`, `CachingOptimized`, **no trusted key group** — avatars are unsigned by design (`08-media-uploads.md` §11.3).
 - **Price class**: `PriceClass_100` (NA + EU only) for cost.
-- **Domain alias**: `cdn.opennewsletter.example.com` (or `cdn-dev...`).
+- **Domain alias**: `cdn.{config.domain}` in prod. None in dev, which uses the raw `*.cloudfront.net` domain (`13-dev-environments.md` §2).
 - **Certificate**: ACM cert in `us-east-1` (created in `FrontendStack`).
 
 ### 5.3 `lambda-image-process` (Rust, `MediaPipelineStack`)
@@ -222,7 +221,8 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
 - `cloudfront_distribution_id`
 - `cloudfront_domain` (the alias)
 - `cloudfront_key_group_id`
-- `cloudfront_signing_key_secret_arn`
+
+The CloudFront signing private key no longer gets its own output — it's one JSON key (`cdn_signing_private_key`) inside the single per-env `app_secret_arn` secret (§7.1, §12; decided 2026-10-07; lands in M13.5), which `lambda-media` reads directly rather than via a `MediaPersistentStack` output.
 
 ---
 
@@ -238,7 +238,7 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
   - Expose headers: `x-correlation-id`
   - Max age: 600
 - **Custom domain**: `{api_domain}` with ACM cert from `FrontendStack`
-- **Default authorizer**: `HttpJwtAuthorizer` against the Cognito user pool (issuer URL `https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}`, audience: `[frontend_client_id, bootstrap_client_id]`). The `admin-bootstrap` client is included so password-auth tokens from `/admin/bootstrap-login` and `scripts/bootstrap_admin.py` pass the same authorizer (`13-dev-environments.md` §6); added in M7, after it was found missing.
+- **Default authorizer**: `HttpJwtAuthorizer` against the Cognito user pool (issuer URL `https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}`). In `dev`, audience: `[frontend_client_id, bootstrap_client_id]` — the `admin-bootstrap` client is included so password-auth tokens from `/admin/bootstrap-login` and `scripts/bootstrap_admin.py` pass the same authorizer (`13-dev-environments.md` §6); added in M7, after it was found missing. In `prod`, audience: `[frontend_client_id]` only, since `admin-bootstrap` no longer exists there (decided 2026-10-07; lands in M13.5 — §4.3).
 - **Throttling**: 50 rps burst, 25 rps steady on default stage
 - **Access logs**: JSON to a CloudWatch log group `/aws/http-api/OpenNewsletter-{env}`, 30/90 day retention
 
@@ -251,13 +251,15 @@ The route column below is a **summary only** — `03-api-contract.md` §13 is th
 | Lambda | Route summary | DynamoDB | S3 | Other |
 |---|---|---|---|---|
 | `lambda-invites` | invite create / list / revoke / redeem; also compiles the `PreSignUp` trigger binary | RW | — | — |
-| `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | — | — |
+| `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | `s3:DeleteObject` on avatar originals + processed (old-avatar cleanup on `PATCH /me`, D8); `cloudfront:CreateInvalidation` on the distribution (`/avatar/*`) | — |
 | `lambda-newsletters` | newsletter list + detail | R | — | — |
 | `lambda-questions` | candidate list/create + votes, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
 | `lambda-responses` | my-response get/list/put (drafts, publish, poll votes) | RW | — | — |
-| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | — | — |
-| `lambda-media` | uploads presign/status/caption/delete, `GET /media-cookie`, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; CloudFront signing | Secrets:GetSecretValue on signing key |
-| `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas (`07-notifications.md` §6) | RW | — | Secrets:GetSecretValue on VAPID |
+| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | `s3:DeleteObject` on media originals + processed (comment-image release on soft-delete/replace, D8); `cloudfront:CreateInvalidation` on the distribution (`/img/*`) | — |
+| `lambda-media` | uploads presign/status/caption/delete, `GET /media-cookie`, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; CloudFront signing; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /avatars`, D8); `cloudfront:CreateInvalidation` on the distribution | Secrets:GetSecretValue on the app secret (signing key) |
+| `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas (`07-notifications.md` §6) | RW | — | Secrets:GetSecretValue on the app secret (VAPID keys) |
+
+**Real media deletion (decided 2026-10-07; lands in M13.5, `03` §9.4/§9.7, D8).** A shared helper in the `shared` crate deletes an image's S3 objects, invalidates its CloudFront path, then deletes the `ImageMedia`/`AvatarMedia` row. The three IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes and the one CloudFront distribution each Lambda actually deletes from; no Lambda gets a blanket `cloudfront:CreateInvalidation` across the whole account.
 
 The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, `03-api-contract.md` §11a) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
@@ -265,9 +267,9 @@ The `PreSignUp` trigger binary is compiled from `lambda-invites` but its CDK `Fu
 
 All Lambdas share:
 - Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4), `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
-- `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference, echoed by `GET /config` per §7.1)
+- `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference against the `vapid_public_key` JSON key of the app secret, echoed by `GET /config` per §7.1)
 - `CDN_BASE_URL` goes to every Lambda that builds media URLs: `lambda-groups`, `-newsletters`, `-questions` and `-media`. It is `https://cdn.{domain}` in prod and `https://{distribution domain}.cloudfront.net` in dev, which has no custom domains (decided M8).
-- `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET`, `CDN_KEY_PAIR_ID` (the CloudFront public key's ID), `CDN_SIGNING_SECRET_ARN` and `MEDIA_COOKIE_DOMAIN` (`.{domain}` in prod, empty in dev, where no `Set-Cookie` is sent — `08` §4.5)
+- `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET`, `CDN_KEY_PAIR_ID` (the CloudFront public key's ID), `APP_SECRET_ARN` (the signing key is the `cdn_signing_private_key` JSON key within it; decided 2026-10-07 — was `CDN_SIGNING_SECRET_ARN` against a dedicated secret) and `MEDIA_COOKIE_DOMAIN` (`.{domain}` in prod, empty in dev, where no `Set-Cookie` is sent — `08` §4.5)
 - The HTTP API's CORS sets `allowCredentials: true`, because the SPA calls `GET /media-cookie` with `credentials: "include"`
 - IAM (baseline): write access to its own log group only
 - DynamoDB IAM: scoped to `arn:aws:dynamodb:...:table/OpenNewsletter-{env}` and the two GSIs
@@ -288,7 +290,7 @@ A static JSON document baked into Lambda env at deploy time, providing defaults 
 {
   "questionsPerCycle": 5,
   "votesPerUserPerCycle": 3,
-  "responseWindowDays": 4,
+  "responseWindowDays": 7,
   "timezone": "America/New_York",
   "memberSoftCap": 50,
   "imagesPerAnswerMax": 10,
@@ -299,7 +301,7 @@ A static JSON document baked into Lambda env at deploy time, providing defaults 
 }
 ```
 
-Group settings stored in DynamoDB override these defaults per-group; see `02-data-model-dynamodb.md`.
+`responseWindowDays` default is 7 (decided 2026-10-07; lands in M13.5 — was 4; `DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`). Existing dev groups keep their stored `responseWindowDays=4` until patched or reseeded. Group settings stored in DynamoDB override these defaults per-group; see `02-data-model-dynamodb.md`.
 
 ### 6.5 No public routes
 
@@ -316,9 +318,11 @@ Group settings stored in DynamoDB override these defaults per-group; see `02-dat
 
 ### 7.1 VAPID secret
 
-- AWS Secrets Manager secret `opennewsletter/vapid/{env}` containing JSON `{ "publicKey": "...", "privateKey": "...", "subject": "mailto:admin@opennewsletter.example.com" }`.
-- Generated out-of-band by `scripts/generate_vapid_keys.py` and stored manually before first deploy.
+VAPID keys no longer get a dedicated secret (decided 2026-10-07; lands in M13.5). They're three JSON keys — `vapid_public_key`, `vapid_private_key`, `vapid_subject` — inside the single per-env Secrets Manager secret `opennewsletter/{env}` (§12), alongside `google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`, and `cdn_signing_private_key`. Its ARN is `app_secret_arn` in `config.py` (§2).
+
+- Generated out-of-band by `scripts/generate_vapid_keys.py` and merged into the one secret manually before first deploy.
 - Public key exposed to the frontend via the `GET /config` endpoint (in `lambda-groups`).
+- The four pre-M13.5 dev secrets (Google, Facebook, VAPID, CDN signing) are migrated into the one secret, then deleted.
 
 ### 7.2 `lambda-cycle-tick`
 
@@ -336,12 +340,12 @@ Group settings stored in DynamoDB override these defaults per-group; see `02-dat
 - **Trigger**: EventBridge Scheduler rule running **every 15 minutes**.
 - **Memory**: 512 MB. **Timeout**: 120 s.
 - **Job**: Find cycles with deadlines within the next configured offset (96/48/24h) that haven't been notified yet, fan out Web Push messages.
-- **IAM**: RW on table, `secretsmanager:GetSecretValue` on VAPID secret. (M11: no `lambda:InvokeFunction` — it links `lambda-push`'s library and sends reminders in-process; only `lambda-cycle-tick` invokes `lambda-push`.)
+- **IAM**: RW on table, `secretsmanager:GetSecretValue` on the app secret (`app_secret_arn`; decided 2026-10-07 — was a dedicated VAPID secret). (M11: no `lambda:InvokeFunction` — it links `lambda-push`'s library and sends reminders in-process; only `lambda-cycle-tick` invokes `lambda-push`.)
 - See `07-notifications.md` for full logic.
 
 ### 7.4 Idempotency
 
-Both tick Lambdas write a `LastTickedAt` sentinel record so re-runs after failure don't double-fire. Notification dispatch idempotency uses a per-cycle, per-offset marker `NL#{nl}#NOTIFIED#{offsetHours}`.
+Both tick Lambdas write a `TICK` sentinel record (`sk=CYCLE` / `sk=NOTIFY`, with `last_ran_at`). Notification dispatch idempotency uses per-cycle markers in the cycle's partition: `NOTIFIED#OPEN`, `NOTIFIED#CLOSE#{offset_hours}` and `NOTIFIED#PUBLISH` (`02-data-model-dynamodb.md` §2.15).
 
 ---
 
@@ -379,13 +383,19 @@ A single CloudWatch dashboard `OpenNewsletter-{env}` with widgets for:
 
 ### 9.2 Alarms
 
-- Any Lambda error rate >5% over 10 minutes → SNS topic
-- HTTP API 5xx >1% over 10 minutes → SNS topic
-- DynamoDB throttles >0 over 5 minutes → SNS topic
-- `lambda-cycle-tick` or `lambda-notify-tick` failure (any) → SNS topic
-- Push delivery failure rate >20% (rolling) → SNS topic
+**Prod only, ≤10 alarm metrics total** (decided 2026-10-07; lands in M13.5 — dev keeps the dashboard in §9.1 but ships no alarms, so dev stays inside the 10-free-alarm-metrics CloudWatch tier at $0):
 
-SNS topic emails `config.alarm_email`.
+- Lambda error rate across all functions, account-level aggregate `AWS/Lambda` `Errors`/`Invocations` (2 metrics) → SNS topic. Replaces a per-Lambda >5% alarm, which would have needed one metric pair per function.
+- HTTP API 5xx rate >1% over 10 minutes (2 metrics) → SNS topic
+- DynamoDB read + write throttle events >0 over 5 minutes (2 metrics) → SNS topic
+- Push delivery failure rate >20% rolling (2 metrics) → SNS topic
+- `lambda-cycle-tick` errors, any (1 metric) → SNS topic
+
+That's 9 of the 10 free alarm metrics; `lambda-notify-tick` failures are not separately alarmed (its failures mostly surface as push failures, already covered). SNS topic emails `config.alarm_email`.
+
+### 9.2a Account-wide budget
+
+One AWS Budget at $5/mo, alerting at 80% actual and 100% forecasted spend, defined once in the account-wide `CiStack` (`infra/opennewsletter/ci_stack.py`) rather than per-env in `MonitoringStack` (decided 2026-10-07; lands in M13.5). The first two budgets on an account are free.
 
 ### 9.3 Custom metrics namespace
 
@@ -400,7 +410,7 @@ The general rule: each Lambda has its own role, scoped only to the resources it 
 DynamoDB IAM patterns:
 - Read-only Lambdas (`lambda-newsletters`): `Query`, `GetItem`, `BatchGetItem` on table + GSIs.
 - Write Lambdas: add `PutItem`, `UpdateItem`, `DeleteItem`, `TransactWriteItems`.
-- Tick Lambdas need `Scan` on GSI2 (bounded by time-bucket prefix — see `02-data-model-dynamodb.md` §10).
+- Tick Lambdas need `Query` on GSI2 (`02-data-model-dynamodb.md` §9). No `Scan` anywhere.
 
 ---
 
@@ -438,15 +448,29 @@ CDK Lambda assets reference compiled `bootstrap` binaries in `backend/target/lam
 
 ---
 
-## 12. Cost expectations (rough, prod, ≤200 active users)
+## 12. Cost expectations (revised 2026-10-07; lands in M13.5)
 
-- DynamoDB on-demand: ~$1–3/mo
-- Lambda + HTTP API: ~$1–2/mo (idle backend)
-- S3 storage + requests: ~$0.50–2/mo (depends on image volume)
-- CloudFront egress: ~$0.085/GB cache miss (PriceClass_100, NA + EU); cache hits dominate after the first viewer per published newsletter. Fixed CloudFront cost is **$0** — the distribution itself is free; only egress and requests are billed. See [`08-media-uploads.md` §6.1](08-media-uploads.md) for why CloudFront is retained vs. direct-from-S3.
-- Cognito: free tier (50k MAU)
-- EventBridge schedules: <$1/mo
-- Secrets Manager: ~$0.40/secret/mo × ~5 secrets = ~$2/mo
-- Route53: $0.50/zone if used
+Target ≈ $1–2/mo at ~30 monthly active users, prod + dev in one account:
 
-**Estimate**: under $15/mo all-in at the target scale. Most of this is fixed (Secrets Manager + Route53). Variable costs scale with image traffic.
+| Item | As built (M13) | After M13.5 |
+|---|---|---|
+| Secrets Manager ($0.40/secret/mo) | 4 per env × 2 = $3.20 | 1 per env × 2 = $0.80 |
+| CloudWatch alarms ($0.10/alarm metric; 10 free) | 17 alarms/env, ~30 alarm metrics/env incl. metric math ≈ $5 | prod only, ≤10 alarm metrics = $0 |
+| CloudWatch Logs / EMF metrics | < $0.10 | < $0.10 |
+| DynamoDB on-demand + storage (+ PITR prod) | < $0.30 | < $0.30 |
+| Lambda | $0 (always-free tier) | $0 |
+| HTTP API ($1/M req after the 12-month free tier) | < $0.10 | < $0.10 |
+| S3 (a few GB) | < $0.25 | < $0.25 |
+| CloudFront (always-free 1 TB + 10M req) | $0 | $0 |
+| Cognito (free tier) | $0 | $0 |
+| EventBridge scheduled rules | $0 | $0 |
+| **Total** | **≈ $8–9/mo** | **≈ $1–2/mo** |
+
+Domain registration (Namecheap) is outside AWS; DNS stays on Namecheap (`PROGRESS.md` B5), so there is no Route53 hosted zone. Prices are approximate list prices (us-east-1).
+
+Changes driving the drop (D7):
+- **One Secrets Manager secret per env**, `opennewsletter/{env}` (§2, §7.1), collapsing the four dev secrets (Google, Facebook, VAPID, CDN signing) into one JSON object.
+- **Alarms in prod only, ≤10 alarm metrics** (§9.2); dev keeps its dashboard but no alarms.
+- **One account-wide AWS Budget at $5/mo** in `CiStack`, not per-env (§9.2a).
+- **DynamoDB on the AWS-owned key** instead of the AWS-managed `aws/dynamodb` KMS key (§3.1).
+- `13-dev-environments.md` §12's dev-only estimate becomes ≈ $0.40–1/mo.

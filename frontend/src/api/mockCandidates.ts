@@ -333,7 +333,8 @@ function validatePollOptions(
         },
       ]);
     }
-    if (seen.has(label)) {
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
       validationFailed([
         {
           field: "pollOptions",
@@ -342,7 +343,7 @@ function validatePollOptions(
         },
       ]);
     }
-    seen.add(label);
+    seen.add(key);
     result.push({ optionId: `cq_${nextQuestionId}_opt_${result.length + 1}`, label });
   }
   return result;

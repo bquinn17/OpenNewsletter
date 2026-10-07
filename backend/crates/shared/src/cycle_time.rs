@@ -42,6 +42,28 @@ pub fn cycle_id_for(response_open_at: DateTime<Utc>, tz: Tz) -> CycleId {
     CycleId::new(format!("{:04}{:02}", local.year(), local.month()))
 }
 
+/// Local midnight on the 1st of `cycle_id`'s month, in UTC — the anchor §5.4
+/// schedules the following cycle from. `None` if `cycle_id` is not a valid
+/// `yyyymm`.
+///
+/// Anchoring on the cycle's identity rather than one of its timestamps keeps
+/// the next cycle exactly one month on: `responseCloseAt` can itself land on
+/// the 1st of the next month (a 28-day window in a non-leap February), and the
+/// dev-only deadline rewind (§11a.1 of `03`) moves `responseOpenAt` back into
+/// earlier months.
+pub fn cycle_month_start(cycle_id: &CycleId, tz: Tz) -> Option<DateTime<Utc>> {
+    let id = cycle_id.as_str();
+    if id.len() != 6 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let year: i32 = id[..4].parse().ok()?;
+    let month: u32 = id[4..].parse().ok()?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    Some(midnight_local_to_utc(tz, year, month, 1))
+}
+
 /// The full schedule for the cycle covering the month after `after`, per
 /// §4.2's default-schedule formula.
 pub fn next_cycle_schedule(
@@ -173,5 +195,40 @@ mod tests {
         assert_eq!(schedule.cycle_id, CycleId::new("202606"));
         assert_eq!(schedule.response_open_at, utc(2026, 6, 1, 4, 0, 0));
         assert_eq!(schedule.response_close_at, utc(2026, 6, 5, 4, 0, 0));
+    }
+
+    #[test]
+    fn cycle_month_start_is_local_midnight_on_the_first() {
+        let got = cycle_month_start(&CycleId::new("202711"), America::New_York);
+        // EST (UTC-5): US DST ends 2027-11-07.
+        assert_eq!(got, Some(utc(2027, 11, 1, 4, 0, 0)));
+    }
+
+    #[test]
+    fn cycle_month_start_rejects_malformed_ids() {
+        for bad in [
+            "", "2027", "202713", "202700", "2027-1", "20271a", "2027011",
+        ] {
+            assert_eq!(cycle_month_start(&CycleId::new(bad), UTC), None, "{bad:?}");
+        }
+    }
+
+    /// A 28-day window in a non-leap February closes at exactly March 1
+    /// 00:00, so scheduling from `responseCloseAt` would skip March. Anchored
+    /// on the cycle's own month, the next cycle is March.
+    #[test]
+    fn a_full_length_february_window_does_not_skip_march() {
+        let tz = America::New_York;
+        let feb = next_cycle_schedule(utc(2027, 1, 15, 0, 0, 0), tz, 28);
+        assert_eq!(feb.cycle_id, CycleId::new("202702"));
+        assert_eq!(feb.response_close_at, utc(2027, 3, 1, 5, 0, 0));
+
+        let anchor = cycle_month_start(&feb.cycle_id, tz).unwrap();
+        let next = next_cycle_schedule(anchor, tz, 28);
+        assert_eq!(next.cycle_id, CycleId::new("202703"));
+
+        // The bug this guards against.
+        let from_close = next_cycle_schedule(feb.response_close_at, tz, 28);
+        assert_eq!(from_close.cycle_id, CycleId::new("202704"));
     }
 }

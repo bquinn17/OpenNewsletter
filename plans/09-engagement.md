@@ -32,7 +32,7 @@ type Comment = {
 
 Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
 
-Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null (decided M10).
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null (decided M10). **Decided 2026-10-07; lands in M13.5:** if the comment had an attached image, that image is deleted for real (`08-media-uploads.md` §8.0) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
 
 ### 1.2 Permissions
 
@@ -58,13 +58,13 @@ A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected 
 
 Detailed in `03-api-contract.md` §8.1–8.4. Server-side handler highlights:
 
-- `POST` validates cycle status = `published`, validates response exists, inserts new row with `commentId = uuidv7()`, returns the created comment with `authorDisplayName` joined in.
+- `POST` validates cycle status = `published`, validates response exists, inserts new row with `commentId = uuidv7()`, returns the created comment with `displayName` joined in.
 - `PATCH` checks the caller's resolved `userId == row.authorUserId` (JWT `sub` → `userId` via the lookup row, `05-auth-flow.md` §6 — never compare `sub` directly), updates `body` and `editedAt`. Admins cannot edit other users' comments.
-- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when the caller's `userId` matches `row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404.
+- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when the caller's `userId` matches `row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404. If the comment held an image, the image is permanently deleted too (decided 2026-10-07; lands in M13.5 — §1.1 above).
 
 ### 1.5 Author display name resolution
 
-Comments embed `authorDisplayName` in the response payload (denormalized read; the actual stored row only carries `authorUserId`). The handler does:
+Comments embed the author's `displayName` in the response payload (denormalized read; the actual stored row only carries `authorUserId`). The handler does:
 
 ```rust
 // After querying comments
@@ -79,7 +79,7 @@ Cache the user batch per cold-start (60s TTL) to avoid repeating the read for ho
 
 Routes are addressed by `questionId` + `responseId` (`03` §8, decided M10). The attached image is claimed through `ImageMedia.attached_comment_id`, written in the same transaction as the comment, so one image can't back two comments and `DELETE /uploads` can refuse a claimed image.
 
-Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read (decided M10, post-review). The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere.
+Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read (decided M10, post-review). The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere. (Decided 2026-10-07; lands in M13.5: "release" now means permanently deleting the image, not just unclaiming it — §1.1 above.)
 
 ### 1.6 Notifications on comments
 
@@ -138,7 +138,7 @@ No WebSocket / live push for v1. Users see other reactions on next page load or 
 
 ### 2.5 Picker UI
 
-Native browser emoji input (`<input type="text">` filtered to one emoji). On mobile this brings up the keyboard's emoji panel. On desktop, fall back to a small built-in picker (a tiny library like `emoji-picker-element` is acceptable; alternatively a curated 64-emoji grid).
+`EmojiPickerPopover`: a curated 64-emoji grid plus a native text input filtered to one emoji (on mobile the input brings up the keyboard's emoji panel). Decided M10; `emoji-picker-element` was dropped, cutting the lazy chunk from about 150 kB to 2.6 kB.
 
 Frequently-used reactions render as one-tap pills next to the picker button: `🔥 🤣 ❤️ 😍 👍 🎉`.
 
@@ -174,7 +174,7 @@ For cycles with very large groups (>200) this would warrant denormalized tallies
 ### 3.3 Validation
 
 - `pollOptions` length 2–6 at suggestion time.
-- Labels 1–80 chars, no duplicates (case-insensitive).
+- Labels 1–80 chars (after trimming), no duplicates. The duplicate check is **case-insensitive** (trimmed labels compared after Unicode lowercasing), so "Yes" and "yes" are the same option and the second is rejected with `VALIDATION_FAILED` on `pollOptions`. The label is stored trimmed, in the case the suggester typed. Implemented in `lambda-questions/src/validation.rs` and mirrored by `SuggestQuestionForm` and the mock API.
 - A user's `pollOptionId` on submit must match one of the question's option IDs.
 - Option labels are immutable once a candidate is promoted into a cycle; whatever the suggester typed is what the group votes on.
 
@@ -187,6 +187,10 @@ While the cycle is `open`, a user can change their vote freely (overwrites their
 Poll votes are **not anonymous** — the tallies are. The `Response` row records `userId`. The published newsletter's poll widget shows aggregate counts only; individual votes are never exposed in any response payload (the server filters them out for poll questions when assembling the published view).
 
 This matches user expectation: "what did people vote for?" shows totals, not "Quinn voted for X."
+
+### 3.6 Auto-publish at close
+
+**Decided 2026-10-07; lands in M13.5:** when the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` (`06-newsletter-lifecycle.md` §8). An empty draft stays `draft` and is excluded, same as today. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See `04-frontend-architecture.md` §7.3 for the RespondPage warning copy.
 
 ---
 
@@ -202,7 +206,6 @@ Renders one published answer with:
 - `<ImageGallery>` for attached images (lightbox on click)
 - `<ReactionBar>`
 - `<CommentList>` (collapsible; show 3, "Show all" expands)
-- Edit affordances if the caller's `userId` (from `/config`) matches `answer.userId` and cycle is still `open` (rare on a published view, but the edit button could appear briefly mid-transition)
 
 ### 4.2 `ReactionBar.tsx`
 
@@ -224,7 +227,7 @@ Alex — 1 hour ago (edited)
 [Reply textarea]
 ```
 
-Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all).
+Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). **Decided 2026-10-07; lands in M13.5:** Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0).
 
 ### 4.4 `PollWidget.tsx`
 
@@ -236,10 +239,10 @@ Two states:
 ● Lake 22       <- selected
 ○ Mailbox Peak
 ○ Wallace Falls
-[Save]                 <- only when changed
+[Publish]
 ```
 
-Last-write-wins; saving overwrites.
+**Decided 2026-10-07; lands in M13.5 (supersedes the M9 "a pick is local only before first publish" behaviour):** every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins (`04` §7.3).
 
 **Tally (after publish):**
 ```
@@ -257,11 +260,11 @@ Bars are pure CSS (no chart library). Caller's pick gets the ring highlight.
 
 All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer:
 
-- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img` (img only with `src` matching the `image:` token or `https://cdn.opennewsletter.example.com/...`)
+- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img` (img only for `image:{id}` tokens, rendered as `CdnImage`; any other image URL renders as a link — decided M9, `04` §9). Comments render with `allowImages={false}`, so no inline images at all.
 - Allowed attributes: `href` on `a` (https only, no `javascript:`/`data:`); `src/alt/width/height` on `img`; `class` is stripped.
 - Forbidden: `script, style, iframe, object, embed, form, input, button, svg, math` and any `on*` attributes.
 
-Implemented in `frontend/src/utils/markdown.ts` using `rehype-sanitize` with a custom `defaultSchema`.
+Implemented in `frontend/src/utils/markdown.tsx` using `rehype-sanitize` with a custom `defaultSchema`.
 
 The backend does NOT sanitize on write — sanitation is a render-time concern. We accept that the raw markdown can contain anything; the client-side render makes it safe. (If we ever add a server-rendered email digest, that renderer must apply the same sanitizer.)
 

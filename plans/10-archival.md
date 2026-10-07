@@ -11,7 +11,7 @@ Move newsletters older than a configurable threshold (default 12 months past pub
 - Hot S3 storage class (originals + processed)
 
 …into:
-- A flat JSON blob per cycle, stored in a dedicated archive bucket in S3 Glacier Instant Retrieval
+- A flat JSON blob per cycle, stored in a dedicated archive bucket in `STANDARD_IA` (§3 step 3: it's read on demand via a signed URL)
 - Cold storage for the corresponding image variants (Glacier Flexible Retrieval or Glacier Deep Archive)
 
 Archived newsletters remain readable on demand via a "thaw" endpoint that re-presents the JSON for the SPA.
@@ -20,7 +20,7 @@ Archived newsletters remain readable on demand via a "thaw" endpoint that re-pre
 
 ## 2. Trigger
 
-A daily EventBridge rule invokes `lambda-archive-tick`. It scans GSI2 for `gsi2pk = NL_STATUS#published` and `publishedAt < now - 12 months`. For each match, kicks off the archive job (one cycle at a time; archive is idempotent).
+A daily EventBridge rule invokes `lambda-archive-tick`. It queries GSI2 for `gsi2pk = NL_STATUS#published` and filters on `published_at < now - 12 months`. (Published rows carry the `9999-12-31T00:00:00Z` sentinel in `gsi2sk`, so the key can't range on publication date. Either filter, as here, or have `publish` write the archival cutoff into `gsi2sk` instead of the sentinel, as `06` §5.3 anticipates.) For each match, kicks off the archive job (one cycle at a time; archive is idempotent).
 
 ---
 

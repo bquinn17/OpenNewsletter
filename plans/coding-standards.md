@@ -154,7 +154,7 @@ These apply regardless of language.
 - Prettier — defaults except `printWidth: 100`, `singleQuote: false`, `trailingComma: "all"`.
 - ESLint flat config with `@typescript-eslint`, `react`, `react-hooks`, `import`, `jsx-a11y`. All `error`-level rules must be clean.
 - `tsc --noEmit` clean (the CI step).
-- Stylelint on CSS files (mostly enforces nothing beyond Tailwind class ordering; the `prettier-plugin-tailwindcss` does the heavy lifting in TSX).
+- No Stylelint (decided M13): the only stylesheet is `src/styles/tailwind.css`, and `prettier-plugin-tailwindcss` orders classes in TSX.
 
 ### 3.3 Types
 - Never `any`. Use `unknown` and narrow.
@@ -172,7 +172,7 @@ These apply regardless of language.
 
 ### 3.5 State
 - Server state: TanStack Query. Period. No `useState` mirror of server data.
-- Client state: Zustand stores in `state/`. Stores are small and focused (`currentGroup.ts`, `draftBuffers.ts`, `toast.ts`). Don't build a single mega-store.
+- Client state: Zustand stores in `state/`. Stores are small and focused (`currentGroup.ts`, `installPrompt.ts`, `toast.ts`). Don't build a single mega-store.
 - URL state belongs in the URL (search params), not local state, when the user might bookmark or share.
 - React Context is for read-only, rarely-changing data: auth, theme. Not for app state.
 
@@ -205,7 +205,7 @@ These apply regardless of language.
 - Every form control has an associated `<label>`.
 - `prefers-reduced-motion` respected for transitions and toasts.
 - Color-only signaling is forbidden — pair with text or icon.
-- `axe-core` runs as part of E2E tests (Playwright + `@axe-core/playwright`).
+- Planned, not yet wired: `axe-core` in the Playwright E2E tests (`@axe-core/playwright` isn't a dependency yet).
 
 ---
 
@@ -239,7 +239,7 @@ These apply regardless of language.
 - 2-space indent, no tabs.
 - Comments at the top of every workflow file explaining its trigger and purpose.
 - `scripts/` files: shebang line, `set -euo pipefail` for bash; `if __name__ == "__main__":` guard for Python. Single-purpose.
-- Never check in `.env` files. Commit `.env.example` instead.
+- Never check in `.env` files that hold real values. The frontend's `.env.development` and `.env.e2e` are the exceptions: they hold only mock-mode flags and placeholder origins (`04` §13). Generated files such as `.env.dev` and `infra/.env.local` stay gitignored.
 
 ---
 
@@ -296,5 +296,6 @@ Before opening a PR:
 - [ ] No new dependencies added without justification in the PR description.
 - [ ] No secrets, env-specific values, or local paths in the diff.
 - [ ] OpenAPI YAML (`shared/openapi.yaml`) updated if any route or schema changed; codegen re-run (`scripts/codegen_types.sh`).
+- [ ] **(decided 2026-10-07; lands in M13.5, D6)** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first (`11-testing-ci-cd.md` §6), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
 - [ ] Plan documents updated if you discovered a gap or made a non-obvious decision.
 - [ ] PR description follows §6.3.

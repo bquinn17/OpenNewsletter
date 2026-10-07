@@ -1,6 +1,6 @@
 # 07 — Notifications (Web Push)
 
-OpenNewsletter sends notifications for two events: a new cycle opens for responses, and reminders before the response deadline (default 96h, 48h, 24h before close). All notifications are delivered as **Web Push** to PWA clients using VAPID. Email is out of scope for v1.
+OpenNewsletter sends notifications for three events: a new cycle opens for responses, reminders before the response deadline (default 96h, 48h, 24h before close), and publication of the edition (§8, always on). All notifications are delivered as **Web Push** to PWA clients using VAPID. Email is out of scope for v1.
 
 ---
 
@@ -9,10 +9,10 @@ OpenNewsletter sends notifications for two events: a new cycle opens for respons
 | Component | Role |
 |---|---|
 | Frontend service worker | Registers a `PushSubscription`; receives push events; renders OS notification |
-| `lambda-push` | Subscribe / unsubscribe / list / test endpoints; also called by tick Lambdas to deliver |
-| `lambda-cycle-tick` | Triggers cycle-open notifications when transitioning a cycle to `open` |
-| `lambda-notify-tick` | Runs every 15 min; finds open cycles with deadlines within configured offsets and fans out reminder pushes |
-| Secrets Manager `opennewsletter/vapid/{env}` | Holds VAPID public key, private key, and subject |
+| `lambda-push` | Subscribe / unsubscribe / list / test / preferences endpoints; also async-invoked by `lambda-cycle-tick` for the cycle-open and publication fan-outs |
+| `lambda-cycle-tick` | Triggers the cycle-open and publication fan-outs when a cycle transitions to `open` / `published` |
+| `lambda-notify-tick` | Runs every 15 min; finds open cycles with deadlines within configured offsets and sends reminder pushes in-process via the `push` library |
+| Secrets Manager `opennewsletter/{env}` | Holds VAPID public key, private key, and subject as JSON keys (`vapid_public_key`/`vapid_private_key`/`vapid_subject`) inside the one per-env app secret — decided 2026-10-07, lands in M13.5, D7; was a dedicated `opennewsletter/vapid/{env}` secret; see `01` §2/§7.1/§12 |
 | DynamoDB | Stores `PushSubscription` rows and idempotency markers |
 
 ---
@@ -27,9 +27,9 @@ python scripts/generate_vapid_keys.py
 # {"publicKey": "BPV...", "privateKey": "Vmt...", "subject": "mailto:admin@opennewsletter.example.com"}
 ```
 
-The script uses the `py_vapid` library. The output is stored in Secrets Manager under `opennewsletter/vapid/{env}`. Public key is exposed via `GET /config`.
+The script encodes the keys itself with `cryptography` (RFC 8292 raw-point encoding). It originally called `py_vapid`, whose installed version lacks the methods it used (`PROGRESS.md` B5). The output is merged into the one per-env app secret `opennewsletter/{env}` as `vapid_public_key`/`vapid_private_key`/`vapid_subject` (decided 2026-10-07; lands in M13.5, D7 — was its own `opennewsletter/vapid/{env}` secret). Public key is exposed via `GET /config`.
 
-The Rust `lambda-notify-tick` and `lambda-push` share `lambda-push`'s library (`push`), which implements Web Push itself (§10 — **not** the `web-push` crate, decided M11). Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value` on `VAPID_SECRET_ARN`, cached in `OnceCell` for the warm container's lifetime. The `privateKey` value is the raw 32-byte P-256 scalar, URL-safe base64 unpadded (the format `scripts/generate_vapid_keys.py` writes); the Rust side loads it directly — **no PEM conversion step exists anywhere**.
+The Rust `lambda-notify-tick` and `lambda-push` share `lambda-push`'s library (`push`), which implements Web Push itself (§10 — **not** the `web-push` crate, decided M11). Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value` on `APP_SECRET_ARN` (was `VAPID_SECRET_ARN` against a dedicated secret), cached in `OnceCell` for the warm container's lifetime, then the `vapid_private_key` JSON key is read out of the parsed secret. The value is the raw 32-byte P-256 scalar, URL-safe base64 unpadded (the format `scripts/generate_vapid_keys.py` writes); the Rust side loads it directly — **no PEM conversion step exists anywhere**.
 
 ---
 
@@ -49,7 +49,7 @@ The frontend's `pushSetup.ts`:
 
 ### 3.2 Pruning failures
 
-When the tick Lambdas attempt delivery and receive a `410 Gone` or `404 Not Found` from the push service, the subscription is deleted immediately (it's permanently invalid).
+When a fan-out attempts delivery and receives a `410 Gone` or `404 Not Found` from the push service, the subscription is deleted immediately (it's permanently invalid).
 
 For other errors (5xx, timeouts), `failureCount` is incremented. After 5 consecutive failures, the row is deleted.
 
@@ -100,14 +100,16 @@ The service worker reads this, calls `showNotification`, and uses `tag` to coale
 
 | Kind | Title | Body |
 |---|---|---|
-| `cycle_open` | "{groupName}: time to write" | "5 questions are waiting. You have 4 days to respond." |
+| `cycle_open` | "{groupName}: time to write" | "5 questions are waiting. You have 7 days to respond." |
 | `deadline_reminder` (96h) | "{groupName}: 4 days left" | "Don't forget — write your answers before {dueDate}." |
 | `deadline_reminder` (48h) | "{groupName}: 2 days left" | "{N} of {total} answers written. {remaining} to go." |
 | `deadline_reminder` (24h) | "{groupName}: due tomorrow" | "Last call — answers lock at {time}." |
 | `publication` | "{groupName}: this month's edition is out" | "{N} answers, {polls} polls — go read it." |
 | `test` | "Test push from OpenNewsletter" | "If you got this, your device is wired up." |
 
-`{N}`, `{remaining}`, and `{dueDate}` are computed per-recipient using their own draft state and the group's TZ.
+The default response window is **7 days** (decided 2026-10-07; lands in M13.5, D3 — was 4; `DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`). The default reminder offsets stay `[96, 48, 24]` hours, so against a 7-day window all three now actually fire (at day 4, day 6, and day 7 of the window) — previously the 96h offset against a 4-day window was moot (§7.1).
+
+`{N}`, `{remaining}`, and `{dueDate}` are computed per-recipient using their own draft state and the group's TZ. `N` counts published responses **and non-empty unpublished drafts** (decided 2026-10-07; lands in M13.5, D2 — text with a non-whitespace `body` or images, or a poll with a pick) — both will be published automatically at close (`06` §5.3), so reminders and the "done" message should reflect that, not just explicitly-published answers. The "skip members who've answered everything" rule (§7.2) uses the same count.
 
 **Generalised for any configured offset (decided M11).** Offsets are admin-configurable up to 168h, so the table above is the 96/48/24 instance of these rules, keyed on the offset `h` being sent:
 - Title: `h ≥ 48` → "{groupName}: {round(h/24)} days left"; `24 ≤ h < 48` → "due tomorrow"; `h < 24` → "{h} hours left".
@@ -205,7 +207,7 @@ for nl in candidates:
 
 **Decided M11** (the original pseudo-code put each marker *after* its fan-out, and sent every overdue offset):
 - **Claim first.** Markers are conditional puts written *before* sending, so two overlapping ticks can't both send. A crash mid-fan-out drops the rest of that reminder rather than risk duplicates.
-- **Moot offsets are never sent.** An offset that lands at or before `responseOpenAt` (e.g. the default 96h against a 4-day window) would arrive minutes after the cycle-open push. Its marker is written and nothing is sent.
+- **Moot offsets are never sent.** An offset that lands at or before `responseOpenAt` (e.g. a 168h offset against a 7-day window — exactly the boundary, decided 2026-10-07/D3; the default 96h offset against the new 7-day window is no longer moot, unlike the old 4-day default) would arrive minutes after the cycle-open push. Its marker is written and nothing is sent.
 - **Only the most urgent due offset is sent.** If several are due at once (a late tick, or `advanceCycleClosesBy` in dev), the smallest is sent and all of them are marked, so members don't get a burst.
 
 The 15-minute cadence means the actual delivery may be ≤15 min late versus the configured offset — acceptable for human reminders.
@@ -214,10 +216,10 @@ The 15-minute cadence means the actual delivery may be ≤15 min late versus the
 
 For each member:
 - Fetch member's drafts and published responses for this cycle (AP15 — single Query).
-- `N = published.len()`, `total = nl.lockedQuestionIds.len()`, `remaining = total - N`.
+- `N = published.len() + non_empty_drafts.len()`, `total = nl.lockedQuestionIds.len()`, `remaining = total - N` (updated 2026-10-07; lands in M13.5, D2 — `N` previously counted published responses only; a non-empty draft now counts too, since it will auto-publish at close, `06` §5.3). Non-empty: text with a non-whitespace `body` or non-empty `imageMediaIds`; poll with `pollOptionId` set.
 - Inject into the body template per §5.1.
 
-Members who already published every answer get a different soft message: "{N}/{total} answers in. You're done — but you can still edit." Optional: skip them entirely. **Default: skip them at the 24h reminder, send them the 96h/48h ones.** Configurable later. Generalised in M11: they're skipped at the group's *smallest* configured offset. `N` counts published responses of any question kind.
+Members who already have `N == total` get a different soft message: "{N}/{total} answers in. You're done — but you can still edit." Optional: skip them entirely. **Default: skip them at the 24h reminder, send them the 96h/48h ones.** Configurable later. Generalised in M11: they're skipped at the group's *smallest* configured offset. `N` counts published responses and non-empty drafts of any question kind.
 
 ---
 
@@ -225,7 +227,7 @@ Members who already published every answer get a different soft message: "{N}/{t
 
 When `publish(nl)` runs in `lambda-cycle-tick`, async-invoke `lambda-push`'s `publication_fanout` with `{ groupId, cycleId }`.
 
-Idempotency marker: `NOTIFIED#PUBLISH` (claimed first, like §6.1). `{N}` counts published answers to text questions, `{polls}` the cycle's poll questions. Same algorithm as §6 but with the `publication` payload.
+Idempotency marker: `NOTIFIED#PUBLISH` (claimed first, like §6.1). `{N}` counts published answers to text questions, `{polls}` the cycle's poll questions. Same algorithm as §6 but with the `publication` payload. Because this fan-out runs after `publish(nl)`'s auto-publish sweep (`06` §5.3), `{N}` naturally **includes answers that were auto-published from non-empty drafts**, not just ones the author explicitly published (decided 2026-10-07; lands in M13.5, D2) — by the time this fan-out reads the answers, there's no distinction left to make.
 
 This was not on the original requirement list (the spec only mentioned cycle-open + deadline reminders) but is the natural counterpart: users want to know when there's a new edition to read. **Always on; no user-facing toggle.** The only kill-switch is the OS-/browser-level push permission. `NotificationPref` carries no `publication` field; `Group.notificationSettings` carries no `onPublication`. The fan-out still respects "user has zero subscriptions" — those users simply receive nothing.
 

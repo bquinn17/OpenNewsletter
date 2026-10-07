@@ -11,9 +11,9 @@ This is the entry point for the OpenNewsletter plan set. Every other plan docume
 OpenNewsletter is a multi-tenant PWA where small groups of friends collaboratively produce a monthly newsletter:
 
 1. Continuously between cycles, members suggest and upvote questions for the next edition.
-2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 4-day response window opens.
+2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 7-day response window opens (decided 2026-10-07; lands in M13.5 — was 4 days).
 3. During the response window, members write long-form text answers (with up to 10 image/GIF attachments per answer) or vote in poll questions. Drafts autosave; only the author can see their draft.
-4. At the close of the response window the newsletter auto-publishes. Comments and emoji reactions become available on every answer.
+4. At the close of the response window, any non-empty draft answer (text with a body or images, or a poll pick) is auto-published, then the newsletter as a whole auto-publishes and comments/emoji reactions become available on every answer (decided 2026-10-07; lands in M13.5). Empty drafts stay drafts and are excluded, as before.
 
 All values above (cycle length, response window, questions-per-cycle, timezone) are configured per-group and editable.
 
@@ -192,5 +192,7 @@ The remaining documents are designed to be read in order during initial implemen
 - `10-archival.md` — future cold-storage plan (deferred but designed)
 - `11-testing-ci-cd.md` — test strategy and GitHub Actions workflows
 - `12-build-order.md` — sequenced milestones a subagent can execute end-to-end
+- `13-dev-environments.md` — workstation setup, the dev stack, reset levels, local testing
+- `14-future-ideas.md` — ideas kept but not scheduled (threaded comments, poll engagement, per-PR CI stacks)
 
 `12-build-order.md` is the recommended starting point for an executor: it references all other documents in the right order.

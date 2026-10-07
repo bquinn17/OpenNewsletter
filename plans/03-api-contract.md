@@ -4,7 +4,7 @@ This is the source-of-truth list of every HTTP endpoint OpenNewsletter exposes. 
 
 A canonical OpenAPI 3.1 document lives at `shared/openapi.yaml`. This Markdown is the human-readable mirror; the YAML is what gets codegen'd into TS types and Rust route stubs.
 
-> **Status**: `shared/openapi.yaml` now exists (landed in M5, "OpenAPI contract") and covers every route through M4 (§2-§4, §13). **It is now authoritative; this document is the human-readable mirror.** M5's own newsletter and candidate-question routes (§5-§6) are added to the YAML separately — check there for the current source of truth on any drift.
+> **Status**: `shared/openapi.yaml` covers every route in this document (landed in M5, extended in each later milestone). **It is authoritative; this document is the human-readable mirror.** On any drift, the YAML wins.
 
 ---
 
@@ -31,7 +31,7 @@ RFC-7807 Problem Details:
   "detail": "Specific message",
   "code": "MACHINE_READABLE_CODE",
   "correlationId": "01HX...",
-  "fieldErrors": [{"field": "body", "code": "INVALID", "message": "body must be at most 10000 characters"}]
+  "fieldErrors": [{"field": "body", "code": "INVALID", "message": "body must be at most 20000 characters"}]
 }
 ```
 
@@ -60,6 +60,7 @@ Error code catalog (machine-readable codes for the top-level `code`):
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
 | `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references (added M8), or that a live comment has attached (added M10) |
+| `INVITE_EMAIL_MISMATCH` | 403 | `POST /invites/redeem` on an invite with `boundEmail` set, where the ID token's `email` (lowercased) doesn't match it or `email_verified` is false (added 2026-10-07; lands in M13.5, D5; `02` §2.4) |
 | `RATE_LIMITED` | 429 | Throttled |
 | `INTERNAL` | 500 | Generic server error |
 
@@ -119,9 +120,12 @@ Body:
 {
   "groupId": "01H...",
   "ttlDays": 7,                    // optional, defaults to group setting (7)
-  "roleOnRedeem": "member"         // "member" | "admin"
+  "roleOnRedeem": "member",        // "member" | "admin"
+  "boundEmail": "quinn@example.com" // optional; lowercased and stored on the invite (02 §2.4)
 }
 ```
+
+`boundEmail` (added 2026-10-07; lands in M13.5, D5) restricts redemption to a caller whose ID-token `email` matches it (case-insensitively) and whose `email_verified` is true — see `02` §2.4 and §3.4 below. It's an admin-side option in general; the UI need not expose it in M13.5 (it's used by `scripts/bootstrap_admin.py`'s prod path, `05` §9).
 
 Response 201:
 ```json
@@ -129,7 +133,8 @@ Response 201:
   "code": "ABCD-EFGH-JKMN-PQRS",
   "groupId": "01H...",
   "expiresAt": "...",
-  "roleOnRedeem": "member"
+  "roleOnRedeem": "member",
+  "boundEmail": null
 }
 ```
 
@@ -168,7 +173,7 @@ Response 200:
 }
 ```
 
-Errors: `INVITE_INVALID`, `INVITE_EXPIRED`, `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`.
+Errors: `INVITE_INVALID`, `INVITE_EXPIRED`, `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `INVITE_EMAIL_MISMATCH` (added 2026-10-07; lands in M13.5, D5 — when the invite has `boundEmail` set and the caller's ID-token `email`/`email_verified` don't satisfy it; `05` §4.2).
 
 ### 3.5 `DELETE /groups/{groupId}/members/{userId}` (leave or kick)
 
@@ -226,6 +231,8 @@ Body (all optional):
 `gradient` must be one of the six preset palette slugs: `grape-sky`, `ember-rose`, `forest-mint`, `ocean-dusk`, `citrus-blush`, `slate-lilac` (canonical home: an enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table).
 
 Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see `07-notifications.md` §7.1).
+
+**`responseWindowDays` on a currently-`open` cycle** (decided 2026-10-07; lands in M13.5, D10 — replaces the old "settings apply only to future cycles" rule, `06` §6): the handler recomputes that cycle's `responseCloseAt = responseOpenAt + days` (and its GSI2 keys) only if the new close is still in the future. If the recomputed close would be in the past, the request is rejected with 422 `VALIDATION_FAILED` and a `fieldErrors` entry on `cycleSettings.responseWindowDays` ("would close the open cycle in the past"), rather than silently applying to a later cycle. Reminder markers already claimed for that cycle stay claimed — an extended window doesn't re-send a reminder already sent. The current `voting` cycle's `responseWindowDays` (and `questionsPerCycle`, `votesPerUserPerCycle`, `timezone`) now apply immediately per `06` §6 as well; see there for the full per-field rules.
 
 ---
 
@@ -286,7 +293,7 @@ Response 200 (published):
       "kind": "text",
       "prompt": "What's your favorite hike of the year?",
       "displayOrder": 0,
-      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "askedBy": { "userId": "01H...", "displayName": "Kari", "avatarColor": "teal", "avatarUrl": null },
       "isAnonymous": false,
       "answers": [
         {
@@ -349,7 +356,7 @@ Response 200:
       "questionId": "01H...",
       "kind": "text",
       "prompt": "...",
-      "askedBy": { "userId": "01H...", "displayName": "Kari" },
+      "askedBy": { "userId": "01H...", "displayName": "Kari", "avatarColor": "teal", "avatarUrl": null },
       "isAnonymous": false,
       "voteCount": 7,
       "votedByMe": true,
@@ -373,7 +380,7 @@ Response 200:
 
 `askedBy`, when populated, has shape `{ userId, displayName, avatarColor, avatarUrl }` — mirroring the member-listing avatar fields so the UI can render a small avatar swatch next to the asker. It's populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
-`sort=top` uses AP11 (GSI1, ScanIndexForward=false). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. **M5 implementation note:** since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory rather than threading AP11's GSI1 cursor — both sort orders and the `cursor`/`limit` contract behave identically to the client either way.
+`sort=top` orders by `voteCount` DESC, then `submittedAt` ASC (oldest first), then `questionId` ASC — the same tie-break promotion uses (decided 2026-10-07; lands in M13.5, D4; `06` §5.2, `02` §2.6). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. **M5 implementation note, updated 2026-10-07:** since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory. This was already true before D4 (to avoid threading AP11's GSI1 cursor); D4 additionally changes the sort comparator itself, because AP11's GSI1 order (newest-first on vote-count ties) no longer matches what promotion does and would make the UI's "top" list disagree with which candidates actually get promoted.
 
 ### 6.2 `POST /groups/{groupId}/candidate-questions`
 
@@ -402,7 +409,7 @@ Or for polls:
 }
 ```
 
-Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars, no duplicate labels. `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
+Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars after trimming, no duplicate labels (compared case-insensitively, `09` §3.3). `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
 
 Response 201: full candidate item, with `askedBy` populated (the submitter is always allowed to see their own attribution, even when `isAnonymous=true`).
 
@@ -481,16 +488,18 @@ Behavior:
 - **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it, and this keeps the `editionsAnswered` count from being bumped twice (`02` §4 #4). There is no unpublish in v1.
 - `responseId` is assigned on the first save and stays the same across later saves.
 - Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`), and the `editionsAnswered` bump on the first publish (`02` §4 #4). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
-- The kind in the body must match the question's kind (else `VALIDATION_ERROR`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_ERROR` naming the image. The save does not modify `ImageMedia` rows; linking an image to a question arrives with the media pipeline in M8.
+- The kind in the body must match the question's kind (else `VALIDATION_FAILED`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_FAILED` naming the image. The save does not modify `ImageMedia` rows; the image's question is fixed at `POST /uploads` time (§9.1).
 - **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
 - Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.
-- For polls: `pollOptionId` must be in question's options. Last-write-wins.
+- For polls: `pollOptionId` must be in question's options. Last-write-wins. A poll pick now saves immediately as a draft (`publish: false`), matching text answers, instead of staying local-only before first publish as in M9 (decided 2026-10-07; lands in M13.5, D2) — so an unpublished pick is auto-published too, same as a non-empty text draft (§7.4).
 
 Response 200: full updated `Response`.
 
-### 7.4 Auto-republish after edit
+### 7.4 After the cycle closes
 
 After the cycle has closed (status `published`), responses are immutable. Attempts to `PUT` return 409 `CYCLE_NOT_OPEN`. The frontend hides edit affordances accordingly.
+
+**Auto-publish of non-empty drafts (decided 2026-10-07; lands in M13.5, D2; `06` §5.3, `02` §4 #4a).** Before flipping the Newsletter to `published`, `lambda-cycle-tick` auto-publishes every non-empty draft answer: text with a non-whitespace `body` or a non-empty `imageMediaIds`, or a poll with `pollOptionId` set. So a caller who never clicked "Publish" can still see their draft show up as a published answer once the cycle closes, as long as it wasn't empty — only an empty draft (or no draft at all) is excluded. There is no race with the save endpoint: saves are already refused once `now >= responseCloseAt` (the "open" clause above), even while the row still reads `status = open` in the up-to-5-minute gap before the tick runs, so the last successful save is exactly what auto-publish sees. The explicit Publish affordance in the UI still exists — it signals "I'm done" (status pill, progress count) — but it no longer determines whether an answer appears in the published edition once the deadline passes.
 
 ---
 
@@ -594,7 +603,7 @@ The frontend then `PUT`s the binary directly to `uploadUrl` with **every** liste
 
 An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` (`02` §2.10), so every `/uploads/{imageId}` route (§9.2–§9.4, §9.6) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
 
-Every one of these routes that returns a body returns `ImageMediaResponse` (`shared/openapi.yaml`): the row's fields in camelCase, minus the S3 keys, plus absolute `displayUrl`/`thumbUrl` (null until `ready`) and `errorMessage` (`IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED` when `failed`).
+Every one of these routes that returns a body returns `ImageMediaResponse` (`shared/openapi.yaml`): the row's fields in camelCase, minus the S3 keys, plus absolute `displayUrl`/`thumbUrl` (null until `ready`) and `errorMessage` (`IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` when `failed`). `DELETED` is no longer a possible value here — `DELETE /uploads/{imageId}` deletes the row instead of soft-marking it (decided 2026-10-07; lands in M13.5, D8; §9.4).
 
 ### 9.2 `POST /uploads/{imageId}/complete`
 
@@ -606,7 +615,11 @@ Every one of these routes that returns a body returns `ImageMediaResponse` (`sha
 
 ### 9.4 `DELETE /uploads/{imageId}`
 
-**Lambda**: `lambda-media`. Detach + mark for cleanup. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. Otherwise soft-marks the row `failed` with `errorMessage: "DELETED"` and returns 204; the S3 lifecycle handles real deletion. Idempotent. A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID when it deletes. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE` (added M10).
+**Lambda**: `lambda-media`. **Real delete** (decided 2026-10-07; lands in M13.5, D8 — resolves the open question from the 2026-10-07 plan review about the bucket lifecycle leaving processed variants servable; it no longer does). Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE` (added M10).
+
+Otherwise: delete the original S3 object, both processed variants (display + thumb), create a CloudFront invalidation for `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/*` (the first 1,000 invalidation paths/month are free), then delete the `ImageMedia` row — via the shared delete helper (`01` §6.2). S3 deletes happen first; if any fails, return 500 and leave the row in place so a retry can finish the job. Returns 204 on success. Idempotent: a repeat `DELETE` whose row is already gone also returns 204 (nothing left to leak). A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID from the draft (and saves) before calling this route — the response editor's "remove image" action does exactly that.
+
+Comment images follow the same path: when a comment is soft-deleted, or its image is removed or replaced (§8.3, §8.4), the released image is deleted this way after the comment transaction commits (best effort; a failure is logged at ERROR, not surfaced to the caller). The UI confirms every one of these permanent deletes with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered."): removing an image in the response editor, removing or replacing a comment image, and deleting a comment that has an image.
 
 ### 9.5 `GET /media-cookie`
 
@@ -643,7 +656,8 @@ Avatars use a separate pipeline (see `08-media-uploads.md` §11) so they can cro
 
 - `POST /avatars` — request a pre-signed PUT URL. Body: `{ "mimeType": "image/jpeg|png|webp", "byteSize": ..., "sha256"?: ... }`. Validation: `byteSize` ≤ 5 MB (else 413), MIME as listed (GIF → 415). Server creates an `AvatarMedia` row (`status=pending`) and returns `{ "avatarId", "uploadUrl", "headers", "expiresInSeconds": 600 }`.
 - `GET /avatars/{avatarId}` — returns `AvatarMediaResponse` (status, `avatarUrl` once ready, `errorMessage`). Looked up under the caller's own user partition, so another user's avatar is a 404. Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
-- `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). Marks the row `failed`/`DELETED`, idempotently; if the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering).
+- `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). **Real delete** (decided 2026-10-07; lands in M13.5, D8): deletes the original + processed S3 objects, invalidates `/avatar/{avatarId}/*`, then deletes the `AvatarMedia` row, via the same shared delete helper as §9.4. Idempotent — a repeat `DELETE` of an already-gone row returns 204. If the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering).
+- **Avatar replacement** (decided 2026-10-07; lands in M13.5, D8): when `PATCH /me` (§2.3) sets a new `avatarMediaId` over an existing one, the handler deletes the old avatar's original + processed objects and invalidates `/avatar/{oldAvatarId}/*` the same way, then deletes the old `AvatarMedia` row, after the `User` row update commits. The frontend confirms both this replace-over-existing case and an explicit `DELETE /avatars/{id}` with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered.").
 
 Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see `02-data-model-dynamodb.md` §2.16.
 
@@ -734,7 +748,7 @@ All of this now exists (landed in M5, `12-build-order.md` M5 "OpenAPI contract")
 
 ## 13. Per-route auth/role summary table
 
-(Keep this synced with code; see `12-build-order.md` Milestone "API skeleton" for the test that enforces this.)
+(Keep this synced with code; `infra/tests/` asserts every synthesized route has the JWT authorizer, and the contract test in `11-testing-ci-cd.md` §2.3 keeps routes and the YAML in step.)
 
 | Method + Path | Role |
 |---|---|

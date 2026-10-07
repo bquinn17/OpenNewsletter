@@ -52,10 +52,16 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     // a fixed-past-date fixture (fine for `persistence`'s own tests, which pass
     // an explicit `now` to `list_cycles_due`) would already be "due" for every
     // transition at once and collapse both ticks below into a single call.
+    //
+    // The cycle id must agree with those dates, as a real cycle's always does:
+    // the tick seeds the next cycle from it (`06` §5.4), and a stale id would
+    // make that next cycle already due, so the second tick would open it too.
     let now = Utc::now();
+    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let cycle_id = shared::cycle_time::cycle_id_for(now + Duration::days(10), tz);
     let voting = Newsletter {
         group_id: GroupId::new("g1"),
-        cycle_id: CycleId::new("202606"),
+        cycle_id: cycle_id.clone(),
         status: NewsletterStatus::Voting,
         vote_window_open_at: now,
         vote_window_close_at: now + Duration::days(10),
@@ -126,13 +132,12 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         summary
             .transitions
             .iter()
-            .any(|t| t.cycle_id == "202606" && t.from == Some("voting") && t.to == "open"),
+            .any(|t| t.cycle_id == cycle_id.as_str() && t.from == Some("voting") && t.to == "open"),
         "tick must promote the voting cycle to open: {:?}",
         summary.transitions
     );
 
     // 5. The cycle is now `open` with the top 2 (by vote count) locked in order.
-    let cycle_id = CycleId::new("202606");
     let opened = newsletters::get_newsletter(&state.repo, &group_id, &cycle_id)
         .await
         .unwrap()
@@ -147,7 +152,12 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .await
         .unwrap()
         .expect("tick creates the next voting cycle alongside promotion");
-    assert_ne!(next_voting.cycle_id, cycle_id);
+    // ...for the month right after this one (`06` §5.4).
+    let following = shared::cycle_time::first_day_of_next_month_local(now + Duration::days(10), tz);
+    assert_eq!(
+        next_voting.cycle_id,
+        shared::cycle_time::cycle_id_for(following, tz)
+    );
 
     // 6. Rewind the (now open) cycle's response deadline and tick again.
     newsletters::rewind_active_cycle_deadline(&state.repo, &group_id, Duration::days(15))
@@ -159,7 +169,9 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         summary
             .transitions
             .iter()
-            .any(|t| t.cycle_id == "202606" && t.from == Some("open") && t.to == "published"),
+            .any(|t| t.cycle_id == cycle_id.as_str()
+                && t.from == Some("open")
+                && t.to == "published"),
         "tick must publish the open cycle: {:?}",
         summary.transitions
     );
@@ -179,12 +191,12 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
             (
                 FanoutKind::CycleOpen,
                 group_id.to_string(),
-                "202606".to_string()
+                cycle_id.to_string()
             ),
             (
                 FanoutKind::Publication,
                 group_id.to_string(),
-                "202606".to_string()
+                cycle_id.to_string()
             ),
         ]
     );

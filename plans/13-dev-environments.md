@@ -106,7 +106,7 @@ node --version
 | Env | Purpose | Lifetime | Auth | URL |
 |---|---|---|---|---|
 | `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints |
-| `ci-pr-{n}` | Per-PR ephemeral stack for E2E in CI | Spun up per PR, torn down on merge/close | Reuses `dev` Cognito user pool | Raw AWS endpoints |
+| `ci-pr-{n}` | *Not built* — per-PR ephemeral stack for E2E (§11) | Spun up per PR, torn down on merge/close | Reuses `dev` Cognito user pool | Raw AWS endpoints |
 | `prod` | The real thing | Permanent | Federated IdPs only | Custom domains |
 
 `dev` is shared today because the project is solo. To split into per-developer stacks later, change the env suffix from `dev` to `dev-{username}` in `--context env=...` and the rest of CDK falls into place.
@@ -170,9 +170,9 @@ For inner-loop work, sign in via the `admin-bootstrap` app client described in [
 
 The frontend's hidden `/admin/bootstrap-login` route (only enabled when `VITE_ENV=dev`) accepts username + password and stores tokens. The resulting JWT goes through the same API Gateway authorizer as a federated user's would — so the auth path is high-fidelity, just without the OAuth dance.
 
-Federated sign-in gets exercised:
-- Manually on `dev` before merging anything that touches auth
-- On every nightly E2E run (one of the ~10 golden paths in [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md) is "sign in via Google → land on home")
+Federated sign-in gets exercised manually on `dev` before merging anything that touches auth. It can't be automated: Google blocks scripted sign-in, so the nightly E2E `dev` project signs in as a Cognito password user (`E2E_USERNAME`/`E2E_PASSWORD`, [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md)).
+
+**Decided 2026-10-07; lands in M13.5 (D5):** the `admin-bootstrap` Cognito app client, and this whole password-login path, is **dev-only**. In prod there is no password auth and no `admin-bootstrap` client — the JWT authorizer's audience is the frontend client only, and the prod bootstrap admin instead signs in via an email-bound invite redeemed with Google (`docs/RUNBOOK.md` M14, `docs/milestone-1-operator-runbook.md`). Dev is unchanged by this decision.
 
 ---
 
@@ -228,7 +228,7 @@ deploy-lambda:
 
 Don't wait for the 5-minute / 15-minute schedule. Two paths:
 
-1. **Manual invoke** — `aws lambda invoke --function-name OpenNewsletter-cycle-tick-dev /tmp/out.json`
+1. **Manual invoke** — `aws lambda invoke --function-name OpenNewsletter-CycleTick-dev /tmp/out.json` (names per the Makefile's `FUNCTION_<binary>` map)
 2. **Admin dev route** — `POST /admin/dev/tick/{cycle|notify}`, gated on `ENV=dev`, that calls the same handler logic synchronously and returns the result.
 
 Path 2 is also what Playwright uses to fast-forward time in E2E tests — see [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md). Implement once, two consumers.
@@ -283,31 +283,23 @@ Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError
 
 ## 11. Ephemeral CI stacks
 
-Per-PR E2E gets a fresh `ci-pr-{n}` stack:
-
-1. PR opens (or `e2e` workflow triggered manually) → GitHub Action assumes the deploy role via OIDC.
-2. `cdk deploy --context env=ci-pr-{n} --all` (uses the persistent `AuthStack` from `dev` — does NOT recreate Cognito).
-3. Run Playwright against the new stack.
-4. On workflow completion (success or failure), `cdk destroy --context env=ci-pr-{n} --all --force`.
-
-Two safety nets:
-
-- **Auto-cleanup sweeper** — a scheduled Lambda (in `dev` account, runs daily) that destroys any `ci-pr-*` stack older than 24h. Catches the case where a workflow crashed before its cleanup step.
-- **AWS Budgets alarm** at $10/mo, emailed to `config.alarm_email`. Catches stranded resources.
+**Not built, and not currently planned** (decided 2026-10-07, D12). The per-PR `ci-pr-{n}` stack design this section used to sketch moved to [`plans/14-future-ideas.md`](14-future-ideas.md). `e2e.yml` continues to target the long-lived `dev` stack via `E2E_BASE_URL`.
 
 ---
 
 ## 12. Cost expectations
 
-`dev` stack idle: ~$3/mo (Secrets Manager dominates: ~$0.40/secret × 5). Active use adds $1–2 in Lambda + DynamoDB + image storage. Per-PR ephemeral stacks: ~$0.50 each, deleted within hours.
+**Decided 2026-10-07; lands in M13.5 (D7):** `dev` stack idle cost drops to **≈ $0.40–1/mo**: one Secrets Manager secret per env instead of four (~$0.40 total, down from ~$1.60), no per-env CloudWatch alarms (dev keeps its dashboard; alarms move to prod only), and DynamoDB uses the free AWS-owned encryption key instead of the AWS-managed `aws/dynamodb` KMS key. Active use adds well under $1 in Lambda + DynamoDB + image storage. See `PROGRESS.md` decision D7 for the full prod+dev cost table.
 
-Total dev-environment overhead: well under $10/mo.
+As built through M13 (superseded): `dev` stack idle was ~$3/mo (Secrets Manager dominated: ~$0.40/secret × 4). Active use added $1–2 in Lambda + DynamoDB + image storage.
+
+Total dev-environment overhead: well under $10/mo either way.
 
 ---
 
 ## 13. What this replaces in the plan set
 
-This document replaces the implicit assumption in [`11-testing-ci-cd.md` §2.4](11-testing-ci-cd.md) that developers run DynamoDB Local for inner-loop work. That assumption is now a CI-only path.
+This document replaces the assumption that developers run a local emulation stack (DynamoDB Local, LocalStack, a Cognito mock) for *application* use. DynamoDB Local remains in use, but only as the Rust integration-test backend, which runs locally and in CI as part of `cargo test --workspace` (§10).
 
 It also adds two CDK refinements that should be incorporated into [`01-infrastructure-cdk.md`](01-infrastructure-cdk.md):
 - Splitting `MediaStack` into `MediaPersistentStack` + `MediaPipelineStack`.
@@ -334,7 +326,7 @@ Every milestone after 3.5 is testable end-to-end against a real AWS stack from t
 make seed                     # ~10s — clean state to work against
 
 # Code changes in a Lambda:
-make deploy-lambda LAMBDA=questions   # ~5s
+make deploy-lambda LAMBDA=questions-api   # ~5s
 
 # Code changes that touch CDK / IAM / env vars:
 make deploy-dev               # ~60–90s
@@ -370,7 +362,7 @@ Manual testing fails. When it does, these are the inspection ladders.
 - The AWS Console's "Explore items" view is fine for ad-hoc poking; prefer it over the CLI when you don't yet know what key you're looking for.
 
 **Lambda logs**
-- Live tail one Lambda: `aws logs tail /aws/lambda/OpenNewsletter-questions-dev --follow --since 5m`
+- Live tail one Lambda: `aws logs tail /aws/lambda/OpenNewsletter-Questions-dev --follow --since 5m`
 - Search by correlation ID across all Lambdas in CloudWatch Logs Insights:
   ```
   fields @timestamp, @log, @message
@@ -380,7 +372,7 @@ Manual testing fails. When it does, these are the inspection ladders.
 - The frontend generates `x-correlation-id` per request ([`00-overview.md` §6](00-overview.md)) and surfaces it in the dev-mode error toast — copy it from there into the Insights query.
 
 **Image pipeline**
-- An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-image-process-dev --follow`.
+- An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-ImageProcess-dev --follow`.
 - Confirm the S3 object exists: `aws s3 ls s3://opennewsletter-media-originals-dev-{account}/uploads/{groupId}/{cycleId}/{questionId}/{userId}/`.
 - Confirm the processed variants were written: `aws s3 ls s3://opennewsletter-media-processed-dev-{account}/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/`.
 - Check the ImageMedia DDB row's `status` and `errorMessage` fields.
@@ -396,9 +388,9 @@ Manual testing fails. When it does, these are the inspection ladders.
 
 ## 16. Frontend mocking
 
-Two mock layers exist; both are for UI iteration without an AWS account (reconciled after M7 — the MSW/`mockData.ts` setup this section used to describe was never built):
+One mock layer exists, for UI iteration without an AWS account (the MSW/`mockData.ts` setup this section used to describe was never built):
 
 - **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each milestone that adds client endpoints adds matching mock routes here. `make fe` (`--mode dev`) talks to the real dev stack instead.
-- **`frontend/src/mocks/`** is the legacy pre-M7 layer (hand-written types). It is transitional and is deleted as M9–M12 migrate their pages (`04-frontend-architecture.md` §16). Don't extend it.
+- The legacy pre-M7 layer, `frontend/src/mocks/`, was deleted in M12 (`04-frontend-architecture.md` §16).
 
 Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`). M9 made this the standard (`coding-standards.md` §3.9, `11-testing-ci-cd.md` §4.2); MSW is not used.
