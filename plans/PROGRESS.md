@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-06. Working document — update as milestones complete or
+Snapshot as of 2026-10-07. Working document — update as milestones complete or
 blockers resolve. Authoritative milestone definitions live in
 [`12-build-order.md`](12-build-order.md).
 
@@ -24,10 +24,10 @@ blockers resolve. Authoritative milestone definitions live in
 | **M10** | **Engagement** | 🟡 **code-complete, deploy unverified** | See "M10 detail" below. 365 backend, 54 CDK and 166 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The two-users-comment-and-react gate needs a deployed stack (B5). |
 | **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 430 backend (427 + 3 from the post-M11 review fixes), 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
 | **M12** | **Admin UI** | 🟡 **code-complete, deploy unverified** | See "M12 detail" below. 265 frontend (was 220), 431 backend (+1) and 68 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt and clippy (`-D warnings`) are clean. The create-invite → share → new-member-appears gate needs a deployed stack (B5). |
-| M13 | Hardening | ⬜ | |
+| **M13** | **Hardening** | 🟡 **code-complete, deploy unverified** | See "M13 detail" below. 444 backend (+13), 86 CDK (+18), 293 frontend Vitest (+26) and 7 Playwright tests green. fmt, clippy (`-D warnings`), `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `cdk synth` (dev + prod) and `actionlint` are clean. The six workflows haven't run on GitHub yet (nothing pushed). The smoke run, the dev-stack E2E and the alarm-email check need a deployed stack (B5). |
 | M14 | Production deploy | ⬜ | |
 
-M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M12 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
+M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M13 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
 
 ---
 
@@ -416,7 +416,12 @@ After M7, every known gap was worked through and two read-only review agents (ba
 
 **Updated 2026-10-05.** Progress so far: domain decided (`betterloop.site`, bought on Namecheap — DNS stays on Namecheap's nameservers, no Route53 hosted zone, so ACM validation CNAMEs get added there manually when `cdk deploy` prints them); Cognito domain prefix picked; AWS CLI credentials fixed to use IAM user `bquinn17` via `aws login` (was briefly root — see note below) with `AdministratorAccess` + `SignInLocalDevelopmentAccess`; `cdk bootstrap` done (`CDKToolkit` stack `CREATE_COMPLETE`); `cargo-lambda` installed on macOS (clears part of B6); VAPID keypair generated and stored at `opennewsletter/vapid/dev` (required fixing `scripts/generate_vapid_keys.py` — the `py-vapid` API it called, `public_key_urlsafe_base64()`/`private_key_urlsafe_base64()`, doesn't exist in the installed 1.9.4; replaced with direct RFC 8292 raw-point encoding via `cryptography`); `ALARM_EMAIL` set.
 
-Still outstanding: Google + Facebook OAuth app registrations, the real CloudFront signing keypair (`infra/keys/cf-signing.pub.pem` is still the repo's dev placeholder), and the two corresponding Secrets Manager entries (`opennewsletter/oauth/google/dev`, `opennewsletter/oauth/facebook/dev`, `opennewsletter/cdn-signing/dev`). These are non-blocking for code work but block the M3/M3.5/M4 deploy gates and any end-to-end auth verification. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+**Re-assessed 2026-10-07.** All four secret ARNs in `.env.local` (`opennewsletter/oauth/google/dev`, `…/oauth/facebook/dev`, `…/vapid/dev`, `…/cdn-signing/dev`) now carry the random suffix AWS adds when a secret is created, so the secrets have been created. Their contents couldn't be checked: the `aws login` session had expired. What remains:
+- **CloudFront key-type mismatch (new, must fix before the M8 gate).** `infra/keys/cf-signing.pub.pem` was RSA-2048 until the M12 commit (2026-10-06) replaced it with an **EC P-256** key. `lambda-media` parses only RSA keys and signs RSA-SHA1 (`cloudfront.rs`), so if the private key in `opennewsletter/cdn-signing/dev` is also EC, every `GET /media-cookie` fails with `InvalidKey`. Regenerate the pair with `openssl genrsa 2048` per `infra/keys/README.md`. Also check it isn't the VAPID public key pasted by mistake: both are P-256.
+- **Confirm the OAuth secrets hold real client IDs and secrets**, and that each IdP app lists the Cognito hosted-UI redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
+- **Re-run `aws login`** before any deploy.
+
+These don't block code work. They block every deploy gate (M3–M13).
 
 **Decision — Apple IdP dropped (2026-10-05).** Sign In with Apple requires a paid Apple Developer membership ($99/yr); the owner declined. Removed `UserPoolIdentityProviderApple` from `AuthStack`, `apple_oauth_secret_arn` from `EnvConfig`, and the Apple step from `docs/milestone-1-operator-runbook.md`; updated the CDK test (`test_user_pool_two_idps`, was `_three_idps`) and every plan doc that listed three IdPs (`00`, `01`, `12`, `13`, `OpenNewsletter_spec.md`) to Google/Facebook only. `cdk synth --context env=dev` and `pytest infra/tests/` (54 passed) both verified green after the change. If Apple support is wanted later, re-add the IdP construct, the 4 config fields (`apple_client_id`/`apple_team_id`/`apple_key_id`/`apple_private_key_secret_arn` per `01` §4.1, collapsed to one `apple_oauth_secret_arn` in the actual `config.py`), and the operator-runbook step.
 
@@ -426,7 +431,12 @@ Still outstanding: Google + Facebook OAuth app registrations, the real CloudFron
 
 **Windows/WSL2**: `cargo build --release` (and therefore `cargo lambda build --release`) aborts in `aws-lc-sys`, which refuses to compile under gcc 9 because of [gcc bug 95189](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189). That host is Ubuntu 20.04 with only gcc 9.4 and no clang. Debug builds and the test suite are unaffected. Fix: `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain; failing both, switch rustls to the `ring` backend.
 
-**macOS**: the gcc issue doesn't apply (Apple clang). `cargo-lambda` 1.9.2 is now installed (2026-10-05, see B5). Release artifacts exist under `backend/target/lambda/` for every binary built before M10, dated 2026-10-04 21:14. They include `image-process`, but that cross-compile has not been run through the M8 gate. **`engagement-api` has no artifact yet**: rebuild before deploying, or the stack falls back to the stub for it.
+**macOS**: the gcc issue doesn't apply (Apple clang), and `cargo-lambda` 1.9.2 is installed. Artifacts in `backend/target/lambda/` (re-checked 2026-10-07) are stale:
+- `cycle-tick`, `notify-tick` and `push-api` date from 2026-10-06 19:18. `push-api` predates the M13 endpoint allowlist.
+- The rest date from 2026-10-04, before M10–M13. `responses-api` lacks the M13 double-count fix and `media-api` the RSA blinding.
+- **`engagement-api` still has no artifact**, so a deploy now would ship the stub for it.
+
+Run `make build-lambdas` immediately before any deploy (`make deploy-dev` already does). **New in M13:** `backend-ci` cross-builds every Lambda on Linux. Its first run is also the first Linux build of `image-process` (`libwebp-sys`).
 
 **Windows/WSL2** has never produced a Lambda artifact. `ApiStack`/`NotificationsStack` fall back to the shell stub when `backend/target/lambda/{binary}/bootstrap` is missing, which is why synth passes — deploying before this is cleared would ship stubs.
 
@@ -462,14 +472,23 @@ Still outstanding: Google + Facebook OAuth app registrations, the real CloudFron
    - Invites: create a member invite, copy the URL, and open it in another browser signed in as a second Google account → the new member appears on the Members tab, and the invite shows "used by {name}"
    - make them admin, then member again; remove them through the confirm dialog
    - Settings: rename the group and change its gradient → Home and the group switcher pick it up without a reload
-12. **Begin M13** (Hardening). See the Handoff below. Standing rule from M5: every new or changed route updates `shared/openapi.yaml` and `ROUTE_TABLE` in `domain/tests/openapi_contract.rs` in the same PR, then re-runs `scripts/codegen_types.sh`.
+12. **M13 gates**:
+   - Push a branch and confirm `frontend-ci`, `backend-ci` and `infra-ci` go green on GitHub. They've only been checked locally and with `actionlint`. The first real run of `cargo lambda build --release --arm64` on Linux, including `libwebp-sys`, happens in `backend-ci`.
+   - After deploy, deploy `CiStack` (it's in `--all`), then paste its two role-ARN outputs into the repo variables listed in `.github/workflows/README.md`.
+   - Run `docs/smoke.md` against dev.
+   - Confirm the SNS email subscription, and that the 17 alarms exist and sit in `OK`.
+   - Fill in the `e2e/dev/` Playwright bodies once a Cognito test user exists (`E2E_USERNAME`/`E2E_PASSWORD`).
+13. **M14** (production deploy). See the Handoff below.
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
 
-- **No `frontend-deploy.yml` workflow yet**, so the `04` §14.5 `404.html` copy (SPA deep links on GitHub Pages) isn't done. Add both in M13/M14.
-- **Push endpoints aren't host-allowlisted.** `POST /push/subscribe` accepts any `https://` URL, so `POST /push/test` will POST an encrypted body to whatever host a signed-in user registered. The Lambda isn't in a VPC and the body is opaque, so the exposure is small; restrict to known push-service hosts in M13 if wanted.
+- **`rsa` timing advisory (RUSTSEC-2023-0071) is mitigated, not fixed.** CloudFront cookie signing is blinded (`sign_with_rng`) and ignored in `deny.toml`. Drop the ignore when RustCrypto ships a constant-time `rsa`.
+- **Five more `cargo deny` advisory ignores have no upstream fix.** Three are `rustls-webpki` 0.101 issues, pinned by `aws-smithy-http-client`'s legacy rustls 0.21 branch; they're reachable only via a mis-issued certificate. The other two are test-only (`h2` 0.3, `tokio-tar`). `deny.toml` also ignores two unmaintained-crate notices (`paste`, `rustls-pemfile`), which aren't vulnerabilities. Re-check after AWS SDK bumps.
+- **Fonts come from Google Fonts**, so the CSP allows `fonts.googleapis.com`/`fonts.gstatic.com` and the fonts aren't available offline. Self-host them if that matters (`04` §12.1).
+- **Mock-mode E2E can't cover reload-persistence of saved drafts.** The mock transport is in-memory, so the test checks the localStorage crash-recovery mirror instead. The real save → reload path is a `dev`-project test.
+- **`CiStack` deploys with every `--all`** (dev or prod). It's account-wide and idempotent, but `make deploy-dev` touches it too.
 - **A crash mid-fan-out loses the rest of that fan-out** (markers are claimed first, at-most-once — `07` §7.1). Accepted for now; the alternative risks duplicate pushes.
 - **Fan-outs are sequential.** Fine for small groups (60s push timeout, 120s notify-tick); parallelise with a bounded `join_all` if groups grow.
 - **PWA icons are generated placeholders** (`frontend/scripts/generate-icons.mjs`). Swap in designed artwork.
@@ -485,7 +504,87 @@ The post-M7 gap pass (2026-09-27, below) cleared most of the earlier list. What 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth (the `NOTIFIED#…`/`TICK#NOTIFY` rows) is resolved: M11 writes them.
-- **No Playwright/E2E yet** (`04` §1); `11` puts it in M13, together with the build-only CSP `<meta>` tag (`04` §13).
+
+---
+
+## M13 detail — what landed (2026-10-07)
+
+The lead settled the semantics first and recorded them in `11` §2.1/§2.4/§4.3/§5.2/§6, `13` §10, `07` §3.1, `04` §12.1/§13 and `02` §2.2/§4 #4. Three Sonnet agents then worked in parallel, split by directory into backend, frontend and CI/infra. Two of them hit an API rate limit mid-task and were resumed. The lead reviewed every diff, fixed what's listed under "Bugs", and re-ran every check.
+
+### CI/CD (`.github/workflows/`)
+- **Six workflows**, each with a header comment:
+  - `frontend-ci`: typecheck, ESLint, Prettier, `test:coverage` (artifact uploaded) and build.
+  - `backend-ci`: fmt, clippy, `cargo deny`, `cargo test --workspace` (DynamoDB Local via the runner's Docker) and `cargo lambda build --release --arm64`.
+  - `infra-ci`: ruff, `mypy --strict`, pytest, and synth for dev and prod. A PR-only `cdk diff` against prod is posted as a comment.
+  - `frontend-deploy`: builds, writes `CNAME`, copies `404.html` (`04` §14.5) and publishes to `gh-pages`.
+  - `backend-deploy`: `cargo lambda` build, then `cdk deploy --all` via OIDC.
+  - `e2e`: nightly Playwright run.
+- **Deploy-shaped steps are off until repo variables switch them on** (`FRONTEND_DEPLOY_ENABLED`, `BACKEND_DEPLOY_ENABLED`, `AWS_DIFF_ROLE_ARN`, `E2E_BASE_URL`), so `main` stays green without AWS. `.github/workflows/README.md` lists every variable and secret.
+- **Node comes from `.nvmrc`** (now 24) in every workflow.
+
+### Infrastructure
+- **`CiStack`** (account-wide, unsuffixed):
+  - a GitHub OIDC provider
+  - `GithubDeployRole`: trusts only `repo:…:ref:refs/heads/main`, and may only `sts:AssumeRole` onto `cdk-hnb659fds-*`
+  - `GithubDiffRole`: trusts `pull_request` only; lookup role plus read-only CloudFormation on `*-prod` stacks
+  - The repo slug lives in `config.py` (`github_repo`).
+- **`MonitoringStack` implements `01` §9.1/§9.2.** It has 17 alarms, all on the SNS topic:
+  - per-Lambda error rate >5%
+  - API 5xx >1%
+  - DynamoDB throttles
+  - the two tick-error alarms
+  - the existing push-failure alarm
+
+  The dashboard has real widgets for API, Lambdas, DynamoDB, CloudFront and the push EMF metrics.
+  - **No exports.** Metrics are built from fixed names. The HTTP API id and the CloudFront distribution id aren't deterministic, so `ApiStack`/`MediaPersistentStack` publish them to SSM (`ssm_refs.py`), and `MonitoringStack` reads them with `{{resolve:ssm:…}}` dynamic references.
+- **CDK: 86 tests** (+9 `test_ci_stack.py`, +9 `test_monitoring_stack.py`).
+
+### Backend
+- **Test-gap audit against `11` §2.** Every key builder, AP1–AP21, every §4 transaction, the 8-item lifecycle suite and the image-pipeline suite were already covered.
+  - **New concurrency tests** use `tokio::join!` on the three named high-stakes transactions: vote (same question; same voter at the cap), redeem-invite (at the member cap) and publish-response.
+  - **`shared::http::error_type_uri`** got pure-core tests.
+  - **Doc correction:** `11` §2.1's `JwtVerifier` bullet named a type that doesn't exist (API Gateway verifies JWTs), so it was removed.
+- **Push-endpoint host allowlist** (`07` §3.1). `shared::config::PUSH_ENDPOINT_HOST_SUFFIXES` covers FCM, Mozilla, Apple and WNS. The check is against the host parsed by the `url` crate, so `fcm.googleapis.com.evil.com` and `https://fcm.googleapis.com@evil.com/` are rejected. This clears the Known gap.
+- **`cargo deny`** (`backend/deny.toml`):
+  - Permissive-license allowlist: `Unicode-3.0` (via `idna`), `CDLA-Permissive-2.0` (`webpki-roots`) and `NCSA` (fuzzing-only).
+  - Sources limited to crates.io.
+  - `cargo update` moved `h2`/`rustls`/`rustls-webpki` past fixed advisories.
+  - The remaining ignores each carry a reason. See Known gaps.
+
+### Frontend
+- **CSP `<meta>`** (`src/csp/csp.ts` + `cspPlugin.ts`, build-only). Origins come from `loadEnv`, which includes `VITE_*` from the process env, as the deploy workflow passes them. `worker-src`/`manifest-src` were added.
+- **Playwright** (`npm run e2e`):
+  - The `mock` project builds `--mode e2e` (`.env.e2e`) and serves with `vite preview`. It runs 7 tests: two CSP assertions, a no-violations walk, and four golden paths (suggest, upvote, react toggle, comment) plus draft recovery.
+  - The `dev` project runs only with `E2E_BASE_URL`. All ten `11` §4.3 paths are scaffolded as `fixme` until B5 clears.
+  - The viewport is 700px, the only width where `BottomNav` and its labels are both in the accessibility tree.
+- **Vitest §4.1 audit: 293 tests (+26).** New `dates.test.ts` (12 tests; `utils/dates.ts` had none) and `PollWidget.test.tsx`, plus gap tests for:
+  - flushing a dirty draft on `visibilitychange`
+  - a sticky poll-vote change after publish
+  - turning a reaction off successfully
+  - markdown headings
+- **New dev dependencies:**
+  - `@playwright/test` (E2E runner)
+  - `@vitest/coverage-v8` (`test:coverage`)
+  - `@types/node` (types `process.env` in the Playwright config)
+
+### Docs
+- **`docs/smoke.md`**: the `11` §13 checklist covering dev (with `advanceCycleClosesBy`) and prod (direct `aws lambda invoke`).
+- **README**: real Status, Local development and Contributing sections (the M13 done-when: clone → run → PR).
+
+### Bugs found (fixed)
+- **`editions_answered` double-counted under concurrency** (found by the new concurrency test). The "first publish this cycle" check was only a handler pre-read, so two concurrent first publishes both bumped.
+  - The bump now also writes `last_answered_cycle`, conditioned on it not already being this cycle.
+  - `save_response` reads the cancellation reasons. A failed marker condition means retry without the bump; a `TransactionConflict` means retry as-is (3 attempts); anything else is still `CYCLE_NOT_OPEN`.
+  - Covered by a regression test and a stale-pre-read test (`02` §4 #4).
+- **`MonitoringStack` had no deploy order relative to the SSM parameters it resolves.** A fresh `--all` deploy could fail. Fixed with an ordering-only `add_dependency` on `ApiStack` and `MediaPersistentStack`, which creates no exports.
+- **`backend-deploy.yml` ran `cargo lambda build` without installing `cargo-lambda`.** Both backend workflows also ran `pip install` on `ubuntu-latest`'s system Python, which PEP 668 refuses. Fixed with `setup-python` and an explicit install.
+- **The CSP blocked the Google Fonts stylesheet** (caught by the Playwright violations walk). Fixed by allowing the two Google Fonts origins (`04` §12.1).
+- **CloudFront cookie signing was unblinded** (RUSTSEC-2023-0071, flagged by `cargo deny`). Fixed by switching to `sign_with_rng`.
+- **Files the root `.gitignore` silently excluded** (post-M13 code review), so a fresh clone or CI couldn't build:
+  - `build/` matched `frontend/src/build/`, which held the CSP plugin. It was renamed to `frontend/src/csp/`.
+  - `*.pem` had excluded `lambda-media`'s throwaway `tests/fixtures/test_signing_key.pem` since M8. It's loaded with `include_str!`, so `cargo test` can't compile `lambda-media` without it. It's now explicitly un-ignored.
+  - `git ls-files --others --ignored --exclude-standard` now lists only build artifacts and `.env.local`.
+- **`infra-ci`'s PR `cdk diff` ran without the prod config variables**, so every comment would have shown placeholder domains and ARNs replacing the real ones. It now gets the same `env:` block as `backend-deploy`.
 
 ---
 
@@ -830,20 +929,17 @@ The backend and frontend agents hit a session limit and an auth expiry, and were
 
 ---
 
-## Handoff — starting M13 (Hardening)
+## Handoff — starting M14 (Production deploy)
 
 For the next agent picking this up cold:
 
-1. **Orient.** Read `CLAUDE.md`, then `12` M13 and `11` §2–§4 (the test pyramid and the four CI workflows). M13 is mostly gap-filling, not new product surface.
-2. **Know the M13 scope.**
-   - Diff `11` §2–§4's test lists against what exists and fill the gaps.
-   - Get all four GitHub Actions workflows green. There is no `frontend-deploy.yml` yet; it should include the `04` §14.5 `404.html` copy (Known gaps).
-   - Playwright: set up E2E (`04` §1), including the build-only CSP `<meta>` (`04` §12.1/§13) verified by a Playwright test.
-   - Write `docs/smoke.md`. Alarms → SNS → email is already wired (`ALARM_EMAIL` set); confirm it once deployed.
-   - Optional, from Known gaps: a push-endpoint host allowlist and the comment-author cache.
-   - The deploy-shaped deliverables (smoke run, 5-min E2E against dev) need B5 cleared. Do the code-side work first.
-3. **Verify** with the commands in `CLAUDE.md`. Baselines: 431 backend, 68 CDK, 265 frontend; ESLint 0 problems. Run `ruff` from the repo root (`ruff check infra`). Put `infra/.venv/bin` first on `PATH` for `cdk synth`. If DynamoDB Local tests fail at "create table" with `IncompleteMessage`, the machine was overloaded (don't build in parallel with the test run); re-run with `--no-fail-fast`.
-4. **Suggested split:** a frontend agent (Playwright + CSP), an infra/CI agent (workflows; Haiku is enough), and the lead on the `11` test-gap audit and `docs/smoke.md`.
+1. **Orient.** Read `CLAUDE.md`, `12` M14 and `docs/RUNBOOK.md` §M14. M14 is almost entirely operator work. It can't start until B5 clears and the dev deploy gates (M3–M13, Suggested next steps 4–12) have been run.
+2. **Code-side prep that can happen now:**
+   - decide `.env.production` (`04` §13 left it to M14) or rely on the `VITE_*` secrets in `frontend-deploy.yml`
+   - replace `opennewsletter.example.com` in `12` M14 and `docs/RUNBOOK.md` with `betterloop.site`
+   - check `config.py`'s prod values
+3. **Deploy path:** `cdk deploy --context env=prod --all` from a workstation the first time. Then set the repo variables and switch on `BACKEND_DEPLOY_ENABLED`/`FRONTEND_DEPLOY_ENABLED` so later deploys go through GitHub OIDC.
+4. **Verify** with `docs/smoke.md` against prod. Baselines: 444 backend, 86 CDK, 293 Vitest, 7 Playwright; ESLint 0 problems. Run `mypy --strict .` from `infra/`, as CI does.
 
 ---
 

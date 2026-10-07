@@ -16,9 +16,11 @@ from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from .config import EnvConfig
+from .ssm_refs import cloudfront_distribution_id_parameter_name
 
 _KEYS_DIR = Path(__file__).parent.parent / "keys"
 
@@ -244,4 +246,13 @@ class MediaPersistentStack(cdk.Stack):
             self,
             "CloudFrontSigningKeySecretArn",
             value=config.cdn_signing_secret_arn,
+        )
+
+        # Published for MonitoringStack (volatile; see ssm_refs.py for why it
+        # can't take a construct reference onto this persistent stack).
+        ssm.StringParameter(
+            self,
+            "CloudFrontDistributionIdParam",
+            parameter_name=cloudfront_distribution_id_parameter_name(config.env),
+            string_value=self.distribution.distribution_id,
         )

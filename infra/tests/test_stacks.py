@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import aws_cdk as cdk
 import pytest
 from aws_cdk import assertions
+
 from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
 from opennewsletter.config import EnvConfig, load_config

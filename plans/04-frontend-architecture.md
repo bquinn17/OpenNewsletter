@@ -477,13 +477,15 @@ GitHub Pages cannot set response headers, so the CSP ships as a `<meta http-equi
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
   script-src 'self';
-  style-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   img-src 'self' data: blob: %VITE_CDN_BASE_URL%;
   connect-src 'self' %VITE_API_BASE_URL% %VITE_CDN_BASE_URL%
     https://cognito-idp.us-east-1.amazonaws.com https://%VITE_COGNITO_HOSTED_DOMAIN%;
-  font-src 'self';
+  font-src 'self' https://fonts.gstatic.com;
   base-uri 'self';
-  form-action 'self' https://%VITE_COGNITO_HOSTED_DOMAIN%">
+  form-action 'self' https://%VITE_COGNITO_HOSTED_DOMAIN%;
+  worker-src 'self';
+  manifest-src 'self'">
 ```
 
 Notes:
@@ -491,6 +493,13 @@ Notes:
 - `blob:`/`data:` in `img-src` cover local previews of not-yet-uploaded images.
 - `frame-ancestors` cannot be expressed in a meta CSP — clickjacking protection is out of scope on a GitHub Pages host.
 - A Playwright test (Milestone 13, `11-testing-ci-cd.md`) asserts the meta tag is present and that `img-src` includes the CDN origin.
+
+**Implemented M13** in `src/csp/csp.ts` (the pure policy builder, with Vitest tests) and `src/csp/cspPlugin.ts` (`apply: "build"`, so the tag is never added under `vite dev`).
+- **Origins come from code, not `%VITE_*%` substitution.** The plugin reads the `VITE_*` origins with `loadEnv`, reduces each to its origin and omits any that are empty. HTML substitution would have left a literal `%VITE_X%` in the tag for an unset variable.
+- **Additions to the policy above:**
+  - `worker-src`/`manifest-src 'self'` for the service worker and the PWA manifest.
+  - The Google Fonts origins. `index.html` loads Plus Jakarta Sans and Fraunces from `fonts.googleapis.com`, and the font files come from `fonts.gstatic.com`. The Playwright "no CSP violations" walk caught the block.
+- **Self-hosting the fonts** would drop the third-party origins and make them available offline. It would mean adding font packages and `woff2` to the precache globs. Not done.
 
 ---
 
@@ -523,7 +532,7 @@ Env files (decided in M7):
 - `.env.production` is M14's to decide.
 - `redirectUri` may be empty; the SPA then derives `${origin}/auth/callback`.
 
-The CSP `<meta>` tag from §12.1 is not in `index.html` yet. In dev, `@vitejs/plugin-react` injects an inline preamble script that `script-src 'self'` would block, so the tag must apply to production builds only (e.g. via a small Vite `transformIndexHtml` plugin gated on `command === "build"`). It lands with M13, alongside the Playwright test.
+The CSP `<meta>` tag from §12.1 applies to production builds only (`cspPlugin`, `apply: "build"`). In dev, `@vitejs/plugin-react` injects an inline preamble script that `script-src 'self'` would block. `.env.e2e` (mock mode, placeholder https origins) is the mode the Playwright `mock` project builds with (`11` §4.3).
 
 ---
 

@@ -45,6 +45,8 @@ The frontend's `pushSetup.ts`:
 
 `lambda-push` upserts the row keyed by `(userId, sha256(endpoint))`. If a row already exists for this `(user, endpoint)`, it is overwritten — handles re-subscriptions after the browser rotates the endpoint.
 
+**Decided M13: endpoint hosts are allowlisted.** `POST /push/subscribe` rejects an `endpoint` whose host isn't a known Web Push service, with a 422 on field `endpoint` ("endpoint must be a known Web Push service"). Without this, `POST /push/test` would POST to any host a signed-in user registered. The list is `PUSH_ENDPOINT_HOST_SUFFIXES` in `shared::config`: `fcm.googleapis.com` (Chrome, Edge-on-Android), `*.push.services.mozilla.com` (Firefox), `web.push.apple.com` and `*.push.apple.com` (Safari/iOS), and `*.notify.windows.com` (legacy Edge). The host must match exactly or end in a suffix, compared case-insensitively on the parsed host, so `fcm.googleapis.com.evil.com` and userinfo tricks fail. A browser on an unlisted service can't subscribe; add its host here if one turns up.
+
 ### 3.2 Pruning failures
 
 When the tick Lambdas attempt delivery and receive a `410 Gone` or `404 Not Found` from the push service, the subscription is deleted immediately (it's permanently invalid).

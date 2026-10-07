@@ -13,7 +13,7 @@ A milestone or task is not "done" until its work conforms to those standards. Th
 
 The `persistence` integration tests start a DynamoDB Local container via `testcontainers`, so they need a reachable Docker daemon whose socket is *not* `/var/run/docker.sock`. The repo is developed on two machines with different setups — **check `uname` to see which one you're on**. Agent shells are non-login and non-interactive, so they don't read shell profiles: **every** test command must set `PATH`/`DOCKER_HOST` inline.
 
-**macOS (Apple Silicon)** — Rust via rustup (`~/.cargo/bin`), Docker via Colima, Node and Python 3.12 via Homebrew:
+**macOS (Apple Silicon)** — Rust via rustup (`~/.cargo/bin`), Docker via Colima, Python 3.12 via Homebrew, Node 24 via nvm (pinned in `.nvmrc`):
 
 ```bash
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH" DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
@@ -32,19 +32,25 @@ Notes:
 - Always wrap in `timeout` (the suite pulls an image on a cold cache and can otherwise hang).
 - Sanity-check the daemon first with the same exports plus `docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
 
-**Frontend checks** (from `frontend/`; no Docker needed; on macOS prefix `export PATH="/opt/homebrew/bin:$PATH" &&`):
+**Frontend checks** (from `frontend/`; no Docker needed; on macOS prefix the nvm loader below):
 
 ```bash
 npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build
 ```
 
-**CDK synth** (from `infra/`; same command on both machines, but on macOS prefix `export PATH="/opt/homebrew/bin:$PATH" &&`):
+**CDK synth** (from `infra/`; same command on both machines, but on macOS prefix the nvm loader below). The venv puts `infra/bin/cdk`, a wrapper for `npx aws-cdk@2`, on `PATH` as `cdk`:
 
 ```bash
-source .venv/bin/activate && npx aws-cdk@2 synth --quiet
+source .venv/bin/activate && cdk synth --quiet
 ```
 
-Use exactly `npx aws-cdk@2`. Don't use `npx cdk` or a global `cdk` install. When npx runs a globally installed binary it puts that binary's directory first on `PATH`, and on macOS that's `/opt/homebrew/bin`, whose `python3` then shadows the venv's. Synth then fails with `No module named 'aws_cdk'` even though the venv is fine.
+Under the hood that's exactly `npx aws-cdk@2`. Don't use `npx cdk` or a global `cdk` install. When npx runs a globally installed binary it puts that binary's directory first on `PATH`, and on macOS that's `/opt/homebrew/bin`, whose `python3` then shadows the venv's. Synth then fails with `No module named 'aws_cdk'` even though the venv is fine.
+
+**macOS Node prefix.** Agent shells don't load nvm, so a bare `node` falls through to whatever else is on `PATH`. Load nvm explicitly; `nvm use` reads `.nvmrc`:
+
+```bash
+export PATH="/opt/homebrew/bin:$PATH" NVM_DIR="$HOME/.nvm" && source /opt/homebrew/opt/nvm/nvm.sh && nvm use >/dev/null &&
+```
 
 Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/13-dev-environments.md) (which also covers which test layers need Docker at all).
 

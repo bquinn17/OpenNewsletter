@@ -147,6 +147,38 @@ describe("useResponseEditor", () => {
     expect(saveMyResponse).not.toHaveBeenCalled();
   });
 
+  it("flushes a dirty draft when the tab is hidden, not just on blur", async () => {
+    saveMyResponse.mockResolvedValue(responseDto({ body: "typed before hiding" }));
+    const { result } = renderHook(
+      () =>
+        useResponseEditor({
+          groupId: "g1",
+          cycleId: "202606",
+          questionId: "q1",
+          userId: "u1",
+          initial: null,
+        }),
+      { wrapper },
+    );
+
+    act(() => result.current.setBody("typed before hiding"));
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flushMicrotasks();
+    });
+
+    expect(saveMyResponse).toHaveBeenCalledTimes(1);
+    expect(saveMyResponse).toHaveBeenCalledWith(
+      "g1",
+      "202606",
+      "q1",
+      expect.objectContaining({ body: "typed before hiding" }),
+    );
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
   it("coalesces an edit made while a save is in flight into exactly one follow-up save", async () => {
     let resolveFirst!: (value: ReturnType<typeof responseDto>) => void;
     saveMyResponse.mockImplementationOnce(

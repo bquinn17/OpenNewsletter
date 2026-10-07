@@ -31,6 +31,9 @@ class EnvConfig:
     cdn_signing_secret_arn: str
     log_retention_days: int
     alarm_email: str | None
+    # "owner/repo" slug the GitHub OIDC trust conditions in CiStack match
+    # against (`token.actions.githubusercontent.com:sub`).
+    github_repo: str
 
 
 def load_config(env: str) -> EnvConfig:
@@ -73,4 +76,5 @@ def load_config(env: str) -> EnvConfig:
         cdn_signing_secret_arn=get("CDN_SIGNING_SECRET_ARN", _PLACEHOLDER_ARN),
         log_retention_days=30 if env == "dev" else 90,
         alarm_email=get_opt("ALARM_EMAIL"),
+        github_repo=get("GITHUB_REPO", "bquinn17/OpenNewsletter"),
     )

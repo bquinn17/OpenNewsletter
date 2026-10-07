@@ -40,6 +40,9 @@ hkdf = "0.12"
 sha2 = "0.10"
 aes-gcm = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Already in the resolved dependency tree via reqwest; made direct here to
+# parse `endpoint` into a host for the allowlist check (M13 hardening).
+url = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["sync", "time"] }

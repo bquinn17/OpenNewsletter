@@ -129,6 +129,21 @@ pub const NOTIFY_TICK_CYCLE_CUTOFF_SECS: u64 = 60;
 /// encryption (`07-notifications.md` §5, M11 decision D6).
 pub const MAX_PUSH_PAYLOAD_BYTES: usize = 3_000;
 
+/// Known Web Push service hosts a subscription `endpoint` is allowed to
+/// target (`plans/03-api-contract.md` §10.1, M13 hardening). Each entry is
+/// either an exact host or, when prefixed with `.`, a suffix match against
+/// the parsed URL host — never a substring match against the raw string,
+/// which userinfo tricks like `https://fcm.googleapis.com@evil.com/` could
+/// otherwise defeat.
+pub const PUSH_ENDPOINT_HOST_SUFFIXES: &[&str] = &[
+    "fcm.googleapis.com",
+    "updates.push.services.mozilla.com",
+    ".push.services.mozilla.com",
+    "web.push.apple.com",
+    ".notify.windows.com",
+    ".push.apple.com",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

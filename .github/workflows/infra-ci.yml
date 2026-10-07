@@ -1,0 +1,113 @@
+# Trigger: pull requests and pushes to main that touch infra/** or this
+# workflow file.
+# Purpose: lint/type-check the CDK app, run its unit tests, and synth (no AWS
+# credentials needed — Lambda assets fall back to a stub when
+# backend/target/lambda/*/bootstrap is missing, see lambda_assets.py). On a
+# pull request, and only once the repo variable AWS_DIFF_ROLE_ARN is set, a
+# second job also posts a read-only `cdk diff` against prod as a PR comment.
+name: infra-ci
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - run: ruff check .
+
+      - run: ruff format --check .
+
+      - run: mypy --strict .
+
+      - run: pytest tests/ -q
+
+      # Needed for `npx aws-cdk@2`, not for the Python app itself.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - run: npx aws-cdk@2 synth --context env=dev --quiet
+
+      - run: npx aws-cdk@2 synth --context env=prod --quiet
+
+  diff:
+    needs: ci
+    if: github.event_name == 'pull_request' && vars.AWS_DIFF_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    # Same EnvConfig inputs as backend-deploy.yml. Without them config.py
+    # falls back to placeholder domains/ARNs and every diff shows prod's
+    # real values being replaced.
+    env:
+      ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
+      API_DOMAIN: ${{ vars.API_DOMAIN }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
+      COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+      GOOGLE_OAUTH_SECRET_ARN: ${{ vars.GOOGLE_OAUTH_SECRET_ARN }}
+      FACEBOOK_OAUTH_SECRET_ARN: ${{ vars.FACEBOOK_OAUTH_SECRET_ARN }}
+      VAPID_SECRET_ARN: ${{ vars.VAPID_SECRET_ARN }}
+      CDN_SIGNING_SECRET_ARN: ${{ vars.CDN_SIGNING_SECRET_ARN }}
+      ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DIFF_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: cdk diff against prod
+        run: |
+          npx aws-cdk@2 diff --context env=prod > diff_output.txt 2>&1 || true
+          # Keep the PR comment body well under GitHub's limit.
+          head -c 60000 diff_output.txt > diff_output.truncated.txt
+
+      - uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: cdk-diff-prod
+          path: infra/diff_output.truncated.txt

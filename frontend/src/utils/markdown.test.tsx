@@ -71,6 +71,12 @@ describe("MarkdownBody sanitization", () => {
     expect(screen.queryByAltText("missing")).not.toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
+
+  it("renders markdown headers rather than stripping them", () => {
+    render(<MarkdownBody body={"# Big heading\n\n## Smaller heading"} images={[]} groupId="g1" />);
+    expect(screen.getByRole("heading", { level: 1, name: "Big heading" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Smaller heading" })).toBeInTheDocument();
+  });
 });
 
 describe("MarkdownBody with allowImages=false (comments, `09-engagement.md` §5)", () => {

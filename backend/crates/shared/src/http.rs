@@ -125,8 +125,15 @@ pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> 
 }
 
 fn error_type_uri(code: ApiErrorCode) -> String {
-    match std::env::var("API_BASE_URL") {
-        Ok(base) if !base.is_empty() => {
+    error_type_uri_from(std::env::var("API_BASE_URL").ok().as_deref(), code)
+}
+
+/// Pure core of [`error_type_uri`], taking the env var's value directly so
+/// both branches are unit-testable without mutating process-wide env state
+/// (`cargo test` runs unit tests in parallel within one process).
+fn error_type_uri_from(base: Option<&str>, code: ApiErrorCode) -> String {
+    match base {
+        Some(base) if !base.is_empty() => {
             format!("{}/errors/{}", base.trim_end_matches('/'), code.slug())
         }
         _ => format!("/errors/{}", code.slug()),
@@ -214,6 +221,34 @@ mod tests {
         assert_eq!(parsed["correlationId"], "01HXCORRELATION");
         assert_eq!(parsed["detail"], "not a member of group 01HG2");
         assert!(parsed.get("fieldErrors").is_none());
+    }
+
+    #[test]
+    fn error_type_uri_falls_back_to_a_relative_path_when_api_base_url_is_unset() {
+        assert_eq!(
+            error_type_uri_from(None, ApiErrorCode::Forbidden),
+            "/errors/forbidden"
+        );
+        assert_eq!(
+            error_type_uri_from(Some(""), ApiErrorCode::Forbidden),
+            "/errors/forbidden"
+        );
+    }
+
+    #[test]
+    fn error_type_uri_prefixes_the_configured_api_base_url() {
+        assert_eq!(
+            error_type_uri_from(Some("https://api.example.com"), ApiErrorCode::Forbidden),
+            "https://api.example.com/errors/forbidden"
+        );
+    }
+
+    #[test]
+    fn error_type_uri_trims_a_trailing_slash_on_the_base_url() {
+        assert_eq!(
+            error_type_uri_from(Some("https://api.example.com/"), ApiErrorCode::Forbidden),
+            "https://api.example.com/errors/forbidden"
+        );
     }
 
     #[test]

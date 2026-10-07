@@ -1,0 +1,73 @@
+# Trigger: pull requests and pushes to main that touch backend/**,
+# shared/openapi.yaml (the contract test), rust-toolchain.toml, or this
+# workflow file.
+# Purpose: fmt, clippy, cargo-deny, the full test suite (including the
+# DynamoDB-Local-backed integration tests via testcontainers) and a Lambda
+# build sanity check — the PR gate for anything under backend/.
+name: backend-ci
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "shared/openapi.yaml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "shared/openapi.yaml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup on ubuntu-latest reads ../rust-toolchain.toml (repo root) and
+      # installs/pins the toolchain it names — no dtolnay/rust-toolchain step.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - run: cargo deny check
+
+      # testcontainers starts DynamoDB Local itself against the runner's
+      # stock Docker daemon — no DOCKER_HOST override and no service-container
+      # setup needed (unlike the two dev machines in CLAUDE.md). There is no
+      # `integration` feature flag: this single `cargo test` runs the unit,
+      # contract and DynamoDB-Local integration suites together.
+      - run: cargo test --workspace
+
+      # ubuntu-latest's system Python refuses `pip install` (PEP 668).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cargo-lambda
+        run: pip install cargo-lambda
+
+      - run: cargo lambda build --release --arm64

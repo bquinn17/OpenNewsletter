@@ -35,10 +35,12 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from .config import EnvConfig
 from .lambda_assets import lambda_code
+from .ssm_refs import http_api_id_parameter_name
 
 # Defaults for newly-created groups, baked into every handler's env
 # (`plans/01-infrastructure-cdk.md` §6.4).
@@ -379,6 +381,16 @@ class ApiStack(cdk.Stack):
 
         cdk.CfnOutput(self, "ApiId", value=self.api.api_id)
         cdk.CfnOutput(self, "ApiEndpoint", value=self.api_endpoint)
+
+        # Published for MonitoringStack to read via a CloudFormation dynamic
+        # reference (`ssm_refs.py`) rather than a cross-stack construct ref —
+        # the api id isn't known until deploy, and MonitoringStack is volatile.
+        ssm.StringParameter(
+            self,
+            "HttpApiIdParam",
+            parameter_name=http_api_id_parameter_name(config.env),
+            string_value=self.api.api_id,
+        )
 
     @property
     def api_endpoint(self) -> str:

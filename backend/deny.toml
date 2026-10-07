@@ -1,0 +1,113 @@
+# `cargo deny check` policy for the backend workspace (M13 hardening).
+# Run from `backend/`. See `plans/coding-standards.md` §2.2, §2.10.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# This section is considered when running `cargo deny check advisories`.
+[advisories]
+ignore = [
+    # No fix exists in the `rsa` crate itself (patched = [] upstream); the
+    # RustCrypto team's own tracking issue is still open. `lambda-media`
+    # uses `rsa::Pkcs1v15Sign` once per `GET /media-cookie` call to sign
+    # CloudFront cookies (`08-media-uploads.md` §4.3) — the exploit needs an
+    # attacker who can observe fine-grained timing of that signing call over
+    # the network to attempt RSA key recovery. Mitigated, not fixed: since
+    # M13 `cloudfront::sign_policy` signs with `sign_with_rng`, so the key
+    # operation is blinded, and the timing is observed only through API
+    # Gateway + Lambda jitter. Track upstream (RustCrypto/RSA#680/#702) and
+    # drop this ignore when a fixed `rsa` ships.
+    { id = "RUSTSEC-2023-0071", reason = "rsa crate has no fix available upstream (patched = []); used by lambda-media for CloudFront cookie signing — blinded via sign_with_rng since M13" },
+
+    # aws-smithy-http-client pins a legacy hyper-rustls 0.24 / rustls 0.21 /
+    # rustls-webpki 0.101 branch alongside the current one; `cargo update`
+    # cannot move it (0 compatible versions in that branch). These three are
+    # all in rustls-webpki's X.509 name-constraint handling and a CRL-parsing
+    # panic — reachable only after a CA has already mis-issued a certificate,
+    # not by a normal network attacker. Fixing requires an upstream
+    # aws-config/aws-smithy-http-client bump (or a feature flag drop), out of
+    # scope for this hardening pass; re-check on the next AWS SDK bump.
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 has no compatible fix; pinned transitively by aws-smithy-http-client's legacy rustls 0.21 branch — see deny.toml comment" },
+    { id = "RUSTSEC-2026-0099", reason = "same legacy rustls-webpki 0.101.7 branch as RUSTSEC-2026-0098" },
+    { id = "RUSTSEC-2026-0104", reason = "same legacy rustls-webpki 0.101.7 branch as RUSTSEC-2026-0098" },
+
+    # Same legacy-branch situation as above, this time in `h2`: the fixed
+    # 0.4.x line was already bumped (see Cargo.lock), but an old h2 0.3.27 is
+    # also pinned, reached only through `bollard` (the Docker client behind
+    # `testcontainers`, a dev-dependency used solely to run DynamoDB Local in
+    # tests) — never part of a deployed Lambda.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 has no compatible fix; reached only via bollard/testcontainers (dev-only, DynamoDB Local test harness)" },
+
+    # Dev-only: both reached via `bollard`, the Docker client `testcontainers`
+    # uses to start DynamoDB Local for integration tests. Neither ships in a
+    # Lambda artifact. `tokio-tar`'s flaw is in parsing attacker-supplied tar
+    # files; the only tar content ours ever reads is the pinned, trusted
+    # `amazon/dynamodb-local` image layer.
+    { id = "RUSTSEC-2025-0111", reason = "tokio-tar has no maintained fix; reached only via bollard/testcontainers (dev-only), never parses untrusted tar input" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is unmaintained with no drop-in fix yet adopted by bollard; reached only via bollard/testcontainers (dev-only)" },
+
+    # Not a vulnerability — `paste` (a proc-macro crate) is archived/
+    # unmaintained upstream with no safe-upgrade alternative yet adopted by
+    # its dependents (`pulp`/`rav1e`, both pulled in transitively by
+    # `image`'s AVIF support). No known advisory beyond "unmaintained".
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained (no vulnerability); pulled in transitively via image's AVIF support (pulp/rav1e), no fix adopted upstream yet" },
+]
+
+# This section is considered when running `cargo deny check licenses`.
+[licenses]
+# Permissive licenses only, matching `coding-standards.md` §2.10
+# ("MIT/Apache-2.0/BSD-equivalent"). Every crate actually resolved in this
+# workspace's dependency graph (`cargo deny check licenses` with an empty
+# allow list, M13 audit) uses one of these, or an OR-expression where one of
+# these is an alternative:
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # Unicode Character Database license (OSI-approved, BSD-equivalent in
+    # substance). Pulled in transitively by `idna`/`idna_adapter` (used by
+    # the `url` crate, itself used by `reqwest` and now `lambda-push`) via
+    # `icu_normalizer`/`icu_properties` — the exact crate
+    # `domain::engagement`'s module doc deliberately avoided depending on
+    # directly for the emoji predicate, on these license grounds. It turns
+    # out to be unavoidable transitively anyway; flagged for the lead rather
+    # than silently allowed.
+    "Unicode-3.0",
+    # Mozilla's bundled CA root data, pulled in by `webpki-roots` (part of
+    # the `reqwest` rustls-tls stack). A permissive, attribution-only data
+    # license, not a software copyleft license.
+    "CDLA-Permissive-2.0",
+    # NCSA/University of Illinois license — permissive, OSI-approved.
+    # Pulled in only via `libfuzzer-sys`, itself only a `cfg(fuzzing)`
+    # target-dependency of `rav1e` (via `image`'s AVIF support) that is
+    # never actually compiled in a normal build.
+    "NCSA",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = false
+
+# This section is considered when running `cargo deny check bans`.
+[bans]
+multiple-versions = "warn"
+# Default ("allow"): every workspace crate depends on its sibling crates
+# (domain, persistence, shared, ...) via bare `path = "../x"` with no
+# version requirement, which cargo-deny also reports as a "wildcard"
+# dependency. That's an internal workspace layout choice, not a real policy
+# concern, so this is left at the default rather than tightened.
+wildcards = "allow"
+
+# This section is considered when running `cargo deny check sources`.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

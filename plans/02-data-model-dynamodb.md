@@ -77,6 +77,7 @@ A user's membership in one group.
 | `role` | `admin` \| `member` |
 | `joined_at` | ISO-8601 |
 | `editions_answered` | number (denormalized; incremented in the publish-response transaction the first time a user publishes any answer in a given cycle) |
+| `last_answered_cycle` | `yyyymm` \| absent. The cycle `editions_answered` last counted. The bump is conditioned on this not already being the current cycle, so two concurrent first publishes count once (added M13; §4 #4). |
 
 Access patterns served:
 - "What groups am I in?" → `Query pk = USER#{user_id} AND begins_with(sk, GROUP#)`
@@ -462,6 +463,11 @@ The following operations MUST use `TransactWriteItems`:
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `vote_count -= 1` AND new `gsi1sk` AND `ADD votes_cast -1` on the tally (`votes_cast > 0`). The admin candidate delete removes each voter's vote together with the same tally decrement.
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items).
 4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky (`03-api-contract.md` §7.3). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. The transaction also increments `GroupMembership.editions_answered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
+
+   **Fixed M13: the pre-read alone wasn't enough.** Two concurrent first publishes to different questions both saw zero published rows and both bumped (`editions_answered` = 2). The bump `Update` now also sets `last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
+   - the bump's condition failed: retry without the bump, since the cycle is already counted
+   - only `TransactionConflict`s: retry unchanged (3 attempts in total)
+   - anything else: the cycle check lost, which surfaces as `CYCLE_NOT_OPEN`
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.member_count += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.member_count -= 1`.
 7. **Last-admin guard** (leave, kick, or demote a member who is currently an admin) — the write also carries a `ConditionCheck` that a *witness*, a different member, still has `role = admin`.

@@ -6,6 +6,7 @@
 
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
+use rsa::rand_core::OsRng;
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use sha1::{Digest, Sha1};
 use thiserror::Error;
@@ -41,9 +42,14 @@ pub fn policy_json(resource: &str, expires_at_epoch_seconds: i64) -> String {
 
 /// RSA PKCS#1 v1.5 signature over the SHA-1 digest of `policy` — the scheme
 /// CloudFront's signed cookies and signed URLs both require.
+///
+/// Signs with an RNG so `rsa` applies base blinding. The crate's private-key
+/// operation isn't constant-time (RUSTSEC-2023-0071, no fix upstream), and
+/// any member can trigger signing via `GET /media-cookie`. Blinding
+/// decorrelates the timing from the key; `deny.toml` records the residual risk.
 pub fn sign_policy(key: &RsaPrivateKey, policy: &[u8]) -> Result<Vec<u8>, CloudFrontError> {
     let digest = Sha1::digest(policy);
-    key.sign(Pkcs1v15Sign::new::<Sha1>(), &digest)
+    key.sign_with_rng(&mut OsRng, Pkcs1v15Sign::new::<Sha1>(), &digest)
         .map_err(|e| CloudFrontError::SignFailed(e.to_string()))
 }
 

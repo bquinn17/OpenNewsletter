@@ -6,12 +6,12 @@ React 18 + Vite + TypeScript + Tailwind app.
 
 ```bash
 cd frontend
-nvm use            # pick up .nvmrc → Node 20
+nvm use            # pick up .nvmrc → Node 24
 npm install
 npm run dev        # http://localhost:5173 — mock mode (see below)
 ```
 
-No `nvm`? `brew install node` (macOS) gives a current Node 20.x that satisfies `.nvmrc` — skip `nvm use`. See [`../plans/13-dev-environments.md` §0](../plans/13-dev-environments.md#0-workstation-setup) for full first-time setup per OS.
+Use nvm rather than Homebrew's `node` formula, which tracks the latest release instead of `.nvmrc`. See [`../plans/13-dev-environments.md` §0](../plans/13-dev-environments.md#0-workstation-setup) for full first-time setup per OS.
 
 ### Mock mode vs real mode
 

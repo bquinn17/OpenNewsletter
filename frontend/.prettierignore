@@ -1,3 +1,6 @@
 dist
 src/types/api.ts
 package-lock.json
+test-results
+playwright-report
+blob-report

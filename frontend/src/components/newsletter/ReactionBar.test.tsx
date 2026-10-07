@@ -141,6 +141,23 @@ describe("ReactionBar", () => {
     );
   });
 
+  it("toggles a pill off and keeps the server's count once the request succeeds", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.deleteReaction).mockResolvedValue({
+      reactionGroups: [],
+      myReactions: [],
+    });
+
+    const qc = renderBar([{ emoji: "🔥", count: 1, reactedByMe: true }]);
+
+    await user.click(screen.getByRole("button", { name: /React with 🔥, 1 reaction/ }));
+
+    // Optimistic removal, then confirmed by the server's response.
+    expect(cachedGroups(qc)).toEqual([]);
+    expect(api.engagement.deleteReaction).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "🔥");
+    await waitFor(() => expect(cachedGroups(qc)).toEqual([]));
+  });
+
   it("opens the picker and adds a new emoji", async () => {
     const user = userEvent.setup();
     vi.mocked(api.engagement.putReaction).mockResolvedValue({

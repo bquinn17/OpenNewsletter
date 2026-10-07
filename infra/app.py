@@ -7,8 +7,10 @@ Usage:
 """
 
 import aws_cdk as cdk
+
 from opennewsletter.api_stack import ApiStack
 from opennewsletter.auth_stack import AuthStack
+from opennewsletter.ci_stack import CiStack
 from opennewsletter.config import load_config
 from opennewsletter.data_stack import DataStack
 from opennewsletter.frontend_stack import FrontendStack
@@ -86,5 +88,14 @@ api_stack = ApiStack(
 monitoring_stack = MonitoringStack(
     app, f"MonitoringStack{suffix}", config=config, env=aws_env
 )
+# Deploy order only, no export: MonitoringStack resolves the SSM parameters
+# these two stacks write (`ssm_refs.py`), so on a fresh `--all` deploy they
+# must exist first.
+monitoring_stack.add_dependency(api_stack)
+monitoring_stack.add_dependency(media_persistent_stack)
+
+# Account-wide, not suffixed by env — deploying under either env context
+# manages the same CloudFormation stack (see ci_stack.py).
+ci_stack = CiStack(app, "CiStack", config=config, env=aws_env)
 
 app.synth()

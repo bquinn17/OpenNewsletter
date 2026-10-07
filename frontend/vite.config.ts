@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { VitePWA } from "vite-plugin-pwa";
+import { cspPlugin } from "./src/csp/cspPlugin";
 
 // `npm run dev:https` (`vite --mode https`) is the only mode that gets the
 // self-signed cert — Web Push's `PushManager.subscribe`/`Notification.requestPermission`
@@ -12,6 +13,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     ...(mode === "https" ? [basicSsl()] : []),
+    // `apply: "build"` (set inside `cspPlugin`) keeps this off `vite dev`
+    // entirely — never gated on `mode` here (`04-frontend-architecture.md` §13).
+    cspPlugin(),
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src/pwa",
@@ -53,6 +57,9 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
+    // Playwright owns `e2e/**` (`npm run e2e`) — its `*.spec.ts` files would
+    // otherwise also match Vitest's default include glob.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
     // `virtual:pwa-register` only resolves under `vite dev`/`vite build`; in
     // tests, `main.tsx`'s import is redirected to a no-op stand-in so
     // registering the real SW/Workbox machinery never runs under Vitest.

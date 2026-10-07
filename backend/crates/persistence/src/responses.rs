@@ -7,6 +7,7 @@ use crate::keys::{
     response_gsi1sk, response_pk, response_sk, user_pk,
 };
 use crate::repo::Repo;
+use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
 use chrono::{DateTime, Utc};
 use domain::{
@@ -128,15 +129,59 @@ pub struct ResponseSave<'a> {
 ///    (`RepoError::is_lost_race`) means this failed — the caller maps that to
 ///    409 `CYCLE_NOT_OPEN`.
 /// 3. IFF `bump_editions_answered`, an `Update` incrementing the caller's
-///    `GroupMembership.editionsAnswered`. The caller is responsible for the
-///    "first publish in this cycle" precondition (AP15) — this function just
-///    includes or omits the bump as told.
+///    `GroupMembership.editionsAnswered` and stamping `lastAnsweredCycle`,
+///    conditioned on `lastAnsweredCycle` not already being this cycle. The
+///    caller's AP15 pre-read ("first publish in this cycle") decides whether
+///    to ask for the bump; the marker makes it idempotent when two first
+///    publishes race past that pre-read (found M13).
+///
+/// Cancellations are told apart by their per-item reasons:
+/// - **The bump's marker condition failed.** A concurrent publish already
+///   counted this cycle, so the transaction is retried without the bump.
+/// - **A `TransactionConflict`** with a concurrent write to one of the same
+///   items (e.g. the other racing publish's bump). The transaction is retried
+///   unchanged, up to [`SAVE_ATTEMPTS`] attempts in total.
+/// - **Anything else**, i.e. the cycle check, is returned as a lost race.
 pub async fn save_response(
     repo: &Repo,
     save: &ResponseSave<'_>,
     now: DateTime<Utc>,
     bump_editions_answered: bool,
 ) -> Result<(), RepoError> {
+    let mut bump = bump_editions_answered;
+    let mut attempt = 1;
+    loop {
+        match save_response_once(repo, save, now, bump).await {
+            Ok(()) => return Ok(()),
+            Err(SaveFailure::AlreadyCounted) => bump = false,
+            Err(SaveFailure::Conflict(_)) if attempt < SAVE_ATTEMPTS => {}
+            Err(SaveFailure::Conflict(e) | SaveFailure::Other(e)) => return Err(e),
+        }
+        attempt += 1;
+    }
+}
+
+/// Total tries [`save_response`] makes when transactions keep conflicting.
+const SAVE_ATTEMPTS: u32 = 3;
+
+/// Positions in the transaction's item list (response update first).
+const CYCLE_CHECK_ITEM_INDEX: usize = 1;
+const BUMP_ITEM_INDEX: usize = 2;
+
+enum SaveFailure {
+    /// The bump's `lastAnsweredCycle` condition failed: this cycle is already counted.
+    AlreadyCounted,
+    /// Cancelled only by `TransactionConflict`s; safe to retry as-is.
+    Conflict(RepoError),
+    Other(RepoError),
+}
+
+async fn save_response_once(
+    repo: &Repo,
+    save: &ResponseSave<'_>,
+    now: DateTime<Utc>,
+    bump_editions_answered: bool,
+) -> Result<(), SaveFailure> {
     let kind_str = match save.kind {
         QuestionKind::Text => "text",
         QuestionKind::Poll => "poll",
@@ -247,8 +292,14 @@ pub async fn save_response(
             .table_name(&repo.table)
             .key(attr::PK, AttributeValue::S(user_pk(save.user_id)))
             .key(attr::SK, AttributeValue::S(membership_sk(save.group_id)))
-            .update_expression("SET editions_answered = editions_answered + :one")
+            .update_expression(
+                "SET editions_answered = editions_answered + :one, last_answered_cycle = :cycle",
+            )
+            .condition_expression(
+                "attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle",
+            )
             .expression_attribute_values(":one", AttributeValue::N("1".into()))
+            .expression_attribute_values(":cycle", AttributeValue::S(save.cycle_id.to_string()))
             .build()
             .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
         items.push(TransactWriteItem::builder().update(bump).build());
@@ -258,6 +309,44 @@ pub async fn save_response(
     for i in items {
         req = req.transact_items(i);
     }
-    req.send().await.map_err(error::from_transact_write_error)?;
-    Ok(())
+    let err = match req.send().await {
+        Ok(_) => return Ok(()),
+        Err(err) => err,
+    };
+    let codes: Vec<Option<String>> = match err.as_service_error() {
+        Some(TransactWriteItemsError::TransactionCanceledException(e)) => e
+            .cancellation_reasons()
+            .iter()
+            .map(|r| r.code().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let err = error::from_transact_write_error(err);
+    let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
+    if bump_editions_answered
+        && code_at(BUMP_ITEM_INDEX) == Some("ConditionalCheckFailed")
+        && code_at(CYCLE_CHECK_ITEM_INDEX) != Some("ConditionalCheckFailed")
+    {
+        return Err(SaveFailure::AlreadyCounted);
+    }
+    let conflict_only = codes
+        .iter()
+        .any(|c| c.as_deref() == Some("TransactionConflict"))
+        && codes.iter().all(|c| {
+            matches!(
+                c.as_deref(),
+                None | Some("None") | Some("TransactionConflict")
+            )
+        });
+    if conflict_only {
+        Err(SaveFailure::Conflict(err))
+    } else {
+        Err(SaveFailure::Other(err))
+    }
+}
+
+impl From<RepoError> for SaveFailure {
+    fn from(e: RepoError) -> Self {
+        SaveFailure::Other(e)
+    }
 }

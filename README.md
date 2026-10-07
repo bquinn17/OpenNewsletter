@@ -13,17 +13,45 @@ A multi-tenant PWA where small groups of friends collaboratively produce a month
 
 ## Status
 
-Pre-release. See [`plans/12-build-order.md`](plans/12-build-order.md) for the milestone sequence and [`plans/PROGRESS.md`](plans/PROGRESS.md) for where things stand: M0 and M2–M6 are code-complete, while M1 operator setup and all deploys are pending, and M7 (frontend) is next.
+Pre-release. Milestones M0–M13 are code-complete, but nothing is deployed yet: the AWS deploy gates wait on the remaining operator setup (OAuth apps and the CloudFront signing key). See [`plans/PROGRESS.md`](plans/PROGRESS.md) for where things stand and [`plans/12-build-order.md`](plans/12-build-order.md) for the milestone sequence.
 
 ## Local development
 
-This repo is developed on two machines — Windows/WSL2 (Ubuntu 20.04) and macOS (Apple Silicon) — with different first-time toolchain setup on each. See [`plans/13-dev-environments.md` §0](plans/13-dev-environments.md#0-workstation-setup) before running anything below for the first time.
+This repo is developed on macOS (Apple Silicon) and Windows/WSL2 (Ubuntu 20.04), with different first-time toolchain setup on each. Follow [`plans/13-dev-environments.md` §0](plans/13-dev-environments.md#0-workstation-setup) once before running anything below.
 
-Full local dev instructions land alongside Milestone 3.5 ("Dev environment online"). Until then:
+**Frontend, no backend needed.** `npm run dev` serves the app against an in-memory mock API (`VITE_USE_MOCKS=true` in `.env.development`), so you can work on the UI without AWS:
 
-- Frontend: `cd frontend && npm install && npm run dev`
-- Backend: `cd backend && cargo build` (requires Rust 1.79+ via `rust-toolchain.toml`)
-- Infra: `cd infra && pip install -r requirements.txt && cdk synth --context env=dev`
+```sh
+cd frontend && npm install && npm run dev        # http://localhost:5173
+```
+
+**Backend.** The tests include DynamoDB Local integration tests, so they need Docker. On macOS and WSL2 the socket needs pointing at explicitly; see [`plans/13-dev-environments.md` §10.1](plans/13-dev-environments.md):
+
+```sh
+cd backend && cargo test --workspace
+```
+
+**Infra.**
+
+```sh
+cd infra && python3.12 -m venv .venv && source .venv/bin/activate \
+  && pip install -r requirements.txt \
+  && npx aws-cdk@2 synth --quiet
+```
+
+**Against a real dev stack** (needs AWS credentials): `make deploy-dev && make seed && make fe`. See [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
+## Contributing
+
+1. Branch from `main`.
+2. Make sure the checks CI runs pass locally. The exact commands, with per-machine environment variables, are in [`CLAUDE.md`](CLAUDE.md) under "Running the Rust tests" and "Frontend checks":
+   - **Backend**: `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`
+   - **Frontend**: `npm run typecheck && npx eslint . && npx prettier --check . && npm test && npm run build`, plus `npm run e2e` (Playwright against a mock-mode build)
+   - **Infra**: `ruff check . && ruff format --check . && pytest tests/ && npx aws-cdk@2 synth --quiet`
+3. If you change an API route, update [`shared/openapi.yaml`](shared/openapi.yaml) and the contract test's `ROUTE_TABLE`, then run `scripts/codegen_types.sh`.
+4. Open a PR. `frontend-ci`, `backend-ci` and `infra-ci` run on the paths you touched. They're described in [`.github/workflows/README.md`](.github/workflows/README.md).
+
+The pre-PR checklist is in [`plans/coding-standards.md`](plans/coding-standards.md) §8.
 
 ## Conventions
 

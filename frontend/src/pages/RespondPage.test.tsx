@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { AuthContext, type AuthValue } from "../auth/useAuth";
 import { uploadToS3 } from "../utils/uploadToS3";
 import type { components } from "../types/api";
@@ -335,5 +335,132 @@ describe("RespondPage", () => {
       pollOptionId: "optB",
       publish: true,
     });
+  });
+
+  it("doesn't save a poll pick before Publish is pressed", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q2",
+          kind: "poll",
+          prompt: "Pick one",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: true,
+          pollOptions: [
+            { optionId: "optA", label: "Option A" },
+            { optionId: "optB", label: "Option B" },
+          ],
+          myResponse: null,
+        },
+      ]),
+    );
+
+    renderAt("q2");
+
+    const optionButton = await screen.findByRole("button", { name: "Option B" });
+    await act(async () => {
+      fireEvent.click(optionButton);
+      await flush();
+    });
+
+    expect(saveMyResponse).not.toHaveBeenCalled();
+    expect(optionButton).toHaveClass("border-grape");
+  });
+
+  it("saves immediately when the caller changes an already-published poll pick", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q2",
+          kind: "poll",
+          prompt: "Pick one",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: true,
+          pollOptions: [
+            { optionId: "optA", label: "Option A" },
+            { optionId: "optB", label: "Option B" },
+          ],
+          myResponse: {
+            responseId: "r2",
+            status: "published",
+            imageMediaIds: [],
+            pollOptionId: "optA",
+            updatedAt: "2026-06-02T00:00:00Z",
+            publishedAt: "2026-06-02T00:00:00Z",
+          },
+        },
+      ]),
+    );
+    saveMyResponse.mockResolvedValue({
+      responseId: "r2",
+      userId: "u_quinn",
+      questionId: "q2",
+      groupId: "g1",
+      cycleId: "c1",
+      kind: "poll",
+      status: "published",
+      pollOptionId: "optB",
+      imageMediaIds: [],
+      updatedAt: "2026-06-03T00:00:00Z",
+      publishedAt: "2026-06-02T00:00:00Z",
+    });
+
+    renderAt("q2");
+
+    const optionButton = await screen.findByRole("button", { name: "Option B" });
+    await act(async () => {
+      fireEvent.click(optionButton);
+      await flush();
+    });
+
+    // No "Publish" click needed — a pick on an already-published poll
+    // response is sticky and saves right away (`03-api-contract.md` §7.3).
+    expect(saveMyResponse).toHaveBeenCalledWith("g1", "c1", "q2", {
+      kind: "poll",
+      pollOptionId: "optB",
+      publish: false,
+    });
+  });
+
+  it("shows a closed message and stops saving when changing a poll pick 409s", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q2",
+          kind: "poll",
+          prompt: "Pick one",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: true,
+          pollOptions: [
+            { optionId: "optA", label: "Option A" },
+            { optionId: "optB", label: "Option B" },
+          ],
+          myResponse: {
+            responseId: "r2",
+            status: "published",
+            imageMediaIds: [],
+            pollOptionId: "optA",
+            updatedAt: "2026-06-02T00:00:00Z",
+            publishedAt: "2026-06-02T00:00:00Z",
+          },
+        },
+      ]),
+    );
+    saveMyResponse.mockRejectedValue(new ApiError(409, "CYCLE_NOT_OPEN", null));
+
+    renderAt("q2");
+
+    const optionButton = await screen.findByRole("button", { name: "Option B" });
+    await act(async () => {
+      fireEvent.click(optionButton);
+      await flush();
+    });
+
+    expect(
+      await screen.findByText("This edition has closed — your last saved version stands."),
+    ).toBeInTheDocument();
   });
 });

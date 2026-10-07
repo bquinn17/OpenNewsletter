@@ -60,7 +60,12 @@ async fn subscribe_rejects_a_malformed_p256dh() {
     let err = handlers::subscribe(
         &state,
         &UserId::new("u1"),
-        subscribe_request("https://example.com/push", "not-base64url!!", &auth, None),
+        subscribe_request(
+            "https://fcm.googleapis.com/push",
+            "not-base64url!!",
+            &auth,
+            None,
+        ),
     )
     .await
     .expect_err("bad p256dh");
@@ -77,7 +82,7 @@ async fn subscribe_defaults_a_missing_user_agent_to_empty_string() {
     handlers::subscribe(
         &state,
         &UserId::new("u1"),
-        subscribe_request("https://example.com/push/1", &p256dh, &auth, None),
+        subscribe_request("https://fcm.googleapis.com/push/1", &p256dh, &auth, None),
     )
     .await
     .expect("subscribe succeeds");
@@ -94,7 +99,7 @@ async fn resubscribing_resets_failures_but_keeps_created_at_and_last_success_at(
     let state = common::test_state(repo, Arc::new(common::FakePushSender::new()));
     let user_id = UserId::new("u1");
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
 
     handlers::subscribe(
         &state,
@@ -189,7 +194,7 @@ async fn subscribing_an_eleventh_endpoint_evicts_the_least_recently_successful()
     handlers::subscribe(
         &state,
         &user_id,
-        subscribe_request("https://example.com/push/new", &p256dh, &auth, None),
+        subscribe_request("https://fcm.googleapis.com/push/new", &p256dh, &auth, None),
     )
     .await
     .expect("11th subscribe succeeds");
@@ -209,7 +214,7 @@ async fn subscribing_an_eleventh_endpoint_evicts_the_least_recently_successful()
         listed
             .items
             .iter()
-            .any(|s| s.endpoint == "https://example.com/push/new"),
+            .any(|s| s.endpoint == "https://fcm.googleapis.com/push/new"),
         "the new subscription was kept"
     );
 }
@@ -220,7 +225,7 @@ async fn unsubscribe_is_idempotent() {
     let state = common::test_state(repo, Arc::new(common::FakePushSender::new()));
     let user_id = UserId::new("u1");
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
 
     handlers::subscribe(
         &state,
@@ -322,7 +327,7 @@ async fn test_push_delivered_resets_failures_and_sets_last_success_at() {
     let sender = Arc::new(common::FakePushSender::new());
     let state = common::test_state(repo, sender.clone());
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
     common::put_subscription(
         &state.repo,
         "u1",
@@ -361,7 +366,7 @@ async fn test_push_expired_deletes_the_subscription() {
     let sender = Arc::new(common::FakePushSender::new());
     let state = common::test_state(repo, sender.clone());
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
     common::put_subscription(
         &state.repo,
         "u1",
@@ -398,7 +403,7 @@ async fn test_push_failure_increments_without_deleting_before_the_cap() {
     let sender = Arc::new(common::FakePushSender::new());
     let state = common::test_state(repo, sender.clone());
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
     common::put_subscription(
         &state.repo,
         "u1",
@@ -436,7 +441,7 @@ async fn test_push_failure_deletes_the_subscription_at_the_cap() {
     let sender = Arc::new(common::FakePushSender::new());
     let state = common::test_state(repo, sender.clone());
     let (p256dh, auth) = common::make_subscriber_keys();
-    let endpoint = "https://example.com/push/1";
+    let endpoint = "https://fcm.googleapis.com/push/1";
     common::put_subscription(
         &state.repo,
         "u1",

@@ -20,7 +20,10 @@ A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `py
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
    ```
    Open a new shell (or run `. "$HOME/.cargo/env"`) so `cargo` is on `PATH`; if rustup was installed with `--no-modify-path`, add that line to `~/.zshrc` yourself. `rust-toolchain.toml` then pulls the pinned Rust version + `rustfmt` + `clippy` automatically on first use.
-2. `brew install colima docker node coreutils` — macOS has no native Docker Engine (Colima supplies the daemon) and no `timeout` (coreutils supplies `gtimeout`).
+2. `brew install colima docker nvm coreutils` — macOS has no native Docker Engine (Colima supplies the daemon) and no `timeout` (coreutils supplies `gtimeout`). Node comes from nvm, not Homebrew's `node` formula, so the version follows `.nvmrc` (Node 24). Add nvm to `~/.zshrc` as `brew info nvm` describes, then from the repo root:
+   ```bash
+   nvm install && nvm alias default 24
+   ```
 3. `colima start --cpu 4 --memory 6 --vm-type vz`. Colima points the `docker` CLI at itself automatically, but `testcontainers` (used by the Rust integration tests) needs its own env vars — add both to `~/.zshrc`:
    ```bash
    export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
@@ -71,7 +74,7 @@ This is the machine the repo was originally built on. Docker runs rootless under
    ```bash
    cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
    ```
-6. Node: install per `.nvmrc` (Node 20) via `nvm`.
+6. Node: install per `.nvmrc` (Node 24) via `nvm`: `nvm install && nvm alias default 24`.
 
 **Verify your setup**
 ```bash
@@ -244,13 +247,11 @@ The test pyramid in [`11-testing-ci-cd.md`](11-testing-ci-cd.md) stands; this se
 | Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Same as planned. |
 | Contract test (OpenAPI ↔ Rust struct round-trip) | ✅ default | ✅ | Pure; runs under `cargo test`. |
 | CDK assertions (`pytest infra/tests/`) | ✅ default | ✅ | Pure synth, no AWS calls. |
-| Rust integration (DDB-local via `testcontainers`) | ⚙️ opt-in: `cargo test --features integration` | ✅ | Needs Docker. Devs don't need to run these to land work. |
-| Playwright E2E | Optional, against `dev` | ✅ nightly + on demand | Targets the deployed `dev` stack or a per-PR `ci-pr-{n}` stack. |
+| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag (decided M13, `11` §2.4). |
+| Playwright E2E | ✅ `npm run e2e` (mock project, no backend) | ✅ nightly + on demand | `mock` project runs against a mock-mode production build; the `dev` project needs `E2E_BASE_URL` and a deployed stack (`11` §4.3). |
 | Manual smoke | Required against your `dev` stack before merging risky changes | — | The seed → click-through → tick → verify loop. |
 
-The change vs. the original plan: **integration tests are a CI responsibility, not a per-commit local responsibility.** Devs run unit tests on every save and rely on CI for integration. The DDB-local container is still used in CI by `testcontainers`, so coverage is unchanged — only the developer's local machine is freed from running it.
-
-If a CI integration test fails and you need to debug locally, opt in with `cargo test --features integration` and the same `testcontainers` path runs on your machine.
+The original plan made integration tests CI-only behind a `--features integration` flag. That flag was never built: `cargo test --workspace` runs everything, so local runs need Docker (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
 
 ### 10.1 Docker socket by platform (required for any Docker-backed test)
 

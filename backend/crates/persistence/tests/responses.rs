@@ -411,6 +411,87 @@ async fn a_second_publish_in_the_same_cycle_does_not_bump_editions_answered_agai
     assert_eq!(updated_membership.editions_answered, 1);
 }
 
+/// Two concurrent first-time publishes to different questions both pass the
+/// handler's AP15 pre-read, so both ask for the bump. The `lastAnsweredCycle`
+/// marker in the transaction must still count the cycle exactly once
+/// (regression for the M13 double-count).
+#[tokio::test]
+async fn concurrent_first_publishes_to_different_questions_count_the_cycle_once() {
+    let (_c, repo) = common::make_repo().await;
+    newsletters::write_status_transition(&repo, &open_newsletter("gconcpub", "202606"))
+        .await
+        .unwrap();
+    let m = common::membership("u1", "gconcpub", domain::Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    let group_id = GroupId::new("gconcpub");
+    let cycle_id = CycleId::new("202606");
+    let user_id = UserId::new("u1");
+    let q1 = QuestionId::new("q1");
+    let q2 = QuestionId::new("q2");
+    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let save1 = text_save(&group_id, &cycle_id, &q1, &user_id, "answer one", &[], true);
+    let save2 = text_save(&group_id, &cycle_id, &q2, &user_id, "answer two", &[], true);
+
+    let (r1, r2) = tokio::join!(
+        responses::save_response(&repo, &save1, now, true),
+        responses::save_response(&repo, &save2, now, true),
+    );
+    r1.unwrap();
+    r2.unwrap();
+
+    let updated_membership = groups::get_membership(&repo, &user_id, &group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated_membership.editions_answered, 1);
+    for q in [&q1, &q2] {
+        let saved = responses::get_my_response(&repo, &group_id, &cycle_id, q, &user_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.status, ResponseStatus::Published);
+    }
+}
+
+#[tokio::test]
+async fn a_repeated_bump_request_in_the_same_cycle_still_saves_and_counts_once() {
+    let (_c, repo) = common::make_repo().await;
+    newsletters::write_status_transition(&repo, &open_newsletter("grebump", "202606"))
+        .await
+        .unwrap();
+    let m = common::membership("u1", "grebump", domain::Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    let group_id = GroupId::new("grebump");
+    let cycle_id = CycleId::new("202606");
+    let user_id = UserId::new("u1");
+    let q1 = QuestionId::new("q1");
+    let q2 = QuestionId::new("q2");
+    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+
+    let first = text_save(&group_id, &cycle_id, &q1, &user_id, "one", &[], true);
+    responses::save_response(&repo, &first, now, true)
+        .await
+        .unwrap();
+    // A stale pre-read asks for the bump again: the save must still land.
+    let second = text_save(&group_id, &cycle_id, &q2, &user_id, "two", &[], true);
+    responses::save_response(&repo, &second, now, true)
+        .await
+        .unwrap();
+
+    let membership = groups::get_membership(&repo, &user_id, &group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(membership.editions_answered, 1);
+    let saved = responses::get_my_response(&repo, &group_id, &cycle_id, &q2, &user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.body.as_deref(), Some("two"));
+}
+
 #[tokio::test]
 async fn save_response_is_a_lost_race_when_the_cycle_is_not_open() {
     let (_c, repo) = common::make_repo().await;

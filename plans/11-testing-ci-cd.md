@@ -31,9 +31,10 @@ In `domain/`, `persistence/keys.rs`, and `shared/`. No IO. Run on every `cargo t
 
 Mandatory unit-test surfaces:
 - `keys.rs` — every key-builder function (gold-master strings)
-- `shared::config` — env parsing
-- `shared::auth::JwtVerifier` — JWKS handling (with a test JWK)
-- Any pure validation function (markdown allowlist, emoji predicate, image MIME check, etc.)
+- Env-derived behaviour in library crates. Since M13 that's `shared::http::error_type_uri_from`; `shared::config` turned out to be constants only, and each Lambda's `main.rs` env reads are entry glue (`coding-standards.md` §2.3).
+- Any pure validation function (emoji predicate, image MIME check, push-endpoint host allowlist, field validators, etc.). Markdown sanitising is frontend-only (`coding-standards.md` §3.9) and tested in Vitest.
+
+**Corrected M13:** this list used to require a `shared::auth::JwtVerifier`. No such type exists, and none should: the API Gateway Cognito JWT authorizer verifies issuer, audience, signature and expiry before a Lambda runs (`05-auth-flow.md` §6), and handlers only read the verified claims.
 
 ### 2.2 Integration (`backend/tests/`)
 
@@ -65,27 +66,18 @@ Each route's YAML entry needs at least one `example` per request and response bo
 
 ### 2.4 Running locally
 
-By default, `cargo test` runs **unit tests only** — pure, no IO, no Docker, no AWS. This is the inner loop, intended to run on every save (`cargo watch -x test`).
-
-Integration tests (the DDB-local-backed suite in §2.2) are gated behind a feature flag and are **CI-only by default**. Developers don't need Docker or DynamoDB Local on their machines. See [`13-dev-environments.md` §10](13-dev-environments.md) for the full test-placement matrix.
+**Decided M13: there is no `integration` feature flag.** The original plan gated the DynamoDB Local suite behind `--features integration`; it never was. Integration tests live per crate under `crates/<crate>/tests/` (using `persistence`'s `test-utils` feature and `make_test_repo()`), and plain `cargo test --workspace` runs them along with the unit and contract tests. They need a reachable Docker daemon; see [`13-dev-environments.md` §10.1](13-dev-environments.md) for the per-machine socket setup.
 
 ```bash
 cd backend
-
-# Inner loop (default): unit + contract tests, ~sub-second.
-cargo test
-cargo clippy --all-targets -- -D warnings
 cargo fmt --check
-
-# Opt-in: integration tests against DDB-local. Requires Docker.
-# Used to debug a failing CI integration test locally.
-cargo test --features integration
-cargo test --features integration --test lifecycle   # one suite
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace                     # unit + contract + DDB-local integration
+cargo test -p domain                       # contract test only, no Docker
+cargo test -p lambda-questions --test lifecycle   # one suite
 ```
 
-When `--features integration` is passed, the `testcontainers` crate auto-starts a DDB-local container per test process — no manual `docker run` needed. One container per test binary, parallelism via per-test unique table names.
-
-CI runs `cargo test --features integration` on every backend PR, so coverage of the access-pattern + transaction tests is unchanged from the original plan; only the developer's local default has shifted.
+The `testcontainers` crate starts DynamoDB Local itself, one container per test binary. CI (`backend-ci.yml`) runs the same `cargo test --workspace` on `ubuntu-latest`, whose stock Docker needs no `DOCKER_HOST` override.
 
 ---
 
@@ -139,6 +131,10 @@ Golden-path tests (≤10):
 9. React with emoji → toggle off → toggle on different emoji.
 10. Upload avatar → poll until ready → `PATCH /me` → avatar renders in member listing.
 
+**Decided M13: two Playwright projects.**
+- `mock` (default, no env needed): `playwright.config.ts` builds the app with `vite build --mode e2e` (checked-in `.env.e2e`: `VITE_USE_MOCKS=true` plus placeholder https origins) and serves it with `vite preview`. It runs the CSP checks from `04` §12.1 against a real production build, plus the golden paths the in-memory mock transport supports (it has no auth and no dev tick routes).
+- `dev`: runs only when `E2E_BASE_URL` is set, against a deployed stack. It needs a real Cognito session (`E2E_USERNAME`/`E2E_PASSWORD`), so its tests skip until B5 clears.
+
 Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` routes (`03-api-contract.md` §11a), which are wired into the API only when `ENV=dev` and refuse with 404 in prod.
 
 ---
@@ -155,8 +151,9 @@ Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` rou
 
 - `eslint .` (with `@typescript-eslint`, `react-hooks`, `import` rules)
 - `prettier --check .`
-- `tsc --noEmit`
-- `stylelint "src/**/*.css"`
+- `tsc --noEmit` (`npm run typecheck`)
+
+**Decided M13: no stylelint.** The only stylesheet is `src/styles/tailwind.css`, which holds the Tailwind directives; everything else is utility classes.
 
 ### 5.3 Python (CDK)
 
@@ -168,6 +165,14 @@ Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` rou
 
 ## 6. GitHub Actions workflows
 
+**Decided M13: deploy-shaped steps are switched on by repo variables.** Until M14, `main` must stay green without AWS credentials:
+- `frontend-deploy.yml` runs only when `vars.FRONTEND_DEPLOY_ENABLED == 'true'`.
+- `backend-deploy.yml` runs only when `vars.BACKEND_DEPLOY_ENABLED == 'true'`.
+- `infra-ci.yml`'s `cdk diff` step runs only when `vars.AWS_DIFF_ROLE_ARN` is set.
+- `e2e.yml`'s `dev` project skips unless `vars.E2E_BASE_URL` is set.
+
+OIDC roles for both (`GithubDeployRole` on `main`, `GithubDiffRole` on pull requests) live in `CiStack` (`infra/opennewsletter/ci_stack.py`). They only assume the CDK bootstrap roles. The variable and secret list is in [`.github/workflows/README.md`](../.github/workflows/README.md).
+
 ### 6.1 `frontend-ci.yml`
 
 Triggers: PRs touching `frontend/**` or shared types.
@@ -175,9 +180,10 @@ Triggers: PRs touching `frontend/**` or shared types.
 Steps:
 1. Setup Node 20.
 2. `npm ci`.
-3. `npm run lint` (eslint + prettier + stylelint + tsc).
-4. `npm run test` (Vitest with `--coverage`).
-5. Upload coverage artifact.
+3. `npm run typecheck`, `npx eslint .`, `npx prettier --check .`.
+4. `npm run test:coverage` (Vitest with `--coverage`).
+5. `npm run build`.
+6. Upload coverage artifact.
 
 ### 6.2 `frontend-deploy.yml`
 
@@ -199,7 +205,7 @@ Steps:
 1. Setup Rust toolchain (pinned via `rust-toolchain.toml`).
 2. Cache `~/.cargo` and `target/`.
 3. `cargo fmt --check && cargo clippy ... && cargo deny check`.
-4. `cargo test --workspace --features integration` — the `testcontainers` crate starts DynamoDB Local itself (§2.4); the runner just needs Docker, no service-container setup step.
+4. `cargo test --workspace` — the `testcontainers` crate starts DynamoDB Local itself (§2.4); the runner just needs Docker, no service-container setup step.
 5. `cargo lambda build --release --arm64` (sanity: ensures all crates compile to lambda artifacts).
 
 ### 6.4 `backend-deploy.yml`

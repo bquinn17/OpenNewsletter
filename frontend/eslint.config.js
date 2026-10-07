@@ -66,4 +66,13 @@ export default tseslint.config(
       globals: { ...globals.node },
     },
   },
+  {
+    // Playwright tests and config run under Node, not the browser bundle
+    // (`page.evaluate` callbacks run in the browser, but the test files
+    // themselves don't).
+    files: ["e2e/**/*.{ts,tsx}", "playwright.config.ts"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
 );
