@@ -14,33 +14,89 @@ use domain::{
     CycleId, GroupId, ImageId, PollOptionId, QuestionId, QuestionKind, Response, ResponseId, UserId,
 };
 use serde_dynamo::from_item;
+use std::collections::HashMap;
 
-/// AP14 — list all answers to a question (post-publish).
+/// AP14 — list all answers to a question (post-publish). Follows
+/// `LastEvaluatedKey`: a member-capped group's 20k-char answers can exceed one
+/// 1 MB query page, and the cycle-close auto-publish sweep must see every row.
 pub async fn list_answers(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
     question_id: &QuestionId,
 ) -> Result<Vec<Response>, RepoError> {
-    let resp = repo
-        .client
-        .query()
-        .table_name(&repo.table)
-        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
-        .expression_attribute_names("#pk", attr::PK)
-        .expression_attribute_names("#sk", attr::SK)
-        .expression_attribute_values(
-            ":pk",
-            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
-        )
-        .expression_attribute_values(":prefix", AttributeValue::S("A#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+    query_answer_items(repo, group_id, cycle_id, question_id)
+        .await?
         .into_iter()
-        .map(|i| from_item::<_, Response>(i).map_err(RepoError::from))
+        .map(|item| Ok(from_item::<_, Response>(item)?))
         .collect()
+}
+
+/// An answer row that wouldn't deserialize, identified by its sort key.
+#[derive(Debug)]
+pub struct UnreadableAnswer {
+    pub sk: String,
+    pub error: String,
+}
+
+/// [`list_answers`] for the close-time auto-publish sweep: a row that doesn't
+/// deserialize comes back in the second list instead of failing the whole
+/// listing, so one corrupt row can't hold back every other answer to the
+/// question (`06-newsletter-lifecycle.md` §5.3).
+pub async fn list_answers_lenient(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<(Vec<Response>, Vec<UnreadableAnswer>), RepoError> {
+    let mut answers = Vec::new();
+    let mut unreadable = Vec::new();
+    for item in query_answer_items(repo, group_id, cycle_id, question_id).await? {
+        let sk = match item.get(attr::SK) {
+            Some(AttributeValue::S(sk)) => sk.clone(),
+            _ => String::new(),
+        };
+        match from_item::<_, Response>(item) {
+            Ok(answer) => answers.push(answer),
+            Err(e) => unreadable.push(UnreadableAnswer {
+                sk,
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok((answers, unreadable))
+}
+
+async fn query_answer_items(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<Vec<HashMap<String, AttributeValue>>, RepoError> {
+    let mut items = Vec::new();
+    let mut start_key = None;
+    loop {
+        let resp = repo
+            .client
+            .query()
+            .table_name(&repo.table)
+            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+            .expression_attribute_names("#pk", attr::PK)
+            .expression_attribute_names("#sk", attr::SK)
+            .expression_attribute_values(
+                ":pk",
+                AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+            )
+            .expression_attribute_values(":prefix", AttributeValue::S("A#".into()))
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await?;
+        items.extend(resp.items.unwrap_or_default());
+        match resp.last_evaluated_key {
+            Some(key) if !key.is_empty() => start_key = Some(key),
+            _ => return Ok(items),
+        }
+    }
 }
 
 /// AP15 — list a user's drafts/publishes for one group's cycle (via GSI1).
@@ -313,14 +369,7 @@ async fn save_response_once(
         Ok(_) => return Ok(()),
         Err(err) => err,
     };
-    let codes: Vec<Option<String>> = match err.as_service_error() {
-        Some(TransactWriteItemsError::TransactionCanceledException(e)) => e
-            .cancellation_reasons()
-            .iter()
-            .map(|r| r.code().map(str::to_owned))
-            .collect(),
-        _ => Vec::new(),
-    };
+    let codes = cancellation_codes(&err);
     let err = error::from_transact_write_error(err);
     let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
     if bump_editions_answered
@@ -329,16 +378,7 @@ async fn save_response_once(
     {
         return Err(SaveFailure::AlreadyCounted);
     }
-    let conflict_only = codes
-        .iter()
-        .any(|c| c.as_deref() == Some("TransactionConflict"))
-        && codes.iter().all(|c| {
-            matches!(
-                c.as_deref(),
-                None | Some("None") | Some("TransactionConflict")
-            )
-        });
-    if conflict_only {
+    if is_conflict_only(&codes) {
         Err(SaveFailure::Conflict(err))
     } else {
         Err(SaveFailure::Other(err))
@@ -349,4 +389,176 @@ impl From<RepoError> for SaveFailure {
     fn from(e: RepoError) -> Self {
         SaveFailure::Other(e)
     }
+}
+
+/// What [`auto_publish_draft`] did with one draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoPublishOutcome {
+    /// The draft is now published. `counted` says whether this write also
+    /// bumped the author's `editionsAnswered` (false when the cycle was already
+    /// counted, or the author is no longer a member).
+    Published { counted: bool },
+    /// The row was no longer a draft: an earlier pass (or the author) already
+    /// published it.
+    AlreadyPublished,
+}
+
+/// Transaction §4 #4a — auto-publish one non-empty draft at cycle close, in
+/// its own `TransactWriteItems` (a whole cycle's drafts can exceed the
+/// 100-item cap):
+///
+/// 1. `Update` the response row, conditioned on `status = draft`: set
+///    `status = published` and `published_at = published_at` (the cycle's
+///    `responseCloseAt`). Every other attribute a published row carries
+///    (`response_id`, GSI1 keys, `entity`) was already written by the draft
+///    save, exactly as [`save_response`] writes them.
+/// 2. The same `editionsAnswered` bump as [`save_response`], guarded by the
+///    `lastAnsweredCycle` marker, plus `attribute_exists(pk)` so a member who
+///    has since left the group fails the condition rather than having a stub
+///    membership row created for them.
+///
+/// If only the bump's condition failed, the draft is published without the
+/// bump. If the draft's condition failed, it was already published:
+/// [`AutoPublishOutcome::AlreadyPublished`]. Pure `TransactionConflict`s are
+/// retried, up to [`SAVE_ATTEMPTS`] in total. Anything else is an error.
+pub async fn auto_publish_draft(
+    repo: &Repo,
+    draft: &Response,
+    published_at: DateTime<Utc>,
+) -> Result<AutoPublishOutcome, RepoError> {
+    let mut bump = true;
+    let mut attempt = 1;
+    loop {
+        match auto_publish_once(repo, draft, published_at, bump).await {
+            Ok(()) => return Ok(AutoPublishOutcome::Published { counted: bump }),
+            Err(AutoPublishFailure::NotADraft) => return Ok(AutoPublishOutcome::AlreadyPublished),
+            Err(AutoPublishFailure::BumpRefused) => bump = false,
+            Err(AutoPublishFailure::Conflict(_)) if attempt < SAVE_ATTEMPTS => {}
+            Err(AutoPublishFailure::Conflict(e) | AutoPublishFailure::Other(e)) => return Err(e),
+        }
+        attempt += 1;
+    }
+}
+
+/// Positions in the auto-publish transaction's item list.
+const AUTO_PUBLISH_DRAFT_ITEM_INDEX: usize = 0;
+const AUTO_PUBLISH_BUMP_ITEM_INDEX: usize = 1;
+
+enum AutoPublishFailure {
+    /// The row's `status = draft` condition failed.
+    NotADraft,
+    /// Only the bump's condition failed: already counted, or no membership.
+    BumpRefused,
+    Conflict(RepoError),
+    Other(RepoError),
+}
+
+impl From<RepoError> for AutoPublishFailure {
+    fn from(e: RepoError) -> Self {
+        AutoPublishFailure::Other(e)
+    }
+}
+
+async fn auto_publish_once(
+    repo: &Repo,
+    draft: &Response,
+    published_at: DateTime<Utc>,
+    bump_editions_answered: bool,
+) -> Result<(), AutoPublishFailure> {
+    let publish = Update::builder()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(
+                &draft.group_id,
+                &draft.cycle_id,
+                &draft.question_id,
+            )),
+        )
+        .key(attr::SK, AttributeValue::S(response_sk(&draft.user_id)))
+        .update_expression("SET #status = :published, published_at = :published_at")
+        .condition_expression("#status = :draft")
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":published", AttributeValue::S("published".into()))
+        .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
+        .expression_attribute_values(
+            ":published_at",
+            AttributeValue::S(published_at.to_rfc3339()),
+        )
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    let mut req = repo
+        .client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().update(publish).build());
+    if bump_editions_answered {
+        let bump = Update::builder()
+            .table_name(&repo.table)
+            .key(attr::PK, AttributeValue::S(user_pk(&draft.user_id)))
+            .key(attr::SK, AttributeValue::S(membership_sk(&draft.group_id)))
+            .update_expression(
+                "SET editions_answered = editions_answered + :one, last_answered_cycle = :cycle",
+            )
+            .condition_expression(
+                "attribute_exists(#pk) AND \
+                 (attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle)",
+            )
+            .expression_attribute_names("#pk", attr::PK)
+            .expression_attribute_values(":one", AttributeValue::N("1".into()))
+            .expression_attribute_values(":cycle", AttributeValue::S(draft.cycle_id.to_string()))
+            .build()
+            .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        req = req.transact_items(TransactWriteItem::builder().update(bump).build());
+    }
+
+    let err = match req.send().await {
+        Ok(_) => return Ok(()),
+        Err(err) => err,
+    };
+    let codes = cancellation_codes(&err);
+    let err = error::from_transact_write_error(err);
+    let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
+    if code_at(AUTO_PUBLISH_DRAFT_ITEM_INDEX) == Some("ConditionalCheckFailed") {
+        return Err(AutoPublishFailure::NotADraft);
+    }
+    if bump_editions_answered
+        && code_at(AUTO_PUBLISH_BUMP_ITEM_INDEX) == Some("ConditionalCheckFailed")
+    {
+        return Err(AutoPublishFailure::BumpRefused);
+    }
+    if is_conflict_only(&codes) {
+        Err(AutoPublishFailure::Conflict(err))
+    } else {
+        Err(AutoPublishFailure::Other(err))
+    }
+}
+
+/// Per-item cancellation reason codes of a cancelled transaction, in item
+/// order; empty for any other failure.
+fn cancellation_codes<R>(
+    err: &aws_sdk_dynamodb::error::SdkError<TransactWriteItemsError, R>,
+) -> Vec<Option<String>> {
+    match err.as_service_error() {
+        Some(TransactWriteItemsError::TransactionCanceledException(e)) => e
+            .cancellation_reasons()
+            .iter()
+            .map(|r| r.code().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// True when a cancellation was caused only by `TransactionConflict`s, so the
+/// same transaction is safe to retry.
+fn is_conflict_only(codes: &[Option<String>]) -> bool {
+    codes
+        .iter()
+        .any(|c| c.as_deref() == Some("TransactionConflict"))
+        && codes.iter().all(|c| {
+            matches!(
+                c.as_deref(),
+                None | Some("None") | Some("TransactionConflict")
+            )
+        })
 }

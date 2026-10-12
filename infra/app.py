@@ -79,9 +79,12 @@ api_stack = ApiStack(
     cycle_tick_fn=notifications_stack.cycle_tick_fn,
     notify_tick_fn=notifications_stack.notify_tick_fn,
     media_originals_bucket=media_persistent_stack.originals_bucket,
+    media_processed_bucket=media_persistent_stack.processed_bucket,
     avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+    avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
     cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
     cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
+    cdn_distribution_id=media_persistent_stack.distribution_id,
     env=aws_env,
 )
 

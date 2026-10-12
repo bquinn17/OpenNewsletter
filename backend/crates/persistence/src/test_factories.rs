@@ -14,7 +14,7 @@ pub async fn make_test_repo() -> (
     crate::Repo,
 ) {
     use aws_sdk_dynamodb::{
-        config::{BehaviorVersion, Credentials, Region},
+        config::{timeout::TimeoutConfig, BehaviorVersion, Credentials, Region},
         types::{
             AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType,
             Projection, ProjectionType, ScalarAttributeType,
@@ -24,6 +24,11 @@ pub async fn make_test_repo() -> (
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::dynamodb_local::DynamoDb;
 
+    // Held until the table exists. Released when this function returns.
+    let _slot = STARTUP_SLOTS
+        .acquire()
+        .await
+        .expect("startup semaphore is never closed");
     let container = DynamoDb::default()
         .start()
         .await
@@ -40,8 +45,17 @@ pub async fn make_test_repo() -> (
         .endpoint_url(&endpoint)
         .region(Region::new("us-east-1"))
         .credentials_provider(creds)
+        // No SDK default: a connection the port forwarder accepts but the
+        // container never answers would otherwise hang the test forever.
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .operation_attempt_timeout(std::time::Duration::from_secs(10))
+                .build(),
+        )
         .build();
     let client = Client::from_conf(config);
+    wait_until_serving(&client).await;
 
     let table = format!("test-{}", uuid::Uuid::new_v4());
 
@@ -105,6 +119,42 @@ pub async fn make_test_repo() -> (
         .expect("create table");
 
     (container, crate::Repo::new(client, table))
+}
+
+/// At most this many DynamoDB Local containers start at once per test process.
+/// A test binary runs one test per CPU in parallel, and each test starts its own
+/// container. A burst of simultaneous JVM start-ups starves the Docker VM, so
+/// starts time out or the first request gets a dropped connection. Only
+/// start-up is throttled. Running containers don't count, so tests still run
+/// in parallel. A tokio `Semaphore` isn't tied to one runtime, so it works
+/// across the separate runtimes `#[tokio::test]` creates.
+const MAX_CONCURRENT_STARTUPS: usize = 4;
+static STARTUP_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_STARTUPS);
+
+/// How long [`wait_until_serving`] waits for a new DynamoDB Local container.
+/// Matches the image's own 60s start-up wait.
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const READY_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Poll until DynamoDB Local answers a request. `start()` can return before
+/// that. The image's wait condition is a log line printed before the server
+/// listens, and Docker's port forwarding (Colima's especially) accepts TCP
+/// connections before the container is listening. Under load, with many
+/// containers starting at once, the first request then gets a dropped
+/// connection (`DispatchFailure`/`IncompleteMessage`), more than the SDK's
+/// three quick retries can cover.
+async fn wait_until_serving(client: &aws_sdk_dynamodb::Client) {
+    let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
+    loop {
+        match client.list_tables().limit(1).send().await {
+            Ok(_) => return,
+            Err(e) if tokio::time::Instant::now() >= deadline => {
+                panic!("DynamoDB Local not serving after {READY_TIMEOUT:?}: {e:?}")
+            }
+            Err(_) => tokio::time::sleep(READY_POLL).await,
+        }
+    }
 }
 
 pub fn user(user_id: &str) -> User {

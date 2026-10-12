@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthValue } from "../auth/useAuth";
@@ -146,5 +146,76 @@ describe("SettingsPage avatar upload", () => {
       expect.any(Function),
     );
     expect(api.patchMe).toHaveBeenCalledWith({ avatarMediaId: "av1" });
+  });
+});
+
+describe("SettingsPage avatar delete confirms (D8)", () => {
+  const withAvatar = () => ({
+    ...baseUser(),
+    avatarMediaId: "av-old",
+    avatarUrl: "https://cdn.test.invalid/avatar/av-old/display.webp",
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.getMe).mockResolvedValue(withAvatar());
+    vi.mocked(api.getConfig).mockResolvedValue(baseConfig());
+    vi.mocked(api.patchMe).mockReset();
+    vi.mocked(api.media.deleteAvatar).mockReset();
+  });
+
+  it("deletes the avatar only after the permanent-delete confirm", async () => {
+    vi.mocked(api.patchMe).mockResolvedValue(baseUser());
+    vi.mocked(api.media.deleteAvatar).mockResolvedValue(undefined);
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove photo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove your photo?" });
+    expect(dialog).toHaveTextContent("This permanently deletes the image. It can't be recovered.");
+    expect(api.patchMe).not.toHaveBeenCalled();
+    expect(api.media.deleteAvatar).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove photo" }));
+
+    await waitFor(() => expect(api.media.deleteAvatar).toHaveBeenCalledWith("av-old"));
+    expect(api.patchMe).toHaveBeenCalledWith({ avatarMediaId: null });
+  });
+
+  it("keeps the avatar when the remove confirm is cancelled", async () => {
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove photo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove your photo?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await act(() => flush());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.patchMe).not.toHaveBeenCalled();
+    expect(api.media.deleteAvatar).not.toHaveBeenCalled();
+  });
+
+  it("confirms before replacing an existing avatar, and only then opens the file picker", async () => {
+    renderSettings();
+    const input = await screen.findByLabelText<HTMLInputElement>("Upload a profile photo");
+    const pick = vi.spyOn(input, "click").mockImplementation(() => undefined);
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload photo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Replace your photo?" });
+    expect(dialog).toHaveTextContent("This permanently deletes the image. It can't be recovered.");
+    expect(pick).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Choose a new photo" }));
+    expect(pick).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the file picker straight away when there's no avatar to replace", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(baseUser());
+    renderSettings();
+    const input = await screen.findByLabelText<HTMLInputElement>("Upload a profile photo");
+    const pick = vi.spyOn(input, "click").mockImplementation(() => undefined);
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload photo" }));
+
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

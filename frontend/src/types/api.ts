@@ -138,7 +138,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update group settings. Admin only. */
+        /** Update group settings. Admin only. A `responseWindowDays` change applies to the current cycles (`06-newsletter-lifecycle.md` §6): the `voting` cycle is rescheduled, and an `open` cycle's close moves to `responseOpenAt + days` if that is still in the future, else the request is refused with a 422 whose field error is `responseWindowDays` with code `CLOSES_IN_PAST`, and nothing changes. */
         patch: operations["patchGroup"];
         trace?: never;
     };
@@ -381,7 +381,7 @@ export interface paths {
         get: operations["getUpload"];
         put?: never;
         post?: never;
-        /** Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`; the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4). Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. */
+        /** Permanently delete an image: its original and processed S3 objects, a CloudFront invalidation of its path, then its row (`03-api-contract.md` §9.4). Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. Idempotent: an image that is already gone returns 204. If the S3 or CloudFront step fails, returns 500 and keeps the row so a retry can finish. */
         delete: operations["deleteUpload"];
         options?: never;
         head?: never;
@@ -451,7 +451,7 @@ export interface paths {
         get: operations["getAvatar"];
         put?: never;
         post?: never;
-        /** Soft-delete one of the caller's avatars (marks it `failed` with `errorMessage: "DELETED"`). If it is the caller's current `avatarMediaId`, that is cleared to `null`. Idempotent. */
+        /** Permanently delete one of the caller's avatars: its original and processed S3 objects, a CloudFront invalidation of `/avatar/{avatarId}/*`, then its row (`03-api-contract.md` §9.7). If it is the caller's current `avatarMediaId`, that is cleared to `null` first. Idempotent: the lookup is under the caller's own user, so an avatar that is already gone (or isn't theirs) returns 204 and touches nothing. If the S3 or CloudFront step fails, returns 500 and keeps the row. */
         delete: operations["deleteAvatar"];
         options?: never;
         head?: never;
@@ -596,10 +596,16 @@ export interface components {
          */
         AvatarColorSlug: "red" | "orange" | "amber" | "green" | "teal" | "blue" | "violet" | "pink";
         FieldError: {
+            /** @description The request field's camelCase wire name. A nested field uses its bare name (`responseWindowDays`, not `cycleSettings.responseWindowDays`). */
             field: string;
-            code: string;
+            code: components["schemas"]["FieldErrorCode"];
             message: string;
         };
+        /**
+         * @description Why the field failed. `INVALID` covers almost everything, and `message` says what's wrong. `CLOSES_IN_PAST`: a `responseWindowDays` change would close the group's open cycle in the past. Clients should treat an unknown code as `INVALID`.
+         * @enum {string}
+         */
+        FieldErrorCode: "INVALID" | "CLOSES_IN_PAST";
         ProblemDetails: {
             /** Format: uri */
             type: string;
@@ -640,7 +646,7 @@ export interface components {
         PatchMeRequest: {
             displayName?: string;
             avatarColor?: components["schemas"]["AvatarColorSlug"];
-            /** @description Absent leaves the photo alone; an explicit `null` clears it. */
+            /** @description Absent leaves the photo alone. A new id replaces the photo, and an explicit `null` clears it. Either way the displaced avatar is permanently deleted (`03-api-contract.md` §9.7). */
             avatarMediaId?: string | null;
         };
         CreateInviteRequest: {
@@ -648,6 +654,8 @@ export interface components {
             /** @description Defaults to the group's invite TTL setting when omitted. */
             ttlDays?: number;
             roleOnRedeem: components["schemas"]["Role"];
+            /** @description Restricts redemption to a caller whose verified ID-token `email` matches it, case-insensitively. Trimmed and stored lowercased; must contain `@`. */
+            boundEmail?: string;
         };
         CreateInviteResponse: {
             code: string;
@@ -655,6 +663,8 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
             roleOnRedeem: components["schemas"]["Role"];
+            /** @description The lowercased bound email, or `null` for an unbound invite. */
+            boundEmail: string | null;
         };
         InviteSummary: {
             code: string;
@@ -669,6 +679,8 @@ export interface components {
             consumedBy: string | null;
             /** Format: date-time */
             consumedAt: string | null;
+            /** @description The lowercased bound email, or `null` for an unbound invite. */
+            boundEmail: string | null;
         };
         InviteListResponse: {
             items: components["schemas"]["InviteSummary"][];
@@ -1012,7 +1024,7 @@ export interface components {
             displayUrl: string | null;
             /** @description Absolute CloudFront URL; null until `status=ready`. */
             thumbUrl: string | null;
-            /** @description Set when `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED` or `DELETED`. */
+            /** @description Set when `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED`. A deleted image has no row, so `DELETED` is no longer returned. */
             errorMessage: string | null;
             /** Format: date-time */
             uploadedAt: string;
@@ -1407,7 +1419,8 @@ export interface operations {
                  * @example {
                  *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
                  *       "ttlDays": 7,
-                 *       "roleOnRedeem": "member"
+                 *       "roleOnRedeem": "admin",
+                 *       "boundEmail": "quinn@example.com"
                  *     }
                  */
                 "application/json": components["schemas"]["CreateInviteRequest"];
@@ -1425,7 +1438,8 @@ export interface operations {
                      *       "code": "ABCD-EFGH-JKMN-PQRS",
                      *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
                      *       "expiresAt": "2026-02-01T00:00:00Z",
-                     *       "roleOnRedeem": "member"
+                     *       "roleOnRedeem": "admin",
+                     *       "boundEmail": "quinn@example.com"
                      *     }
                      */
                     "application/json": components["schemas"]["CreateInviteResponse"];
@@ -1465,7 +1479,8 @@ export interface operations {
                      *           "createdAt": "2026-01-25T00:00:00Z",
                      *           "expiresAt": "2026-02-01T00:00:00Z",
                      *           "consumedBy": null,
-                     *           "consumedAt": null
+                     *           "consumedAt": null,
+                     *           "boundEmail": null
                      *         }
                      *       ],
                      *       "nextCursor": null
@@ -1535,6 +1550,25 @@ export interface operations {
                 };
             };
             400: components["responses"]["InviteInvalid"];
+            /** @description `INVITE_EMAIL_MISMATCH` — the invite has `boundEmail` set and the caller's ID-token `email` (compared lowercased) doesn't match it, or `email_verified` isn't true (`05-auth-flow.md` §4.2). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.opennewsletter.example.com/errors/invite-email-mismatch",
+                     *       "title": "Invite is bound to a different email",
+                     *       "status": 403,
+                     *       "detail": "this invite is for a different email address; sign in with Google using the invited address",
+                     *       "code": "INVITE_EMAIL_MISMATCH",
+                     *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
             409: components["responses"]["Conflict"];
             410: components["responses"]["InviteExpired"];
         };
@@ -1600,7 +1634,7 @@ export interface operations {
                      *       "cycleSettings": {
                      *         "questionsPerCycle": 5,
                      *         "votesPerUserPerCycle": 3,
-                     *         "responseWindowDays": 4
+                     *         "responseWindowDays": 7
                      *       },
                      *       "notificationSettings": {
                      *         "offsetsHoursBeforeClose": [
@@ -1651,7 +1685,7 @@ export interface operations {
                  *       "cycleSettings": {
                  *         "questionsPerCycle": 5,
                  *         "votesPerUserPerCycle": 3,
-                 *         "responseWindowDays": 4
+                 *         "responseWindowDays": 7
                  *       }
                  *     }
                  */
@@ -1674,7 +1708,7 @@ export interface operations {
                      *       "cycleSettings": {
                      *         "questionsPerCycle": 5,
                      *         "votesPerUserPerCycle": 3,
-                     *         "responseWindowDays": 4
+                     *         "responseWindowDays": 7
                      *       },
                      *       "notificationSettings": {
                      *         "offsetsHoursBeforeClose": [
@@ -1704,7 +1738,32 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            422: components["responses"]["ValidationFailed"];
+            /** @description Validation failed; see `fieldErrors`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.opennewsletter.example.com/errors/validation-failed",
+                     *       "title": "Validation failed",
+                     *       "status": 422,
+                     *       "detail": "responseWindowDays 2 would close the open cycle in the past",
+                     *       "code": "VALIDATION_FAILED",
+                     *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "fieldErrors": [
+                     *         {
+                     *           "field": "responseWindowDays",
+                     *           "code": "CLOSES_IN_PAST",
+                     *           "message": "responseWindowDays 2 would close the open cycle in the past"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
         };
     };
     removeMember: {
@@ -2788,7 +2847,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted. */
+            /** @description Deleted, or already gone. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2796,7 +2855,6 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
         };
     };
@@ -3042,14 +3100,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted. */
+            /** @description Deleted, or already gone. */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            404: components["responses"]["NotFound"];
         };
     };
     pushSubscribe: {

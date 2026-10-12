@@ -62,11 +62,7 @@ pub async fn list_candidates(
         })?;
 
     match sort {
-        Sort::Top => pool.sort_by(|a, b| {
-            b.vote_count
-                .cmp(&a.vote_count)
-                .then_with(|| a.submitted_at.cmp(&b.submitted_at))
-        }),
+        Sort::Top => pool.sort_by(CandidateQuestion::promotion_order),
         Sort::Recent => pool.sort_by_key(|c| std::cmp::Reverse(c.submitted_at)),
     }
 
@@ -378,13 +374,20 @@ async fn delete_candidate_and_votes(
     cycle_id: &CycleId,
     question_id: &QuestionId,
 ) -> Result<(), ApiError> {
+    // Votes, candidate, votes again. The first sweep runs while the candidate
+    // still exists, so if it fails partway a retried DELETE finds the
+    // candidate and redoes it. A retry after the candidate is gone gets a 404
+    // and could never reach the leftover votes. The second sweep catches a vote
+    // cast between the first sweep and the delete; once the candidate is gone,
+    // `cast_vote_tx`'s `vote_count` condition fails, so nothing lands after it.
     cascade_delete_votes(state, group_id, cycle_id, question_id).await?;
     questions::delete_candidate(&state.repo, group_id, cycle_id, question_id)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, group_id = %group_id, "candidate delete failed");
             ApiError::internal("failed to delete candidate question")
-        })
+        })?;
+    cascade_delete_votes(state, group_id, cycle_id, question_id).await
 }
 
 /// `02-data-model-dynamodb.md` has no access pattern for "list voters of

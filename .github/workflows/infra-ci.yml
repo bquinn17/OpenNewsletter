@@ -1,6 +1,6 @@
-# Trigger: pull requests and pushes to main that touch infra/** or this
-# workflow file.
-# Purpose: lint/type-check the CDK app, run its unit tests, and synth (no AWS
+# Trigger: pull requests and pushes to main that touch infra/**, scripts/**
+# (infra/tests covers scripts/bootstrap_admin.py) or this workflow file.
+# Purpose: lint/type-check the CDK app and scripts, run the unit tests, and synth (no AWS
 # credentials needed — Lambda assets fall back to a stub when
 # backend/target/lambda/*/bootstrap is missing, see lambda_assets.py). On a
 # pull request, and only once the repo variable AWS_DIFF_ROLE_ARN is set, a
@@ -11,11 +11,13 @@ on:
   pull_request:
     paths:
       - "infra/**"
+      - "scripts/**"
       - ".github/workflows/infra-ci.yml"
   push:
     branches: [main]
     paths:
       - "infra/**"
+      - "scripts/**"
       - ".github/workflows/infra-ci.yml"
 
 permissions:
@@ -41,9 +43,9 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: ruff check .
+      - run: ruff check . ../scripts
 
-      - run: ruff format --check .
+      - run: ruff format --check . ../scripts
 
       - run: mypy --strict .
 
@@ -66,20 +68,22 @@ jobs:
       id-token: write
       contents: read
       pull-requests: write
-    # Same EnvConfig inputs as backend-deploy.yml. Without them config.py
-    # falls back to placeholder domains/ARNs and every diff shows prod's
-    # real values being replaced.
+    # Same EnvConfig inputs as deploy.yml's promote-prod job (the unprefixed
+    # repo variables are prod's). Without them config.py falls back to
+    # placeholder domains/ARNs and every diff shows prod's real values being
+    # replaced. If prod's values live as `production` environment variables
+    # instead, mirror them at repo level too: this job has no environment,
+    # since that would put every PR behind the reviewer gate.
     env:
       ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
       API_DOMAIN: ${{ vars.API_DOMAIN }}
       HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
       HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
       COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
-      GOOGLE_OAUTH_SECRET_ARN: ${{ vars.GOOGLE_OAUTH_SECRET_ARN }}
-      FACEBOOK_OAUTH_SECRET_ARN: ${{ vars.FACEBOOK_OAUTH_SECRET_ARN }}
-      VAPID_SECRET_ARN: ${{ vars.VAPID_SECRET_ARN }}
-      CDN_SIGNING_SECRET_ARN: ${{ vars.CDN_SIGNING_SECRET_ARN }}
+      APP_SECRET_ARN: ${{ vars.APP_SECRET_ARN }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
       ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+      GITHUB_REPO: ${{ github.repository }}
     defaults:
       run:
         working-directory: infra

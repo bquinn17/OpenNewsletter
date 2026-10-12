@@ -7,7 +7,7 @@ use crate::keys::{
     newsletter_gsi2sk_sentinel, newsletter_sk, TICK_CYCLE_SK, TICK_PK,
 };
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
@@ -124,10 +124,71 @@ pub async fn list_open_cycles_closing_within(
         .collect()
 }
 
+/// Every cycle currently in `status`, across all groups, regardless of its
+/// transition time. `lambda-cycle-tick`'s successor repair pass uses it with
+/// `Open` (`plans/06-newsletter-lifecycle.md` §5.4). Follows
+/// `LastEvaluatedKey`, so it never silently truncates at one 1 MB page.
+pub async fn list_cycles_in_status(
+    repo: &Repo,
+    status: NewsletterStatus,
+) -> Result<Vec<Newsletter>, RepoError> {
+    let mut cycles = Vec::new();
+    let mut start_key = None;
+    loop {
+        let resp = repo
+            .client
+            .query()
+            .table_name(&repo.table)
+            .index_name(index::GSI2)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", attr::GSI2PK)
+            .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await?;
+        for item in resp.items.unwrap_or_default() {
+            cycles.push(from_item::<_, Newsletter>(item)?);
+        }
+        match resp.last_evaluated_key {
+            Some(key) if !key.is_empty() => start_key = Some(key),
+            _ => return Ok(cycles),
+        }
+    }
+}
+
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
 /// for state transitions referenced in §9 of `02-data-model-dynamodb.md`.
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
-    let mut item: std::collections::HashMap<String, AttributeValue> = to_item(nl)?;
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(newsletter_item(nl)?))
+        .send()
+        .await?;
+    Ok(())
+}
+
+/// Rewrite a `voting` cycle's schedule (`06` §6, a settings change), as
+/// [`write_status_transition`] does but conditioned on the row still being
+/// `voting`. A tick that promoted it in the meantime would otherwise be
+/// undone by this copy read before the promotion; that lost race is
+/// `RepoError::ConditionalCheckFailed`.
+pub async fn reschedule_voting_cycle(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(newsletter_item(nl)?))
+        .condition_expression("#s = :voting")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":voting", AttributeValue::S("voting".into()))
+        .send()
+        .await
+        .map_err(error::from_put_item_error)?;
+    Ok(())
+}
+
+fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, RepoError> {
+    let mut item: HashMap<String, AttributeValue> = to_item(nl)?;
     item.insert(attr::PK.into(), AttributeValue::S(group_pk(&nl.group_id)));
     item.insert(
         attr::SK.into(),
@@ -143,14 +204,76 @@ pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(),
     };
     item.insert(attr::GSI2SK.into(), AttributeValue::S(gsi2sk));
     item.insert(attr::ENTITY.into(), AttributeValue::S("Newsletter".into()));
+    Ok(item)
+}
 
+/// Move an `open` cycle's close (`06` §6, `responseWindowDays` applied to the
+/// current cycle): `response_close_at`, `next_transition_at` (which equals it
+/// while open) and the GSI2 sort key change together. Conditioned on the row
+/// still being `open`, so a tick that published it in the meantime isn't
+/// undone; that lost race is `RepoError::ConditionalCheckFailed`.
+pub async fn reschedule_open_cycle_close(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    new_close: DateTime<Utc>,
+) -> Result<(), RepoError> {
+    let close_av = serde_dynamo::to_attribute_value(new_close)?;
     repo.client
-        .put_item()
+        .update_item()
         .table_name(&repo.table)
-        .set_item(Some(item))
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(newsletter_sk(cycle_id)))
+        .update_expression(
+            "SET response_close_at = :close, next_transition_at = :close, #g2sk = :g2sk",
+        )
+        .condition_expression("#s = :open")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_names("#g2sk", attr::GSI2SK)
+        .expression_attribute_values(":close", close_av)
+        .expression_attribute_values(
+            ":g2sk",
+            AttributeValue::S(newsletter_gsi2sk(new_close, group_id, cycle_id)),
+        )
+        .expression_attribute_values(":open", AttributeValue::S("open".into()))
         .send()
-        .await?;
+        .await
+        .map_err(error::from_update_item_error)?;
     Ok(())
+}
+
+/// §5.3 — record one auto-publish sweep that left drafts unpublished, and
+/// return how many such sweeps the cycle has now had. Conditioned on the row
+/// still being `open`; a cycle published meanwhile is
+/// `RepoError::ConditionalCheckFailed`. The counter lives only on the row (it
+/// isn't a `Newsletter` field) and stops mattering once the cycle publishes.
+pub async fn record_failed_sweep(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+) -> Result<u32, RepoError> {
+    let resp = repo
+        .client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(newsletter_sk(cycle_id)))
+        .update_expression("ADD auto_publish_failed_sweeps :one")
+        .condition_expression("#s = :open")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":one", AttributeValue::N("1".into()))
+        .expression_attribute_values(":open", AttributeValue::S("open".into()))
+        .return_values(ReturnValue::UpdatedNew)
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    resp.attributes
+        .and_then(|mut new| new.remove("auto_publish_failed_sweeps"))
+        .and_then(|value| match value {
+            AttributeValue::N(n) => n.parse().ok(),
+            _ => None,
+        })
+        .ok_or_else(|| RepoError::Dynamo("ADD returned no auto_publish_failed_sweeps".into()))
 }
 
 /// §10 — the current `voting` cycle for a group, if any. Candidate-question

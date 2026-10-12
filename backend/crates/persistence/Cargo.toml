@@ -27,12 +27,15 @@ uuid.workspace = true
 once_cell.workspace = true
 dashmap.workspace = true
 base64.workspace = true
-# `time` for the `UnprocessedKeys` backoff in `batch.rs`.
-tokio = { workspace = true, features = ["time"] }
+# `time` for the `UnprocessedKeys` backoff in `batch.rs`; `sync` for the
+# test-utils container-startup throttle.
+tokio = { workspace = true, features = ["time", "sync"] }
 testcontainers = { workspace = true, optional = true }
 testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
+# This crate's own integration tests share `test_factories::make_test_repo`.
+persistence = { path = ".", features = ["test-utils"] }
 tokio.workspace = true
 pretty_assertions.workspace = true
 testcontainers.workspace = true

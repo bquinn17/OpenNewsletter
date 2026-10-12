@@ -204,7 +204,7 @@ async fn it_sets_and_clears_an_image_caption() {
 }
 
 #[tokio::test]
-async fn it_marks_an_image_deleted_idempotently() {
+async fn it_deletes_an_image_row_idempotently() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("gdel");
     let cycle_id = CycleId::new("202606");
@@ -212,42 +212,33 @@ async fn it_marks_an_image_deleted_idempotently() {
     let img = common::image_media("gdel", "202606", "img-01", "u1");
     media::put_image(&repo, &img).await.unwrap();
 
-    media::mark_image_deleted(&repo, &group_id, &cycle_id, &image_id)
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id)
         .await
         .unwrap();
     let got = media::get_image(&repo, &group_id, &cycle_id, &image_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(got.status, MediaStatus::Failed);
-    assert_eq!(got.error_message, Some("DELETED".to_owned()));
+    assert_eq!(got, None);
 
-    // Idempotent: deleting an already-failed row succeeds and leaves it failed.
-    media::mark_image_deleted(&repo, &group_id, &cycle_id, &image_id)
+    // Idempotent: deleting an already-gone row succeeds.
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id)
         .await
         .unwrap();
-    let got_again = media::get_image(&repo, &group_id, &cycle_id, &image_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(got_again.status, MediaStatus::Failed);
 }
 
 #[tokio::test]
-async fn it_marks_an_avatar_deleted() {
+async fn it_deletes_an_avatar_row() {
     let (_c, repo) = common::make_repo().await;
     let user_id = UserId::new("u1");
     let avatar_id = AvatarId::new("av-01");
     let av = common::avatar_media("u1", "av-01");
     media::put_avatar(&repo, &av).await.unwrap();
 
-    media::mark_avatar_deleted(&repo, &user_id, &avatar_id)
+    media::delete_avatar_row(&repo, &user_id, &avatar_id)
         .await
         .unwrap();
     let got = media::get_avatar(&repo, &user_id, &avatar_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(got.status, MediaStatus::Failed);
-    assert_eq!(got.error_message, Some("DELETED".to_owned()));
+    assert_eq!(got, None);
 }

@@ -100,6 +100,12 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         round_trip::<RedeemResponse>,
     ),
     (
+        "POST",
+        "/invites/redeem",
+        "403",
+        round_trip::<ProblemDetails>,
+    ),
+    (
         "GET",
         "/groups",
         "200",
@@ -452,12 +458,6 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         round_trip::<ProblemDetails>,
     ),
     (
-        "DELETE",
-        "/uploads/{imageId}",
-        "404",
-        round_trip::<ProblemDetails>,
-    ),
-    (
         "POST",
         "/uploads/{imageId}/complete",
         "200",
@@ -497,12 +497,6 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
     ),
     (
         "GET",
-        "/avatars/{avatarId}",
-        "404",
-        round_trip::<ProblemDetails>,
-    ),
-    (
-        "DELETE",
         "/avatars/{avatarId}",
         "404",
         round_trip::<ProblemDetails>,
@@ -703,6 +697,20 @@ fn gradient_and_avatar_color_enums_match_shared_config() {
         enum_values(&spec, "AvatarColorSlug"),
         shared::config::AVATAR_COLOR_SLUGS.to_vec(),
         "shared/openapi.yaml's AvatarColorSlug enum has drifted from shared::config::AVATAR_COLOR_SLUGS"
+    );
+}
+
+#[test]
+fn field_error_codes_match_the_domain_enum() {
+    let spec = load_spec();
+    let domain_codes: Vec<&str> = domain::FieldErrorCode::ALL
+        .iter()
+        .map(|c| c.as_str())
+        .collect();
+    assert_eq!(
+        enum_values(&spec, "FieldErrorCode"),
+        domain_codes,
+        "shared/openapi.yaml's FieldErrorCode enum has drifted from domain::FieldErrorCode"
     );
 }
 

@@ -3,6 +3,9 @@
 
 use lambda_http::{service_fn, Error};
 use media::{router, state::AppState};
+use media_delete::{
+    CdnInvalidator, CloudFrontInvalidator, MediaDeleter, MediaObjectStore, S3ObjectStore,
+};
 use persistence::Repo;
 use std::sync::Arc;
 
@@ -21,17 +24,43 @@ async fn main() -> Result<(), Error> {
         .request_checksum_calculation(aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired)
         .build();
 
+    let s3 = aws_sdk_s3::Client::from_conf(s3_config);
+    let media_originals_bucket =
+        std::env::var("MEDIA_ORIGINALS_BUCKET").map_err(|_| "MEDIA_ORIGINALS_BUCKET is not set")?;
+    let avatars_originals_bucket = std::env::var("AVATARS_ORIGINALS_BUCKET")
+        .map_err(|_| "AVATARS_ORIGINALS_BUCKET is not set")?;
+    let store: Arc<dyn MediaObjectStore> = Arc::new(S3ObjectStore::new(s3.clone()));
+    let cdn: Arc<dyn CdnInvalidator> = Arc::new(CloudFrontInvalidator::new(
+        aws_sdk_cloudfront::Client::new(&aws_config),
+        std::env::var("CDN_DISTRIBUTION_ID").map_err(|_| "CDN_DISTRIBUTION_ID is not set")?,
+    ));
+    let image_deleter = MediaDeleter {
+        store: store.clone(),
+        cdn: cdn.clone(),
+        originals_bucket: media_originals_bucket.clone(),
+        processed_bucket: std::env::var("PROCESSED_BUCKET")
+            .map_err(|_| "PROCESSED_BUCKET is not set")?,
+    };
+    let avatar_deleter = MediaDeleter {
+        store,
+        cdn,
+        originals_bucket: avatars_originals_bucket.clone(),
+        processed_bucket: std::env::var("AVATARS_PROCESSED_BUCKET")
+            .map_err(|_| "AVATARS_PROCESSED_BUCKET is not set")?,
+    };
+
     let state = Arc::new(AppState::new(
         Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
-        aws_sdk_s3::Client::from_conf(s3_config),
+        s3,
         aws_sdk_secretsmanager::Client::new(&aws_config),
-        std::env::var("MEDIA_ORIGINALS_BUCKET").map_err(|_| "MEDIA_ORIGINALS_BUCKET is not set")?,
-        std::env::var("AVATARS_ORIGINALS_BUCKET")
-            .map_err(|_| "AVATARS_ORIGINALS_BUCKET is not set")?,
+        media_originals_bucket,
+        avatars_originals_bucket,
         std::env::var("CDN_BASE_URL").unwrap_or_default(),
         std::env::var("CDN_KEY_PAIR_ID").unwrap_or_default(),
-        std::env::var("CDN_SIGNING_SECRET_ARN").unwrap_or_default(),
+        std::env::var("APP_SECRET_ARN").unwrap_or_default(),
         std::env::var("MEDIA_COOKIE_DOMAIN").unwrap_or_default(),
+        image_deleter,
+        avatar_deleter,
     ));
 
     lambda_http::run(service_fn(move |req| {

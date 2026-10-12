@@ -1,6 +1,9 @@
 """MonitoringStack — CloudWatch dashboard, alarms, and the SNS topic they page.
 
-Per `plans/01-infrastructure-cdk.md` §9. All of this is built from the fixed
+Per `plans/01-infrastructure-cdk.md` §9. Every env gets the dashboard; only
+prod gets alarms (and the SNS topic they page), capped at the 10 alarm metrics
+CloudWatch's free tier covers (§9.2). The cost budget is account-wide and lives
+in `CiStack` (§9.2a), not here. All of this is built from the fixed
 naming scheme other stacks use for their resources (`OpenNewsletter-{Name}-{env}`
 for Lambdas, `OpenNewsletter-{env}` for the table) rather than passed in as
 construct references: MonitoringStack is volatile (`make redeploy-volatile`
@@ -21,7 +24,6 @@ from __future__ import annotations
 from typing import Any
 
 import aws_cdk as cdk
-from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_sns as sns
@@ -39,8 +41,7 @@ from .ssm_refs import (
 # `OpenNewsletter-{Name}-{env}` function_name across AuthStack (PreSignUp),
 # ApiStack (the eight request handlers), NotificationsStack (the two tick
 # Lambdas) and MediaPipelineStack (ImageProcess). Kept in one place so the
-# dashboard and the per-Lambda alarms can't drift from each other or from a
-# Lambda that gets its `function_name` changed.
+# dashboard can't drift from a Lambda that gets its `function_name` changed.
 _LAMBDA_NAMES: tuple[str, ...] = (
     "PreSignUp",
     "Invites",
@@ -56,9 +57,9 @@ _LAMBDA_NAMES: tuple[str, ...] = (
     "ImageProcess",
 )
 
-# These two also get their own "any error at all" alarm (`01` §9.2), on top
-# of the generic per-Lambda error-rate alarm every Lambda gets.
-_TICK_LAMBDA_NAMES: tuple[str, ...] = ("CycleTick", "NotifyTick")
+# The free CloudWatch tier covers 10 alarm metrics; a metric-math alarm costs
+# one per metric it reads (`01` §9.2). Prod's alarms must fit inside it.
+MAX_ALARM_METRICS = 10
 
 _FIVE_MIN = cdk.Duration.minutes(5)
 
@@ -90,18 +91,6 @@ class MonitoringStack(cdk.Stack):
             cloudfront_distribution_id_parameter_name(config.env)
         )
 
-        self.alarm_topic = sns.Topic(
-            self,
-            "AlarmTopic",
-            topic_name=f"OpenNewsletter-Alarms-{config.env}",
-            display_name=f"OpenNewsletter {config.env} alarms",
-        )
-
-        if config.alarm_email:
-            self.alarm_topic.add_subscription(
-                subscriptions.EmailSubscription(config.alarm_email)
-            )
-
         self.dashboard = cloudwatch.Dashboard(
             self,
             "Dashboard",
@@ -121,65 +110,37 @@ class MonitoringStack(cdk.Stack):
         self.dashboard.add_widgets(self._cloudfront_widget(cloudfront_distribution_id))
         self.dashboard.add_widgets(self._push_widget(config.env))
 
-        # AWS Budgets alarm — alert at 80 % actual spend ($8) and 100 % forecasted spend ($10).
-        # Created unconditionally so the budget exists even if alarm_email is absent;
-        # the SNS subscriber is optional.
-        budgets.CfnBudget(
-            self,
-            "MonthlyCostBudget",
-            budget=budgets.CfnBudget.BudgetDataProperty(
-                budget_type="COST",
-                time_unit="MONTHLY",
-                budget_limit=budgets.CfnBudget.SpendProperty(amount=10, unit="USD"),
-                budget_name=f"OpenNewsletter-{config.env}-monthly",
-            ),
-            notifications_with_subscribers=(
-                [
-                    budgets.CfnBudget.NotificationWithSubscribersProperty(
-                        notification=budgets.CfnBudget.NotificationProperty(
-                            notification_type="ACTUAL",
-                            comparison_operator="GREATER_THAN",
-                            threshold=80,
-                            threshold_type="PERCENTAGE",
-                        ),
-                        subscribers=[
-                            budgets.CfnBudget.SubscriberProperty(
-                                subscription_type="EMAIL",
-                                address=config.alarm_email,
-                            )
-                        ],
-                    ),
-                    budgets.CfnBudget.NotificationWithSubscribersProperty(
-                        notification=budgets.CfnBudget.NotificationProperty(
-                            notification_type="FORECASTED",
-                            comparison_operator="GREATER_THAN",
-                            threshold=100,
-                            threshold_type="PERCENTAGE",
-                        ),
-                        subscribers=[
-                            budgets.CfnBudget.SubscriberProperty(
-                                subscription_type="EMAIL",
-                                address=config.alarm_email,
-                            )
-                        ],
-                    ),
-                ]
-                if config.alarm_email
-                else []
-            ),
-        )
-
-        # --- Alarms ---
-
-        self._add_api_5xx_alarm(http_api_id)
-        for lambda_name in _LAMBDA_NAMES:
-            self._add_lambda_error_rate_alarm(lambda_name, config.env)
-        self._add_dynamo_throttle_alarm(table_name)
-        self._add_tick_errors_alarms(config.env)
-        self._add_push_failure_rate_alarm(config.env)
-
-        cdk.CfnOutput(self, "AlarmTopicArn", value=self.alarm_topic.topic_arn)
         cdk.CfnOutput(self, "DashboardName", value=self.dashboard.dashboard_name)
+
+        # --- Alarms (prod only, `01` §9.2) ---
+        # Dev has no alarms and so no topic either: nothing would publish to it.
+
+        self.alarm_topic: sns.Topic | None = None
+        if config.env != "prod":
+            return
+
+        topic = sns.Topic(
+            self,
+            "AlarmTopic",
+            topic_name=f"OpenNewsletter-Alarms-{config.env}",
+            display_name=f"OpenNewsletter {config.env} alarms",
+        )
+        if config.alarm_email:
+            topic.add_subscription(subscriptions.EmailSubscription(config.alarm_email))
+        self.alarm_topic = topic
+
+        # 2 + 2 + 2 + 2 + 2 = 10 alarm metrics, exactly MAX_ALARM_METRICS.
+        alarms = [
+            self._add_lambda_error_rate_alarm(),
+            self._add_api_5xx_alarm(http_api_id),
+            self._add_dynamo_throttle_alarm(table_name),
+            self._add_push_failure_rate_alarm(config.env),
+            self._add_cycle_tick_errors_alarm(config.env),
+        ]
+        for alarm in alarms:
+            alarm.add_alarm_action(cw_actions.SnsAction(topic))
+
+        cdk.CfnOutput(self, "AlarmTopicArn", value=topic.topic_arn)
 
     # --- Dashboard widgets ---
 
@@ -381,7 +342,7 @@ class MonitoringStack(cdk.Stack):
 
     # --- Alarms ---
 
-    def _add_api_5xx_alarm(self, http_api_id: str) -> None:
+    def _add_api_5xx_alarm(self, http_api_id: str) -> cloudwatch.Alarm:
         dims = {"ApiId": http_api_id}
         count = cloudwatch.Metric(
             namespace="AWS/ApiGateway",
@@ -412,11 +373,25 @@ class MonitoringStack(cdk.Stack):
             alarm_description="HTTP API 5xx rate exceeds 1% over 10 minutes",
             alarm_name=f"OpenNewsletter-Api5xxRate-{self._env}",
         )
-        alarm.add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+        return alarm
 
-    def _add_lambda_error_rate_alarm(self, name: str, env: str) -> None:
-        invocations = _lambda_metric(name, env, "Invocations")
-        errors = _lambda_metric(name, env, "Errors")
+    def _add_lambda_error_rate_alarm(self) -> cloudwatch.Alarm:
+        # Account-level aggregate (no FunctionName dimension): one metric pair
+        # covers every function, where a per-Lambda alarm would need a pair per
+        # function (`01` §9.2). Dev and prod share the account, so a dev error
+        # burst can trip this too; the alarm says so in its description.
+        invocations = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Invocations",
+            statistic=cloudwatch.Stats.SUM,
+            period=_FIVE_MIN,
+        )
+        errors = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Errors",
+            statistic=cloudwatch.Stats.SUM,
+            period=_FIVE_MIN,
+        )
         expression = cloudwatch.MathExpression(
             expression="(errors / FILL(invocations, 0)) * 100",
             using_metrics={"errors": errors, "invocations": invocations},
@@ -424,17 +399,20 @@ class MonitoringStack(cdk.Stack):
         )
         alarm = cloudwatch.Alarm(
             self,
-            f"{name}ErrorRateAlarm",
+            "LambdaErrorRateAlarm",
             metric=expression,
             threshold=5,
             evaluation_periods=2,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
-            alarm_description=f"{name} Lambda error rate exceeds 5% over 10 minutes",
-            alarm_name=f"OpenNewsletter-{name}-ErrorRate-{env}",
+            alarm_description=(
+                "Lambda error rate across every function in the account "
+                "(dev included) exceeds 5% over 10 minutes"
+            ),
+            alarm_name=f"OpenNewsletter-LambdaErrorRate-{self._env}",
         )
-        alarm.add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+        return alarm
 
-    def _add_dynamo_throttle_alarm(self, table_name: str) -> None:
+    def _add_dynamo_throttle_alarm(self, table_name: str) -> cloudwatch.Alarm:
         dims = {"TableName": table_name}
         read_throttles = cloudwatch.Metric(
             namespace="AWS/DynamoDB",
@@ -466,29 +444,53 @@ class MonitoringStack(cdk.Stack):
             alarm_description="DynamoDB table is being throttled",
             alarm_name=f"OpenNewsletter-DynamoThrottles-{self._env}",
         )
-        alarm.add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+        return alarm
 
-    def _add_tick_errors_alarms(self, env: str) -> None:
-        for name in _TICK_LAMBDA_NAMES:
-            errors = cloudwatch.Metric(
-                namespace="AWS/Lambda",
-                metric_name="Errors",
-                dimensions_map={"FunctionName": _lambda_function_name(name, env)},
-                statistic=cloudwatch.Stats.SUM,
-                period=cdk.Duration.minutes(1),
-            )
-            alarm = cloudwatch.Alarm(
-                self,
-                f"{name}ErrorsAlarm",
-                metric=errors,
-                threshold=1,
-                evaluation_periods=1,
-                alarm_description=f"{name} Lambda has encountered errors",
-                alarm_name=f"OpenNewsletter-{name}-Errors-{env}",
-            )
-            alarm.add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+    def _add_cycle_tick_errors_alarm(self, env: str) -> cloudwatch.Alarm:
+        # Any cycle-tick error at all: a stuck tick stalls every group's
+        # lifecycle. Notify-tick isn't separately alarmed; its failures mostly
+        # surface as push failures, already covered (`01` §9.2).
+        #
+        # The tick logs per-cycle failures rather than failing the invocation,
+        # so Lambda `Errors` alone misses the one that loses user content:
+        # auto-publish giving up on drafts after
+        # `AUTO_PUBLISH_MAX_FAILED_SWEEPS` sweeps (`06` §5.3). The tick emits
+        # that as the EMF metric `AutoPublishAbandoned`.
+        one_minute = cdk.Duration.minutes(1)
+        errors = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Errors",
+            dimensions_map={"FunctionName": _lambda_function_name("CycleTick", env)},
+            statistic=cloudwatch.Stats.SUM,
+            period=one_minute,
+        )
+        abandoned = cloudwatch.Metric(
+            namespace=f"OpenNewsletter/{env}",
+            metric_name="AutoPublishAbandoned",
+            statistic=cloudwatch.Stats.SUM,
+            period=one_minute,
+        )
+        expression = cloudwatch.MathExpression(
+            expression="FILL(errors, 0) + FILL(abandoned, 0)",
+            using_metrics={"errors": errors, "abandoned": abandoned},
+            period=one_minute,
+        )
+        alarm = cloudwatch.Alarm(
+            self,
+            "CycleTickErrorsAlarm",
+            metric=expression,
+            threshold=1,
+            evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+            alarm_description=(
+                "CycleTick Lambda has encountered errors, or auto-publish gave up"
+                " on drafts"
+            ),
+            alarm_name=f"OpenNewsletter-CycleTick-Errors-{env}",
+        )
+        return alarm
 
-    def _add_push_failure_rate_alarm(self, env: str) -> None:
+    def _add_push_failure_rate_alarm(self, env: str) -> cloudwatch.Alarm:
         # PushFailed / (PushSent + PushFailed) > 0.2 over 30 minutes, treating
         # missing data as not breaching (M11). FILL(sent, 0): in a total
         # outage PushSent has no datapoints, and an unfilled expression would
@@ -506,7 +508,7 @@ class MonitoringStack(cdk.Stack):
             period=cdk.Duration.minutes(30),
         )
 
-        cloudwatch.Alarm(
+        alarm = cloudwatch.Alarm(
             self,
             "PushFailureRateAlarm",
             metric=cloudwatch.MathExpression(
@@ -524,4 +526,5 @@ class MonitoringStack(cdk.Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="Push failure rate exceeds 20% over 30 minutes",
             alarm_name=f"OpenNewsletter-PushFailureRate-{env}",
-        ).add_alarm_action(cw_actions.SnsAction(self.alarm_topic))
+        )
+        return alarm

@@ -32,7 +32,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <HomePage /> },
       { path: "join", element: <JoinPage /> },
-      ...(env.appEnv === "dev"
+      // Dev only, and only with an `admin-bootstrap` client (D5, `05` §9.2).
+      ...(env.bootstrapLoginEnabled
         ? [{ path: "admin/bootstrap-login", element: <BootstrapLoginPage /> }]
         : []),
       {

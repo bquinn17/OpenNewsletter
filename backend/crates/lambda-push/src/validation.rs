@@ -41,6 +41,11 @@ fn has_allowed_host(raw: &str) -> bool {
     let Ok(url) = url::Url::parse(raw) else {
         return false;
     };
+    // Push services listen on 443; any other port would turn the allowlist
+    // into a port scanner against those hosts. `port()` is `None` for 443.
+    if url.port().is_some() {
+        return false;
+    }
     let Some(host) = url.host_str() else {
         return false;
     };
@@ -172,6 +177,15 @@ mod tests {
         let err = endpoint("https://fcm.googleapis.com@evil.com/push")
             .expect_err("host is evil.com, not fcm.googleapis.com");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn endpoint_rejects_a_non_default_port() {
+        let err = endpoint("https://fcm.googleapis.com:8443/fcm/send/abc")
+            .expect_err("push services only listen on 443");
+        assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+        endpoint("https://fcm.googleapis.com:443/fcm/send/abc")
+            .expect("an explicit default port is the same URL");
     }
 
     #[test]

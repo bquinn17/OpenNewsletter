@@ -15,6 +15,7 @@ build-lambdas: ## Cross-compile every Lambda binary for arm64
 # CDK falls back to a shell stub for any binary it can't find in
 # backend/target/lambda, so skipping the build here would deploy stubs silently.
 deploy-dev: build-lambdas ## Build Lambdas, deploy all stacks to dev, write frontend/.env.dev
+	./scripts/check_lambda_binaries.sh
 	cd infra && . .venv/bin/activate && \
 	    cdk deploy --context env=dev --all \
 	        --require-approval never \

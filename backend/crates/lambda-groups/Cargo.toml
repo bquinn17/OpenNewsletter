@@ -16,7 +16,10 @@ path = "src/main.rs"
 domain = { path = "../domain" }
 persistence = { path = "../persistence" }
 shared = { path = "../shared" }
+media-delete = { path = "../media-delete" }
 aws-config.workspace = true
+aws-sdk-cloudfront.workspace = true
+aws-sdk-s3.workspace = true
 aws-sdk-dynamodb.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true

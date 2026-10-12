@@ -242,7 +242,7 @@ def write_fixture(
             "cycle_settings": {
                 "questions_per_cycle": 5,
                 "votes_per_user_per_cycle": 3,
-                "response_window_days": 4,
+                "response_window_days": 7,
                 "auto_publish": True,
             },
             "notification_settings": {

@@ -54,9 +54,11 @@ See [`../plans/05-auth-flow.md`](../plans/05-auth-flow.md) for the full design. 
 codebase:
 
 - `src/auth/userManager.ts` — the single shared `oidc-client-ts` `UserManager` instance
-  (Authorization Code + PKCE against the Cognito hosted UI). `null` in mock mode.
+  (Authorization Code + PKCE against the Cognito hosted UI). `null` in mock mode. Tokens
+  live in `localStorage` so an installed PWA stays signed in (D1).
 - `src/auth/AuthProvider.tsx` / `src/auth/useAuth.ts` — the `{ status, user, login, logout }`
-  context every component reads via `useAuth()`.
+  context every component reads via `useAuth()`. Logout clears storage and caches, then
+  best-effort revokes the refresh token (`src/auth/revokeToken.ts`) before Cognito `/logout`.
 - `src/auth/RequireAuth.tsx` — a layout route element that redirects to login when signed out.
 - `src/auth/inviteStash.ts` — sessionStorage fallback for carrying an invite code across the
   OAuth round-trip (the primary carrier is `oidc-client-ts`'s `state` data).
@@ -70,7 +72,9 @@ codebase:
 - `src/pages/AuthCallbackPage.tsx` — handles `/auth/callback` (the OAuth redirect target).
 - `src/pages/BootstrapLoginPage.tsx` — `/admin/bootstrap-login`, a dev-only
   username/password form against the `admin-bootstrap` Cognito client, for creating the
-  very first group/admin before any invite exists. Only routed when `env.appEnv === "dev"`.
+  very first group/admin before any invite exists. Only routed when `env.bootstrapLoginEnabled`:
+  a dev build with `VITE_COGNITO_BOOTSTRAP_CLIENT_ID` set. That variable is optional and a
+  prod build ignores it, since prod has no `admin-bootstrap` client (D5).
   Not available in mock mode (there's no real Cognito client to call).
 - `src/api/client.ts` — attaches `Authorization: Bearer {idToken}` and an `x-correlation-id`
   header to every request; on a 401 it renews once and retries before signing the user out.

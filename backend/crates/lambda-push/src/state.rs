@@ -11,9 +11,9 @@ use tokio::sync::OnceCell;
 pub struct AppState {
     pub repo: Repo,
     pub secrets: aws_sdk_secretsmanager::Client,
-    /// Secrets Manager ARN of `opennewsletter/vapid/{env}`
-    /// (`plans/07-notifications.md` §2).
-    pub vapid_secret_arn: String,
+    /// Secrets Manager ARN of the per-env app secret `opennewsletter/{env}`,
+    /// whose JSON carries the VAPID keys (`plans/07-notifications.md` §2).
+    pub app_secret_arn: String,
     pub sender: Arc<dyn PushSender>,
     /// `dev` | `staging` | `prod` — the dev-only HTTP route refuses with
     /// `404 NOT_FOUND` unless this is exactly `dev`
@@ -24,26 +24,32 @@ pub struct AppState {
     vapid: OnceCell<VapidKeys>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VapidSecretJson {
-    public_key: String,
-    private_key: String,
-    subject: String,
+/// The VAPID part of the app secret's JSON. The secret holds other keys
+/// too (OAuth credentials, the CDN signing key); serde ignores them.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct VapidSecret {
+    pub vapid_public_key: String,
+    pub vapid_private_key: String,
+    pub vapid_subject: String,
+}
+
+/// Parse the app secret's `SecretString` for its VAPID keys.
+pub fn parse_vapid_secret(raw: &str) -> Result<VapidSecret, serde_json::Error> {
+    serde_json::from_str(raw)
 }
 
 impl AppState {
     pub fn new(
         repo: Repo,
         secrets: aws_sdk_secretsmanager::Client,
-        vapid_secret_arn: String,
+        app_secret_arn: String,
         sender: Arc<dyn PushSender>,
         env: String,
     ) -> Self {
         Self {
             repo,
             secrets,
-            vapid_secret_arn,
+            app_secret_arn,
             sender,
             env,
             vapid: OnceCell::new(),
@@ -63,27 +69,31 @@ impl AppState {
                 let resp = self
                     .secrets
                     .get_secret_value()
-                    .secret_id(&self.vapid_secret_arn)
+                    .secret_id(&self.app_secret_arn)
                     .send()
                     .await
                     .map_err(|e| {
-                        tracing::error!(error = ?e, "failed to fetch vapid secret");
+                        tracing::error!(error = ?e, "failed to fetch the app secret");
                         ApiError::internal("failed to load vapid keys")
                     })?;
                 let raw = resp.secret_string().ok_or_else(|| {
-                    tracing::error!("vapid secret has no SecretString");
-                    ApiError::internal("vapid secret has no SecretString")
+                    tracing::error!("app secret has no SecretString");
+                    ApiError::internal("app secret has no SecretString")
                 })?;
-                let parsed: VapidSecretJson = serde_json::from_str(raw).map_err(|e| {
-                    tracing::error!(error = ?e, "vapid secret is not valid JSON");
-                    ApiError::internal("vapid secret is not valid JSON")
+                // serde_json's error names the missing key, never a value.
+                let parsed = parse_vapid_secret(raw).map_err(|e| {
+                    tracing::error!(error = %e, "app secret lacks valid vapid keys");
+                    ApiError::internal("app secret lacks valid vapid keys")
                 })?;
-                VapidKeys::parse(&parsed.public_key, &parsed.private_key, parsed.subject).map_err(
-                    |e| {
-                        tracing::error!(error = ?e, "invalid vapid keypair");
-                        ApiError::internal("invalid vapid keypair")
-                    },
+                VapidKeys::parse(
+                    &parsed.vapid_public_key,
+                    &parsed.vapid_private_key,
+                    parsed.vapid_subject,
                 )
+                .map_err(|e| {
+                    tracing::error!(error = ?e, "invalid vapid keypair");
+                    ApiError::internal("invalid vapid keypair")
+                })
             })
             .await
     }
@@ -93,5 +103,35 @@ impl AppState {
     /// A no-op if the keys have already been loaded.
     pub fn set_vapid_keys_for_test(&self, keys: VapidKeys) {
         let _ = self.vapid.set(keys);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vapid_keys_are_read_from_the_app_secret_ignoring_other_keys() {
+        let raw = r#"{
+            "google_client_id": "g",
+            "cdn_signing_private_key": "-----BEGIN PRIVATE KEY-----",
+            "vapid_public_key": "pub",
+            "vapid_private_key": "priv",
+            "vapid_subject": "mailto:ops@example.com"
+        }"#;
+        assert_eq!(
+            parse_vapid_secret(raw).unwrap(),
+            VapidSecret {
+                vapid_public_key: "pub".into(),
+                vapid_private_key: "priv".into(),
+                vapid_subject: "mailto:ops@example.com".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_app_secret_without_vapid_keys_is_rejected() {
+        let raw = r#"{"vapid_public_key": "pub", "vapid_private_key": "priv"}"#;
+        assert!(parse_vapid_secret(raw).is_err());
     }
 }

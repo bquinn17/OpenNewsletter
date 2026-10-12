@@ -227,7 +227,7 @@ Alex — 1 hour ago (edited)
 [Reply textarea]
 ```
 
-Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). **Decided 2026-10-07; lands in M13.5:** Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0).
+Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). **Decided 2026-10-07; lands in M13.5:** Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0). As built (M13.5): for an edit that removes or replaces the image, the confirm fires at Save, when the image is actually released, since cancelling the edit keeps it. A fresh, never-posted upload in the composer is removed without a confirm.
 
 ### 4.4 `PollWidget.tsx`
 

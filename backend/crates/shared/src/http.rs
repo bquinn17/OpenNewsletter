@@ -19,6 +19,9 @@ pub const CORRELATION_ID_HEADER: &str = "x-correlation-id";
 pub struct AuthClaims {
     pub sub: CognitoSub,
     pub email: Option<String>,
+    /// Cognito's `email_verified`, which only the Google IdP populates
+    /// (`plans/05-auth-flow.md` §4.2). False when the claim is missing.
+    pub email_verified: bool,
     pub name: Option<String>,
 }
 
@@ -51,8 +54,16 @@ pub fn auth_claims(req: &Request) -> Result<AuthClaims, ApiError> {
     Ok(AuthClaims {
         sub: CognitoSub::new(sub.as_str()),
         email: claims.get("email").filter(|s| !s.is_empty()).cloned(),
+        email_verified: is_true_claim(claims.get("email_verified").map(String::as_str)),
         name: claims.get("name").filter(|s| !s.is_empty()).cloned(),
     })
+}
+
+/// A boolean JWT claim as the HTTP API JWT authorizer passes it: every claim
+/// arrives as a string, so JSON `true` shows up as `"true"`. Anything else,
+/// including a missing claim, is false.
+pub fn is_true_claim(raw: Option<&str>) -> bool {
+    raw.is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
 }
 
 /// The caller's correlation ID, or a freshly minted one when absent.
@@ -184,6 +195,21 @@ mod tests {
             .expect("valid test request");
         let err = auth_claims(&req).expect_err("no authorizer context");
         assert_eq!(err.code, ApiErrorCode::Unauthenticated);
+    }
+
+    #[test]
+    fn a_true_claim_is_true_in_any_case() {
+        assert!(is_true_claim(Some("true")));
+        assert!(is_true_claim(Some("True")));
+        assert!(is_true_claim(Some("TRUE")));
+    }
+
+    #[test]
+    fn a_false_odd_or_missing_claim_is_false() {
+        assert!(!is_true_claim(Some("false")));
+        assert!(!is_true_claim(Some("1")));
+        assert!(!is_true_claim(Some("")));
+        assert!(!is_true_claim(None));
     }
 
     #[test]

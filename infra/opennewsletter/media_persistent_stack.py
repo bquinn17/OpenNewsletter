@@ -23,6 +23,12 @@ from .config import EnvConfig
 from .ssm_refs import cloudfront_distribution_id_parameter_name
 
 _KEYS_DIR = Path(__file__).parent.parent / "keys"
+# CloudFront signing public key per env; the private halves live in each
+# env's app secret under `cdn_signing_private_key`.
+_SIGNING_PUBLIC_KEY_FILES = {
+    "dev": "cf-signing.pub.pem",
+    "prod": "cf-signing-prod.pub.pem",
+}
 
 
 class MediaPersistentStack(cdk.Stack):
@@ -61,7 +67,10 @@ class MediaPersistentStack(cdk.Stack):
             "OriginalsBucket",
             bucket_name=f"opennewsletter-media-originals-{config.env}-{self.account}",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            versioned=not is_dev,
+            # No versioning in either env: a user-initiated delete must remove
+            # the object, not leave it behind a delete marker
+            # (`plans/01-infrastructure-cdk.md` §5.1).
+            versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
             cors=cors_rules,
             lifecycle_rules=[
@@ -156,7 +165,9 @@ class MediaPersistentStack(cdk.Stack):
         )
 
         # --- CloudFront signing KeyGroup ---
-        pub_key_path = _KEYS_DIR / "cf-signing.pub.pem"
+        # Each env has its own RSA-2048 pair, so a leaked dev private key can't
+        # sign prod cookies (`plans/05-auth-flow.md` §10).
+        pub_key_path = _KEYS_DIR / _SIGNING_PUBLIC_KEY_FILES[config.env]
         pub_key_body = pub_key_path.read_text()
 
         cf_public_key = cloudfront.PublicKey(
@@ -206,6 +217,10 @@ class MediaPersistentStack(cdk.Stack):
 
         # Store the key pair ID from the public key for use by lambda-media
         self.cdn_key_pair_id = cf_public_key.public_key_id
+        # For the media-delete CloudFront invalidations ApiStack's Lambdas issue
+        # (`plans/01-infrastructure-cdk.md` §6.2). ApiStack already depends on
+        # this stack for the buckets and key pair id, so this adds no new edge.
+        self.distribution_id = self.distribution.distribution_id
 
         # --- Outputs ---
         cdk.CfnOutput(
@@ -241,11 +256,6 @@ class MediaPersistentStack(cdk.Stack):
             self,
             "CloudFrontKeyPairId",
             value=self.cdn_key_pair_id,
-        )
-        cdk.CfnOutput(
-            self,
-            "CloudFrontSigningKeySecretArn",
-            value=config.cdn_signing_secret_arn,
         )
 
         # Published for MonitoringStack (volatile; see ssm_refs.py for why it

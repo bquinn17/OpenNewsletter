@@ -6,9 +6,11 @@ import { mockNewsletterRoute } from "./mockNewsletters";
 import { mockPushRoute } from "./mockPush";
 import {
   CALLER_ID,
+  deleteMockImage,
   fail,
   groups,
   hasOtherAdmin,
+  imageRows,
   isAdminOf,
   newsletters,
   NO_MOCK_ROUTE,
@@ -89,7 +91,16 @@ function handlePatchMe(body: unknown): S["UserResponse"] {
   const next = { ...me };
   if (patch.displayName !== undefined) next.displayName = patch.displayName;
   if (patch.avatarColor !== undefined) next.avatarColor = patch.avatarColor;
-  if ("avatarMediaId" in patch) next.avatarMediaId = patch.avatarMediaId ?? null;
+  if ("avatarMediaId" in patch) {
+    next.avatarMediaId = patch.avatarMediaId ?? null;
+    next.avatarUrl = next.avatarMediaId
+      ? (avatarRows.get(next.avatarMediaId)?.avatarUrl ?? null)
+      : null;
+    // Replacing or clearing an avatar deletes the old one for real (`03` §2.3/§9.7).
+    if (me.avatarMediaId && me.avatarMediaId !== next.avatarMediaId) {
+      avatarRows.delete(me.avatarMediaId);
+    }
+  }
   me = next;
   return { ...me };
 }
@@ -163,7 +174,7 @@ function handleRedeemInvite(body: unknown): S["RedeemResponse"] {
       name: "New Group",
       timezone: "America/New_York",
       gradient: "citrus-blush",
-      cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+      cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 7 },
       notificationSettings: { offsetsHoursBeforeClose: [48, 24], onCycleOpen: true },
       memberCount: 1,
       memberSoftCap: 50,
@@ -203,16 +214,15 @@ const MOCK_IMAGE_DATA_URL =
 
 let nextImageId = 1;
 let nextAvatarId = 1;
-const imageRows: Record<string, S["ImageMediaResponse"]> = {};
 const imagePollCounts: Record<string, number> = {};
-const avatarRows: Record<string, S["AvatarMediaResponse"]> = {};
+const avatarRows = new Map<string, S["AvatarMediaResponse"]>();
 const avatarPollCounts: Record<string, number> = {};
 
 function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
   // Trusted internal shape — the only caller is our own typed `api.media.createUpload`.
   const request = body as S["CreateUploadRequest"];
   const imageId = `img_${nextImageId++}`;
-  imageRows[imageId] = {
+  imageRows.set(imageId, {
     imageId,
     userId: CALLER_ID,
     groupId: request.groupId,
@@ -230,7 +240,7 @@ function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
     errorMessage: null,
     uploadedAt: new Date().toISOString(),
     processedAt: null,
-  };
+  });
   imagePollCounts[imageId] = 0;
   return {
     imageId,
@@ -241,7 +251,7 @@ function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
 }
 
 function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"] {
-  const row = imageRows[imageId];
+  const row = imageRows.get(imageId);
   if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
 
   if (poll && row.status === "pending") {
@@ -258,16 +268,14 @@ function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"
   return { ...row };
 }
 
+/** Real delete (`03-api-contract.md` §9.4, D8): the row is gone; a repeat is still 204. */
 function handleDeleteUpload(imageId: string): undefined {
-  const row = imageRows[imageId];
-  if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
-  row.status = "failed";
-  row.errorMessage = "DELETED";
+  deleteMockImage(imageId);
   return undefined;
 }
 
 function handlePatchUpload(imageId: string, body: unknown): S["ImageMediaResponse"] {
-  const row = imageRows[imageId];
+  const row = imageRows.get(imageId);
   if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
   // Trusted internal shape — the only caller is our own typed `api.media.patchUpload`.
   const patch = body as S["PatchUploadRequest"];
@@ -288,7 +296,7 @@ function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
   // Trusted internal shape — the only caller is our own typed `api.media.createAvatar`.
   const request = body as S["CreateAvatarRequest"];
   const avatarId = `avatar_${nextAvatarId++}`;
-  avatarRows[avatarId] = {
+  avatarRows.set(avatarId, {
     avatarId,
     mimeType: request.mimeType,
     status: "pending",
@@ -297,7 +305,7 @@ function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
     errorMessage: null,
     uploadedAt: new Date().toISOString(),
     processedAt: null,
-  };
+  });
   avatarPollCounts[avatarId] = 0;
   return {
     avatarId,
@@ -308,7 +316,7 @@ function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
 }
 
 function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
-  const row = avatarRows[avatarId];
+  const row = avatarRows.get(avatarId);
   if (!row) fail(404, "NOT_FOUND", `avatar ${avatarId} not found`);
 
   if (row.status === "pending") {
@@ -322,11 +330,13 @@ function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
   return { ...row };
 }
 
+/**
+ * Real delete (`03-api-contract.md` §9.7, D8): the row is gone (a repeat is
+ * still 204), and the caller's current avatar falls back to `avatarColor`.
+ */
 function handleDeleteAvatar(avatarId: string): undefined {
-  const row = avatarRows[avatarId];
-  if (!row) fail(404, "NOT_FOUND", `avatar ${avatarId} not found`);
-  row.status = "failed";
-  row.errorMessage = "DELETED";
+  avatarRows.delete(avatarId);
+  if (me.avatarMediaId === avatarId) me = { ...me, avatarMediaId: null, avatarUrl: null };
   return undefined;
 }
 

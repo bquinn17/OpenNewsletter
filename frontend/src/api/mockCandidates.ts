@@ -257,7 +257,7 @@ function listCandidates(groupId: string, query: URLSearchParams): S["CandidateLi
   };
 }
 
-type FieldError = { field: string; code: string; message: string };
+type FieldError = S["FieldError"];
 
 function validationFailed(fieldErrors: FieldError[]): never {
   const problem: S["ProblemDetails"] = {

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
+import type { components } from "../../types/api";
 import { uploadToS3 } from "../../utils/uploadToS3";
 import { ImageUploader } from "./ImageUploader";
 
@@ -271,6 +272,105 @@ describe("ImageUploader", () => {
 
     expect(deleteUpload).toHaveBeenCalledWith("img1", "g1", "202606");
     expect(screen.queryByAltText("Uploaded image")).not.toBeInTheDocument();
+  });
+
+  describe("confirmRemove (D8)", () => {
+    const readyRow = {
+      imageId: "img1",
+      status: "ready",
+      purpose: "response",
+      mimeType: "image/jpeg",
+      caption: null,
+      thumbUrl: "https://cdn.test.invalid/img1/thumb.webp",
+      displayUrl: "https://cdn.test.invalid/img1/display.webp",
+      width: 10,
+      height: 10,
+      errorMessage: null,
+    } as components["schemas"]["ImageMediaResponse"];
+
+    it("asks before deleting, and a cancel keeps the image", async () => {
+      render(
+        <ImageUploader
+          groupId="g1"
+          cycleId="202606"
+          questionId="q1"
+          initialImages={[readyRow]}
+          confirmRemove
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove image img1" }));
+      expect(
+        screen.getByText("This permanently deletes the image. It can't be recovered."),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await act(() => flush());
+
+      expect(deleteUpload).not.toHaveBeenCalled();
+      expect(screen.getByAltText("Uploaded image")).toBeInTheDocument();
+    });
+
+    it("hands removal to onRemove after the confirm, hiding the image from onChange meanwhile", async () => {
+      let finish!: () => void;
+      const onRemove = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const onChange = vi.fn();
+      render(
+        <ImageUploader
+          groupId="g1"
+          cycleId="202606"
+          questionId="q1"
+          initialImages={[readyRow]}
+          confirmRemove
+          onRemove={onRemove}
+          onChange={onChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove image img1" }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
+        await flush();
+      });
+
+      expect(onRemove).toHaveBeenCalledWith("img1");
+      expect(deleteUpload).not.toHaveBeenCalled();
+      expect(onChange).toHaveBeenLastCalledWith([]);
+
+      await act(async () => {
+        finish();
+        await flush();
+      });
+      expect(screen.queryByAltText("Uploaded image")).not.toBeInTheDocument();
+    });
+
+    it("restores the image when onRemove fails", async () => {
+      const onChange = vi.fn();
+      render(
+        <ImageUploader
+          groupId="g1"
+          cycleId="202606"
+          questionId="q1"
+          initialImages={[readyRow]}
+          confirmRemove
+          onRemove={() => Promise.reject(new Error("offline"))}
+          onChange={onChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove image img1" }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
+        await flush();
+      });
+
+      expect(screen.getByAltText("Uploaded image")).toBeInTheDocument();
+      expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ imageId: "img1" })]);
+    });
   });
 
   it("resumes polling an initial image that was still pending on mount", async () => {

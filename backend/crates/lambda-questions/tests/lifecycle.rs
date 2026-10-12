@@ -208,3 +208,67 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .expect("the next voting cycle still exists");
     assert_eq!(still_voting.cycle_id, next_voting.cycle_id);
 }
+
+/// `06` §5.4 repair: promotion creates the next voting cycle best-effort, after
+/// its own transaction. If that create failed, the group sits with an `open`
+/// cycle and no `voting` one; nothing else would ever create it, so its
+/// lifecycle would stop after this edition. Every tick re-checks.
+#[tokio::test]
+async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("g-repair", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    let group_id = group.group_id.clone();
+
+    // An open cycle closing well in the future, so this tick neither publishes it
+    // nor has a voting cycle to promote — the state a failed create leaves.
+    let now = Utc::now();
+    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let cycle_id = shared::cycle_time::cycle_id_for(now, tz);
+    let open = Newsletter {
+        group_id: group_id.clone(),
+        cycle_id: cycle_id.clone(),
+        status: NewsletterStatus::Open,
+        vote_window_open_at: now - Duration::days(30),
+        vote_window_close_at: now - Duration::days(1),
+        response_open_at: now - Duration::days(1),
+        response_close_at: now + Duration::days(5),
+        published_at: None,
+        next_transition_at: Some(now + Duration::days(5)),
+        locked_question_ids: Vec::new(),
+        notified_offsets_hours: Vec::new(),
+        notified_on_open: false,
+    };
+    newsletters::write_status_transition(&repo, &open)
+        .await
+        .unwrap();
+    assert!(newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .is_none());
+
+    let notifier = RecordingNotifier::default();
+    let summary = run_tick_with(&repo, &notifier).await;
+
+    let following = shared::cycle_time::first_day_of_next_month_local(now, tz);
+    let next_id = shared::cycle_time::cycle_id_for(following, tz);
+    assert_eq!(
+        summary.transitions,
+        vec![cycle_tick::tick::Transition {
+            group_id: group_id.to_string(),
+            cycle_id: next_id.to_string(),
+            from: None,
+            to: "voting",
+        }]
+    );
+    let voting = newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("the tick recreates the missing voting cycle");
+    assert_eq!(voting.cycle_id, next_id);
+
+    // Once the successor exists, the repair is a no-op.
+    let summary = run_tick_with(&repo, &notifier).await;
+    assert_eq!(summary.transitions, Vec::new());
+    assert!(notifier.0.lock().unwrap().is_empty());
+}

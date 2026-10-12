@@ -248,6 +248,7 @@ Follow [`smoke.md`](smoke.md). All steps must pass clean.
 2. On `prod`, go to CloudWatch → Alarms. The ≤10 `OpenNewsletter-*-prod` alarm metrics should exist and sit in `OK` or `INSUFFICIENT_DATA`, not `ALARM`.
 3. Go to AWS Budgets. Confirm the single account-wide budget exists at $5/mo with alerts at 80% actual and 100% forecasted.
 4. Manually trigger a CloudWatch alarm (or wait for a test condition) to confirm the SNS email fires to `ALARM_EMAIL`.
+5. On `prod`, open `OpenNewsletter-CycleTick-Errors-prod`. Its math expression should read both the CycleTick Lambda's `Errors` and `OpenNewsletter/prod` `AutoPublishAbandoned` (added 2026-10-09; `plans/01-infrastructure-cdk.md` §9.2). The `AutoPublishAbandoned` metric only appears in CloudWatch once a tick has emitted it, so an empty metric list here is expected on a healthy stack.
 
 ---
 
@@ -259,7 +260,7 @@ Follow [`smoke.md`](smoke.md). All steps must pass clean.
 
 Update the Cognito redirect URIs on Google/Facebook to include the prod Cognito domain.
 
-Generate a **fresh** CloudFront signing keypair for prod (never share the dev private key), and put it in the combined secret under `cdn_signing_private_key`:
+Generate a **fresh** RSA-2048 CloudFront signing keypair for prod (never share the dev private key), and put it in the combined secret under `cdn_signing_private_key`. `MediaPersistentStack` reads `infra/keys/cf-signing-prod.pub.pem` for prod, so prod synth fails until it exists. **Done ahead of M14 (2026-10-07):** `opennewsletter/prod` was created holding only `cdn_signing_private_key`, so M14 *merges* the other keys into it (`put-secret-value` with the combined JSON) rather than creating it. Skip the block below unless you're rotating the key:
 
 ```sh
 openssl genrsa -out cf-signing-prod.key 2048
@@ -300,10 +301,10 @@ api.opennewsletter.example.com  CNAME  <apigw-id>.execute-api.us-east-1.amazonaw
 ```sh
 python scripts/bootstrap_admin.py \
   --env prod \
-  --admin-email "$BOOTSTRAP_ADMIN_EMAIL" \
-  --admin-display-name "Your Name" \
   --group-name "OpenNewsletter"
 ```
+
+The email comes from `BOOTSTRAP_ADMIN_EMAIL`; the script exits without it. `--admin-email` is optional in prod and only cross-checked against it, and `--admin-display-name`/`--password` are ignored (the display name comes from the Google profile at redemption). The table name comes from `cdk.out/prod-outputs.json` if present, otherwise `OpenNewsletter-prod`. Every put is conditional on the row not existing, so a re-run can't reset a live group (M13.5).
 
 Open the printed URL and sign in with **Google**, using that exact email — the invite's `bound_email` check requires the ID token's `email` (lowercased) to match and `email_verified` to be true, so Facebook (which doesn't supply `email_verified`) won't work for this redemption. The normal redeem path then creates the User + membership, same as any other invite. There is no password auth in prod and no `admin-bootstrap` Cognito client there (`plans/13-dev-environments.md` §6) — this invite-based flow is the only way to bootstrap the first prod admin.
 
@@ -313,5 +314,48 @@ Open the printed URL and sign in with **Google**, using that exact email — the
 2. Sign in via Google.
 3. Generate an invite, share the URL, redeem in a second account.
 4. Enable push notifications and verify a test notification arrives.
+5. Sign up a fresh account via **Facebook**. In the Cognito console, its `email_verified` attribute must be `false` (or absent). PreSignUp no longer auto-verifies federated emails (`plans/05-auth-flow.md` §3.3). If it's `true`, a Facebook user could redeem an email-bound invite, so stop and investigate.
 
 **M14 is verified when**: a real user can sign in and use the app at the production domain.
+
+---
+
+## Operations
+
+### Drafts that auto-publish gave up on
+
+At a cycle's close, the tick publishes every non-empty draft. A draft that keeps failing is retried on the next ticks. After `AUTO_PUBLISH_MAX_FAILED_SWEEPS` (3) failed passes, the edition publishes without it and the draft stays `draft` (`plans/06-newsletter-lifecycle.md` §5.3). This emits `AutoPublishAbandoned`, which trips the `OpenNewsletter-CycleTick-Errors-prod` alarm.
+
+1. **Find the drafts.** In CloudWatch Logs Insights, on `/aws/lambda/OpenNewsletter-CycleTick-prod`:
+
+   ```
+   fields @timestamp, @message
+   | filter @message like /failed to auto-publish draft|unreadable answer row|failed to list answers for auto-publish|auto-publish kept failing/
+   | sort @timestamp desc
+   ```
+
+   Each line names the group, cycle and question, plus either a `response_id`, the row's sort key `sk` (`A#{userId}`), or (for a listing failure) no row at all. A listing failure means every draft under that question was skipped.
+2. **Fix the cause.** An `unreadable answer row` is corrupt data. Inspect the item at `pk = GROUP#{groupId}#NL#{cycleId}#Q#{questionId}`, `sk = A#{userId}`, and repair or delete it. Anything else (throttling, a validation error) shows in the log line's `error` field.
+3. **Publish each draft by hand.** Do what the tick would have done: set `status` and `published_at`, the latter to the cycle's `response_close_at` as RFC 3339:
+
+   ```sh
+   aws dynamodb update-item --table-name OpenNewsletter-prod \
+     --key '{"pk":{"S":"GROUP#<g>#NL#<c>#Q#<q>"},"sk":{"S":"A#<u>"}}' \
+     --update-expression 'SET #s = :p, published_at = :at' \
+     --condition-expression '#s = :d' \
+     --expression-attribute-names '{"#s":"status"}' \
+     --expression-attribute-values '{":p":{"S":"published"},":d":{"S":"draft"},":at":{"S":"<responseCloseAt>"}}'
+   ```
+
+   Only publish a draft with content: a non-blank `body` or a live image for text, or a `poll_option_id` for polls.
+4. **Count the edition.** If the member has no other published answer in that cycle, bump their membership the same way, so the edition counts once:
+
+   ```sh
+   aws dynamodb update-item --table-name OpenNewsletter-prod \
+     --key '{"pk":{"S":"USER#<u>"},"sk":{"S":"GROUP#<g>"}}' \
+     --update-expression 'SET editions_answered = editions_answered + :one, last_answered_cycle = :c' \
+     --condition-expression 'attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :c' \
+     --expression-attribute-values '{":one":{"N":"1"},":c":{"S":"<c>"}}'
+   ```
+
+   A `ConditionalCheckFailedException` here means the edition was already counted. That's fine.

@@ -99,6 +99,8 @@ pub struct CreateInviteRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_days: Option<u32>,
     pub role_on_redeem: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_email: Option<String>,
 }
 
 /// `POST /admin/invites` response (§3.1).
@@ -109,6 +111,7 @@ pub struct CreateInviteResponse {
     pub group_id: GroupId,
     pub expires_at: DateTime<Utc>,
     pub role_on_redeem: Role,
+    pub bound_email: Option<String>,
 }
 
 /// One row of `GET /admin/groups/{groupId}/invites` (§3.2).
@@ -124,6 +127,7 @@ pub struct InviteSummary {
     pub expires_at: DateTime<Utc>,
     pub consumed_by: Option<UserId>,
     pub consumed_at: Option<DateTime<Utc>>,
+    pub bound_email: Option<String>,
 }
 
 impl InviteSummary {
@@ -138,6 +142,7 @@ impl InviteSummary {
             expires_at: invite.expires_at,
             consumed_by: invite.consumed_by,
             consumed_at: invite.consumed_at,
+            bound_email: invite.bound_email,
         }
     }
 }

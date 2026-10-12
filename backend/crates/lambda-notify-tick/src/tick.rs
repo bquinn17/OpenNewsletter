@@ -229,7 +229,8 @@ async fn fan_out_deadline_reminder(
             continue;
         }
 
-        let published_count = match responses::list_my_responses_in_cycle(
+        // A non-empty draft counts as answered: it auto-publishes at close (`07` §7.2).
+        let answered_count = match responses::list_my_responses_in_cycle(
             &state.repo,
             &member.user_id,
             &nl.group_id,
@@ -239,14 +240,14 @@ async fn fan_out_deadline_reminder(
         {
             Ok(list) => list
                 .iter()
-                .filter(|r| r.status == ResponseStatus::Published)
+                .filter(|r| r.status == ResponseStatus::Published || r.is_non_empty())
                 .count() as u32,
             Err(e) => {
                 tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
                 continue;
             }
         };
-        let is_done = total_questions > 0 && published_count >= total_questions;
+        let is_done = total_questions > 0 && answered_count >= total_questions;
         if is_done && offset_hours == smallest_offset_overall {
             continue;
         }
@@ -269,7 +270,7 @@ async fn fan_out_deadline_reminder(
             offset_hours,
             nl.response_close_at,
             tz,
-            published_count,
+            answered_count,
             total_questions,
             is_done,
         );

@@ -3,9 +3,13 @@
 
 use crate::state::AppState;
 use crate::validation;
+use chrono::{DateTime, Duration, Utc};
 use domain::api::{GroupResponse, MemberResponse, PatchGroupRequest, PatchMemberRequest};
-use domain::{ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Role, UserId};
-use persistence::{auth, groups, newsletters, questions, users, RepoError};
+use domain::{
+    ApiError, ApiErrorCode, CycleId, FieldErrorCode, Group, GroupId, GroupMembership, Role, UserId,
+};
+use persistence::groups::GroupPatch;
+use persistence::{auth, groups, newsletters, users, RepoError};
 
 pub async fn get_group(
     state: &AppState,
@@ -28,6 +32,8 @@ pub async fn patch_group(
     let group = load_group(state, group_id).await?;
 
     let patch = validation::group_patch(&group, request)?;
+    // Validated before any write, so a 422 here leaves the group untouched.
+    let open_cycle_close = open_cycle_close_change(state, group_id, &group, &patch).await?;
     groups::update_group(&state.repo, group_id, &patch)
         .await
         .map_err(|e| {
@@ -37,16 +43,77 @@ pub async fn patch_group(
 
     let updated = load_group(state, group_id).await?;
     reschedule_voting_cycle_if_needed(state, group_id, &group, &updated).await;
+    if let Some((cycle_id, new_close)) = open_cycle_close {
+        move_open_cycle_close(state, group_id, &cycle_id, new_close).await;
+    }
     let members = hydrate_members(state, group_id).await?;
     Ok(GroupResponse::new(updated, members))
 }
 
+/// `plans/06-newsletter-lifecycle.md` §6 — when `responseWindowDays` changes
+/// and the group has an `open` cycle, that cycle's close moves to
+/// `responseOpenAt + days`. Returns the cycle and its new close, or a 422 on
+/// `responseWindowDays` with code `CLOSES_IN_PAST` if the new close isn't in
+/// the future.
+async fn open_cycle_close_change(
+    state: &AppState,
+    group_id: &GroupId,
+    current: &Group,
+    patch: &GroupPatch,
+) -> Result<Option<(CycleId, DateTime<Utc>)>, ApiError> {
+    let Some(settings) = &patch.cycle_settings else {
+        return Ok(None);
+    };
+    let days = settings.response_window_days;
+    if days == current.cycle_settings.response_window_days {
+        return Ok(None);
+    }
+    let open = newsletters::find_open_cycle(&state.repo, group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "failed to load the open cycle");
+            ApiError::internal("failed to load the open cycle")
+        })?;
+    let Some(open) = open else {
+        return Ok(None);
+    };
+    let new_close = open.response_open_at + Duration::days(days.into());
+    if new_close <= Utc::now() {
+        return Err(ApiError::invalid_field_because(
+            "responseWindowDays",
+            FieldErrorCode::ClosesInPast,
+            format!("responseWindowDays {days} would close the open cycle in the past"),
+        ));
+    }
+    if new_close == open.response_close_at {
+        return Ok(None);
+    }
+    Ok(Some((open.cycle_id, new_close)))
+}
+
+/// Best-effort, like the voting-cycle reschedule: the settings change itself
+/// has already been saved.
+async fn move_open_cycle_close(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    new_close: DateTime<Utc>,
+) {
+    match newsletters::reschedule_open_cycle_close(&state.repo, group_id, cycle_id, new_close).await
+    {
+        Ok(()) => {}
+        Err(e) if e.is_lost_race() => {
+            tracing::info!(group_id = %group_id, cycle_id = %cycle_id, "open cycle published before its close could move");
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "failed to move the open cycle's close");
+        }
+    }
+}
+
 /// `plans/06-newsletter-lifecycle.md` §6 — a `timezone`/`responseWindowDays`
-/// change recomputes the group's current `voting` cycle's schedule, but only
-/// when nobody has suggested a candidate question for it yet; a cycle with
-/// candidate activity keeps its original timestamps (the change instead takes
-/// effect on the cycle created after this one transitions to `open`, since
-/// `create_next_voting_cycle` always reads the group's settings fresh).
+/// change recomputes the group's current `voting` cycle's schedule, whether
+/// or not it already has candidates.
 ///
 /// `cycleId` is derived from the recomputed `responseOpenAt` and doubles as
 /// the row's partition key. If recomputing would change it (a timezone shift
@@ -80,23 +147,6 @@ async fn reschedule_voting_cycle_if_needed(
         }
     };
 
-    let candidates = match questions::list_candidates(&state.repo, group_id, &voting.cycle_id).await
-    {
-        Ok(list) => list,
-        Err(e) => {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %voting.cycle_id, "failed to list candidates for reschedule");
-            return;
-        }
-    };
-    if !candidates.is_empty() {
-        tracing::info!(
-            group_id = %group_id,
-            cycle_id = %voting.cycle_id,
-            "settings changed but the voting cycle already has candidates; leaving its schedule as-is"
-        );
-        return;
-    }
-
     let Ok(tz) = updated.timezone.parse::<chrono_tz::Tz>() else {
         tracing::error!(group_id = %group_id, timezone = %updated.timezone, "validated timezone failed to parse during reschedule");
         return;
@@ -124,8 +174,14 @@ async fn reschedule_voting_cycle_if_needed(
     rescheduled.response_close_at = schedule.response_close_at;
     rescheduled.next_transition_at = Some(schedule.response_open_at);
 
-    if let Err(e) = newsletters::write_status_transition(&state.repo, &rescheduled).await {
-        tracing::error!(error = ?e, group_id = %group_id, "failed to reschedule voting cycle");
+    match newsletters::reschedule_voting_cycle(&state.repo, &rescheduled).await {
+        Ok(()) => {}
+        Err(e) if e.is_lost_race() => {
+            tracing::info!(group_id = %group_id, cycle_id = %rescheduled.cycle_id, "voting cycle promoted before it could be rescheduled");
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, "failed to reschedule voting cycle");
+        }
     }
 }
 

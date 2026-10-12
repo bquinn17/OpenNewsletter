@@ -87,7 +87,7 @@ The `testcontainers` crate starts DynamoDB Local itself, one container per test 
 
 `infra/tests/test_stacks.py` using `aws_cdk.assertions`. For each stack, assert:
 - Expected resource counts. `ApiStack` ends up with the eight request handlers from `01-infrastructure-cdk.md` §6.2, but they arrive milestone by milestone (M4 wires two: `lambda-invites` and `lambda-groups`), so assert on each handler's `FunctionName` rather than on a total count that is wrong until M11. Note the `PreSignUp` trigger is **not** in `ApiStack` — it lives in `AuthStack` alongside the user pool it attaches to (§6.2); the tick Lambdas live in `NotificationsStack` and `lambda-image-process` in `MediaPipelineStack`.
-- Cognito user pool has exactly two app clients (`frontend` + `admin-bootstrap`).
+- Cognito user pool has exactly two app clients in `dev` (`frontend` + `admin-bootstrap`) and one in `prod` (`frontend`; M13.5, D5).
 - IAM policy templates for each Lambda role match the documented least-privilege scope.
 - API routes match `03-api-contract.md` (auth attached to all but the explicit list of public ones — and there should be ZERO public routes).
 - DynamoDB table has correct keys + TTL attribute + 2 GSIs.
@@ -206,6 +206,10 @@ Steps:
 ### 6.4 `deploy.yml` — dev auto-deploy + gated prod promotion (decided 2026-10-07; lands in M13.5)
 
 Triggers: push to `main`.
+
+**Config variables (M13.5).** Unprefixed repo variables (`ROOT_DOMAIN`, `APP_SECRET_ARN`, `BOOTSTRAP_ADMIN_EMAIL`, …) are prod's; the dev job maps `DEV_*` variables onto the same names, so dev can never silently pick up a prod value. `ALARM_EMAIL` is shared, since `CiStack` is account-wide and both jobs deploy it. Both jobs fail fast when their app-secret ARN is empty.
+
+**OIDC trust (M13.5).** A job that declares `environment: production` gets the OIDC subject `repo:…:environment:production`, not `ref:refs/heads/main`, so `GithubDeployRole` trusts exactly those two subjects. The environment subject carries no branch, so the `production` environment **must** restrict deployment branches to `main` (`.github/workflows/README.md`).
 
 **Dev job** (gated by `vars.DEPLOY_ENABLED == 'true'`):
 1. Set up Rust + `cargo-lambda`; build all Lambdas (`cargo lambda build --release --arm64`) and upload them as a workflow artifact — built once here, reused by the prod job below.

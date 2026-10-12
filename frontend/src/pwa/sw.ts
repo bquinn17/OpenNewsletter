@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 // Custom service worker, injected into Workbox's precache manifest via
 // `vite-plugin-pwa`'s `injectManifest` strategy (`plans/04-frontend-architecture.md`
-// §14.2). Handles: precaching the build, `CacheFirst` for CDN images only, and
-// Web Push `push`/`notificationclick` (`plans/07-notifications.md` §5, M11 D11).
+// §14.2). Handles: prompt activation of a new deploy (D6), precaching the
+// build, `CacheFirst` for CDN images only, and Web Push
+// `push`/`notificationclick` (`plans/07-notifications.md` §5, M11 D11).
 //
 // Deliberately does NOT runtime-cache any API response (M11 D11 deviation
 // from `04` §5.2): authenticated JSON sitting in Cache Storage would outlive
@@ -11,11 +12,22 @@ import { precacheAndRoute } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
 import { CacheFirst } from "workbox-strategies";
 import { ExpirationPlugin } from "workbox-expiration";
-import { buildNotificationOptions, parsePushPayload, resolveNotificationUrl } from "./swHelpers";
+import {
+  activatePromptly,
+  buildNotificationOptions,
+  parsePushPayload,
+  resolveNotificationUrl,
+} from "./swHelpers";
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
 };
+
+// D6: activate a new deploy right away (skipWaiting + clients.claim) rather
+// than after every tab closes. `main.tsx` keeps vite-plugin-pwa's default
+// `prompt` registerType, whose `autoUpdate` alternative would reload open
+// pages mid-session; here a page picks up the new build on its next load.
+activatePromptly(self);
 
 precacheAndRoute(self.__WB_MANIFEST);
 

@@ -42,7 +42,7 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
     )
     .await;
 
-    let state = common::test_state(repo);
+    let (state, store, cdn) = common::test_state_with_fakes(repo);
     let group_id = GroupId::new("gcmt1");
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
@@ -130,9 +130,35 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
     assert_eq!(placeholder.body, "");
     assert!(placeholder.image.is_none());
 
-    // The image's claim is released.
-    let released = common::get_image(&state.repo, "gcmt1", "202606", &image_id).await;
-    assert_eq!(released.attached_comment_id, None);
+    // The released image is permanently deleted: objects, CDN copies, row.
+    assert_eq!(
+        store.deleted().await,
+        vec![
+            (
+                common::MEDIA_ORIGINALS.to_owned(),
+                "uploads/gcmt1/202606/q1/u1/img-1.jpg".to_owned()
+            ),
+            (
+                common::MEDIA_PROCESSED.to_owned(),
+                "processed/img-1/display.webp".to_owned()
+            ),
+            (
+                common::MEDIA_PROCESSED.to_owned(),
+                "processed/img-1/thumb.webp".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        cdn.invalidations().await,
+        vec![vec![
+            "/processed/img-1/display.webp".to_owned(),
+            "/processed/img-1/thumb.webp".to_owned(),
+        ]]
+    );
+    assert_eq!(
+        common::find_image(&state.repo, "gcmt1", "202606", &image_id).await,
+        None
+    );
 
     // Idempotent: deleting again still succeeds.
     handlers::delete_comment(
@@ -401,7 +427,7 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
     )
     .await;
 
-    let state = common::test_state(repo);
+    let (state, store, _cdn) = common::test_state_with_fakes(repo);
     let caller = domain::UserId::new("u1");
     let group_id = GroupId::new("gcmt6");
     let cycle_id = CycleId::new("202606");
@@ -467,8 +493,12 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
         "body left alone by an absent field"
     );
 
-    let released = common::get_image(&state.repo, "gcmt6", "202606", &image_id).await;
-    assert_eq!(released.attached_comment_id, None);
+    // Removing the image permanently deletes it.
+    assert_eq!(store.deleted().await.len(), 3);
+    assert_eq!(
+        common::find_image(&state.repo, "gcmt6", "202606", &image_id).await,
+        None
+    );
 }
 
 #[tokio::test]

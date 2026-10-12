@@ -54,12 +54,40 @@ export function buildNotificationOptions(payload: PushPayload): BuiltNotificatio
 /**
  * Resolves the payload's root-relative `url` (D6) against the SW's own
  * origin. Falls back to the origin itself on a malformed value rather than
- * throwing — a bad push payload shouldn't break the click handler.
+ * throwing — a bad push payload shouldn't break the click handler — and on
+ * any URL that resolves off-origin, so a notification can only open the app.
  */
 export function resolveNotificationUrl(url: string | undefined, origin: string): string {
   try {
-    return new URL(url ?? "/", origin).toString();
+    const resolved = new URL(url ?? "/", origin);
+    return resolved.origin === new URL(origin).origin ? resolved.toString() : origin;
   } catch {
     return origin;
   }
+}
+
+/**
+ * The slice of `ServiceWorkerGlobalScope` that `activatePromptly` touches,
+ * typed structurally so this file stays lib-agnostic (see the header).
+ */
+export interface ActivationScope {
+  skipWaiting(): Promise<void>;
+  clients: { claim(): Promise<void> };
+  addEventListener(
+    type: "install" | "activate",
+    listener: (event: { waitUntil(promise: Promise<unknown>): void }) => void,
+  ): void;
+}
+
+/**
+ * Makes a newly deployed service worker take over as soon as it installs
+ * (`04-frontend-architecture.md` §5.2/§14.2, D6), instead of waiting for
+ * every tab of the installed PWA to close: the prod promotion gate ships the
+ * backend and frontend together, so clients must pick up the matching
+ * frontend quickly. It doesn't reload anything: an open page keeps running
+ * the code it loaded and gets the new build on its next load or navigation.
+ */
+export function activatePromptly(scope: ActivationScope): void {
+  scope.addEventListener("install", (event) => event.waitUntil(scope.skipWaiting()));
+  scope.addEventListener("activate", (event) => event.waitUntil(scope.clients.claim()));
 }

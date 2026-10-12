@@ -130,7 +130,8 @@ class NotificationsStack(cdk.Stack):
                 "TABLE_NAME": table.table_name,
                 "ENV": config.env,
                 "RUST_LOG": "info",
-                "VAPID_SECRET_ARN": config.vapid_secret_arn,
+                # VAPID keys are its `vapid_*` JSON keys (`01` §7.1).
+                "APP_SECRET_ARN": config.app_secret_arn,
             },
             log_group=notify_tick_log_group,
         )
@@ -138,7 +139,7 @@ class NotificationsStack(cdk.Stack):
         self.notify_tick_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["secretsmanager:GetSecretValue"],
-                resources=[config.vapid_secret_arn],
+                resources=[config.app_secret_arn],
             )
         )
 

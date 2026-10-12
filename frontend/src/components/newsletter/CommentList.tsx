@@ -11,6 +11,7 @@ import { Avatar } from "../ui/Avatar";
 import { CdnImage } from "../ui/CdnImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ImageUploader, type UploaderImage } from "../responses/ImageUploader";
+import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
 
 type S = components["schemas"];
 type Comment = S["CommentResponse"];
@@ -125,6 +126,7 @@ function CommentRow({
   const [draftImages, setDraftImages] = useState<UploaderImage[]>([]);
   const [imageRemoved, setImageRemoved] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmImageRelease, setConfirmImageRelease] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const editComment = useEditComment(groupId, cycleId, questionId);
@@ -141,7 +143,7 @@ function CommentRow({
     setEditing(true);
   }
 
-  async function saveEdit() {
+  function saveEdit() {
     const trimmed = draftBody.trim();
     const readyImage = draftImages.find((img) => img.status === "ready");
     const keepsExistingImage = !!comment.image && !imageRemoved;
@@ -150,6 +152,19 @@ function CommentRow({
       return;
     }
     setError(null);
+    // Removing or replacing the attached image deletes it for real once the
+    // edit commits (`09-engagement.md` §1, D8), so confirm that first.
+    if (comment.image && (imageRemoved || readyImage)) {
+      setConfirmImageRelease(true);
+      return;
+    }
+    void commitEdit();
+  }
+
+  async function commitEdit() {
+    setConfirmImageRelease(false);
+    const trimmed = draftBody.trim();
+    const readyImage = draftImages.find((img) => img.status === "ready");
     try {
       await editComment.mutateAsync({
         responseId,
@@ -287,7 +302,7 @@ function CommentRow({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void saveEdit()}
+                  onClick={saveEdit}
                   disabled={busy}
                   className="text-xs font-bold text-grape disabled:opacity-50"
                 >
@@ -327,12 +342,27 @@ function CommentRow({
       <ConfirmDialog
         open={confirmDelete}
         title="Delete this comment?"
-        message="This can't be undone."
+        message={
+          comment.image
+            ? "This can't be undone. This also permanently deletes the attached image. It can't be recovered."
+            : "This can't be undone."
+        }
         confirmLabel="Delete"
         tone="danger"
         busy={deleteComment.isPending}
         onConfirm={() => void confirmAndDelete()}
         onCancel={() => setConfirmDelete(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmImageRelease}
+        title="Delete the attached image?"
+        message={PERMANENT_IMAGE_DELETE_MESSAGE}
+        confirmLabel="Delete image and save"
+        tone="danger"
+        busy={editComment.isPending}
+        onConfirm={() => void commitEdit()}
+        onCancel={() => setConfirmImageRelease(false)}
       />
     </div>
   );

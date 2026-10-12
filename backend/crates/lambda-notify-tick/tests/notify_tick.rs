@@ -238,6 +238,74 @@ async fn a_done_member_is_skipped_when_the_sent_offset_is_the_smallest() {
 }
 
 #[tokio::test]
+async fn a_non_empty_draft_counts_as_answered_but_an_empty_one_does_not() {
+    let (_c, repo) = common::make_repo().await;
+    let sender = Arc::new(common::FakePushSender::new());
+    let state = common::test_state(repo, sender.clone(), "dev");
+
+    let mut group = common::group("gnt-drafts", "u1");
+    group.notification_settings.offsets_hours_before_close = vec![24];
+    common::seed_group_and_membership(&state.repo, &group, "u1", Role::Member).await;
+    common::seed_group_and_membership(&state.repo, &group, "u2", Role::Member).await;
+    common::put_user(&state.repo, "u1").await;
+    common::put_user(&state.repo, "u2").await;
+
+    let now = Utc::now();
+    common::put_newsletter(
+        &state.repo,
+        &common::open_newsletter(
+            "gnt-drafts",
+            "202610",
+            now - Duration::days(1),
+            now + Duration::hours(10),
+            vec![QuestionId::new("q1")],
+        ),
+    )
+    .await;
+
+    // u1's unpublished draft has words, so it will auto-publish at close:
+    // u1 is done. u2's draft is only whitespace: not done.
+    common::put_text_draft(
+        &state.repo,
+        "gnt-drafts",
+        "202610",
+        "q1",
+        "u1",
+        "r1",
+        "Lake 22.",
+    )
+    .await;
+    common::put_text_draft(&state.repo, "gnt-drafts", "202610", "q1", "u2", "r2", "  ").await;
+
+    for (user, hash) in [("u1", "h1"), ("u2", "h2")] {
+        let (p256dh, auth) = common::make_subscriber_keys();
+        common::put_subscription(
+            &state.repo,
+            user,
+            hash,
+            &format!("https://example.com/{user}"),
+            &p256dh,
+            &auth,
+            "UA",
+            Utc::now(),
+        )
+        .await;
+    }
+
+    tick::run_notify_tick(&state).await;
+
+    let calls = sender.calls();
+    assert!(
+        !calls.contains(&"https://example.com/u1".to_owned()),
+        "a non-empty draft makes u1 done, so the smallest offset skips them"
+    );
+    assert!(
+        calls.contains(&"https://example.com/u2".to_owned()),
+        "an empty draft doesn't count"
+    );
+}
+
+#[tokio::test]
 async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smallest() {
     let (_c, repo) = common::make_repo().await;
     let sender = Arc::new(common::FakePushSender::new());

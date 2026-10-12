@@ -1,5 +1,6 @@
 //! Process-wide state built once per cold start.
 
+use media_delete::MediaDeleter;
 use persistence::Repo;
 
 pub struct AppState {
@@ -10,6 +11,8 @@ pub struct AppState {
     pub vapid_public_key: String,
     /// CloudFront origin for avatar URLs, e.g. `https://cdn.example.com`.
     pub cdn_base_url: String,
+    /// Deletes the avatar a `PATCH /me` replaces (`plans/08-media-uploads.md` §11.4).
+    pub avatar_deleter: MediaDeleter,
 }
 
 impl AppState {

@@ -2,8 +2,10 @@
 """Generate a VAPID keypair for Web Push and print it as JSON.
 
 Per plans/05-auth-flow.md §10 and plans/07-notifications.md: the resulting JSON
-({"publicKey": "...", "privateKey": "...", "subject": "mailto:..."}) is stored
-in AWS Secrets Manager at `opennewsletter/vapid/{env}`.
+({"publicKey": "...", "privateKey": "...", "subject": "mailto:..."}) is merged
+into the one per-env Secrets Manager secret `opennewsletter/{env}` as its
+`vapid_public_key` / `vapid_private_key` / `vapid_subject` keys
+(docs/milestone-1-operator-runbook.md §7 has the jq recipe).
 
 Usage:
     python scripts/generate_vapid_keys.py --subject mailto:ops@example.com

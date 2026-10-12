@@ -228,6 +228,7 @@ describe("GroupAdminPage", () => {
         groupId: "g1",
         expiresAt: "2026-02-01T00:00:00Z",
         roleOnRedeem: "admin",
+        boundEmail: null,
       });
 
       renderPage();
@@ -271,6 +272,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: null,
             consumedAt: null,
+            boundEmail: null,
           },
           {
             code: "EXPD-EXPD-EXPD-EXPD",
@@ -282,6 +284,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: null,
             consumedAt: null,
+            boundEmail: null,
           },
           {
             code: "RVKD-RVKD-RVKD-RVKD",
@@ -293,6 +296,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: null,
             consumedAt: null,
+            boundEmail: null,
           },
           {
             code: "SAMC-SAMC-SAMC-SAMC",
@@ -304,6 +308,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: "u_sam",
             consumedAt: new Date(now - 1 * 24 * 60 * 60 * 1000).toISOString(),
+            boundEmail: null,
           },
           {
             code: "GONE-GONE-GONE-GONE",
@@ -315,6 +320,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: "u_departed",
             consumedAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            boundEmail: null,
           },
         ],
         nextCursor: null,
@@ -349,6 +355,7 @@ describe("GroupAdminPage", () => {
             expiresAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
             consumedBy: null,
             consumedAt: null,
+            boundEmail: null,
           },
         ],
         nextCursor: null,
@@ -459,6 +466,51 @@ describe("GroupAdminPage", () => {
       await user.click(screen.getByRole("button", { name: "Save" }));
 
       expect(await screen.findByText("That name is taken.")).toBeInTheDocument();
+    });
+
+    it("says settings apply to the current cycle, not just future ones (D10)", async () => {
+      await openSettingsTab();
+
+      expect(
+        screen.getByText("Changes apply to the current cycle where possible."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Timezone changes affect the current voting cycle's open time."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/future cycles/i)).not.toBeInTheDocument();
+    });
+
+    it("shows the open-cycle 422 on the response window field (D10)", async () => {
+      const { user } = await openSettingsTab();
+      vi.mocked(api.patchGroup).mockRejectedValue(
+        new ApiError(422, "VALIDATION_FAILED", {
+          type: "https://api.opennewsletter.example.com/errors/validation-failed",
+          title: "Validation failed",
+          status: 422,
+          detail: "responseWindowDays 1 would close the open cycle in the past",
+          code: "VALIDATION_FAILED",
+          correlationId: "corr-2",
+          fieldErrors: [
+            {
+              field: "responseWindowDays",
+              code: "CLOSES_IN_PAST",
+              message: "responseWindowDays 1 would close the open cycle in the past",
+            },
+          ],
+        }),
+      );
+
+      const windowInput = screen.getByLabelText("Response window (days)");
+      await user.clear(windowInput);
+      await user.type(windowInput, "1");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      const message = await screen.findByText("Would close the open cycle in the past.");
+      // Rendered under the response window field, not as a form-level banner.
+      expect(message.parentElement).toContainElement(windowInput);
+      expect(api.patchGroup).toHaveBeenCalledWith("g1", {
+        cycleSettings: expect.objectContaining({ responseWindowDays: 1 }),
+      });
     });
 
     it("invalidates the config query on a successful save", async () => {

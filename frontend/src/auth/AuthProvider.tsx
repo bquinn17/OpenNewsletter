@@ -11,9 +11,11 @@ import {
   type LoginOptions,
 } from "./useAuth";
 import { renewSession } from "./renewSession";
+import { revokeRefreshToken } from "./revokeToken";
 import { userManager } from "./userManager";
 import { stashInvite } from "./inviteStash";
 import { disablePush } from "../pwa/pushSetup";
+import { assignLocation } from "../utils/navigation";
 
 /**
  * `disablePush()` is already internally best-effort (never throws), but it
@@ -112,16 +114,26 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     if (env.useMocks) {
       queryClient.clear();
       useCurrentGroup.getState().clear();
-      window.location.assign("/");
+      assignLocation("/");
       return;
     }
     if (!userManager) return;
     loggingOut.current = true;
-    await userManager.removeUser();
+    // `05-auth-flow.md` §8, in order. Read the user first: the refresh token
+    // (and which client issued it) is needed for step 4, after step 1 has
+    // already dropped it from storage.
+    const stored = await userManager.getUser().catch(() => null);
+    // 1. Remove the stored user from localStorage.
+    await userManager.removeUser().catch(() => undefined);
+    // 2. Clear the React Query cache.
     queryClient.clear();
+    // 3. Clear the persisted Zustand stores.
     useCurrentGroup.getState().clear();
+    // 4. Best-effort revoke; never throws, never blocks for long.
+    await revokeRefreshToken(stored);
+    // 5. Cognito's hosted-UI `/logout`.
     const logoutUri = encodeURIComponent(`${window.location.origin}/`);
-    window.location.assign(
+    assignLocation(
       `https://${env.cognitoHostedDomain}/logout?client_id=${env.cognitoClientId}&logout_uri=${logoutUri}`,
     );
   }, [queryClient]);

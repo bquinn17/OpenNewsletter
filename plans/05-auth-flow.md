@@ -87,10 +87,12 @@ Invite consumption happens later, after the SPA holds a real JWT, via `POST /inv
 // returns auto-confirm true so federated users skip email confirm
 fn handle(event: PreSignUp) -> PreSignUp {
     event.response.auto_confirm_user = true;
-    event.response.auto_verify_email = matches!(event.trigger_source.as_str(), "PreSignUp_ExternalProvider");
+    event.response.auto_verify_email = false;
     event
 }
 ```
+
+`auto_verify_email` is always false (changed 2026-10-08, review fix). It was once true for every federated signup, which set `email_verified=true` for Facebook users as well and defeated the Google-only rule for bound invites (§4.2). `email_verified` now comes only from the Google IdP's attribute mapping. Nothing had been deployed when this changed, so no user pool holds users created under the old behaviour.
 
 The SPA preserves the invite code across the OAuth round-trip by passing `{ invite, returnTo }` as `oidc-client-ts`'s `signinRedirect({ state })` data. The library keeps that data client-side, keyed by the opaque OIDC `state` nonce, so nothing user-controlled travels through Cognito (decided M7; `04` §6). A `sessionStorage` stash is the fallback. After token exchange, `/auth/callback` sends the user to `/join?code=…`, which posts the code to `/invites/redeem`.
 
@@ -165,7 +167,7 @@ write_transact(items_to_write)
 return 200 { groupId, groupName, role: invite.roleOnRedeem }
 ```
 
-**Bound-email check, step 2** (decided 2026-10-07; lands in M13.5, D5). `jwt.email_verified` comes from Cognito's `email_verified` attribute, which only Google populates via the IdP attribute mapping (`01` §4.2); Facebook doesn't supply it. So a `boundEmail` invite can only be redeemed by signing in with Google using that exact (lowercased) address — a Facebook sign-in, or a Google sign-in with a different or unverified email, gets `INVITE_EMAIL_MISMATCH`. This is the mechanism the prod bootstrap admin uses (§9).
+**Bound-email check, step 2** (decided 2026-10-07; lands in M13.5, D5). `jwt.email_verified` comes from Cognito's `email_verified` attribute, which only Google populates via the IdP attribute mapping (`01` §4.2); Facebook doesn't supply it. So a `boundEmail` invite can only be redeemed by signing in with Google using that exact (lowercased) address — a Facebook sign-in, or a Google sign-in with a different or unverified email, gets `INVITE_EMAIL_MISMATCH`. This is the mechanism the prod bootstrap admin uses (§9). **As built (M13.5):** the check runs after step 5's "already a member" short-circuit rather than before it. An idempotent retry by an existing member still returns 200, and nothing is consumed on that path, so no access is granted. API Gateway's HTTP API JWT authorizer hands claims to the Lambda as strings, so the handler treats `email_verified` as true only for JSON `true` or the string `"true"` (case-insensitive); a missing claim is false (decided M13.5).
 
 ### 4.3 First-signup vs additional-group
 
@@ -346,7 +348,7 @@ All of the following now land as JSON keys inside **one** per-env Secrets Manage
 - [ ] **Google**: Create OAuth 2.0 client in Google Cloud Console. Authorized redirect URI: `https://{cognito_domain_prefix}.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`. Authorized JS origin: `https://opennewsletter.example.com`. Save Client ID + Client Secret as `google_client_id`/`google_client_secret` in `opennewsletter/{env}`.
 - [ ] **Facebook**: Create app in Meta for Developers. Add Facebook Login. Valid OAuth redirect URI: same Cognito callback. Save App ID + Secret as `facebook_app_id`/`facebook_app_secret` in `opennewsletter/{env}`.
 - [ ] **VAPID keys**: `python scripts/generate_vapid_keys.py` → merge the JSON output's `publicKey`/`privateKey`/`subject` into `opennewsletter/{env}` as `vapid_public_key`/`vapid_private_key`/`vapid_subject`.
-- [ ] **CloudFront signing keypair**: generate RSA 2048; upload public to CloudFront (CDK does this from a public-key file in `infra/keys/`); store the private key as `cdn_signing_private_key` in `opennewsletter/{env}`.
+- [ ] **CloudFront signing keypair**: generate **RSA 2048**, a separate pair per env. ECDSA is not supported: `lambda-media` signs RSA-SHA1 only (`cloudfront.rs`), so an EC key deploys cleanly and then fails every `GET /media-cookie`. CDK uploads the public half from `infra/keys/` (`cf-signing.pub.pem` for dev, `cf-signing-prod.pub.pem` for prod); store the private half as `cdn_signing_private_key` in `opennewsletter/{env}`. Never reuse the dev private key in prod. `infra/tests/test_cf_signing_keys.py` checks both files are distinct RSA-2048 keys.
 - [ ] **Bootstrap admin email (prod only)**: set `BOOTSTRAP_ADMIN_EMAIL` for `scripts/bootstrap_admin.py`'s prod mode (§9.1a).
 
 This checklist is reproduced in `12-build-order.md` Milestone 1.

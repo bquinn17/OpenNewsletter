@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api/client";
 import { useConfig, useMembership, useNewsletter } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
@@ -9,9 +9,9 @@ import { Button } from "../components/ui/Button";
 import { Spinner } from "../components/ui/Spinner";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
 import { ResponseEditor } from "../components/responses/ResponseEditor";
-import { DraftStatusBadge } from "../components/responses/DraftStatusBadge";
+import { AUTO_PUBLISH_BADGE, DraftStatusBadge } from "../components/responses/DraftStatusBadge";
 import { PublishButton } from "../components/responses/PublishButton";
-import { useResponseEditor } from "../components/responses/useResponseEditor";
+import { cacheSavedResponse, useResponseEditor } from "../components/responses/useResponseEditor";
 import { MarkdownBody } from "../utils/markdown";
 import { useToasts } from "../state/toast";
 import { formatInZone, shortCountdown } from "../utils/dates";
@@ -152,6 +152,7 @@ function QuestionBody({
   responseCloseAt: string;
 }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const pushToast = useToasts((s) => s.push);
   const { data: config } = useConfig();
   const isText = question.kind === "text";
@@ -195,6 +196,7 @@ function QuestionBody({
 
   const isPublished = (editor.lastResponse?.status ?? question.myResponse?.status) === "published";
   const canPublishText = editor.body.trim().length > 0 || editor.imageMediaIds.length > 0;
+  const textIsUnpublishedDraft = !isPublished && canPublishText;
 
   const [pollOptionId, setPollOptionId] = useState<string | null>(
     question.myResponse?.pollOptionId ?? null,
@@ -203,6 +205,11 @@ function QuestionBody({
   const [pollResponse, setPollResponse] = useState<S["ResponseDto"] | null>(null);
   const [pollClosed, setPollClosed] = useState(false);
   const pollIsPublished = (pollResponse?.status ?? question.myResponse?.status) === "published";
+  const pollIsUnpublishedDraft = !pollIsPublished && pollOptionId !== null;
+  // `04` §7.3 (D2): a non-empty draft auto-publishes when responses close.
+  const showAutoPublishNote = isText
+    ? textIsUnpublishedDraft && !editor.readOnly
+    : pollIsUnpublishedDraft && !pollClosed;
 
   async function savePoll(publish: boolean, optionId: string) {
     setPollSaving(true);
@@ -213,6 +220,7 @@ function QuestionBody({
         publish,
       });
       setPollResponse(response);
+      cacheSavedResponse(queryClient, groupId, cycleId, question.questionId, response);
       if (response.status === "published" && prevStatusRef.current !== "published") {
         pushToast("Published — friends can see this when the edition publishes.", "success");
       }
@@ -233,10 +241,11 @@ function QuestionBody({
 
   function handlePollSelect(optionId: string) {
     setPollOptionId(optionId);
-    // Before the first publish, a pick is just local state — it's only
-    // persisted when Publish is pressed. Once published, every change is
-    // sticky and saves immediately (`03-api-contract.md` §7.3).
-    if (pollIsPublished) void savePoll(false, optionId);
+    // Every pick saves right away as a draft, the first one included, the
+    // same as a text autosave (`04` §7.3, D2). An unpublished pick is then
+    // auto-published at the deadline; once published, a change stays
+    // published (publishing is sticky server-side, `03-api-contract.md` §7.3).
+    void savePoll(false, optionId);
   }
 
   async function handlePublish() {
@@ -261,6 +270,20 @@ function QuestionBody({
           Closes {formatInZone(responseCloseAt, timezone)}
         </div>
       </div>
+
+      {showAutoPublishNote && (
+        <div className="px-5 pt-3">
+          <p
+            role="note"
+            className="rounded-3xl border border-sun/60 bg-sun/20 p-3 text-sm text-ink"
+          >
+            Drafts are published automatically when responses close on{" "}
+            {formatInZone(responseCloseAt, timezone)}.
+            {/* A poll pick can be changed but not cleared (`pollOptionId` is required). */}
+            {isText && " Clear your answer if you don't want it included."}
+          </p>
+        </div>
+      )}
 
       <div className="px-5 pt-5">
         <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
@@ -315,6 +338,7 @@ function QuestionBody({
                 onUploadingChange={setUploading}
                 initialImages={hydratedImages}
                 readOnly={editor.readOnly}
+                onDetachImage={editor.detachImage}
               />
             )}
           </>
@@ -340,13 +364,15 @@ function QuestionBody({
         <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
           <div className="text-xs leading-tight">
             {isText ? (
-              <DraftStatusBadge status={editor.status} />
+              <DraftStatusBadge status={editor.status} unpublishedDraft={textIsUnpublishedDraft} />
             ) : pollSaving ? (
               <Pill tone="grape">● Saving…</Pill>
+            ) : (pollResponse || question.myResponse) && pollIsUnpublishedDraft ? (
+              <Pill tone="mint">{AUTO_PUBLISH_BADGE}</Pill>
             ) : pollResponse || question.myResponse ? (
               <Pill tone="mint">Saved</Pill>
             ) : (
-              <Pill tone="sun">Pick one, then publish</Pill>
+              <Pill tone="sun">Pick one</Pill>
             )}
           </div>
           <span className="flex-1" />

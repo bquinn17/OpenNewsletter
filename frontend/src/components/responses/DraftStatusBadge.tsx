@@ -20,12 +20,21 @@ function useOnlineStatus(): boolean {
   return online;
 }
 
+/** The badge copy for a saved, non-empty, unpublished draft (`04` §7.3, D2). */
+export const AUTO_PUBLISH_BADGE = "Draft — publishes automatically at the deadline";
+
 type Props = {
   status: EditorStatus;
+  /**
+   * The saved answer is a non-empty draft that hasn't been published. It will
+   * auto-publish when the response window closes (`06` §5.3), so a settled
+   * save says so instead of a bare "Saved".
+   */
+  unpublishedDraft?: boolean;
 };
 
-/** Save-state indicator for the response editor (`04-frontend-architecture.md` §8.3). */
-export function DraftStatusBadge({ status }: Props) {
+/** Save-state indicator for the response editor (`04-frontend-architecture.md` §7.3, §8.3). */
+export function DraftStatusBadge({ status, unpublishedDraft = false }: Props) {
   const online = useOnlineStatus();
 
   if (!online) return <Pill tone="coral">You&apos;re offline</Pill>;
@@ -40,6 +49,7 @@ export function DraftStatusBadge({ status }: Props) {
     case "closed":
       return <Pill tone="mint">Saved {status.at ? formatRelative(status.at) : ""}</Pill>;
     case "saved":
+      if (unpublishedDraft) return <Pill tone="mint">{AUTO_PUBLISH_BADGE}</Pill>;
       return <Pill tone="mint">Saved {formatRelative(status.at)}</Pill>;
   }
 }

@@ -190,7 +190,7 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
   - Allowed methods: `GET, HEAD`
   - Viewer protocol: redirect-to-HTTPS
   - Cache policy: `CachingOptimized` (managed)
-  - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key (private key in Secrets Manager) → enables **signed cookies** for tenant isolation. See `08-media-uploads.md` §6. (In dev the same key group is used but the SPA presents the signature as signed-URL query params — `08-media-uploads.md` §4.5.)
+  - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key — **RSA 2048**, its own pair per env, read from `infra/keys/cf-signing.pub.pem` (dev) or `infra/keys/cf-signing-prod.pub.pem` (prod); private key in the env's app secret (`05` §10) → enables **signed cookies** for tenant isolation. See `08-media-uploads.md` §6. (In dev the same key group is used but the SPA presents the signature as signed-URL query params — `08-media-uploads.md` §4.5.)
 - **Avatar behavior**: path pattern `/avatar/*` → `avatars-processed` bucket via OAC. `GET, HEAD`, `CachingOptimized`, **no trusted key group** — avatars are unsigned by design (`08-media-uploads.md` §11.3).
 - **Price class**: `PriceClass_100` (NA + EU only) for cost.
 - **Domain alias**: `cdn.{config.domain}` in prod. None in dev, which uses the raw `*.cloudfront.net` domain (`13-dev-environments.md` §2).
@@ -259,7 +259,7 @@ The route column below is a **summary only** — `03-api-contract.md` §13 is th
 | `lambda-media` | uploads presign/status/caption/delete, `GET /media-cookie`, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; CloudFront signing; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /avatars`, D8); `cloudfront:CreateInvalidation` on the distribution | Secrets:GetSecretValue on the app secret (signing key) |
 | `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas (`07-notifications.md` §6) | RW | — | Secrets:GetSecretValue on the app secret (VAPID keys) |
 
-**Real media deletion (decided 2026-10-07; lands in M13.5, `03` §9.4/§9.7, D8).** A shared helper in the `shared` crate deletes an image's S3 objects, invalidates its CloudFront path, then deletes the `ImageMedia`/`AvatarMedia` row. The three IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes and the one CloudFront distribution each Lambda actually deletes from; no Lambda gets a blanket `cloudfront:CreateInvalidation` across the whole account.
+**Real media deletion (decided 2026-10-07; lands in M13.5, `03` §9.4/§9.7, D8).** A shared helper — the `media-delete` library crate (`backend/crates/media-delete`; not `shared`, which can't depend on `persistence` and so can't delete the row — decided M13.5) — deletes an image's S3 objects, invalidates its CloudFront path, then deletes the `ImageMedia`/`AvatarMedia` row. The three IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes and the one CloudFront distribution each Lambda actually deletes from; no Lambda gets a blanket `cloudfront:CreateInvalidation` across the whole account.
 
 The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, `03-api-contract.md` §11a) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
@@ -389,9 +389,9 @@ A single CloudWatch dashboard `OpenNewsletter-{env}` with widgets for:
 - HTTP API 5xx rate >1% over 10 minutes (2 metrics) → SNS topic
 - DynamoDB read + write throttle events >0 over 5 minutes (2 metrics) → SNS topic
 - Push delivery failure rate >20% rolling (2 metrics) → SNS topic
-- `lambda-cycle-tick` errors, any (1 metric) → SNS topic
+- `lambda-cycle-tick` errors, any, plus the tick's `AutoPublishAbandoned` EMF metric (2 metrics, `FILL(errors,0) + FILL(abandoned,0) ≥ 1`) → SNS topic. The tick logs per-cycle failures rather than failing the invocation, so Lambda `Errors` alone missed auto-publish giving up on drafts (`06` §5.3; added 2026-10-08, review fix).
 
-That's 9 of the 10 free alarm metrics; `lambda-notify-tick` failures are not separately alarmed (its failures mostly surface as push failures, already covered). SNS topic emails `config.alarm_email`.
+That's all 10 of the free alarm metrics, so a new alarm must replace or merge into one of these; `lambda-notify-tick` failures are not separately alarmed (its failures mostly surface as push failures, already covered). SNS topic emails `config.alarm_email`.
 
 ### 9.2a Account-wide budget
 
@@ -435,7 +435,7 @@ python -m venv .venv && . .venv/bin/activate   # or .venv/Scripts/activate on Wi
 pip install -r requirements.txt
 cdk bootstrap aws://{accountId}/us-east-1
 
-# Build Lambdas (separate step, fed via cdk asset bundling — see backend-deploy.yml)
+# Build Lambdas (separate step, fed via cdk asset bundling — see deploy.yml)
 cd ../backend
 cargo lambda build --release --arm64
 

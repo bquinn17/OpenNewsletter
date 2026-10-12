@@ -5,6 +5,7 @@ use image::{ImageBuffer, ImageFormat, Rgba, RgbaImage};
 use image_process::handler::handle_event;
 use image_process::state::{AppState, Buckets};
 use image_process::storage::fake::FakeStore;
+use image_process::storage::{ObjectStore, StoreError};
 use persistence::media;
 use pretty_assertions::assert_eq;
 use std::io::Cursor;
@@ -173,6 +174,81 @@ async fn an_already_ready_row_is_skipped_and_not_reuploaded() {
             .contains(PROCESSED, "img/g1/202606/q1/u1/img-04/display.webp")
             .await
     );
+}
+
+/// A store that deletes the image row on the first processed upload: the user
+/// removing the image while this invocation is mid-processing.
+struct DeleteRowDuringUpload {
+    inner: Arc<FakeStore>,
+    repo: persistence::Repo,
+    row: domain::ImageMedia,
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for DeleteRowDuringUpload {
+    async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError> {
+        self.inner.content_length(bucket, key).await
+    }
+
+    async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError> {
+        self.inner.get(bucket, key).await
+    }
+
+    async fn put(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        cache_control: &str,
+    ) -> Result<(), StoreError> {
+        media::delete_image_row(
+            &self.repo,
+            &self.row.group_id,
+            &self.row.cycle_id,
+            &self.row.image_id,
+        )
+        .await
+        .unwrap();
+        self.inner
+            .put(bucket, key, body, content_type, cache_control)
+            .await
+    }
+
+    async fn delete(&self, bucket: &str, key: &str) -> Result<(), StoreError> {
+        self.inner.delete(bucket, key).await
+    }
+}
+
+#[tokio::test]
+async fn an_image_deleted_mid_processing_leaves_no_processed_objects() {
+    let (_c, repo) = common::make_repo().await;
+    let fake = Arc::new(FakeStore::new());
+    let row = common::pending_image("g1", "202606", "img-05", "q1", "u1");
+    media::put_image(&repo, &row).await.unwrap();
+    let state = AppState {
+        repo: repo.clone(),
+        store: Arc::new(DeleteRowDuringUpload {
+            inner: fake.clone(),
+            repo,
+            row,
+        }),
+        buckets: buckets(),
+    };
+    let key = "uploads/g1/202606/q1/u1/img-05.jpg";
+    fake.seed(MEDIA_ORIGINALS, key, jpeg_bytes(100, 100)).await;
+
+    handle_event(&state, common::s3_event(MEDIA_ORIGINALS, key))
+        .await
+        .unwrap();
+
+    for variant in ["display", "thumb"] {
+        let processed = format!("img/g1/202606/q1/u1/img-05/{variant}.webp");
+        assert!(
+            !fake.contains(PROCESSED, &processed).await,
+            "{processed} left behind"
+        );
+    }
 }
 
 #[tokio::test]

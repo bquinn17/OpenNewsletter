@@ -208,8 +208,9 @@ pub async fn patch_upload(
 /// with `IMAGE_IN_USE` when the caller's own *published* response for the
 /// image's question still references it, or (`purpose=comment`, added M10)
 /// a live comment still has it claimed via `attachedCommentId`
-/// (`09-engagement.md` §1.5, `03-api-contract.md` §8.2). Otherwise
-/// idempotent: an already-`failed` image is a no-op success.
+/// (`09-engagement.md` §1.5, `03-api-contract.md` §8.2). Otherwise deletes
+/// the S3 objects, the CDN copies and the row (`08-media-uploads.md` §8.0).
+/// Idempotent: an already-deleted image is a no-op success.
 pub async fn delete_upload(
     state: &AppState,
     caller: &UserId,
@@ -218,7 +219,9 @@ pub async fn delete_upload(
     image_id: &ImageId,
 ) -> Result<(), ApiError> {
     auth::require_membership(&state.repo, caller, group_id, false).await?;
-    let image = load_image(state, group_id, cycle_id, image_id).await?;
+    let Some(image) = find_image(state, group_id, cycle_id, image_id).await? else {
+        return Ok(());
+    };
     require_owner(caller, &image)?;
 
     if image.purpose == ImagePurpose::Comment && image.attached_comment_id.is_some() {
@@ -247,13 +250,12 @@ pub async fn delete_upload(
         }
     }
 
-    media::mark_image_deleted(&state.repo, group_id, cycle_id, image_id)
+    media_delete::delete_image_media(&state.repo, &state.image_deleter, &image)
         .await
         .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "image delete failed");
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "image delete failed");
             ApiError::internal("failed to delete image")
-        })?;
-    Ok(())
+        })
 }
 
 /// The caller's signed CloudFront cookie values, plus the `Set-Cookie`
@@ -380,28 +382,40 @@ pub async fn get_avatar(
     Ok(AvatarMediaResponse::new(avatar, avatar_url))
 }
 
-/// `DELETE /avatars/{avatarId}` (§9.7). Idempotent; clears
-/// `User.avatar_media_id` if it still points at this avatar.
+/// `DELETE /avatars/{avatarId}` (§9.7). Unlinks it from `User.avatar_media_id`
+/// if it's the current one, then deletes its S3 objects, CDN copies and row
+/// (`08-media-uploads.md` §11.4). Unlinking first means a failed delete never
+/// leaves the profile pointing at a half-deleted avatar. Idempotent: the
+/// lookup is under the caller's own partition, so an already-deleted avatar
+/// (or another user's id, which touches nothing of theirs) is a no-op success.
 pub async fn delete_avatar(
     state: &AppState,
     caller: &UserId,
     avatar_id: &AvatarId,
 ) -> Result<(), ApiError> {
-    load_avatar(state, caller, avatar_id).await?;
-
-    media::mark_avatar_deleted(&state.repo, caller, avatar_id)
+    let avatar = media::get_avatar(&state.repo, caller, avatar_id)
         .await
         .map_err(|e| {
-            tracing::error!(error = ?e, user_id = %caller, "avatar delete failed");
-            ApiError::internal("failed to delete avatar")
+            tracing::error!(error = ?e, user_id = %caller, "avatar lookup failed");
+            ApiError::internal("failed to load avatar")
         })?;
+
     users::clear_user_avatar_if(&state.repo, caller, avatar_id)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, user_id = %caller, "avatar unlink failed");
             ApiError::internal("failed to unlink avatar")
         })?;
-    Ok(())
+
+    let Some(avatar) = avatar else {
+        return Ok(());
+    };
+    media_delete::delete_avatar_media(&state.repo, &state.avatar_deleter, &avatar)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, user_id = %caller, avatar_id = %avatar_id, "avatar delete failed");
+            ApiError::internal("failed to delete avatar")
+        })
 }
 
 async fn load_image(
@@ -410,13 +424,23 @@ async fn load_image(
     cycle_id: &CycleId,
     image_id: &ImageId,
 ) -> Result<ImageMedia, ApiError> {
+    find_image(state, group_id, cycle_id, image_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("image not found"))
+}
+
+async fn find_image(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_id: &ImageId,
+) -> Result<Option<ImageMedia>, ApiError> {
     media::get_image(&state.repo, group_id, cycle_id, image_id)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "image lookup failed");
             ApiError::internal("failed to load image")
-        })?
-        .ok_or_else(|| ApiError::not_found("image not found"))
+        })
 }
 
 async fn load_avatar(

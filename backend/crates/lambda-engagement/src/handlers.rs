@@ -160,7 +160,7 @@ pub async fn patch_comment(
     // image change on this comment (its transaction is conditioned on the
     // image read here, so a stale detach can't release the wrong image).
     let mut attempts = 0;
-    loop {
+    let released_image_id = loop {
         attempts += 1;
         let existing = load_live_comment(
             state,
@@ -235,7 +235,7 @@ pub async fn patch_comment(
         )
         .await;
         match update {
-            Ok(()) => break,
+            Ok(()) => break detach_image_id,
             Err(e) if e.is_lost_race() => {
                 // Deleted meanwhile → 404 from `load_live_comment`; image
                 // changed meanwhile → retry against the fresh state;
@@ -265,6 +265,9 @@ pub async fn patch_comment(
                 return Err(ApiError::internal("failed to update comment"));
             }
         }
+    };
+    if let Some(image_id) = &released_image_id {
+        delete_released_image(state, group_id, cycle_id, image_id).await;
     }
 
     let updated = engagement::get_comment_by_id(
@@ -350,13 +353,42 @@ pub async fn delete_comment(
         )
         .await
         {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                if let Some(image_id) = &existing.image_media_id {
+                    delete_released_image(state, group_id, cycle_id, image_id).await;
+                }
+                return Ok(());
+            }
             Err(e) if e.is_lost_race() && attempts < COMMENT_WRITE_ATTEMPTS => {}
             Err(e) => {
                 tracing::error!(error = ?e, group_id = %group_id, "comment soft-delete failed");
                 return Err(ApiError::internal("failed to delete comment"));
             }
         }
+    }
+}
+
+/// Permanently delete an image a comment just released (`09-engagement.md`
+/// §1.1, `08-media-uploads.md` §8.0). Best effort: the comment write has
+/// already committed, so a failure is logged rather than surfaced.
+async fn delete_released_image(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_id: &ImageId,
+) {
+    let image = match media::get_image(&state.repo, group_id, cycle_id, image_id).await {
+        Ok(Some(image)) => image,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "released comment image lookup failed; not deleted");
+            return;
+        }
+    };
+    if let Err(e) =
+        media_delete::delete_image_media(&state.repo, &state.image_deleter, &image).await
+    {
+        tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "released comment image delete failed");
     }
 }
 

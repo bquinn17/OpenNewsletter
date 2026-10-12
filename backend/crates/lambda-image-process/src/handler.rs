@@ -103,6 +103,9 @@ async fn handle_image_record(
         Err(ProcessError::DecodeFailed) => {
             return fail_image(state, &parsed, None, IMAGE_DECODE_FAILED).await;
         }
+        Err(ProcessError::TooLarge) => {
+            return fail_image(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        }
     };
 
     let display_key = format!(
@@ -160,7 +163,30 @@ async fn handle_image_record(
     )
     .await?;
     if outcome == UpdateOutcome::AlreadyFinal {
-        info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+        // The conditional update also fails when the row is gone: the image was
+        // deleted while this invocation processed it. The deleter saw no
+        // processed keys on the pending row, so the objects just written are
+        // ours to remove.
+        let row = media::get_image(
+            &state.repo,
+            &parsed.group_id,
+            &parsed.cycle_id,
+            &parsed.image_id,
+        )
+        .await?;
+        if row.is_none() {
+            info!(image_id = %parsed.image_id, "image deleted during processing; removing its processed objects");
+            state
+                .store
+                .delete(&state.buckets.processed, &display_key)
+                .await?;
+            state
+                .store
+                .delete(&state.buckets.processed, &thumb_key)
+                .await?;
+        } else {
+            info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+        }
     }
     Ok(())
 }
@@ -220,6 +246,9 @@ async fn handle_avatar_record(
         Err(ProcessError::DecodeFailed) => {
             return fail_avatar(state, &parsed, None, IMAGE_DECODE_FAILED).await;
         }
+        Err(ProcessError::TooLarge) => {
+            return fail_avatar(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        }
     };
 
     let display_key = format!(
@@ -247,7 +276,17 @@ async fn handle_avatar_record(
     )
     .await?;
     if outcome == UpdateOutcome::AlreadyFinal {
-        info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+        // As for images: a missing row means the avatar was deleted mid-processing.
+        let row = media::get_avatar(&state.repo, &parsed.user_id, &parsed.avatar_id).await?;
+        if row.is_none() {
+            info!(avatar_id = %parsed.avatar_id, "avatar deleted during processing; removing its processed object");
+            state
+                .store
+                .delete(&state.buckets.avatars_processed, &display_key)
+                .await?;
+        } else {
+            info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+        }
     }
     Ok(())
 }

@@ -118,3 +118,26 @@ test.describe("save draft → reload", () => {
     await expect(page.getByText("Unsaved changes")).toBeVisible();
   });
 });
+
+test("a poll pick saves as a draft at once and warns that drafts auto-publish", async ({
+  page,
+}) => {
+  // D2 (`04` §7.3): every pick, the first included, saves with `publish:false`,
+  // and an unpublished non-empty answer shows the auto-publish note.
+  await gotoHome(page);
+  await page.getByRole("link", { name: "Respond" }).click();
+  await page.getByRole("link", { name: /which trail should we do next/i }).click();
+
+  await expect(page.getByRole("note")).toHaveCount(0);
+  await page.getByRole("button", { name: "Lake 22" }).click();
+
+  await expect(page.getByText("Draft — publishes automatically at the deadline")).toBeVisible();
+  await expect(page.getByRole("note")).toContainText(
+    "Drafts are published automatically when responses close on",
+  );
+
+  // The draft really reached the (mock) server: it survives leaving and coming back.
+  await page.goBack();
+  await page.getByRole("link", { name: /which trail should we do next/i }).click();
+  await expect(page.getByRole("button", { name: "Lake 22" })).toHaveClass(/border-grape/);
+});

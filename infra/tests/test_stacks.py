@@ -5,8 +5,11 @@ Run with: pytest infra/tests/
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure the infra package is importable regardless of working directory.
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -156,6 +159,7 @@ def test_user_pool_self_signup_disabled(auth_template: assertions.Template) -> N
 
 
 def test_user_pool_exactly_two_clients(auth_template: assertions.Template) -> None:
+    # Dev: `frontend` + the dev-only `admin-bootstrap` client.
     auth_template.resource_count_is("AWS::Cognito::UserPoolClient", 2)
 
 
@@ -440,9 +444,12 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
         notify_tick_fn=notifications_stack.notify_tick_fn,
         media_originals_bucket=media_persistent_stack.originals_bucket,
+        media_processed_bucket=media_persistent_stack.processed_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+        avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
         cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
         cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
+        cdn_distribution_id=media_persistent_stack.distribution_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -482,9 +489,12 @@ def prod_api_template() -> assertions.Template:
         cycle_tick_fn=notifications_stack.cycle_tick_fn,
         notify_tick_fn=notifications_stack.notify_tick_fn,
         media_originals_bucket=media_persistent_stack.originals_bucket,
+        media_processed_bucket=media_persistent_stack.processed_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
+        avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
         cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
         cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
+        cdn_distribution_id=media_persistent_stack.distribution_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -525,14 +535,31 @@ def test_jwt_authorizer_targets_the_user_pool(
     )
 
 
+def _authorizer_audiences(template: assertions.Template) -> list[Any]:
+    authorizers = template.find_resources("AWS::ApiGatewayV2::Authorizer")
+    assert len(authorizers) == 1
+    authorizer = next(iter(authorizers.values()))
+    audiences: list[Any] = authorizer["Properties"]["JwtConfiguration"]["Audience"]
+    return audiences
+
+
 def test_jwt_authorizer_accepts_both_frontend_and_bootstrap_audiences(
     api_template: assertions.Template,
 ) -> None:
-    authorizers = api_template.find_resources("AWS::ApiGatewayV2::Authorizer")
-    assert len(authorizers) == 1
-    authorizer = next(iter(authorizers.values()))
-    audiences = authorizer["Properties"]["JwtConfiguration"]["Audience"]
+    audiences = _authorizer_audiences(api_template)
     assert len(audiences) == 2
+    assert "FrontendClient" in str(audiences[0])
+    assert "AdminBootstrapClient" in str(audiences[1])
+
+
+def test_prod_jwt_authorizer_accepts_only_the_frontend_audience(
+    prod_api_template: assertions.Template,
+) -> None:
+    # Prod has no admin-bootstrap client, so no password-auth token can pass
+    # (`01` §6.1).
+    audiences = _authorizer_audiences(prod_api_template)
+    assert len(audiences) == 1
+    assert "FrontendClient" in str(audiences[0])
 
 
 def test_every_route_requires_the_jwt_authorizer(
@@ -664,10 +691,13 @@ def test_media_lambda_has_required_env_vars(
                 "Variables": assertions.Match.object_like(
                     {
                         "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "PROCESSED_BUCKET": assertions.Match.any_value(),
                         "AVATARS_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "AVATARS_PROCESSED_BUCKET": assertions.Match.any_value(),
                         "CDN_BASE_URL": assertions.Match.any_value(),
                         "CDN_KEY_PAIR_ID": assertions.Match.any_value(),
-                        "CDN_SIGNING_SECRET_ARN": assertions.Match.any_value(),
+                        "CDN_DISTRIBUTION_ID": assertions.Match.any_value(),
+                        "APP_SECRET_ARN": assertions.Match.any_value(),
                         "MEDIA_COOKIE_DOMAIN": "",
                     }
                 )
@@ -760,7 +790,7 @@ def test_push_lambda_exists(api_template: assertions.Template) -> None:
     )
 
 
-def test_push_lambda_has_vapid_secret_env_var(
+def test_push_lambda_has_app_secret_env_var(
     api_template: assertions.Template,
 ) -> None:
     api_template.has_resource_properties(
@@ -769,7 +799,7 @@ def test_push_lambda_has_vapid_secret_env_var(
             "FunctionName": "OpenNewsletter-Push-dev",
             "Environment": {
                 "Variables": assertions.Match.object_like(
-                    {"VAPID_SECRET_ARN": assertions.Match.any_value()}
+                    {"APP_SECRET_ARN": assertions.Match.any_value()}
                 )
             },
         },
@@ -978,7 +1008,7 @@ def test_notify_tick_lambda_has_required_env_vars(
                         "TABLE_NAME": assertions.Match.any_value(),
                         "ENV": "dev",
                         "RUST_LOG": "info",
-                        "VAPID_SECRET_ARN": assertions.Match.any_value(),
+                        "APP_SECRET_ARN": assertions.Match.any_value(),
                     }
                 )
             },
@@ -1044,12 +1074,17 @@ def test_user_pool_has_no_custom_attributes(auth_template: assertions.Template) 
 # ---------------------------------------------------------------------------
 
 
+# Alarms are prod-only (`01` §9.2), so these build the prod stack; the
+# dev/prod split and the alarm-metric budget are covered in
+# test_monitoring_stack.py.
 @pytest.fixture(scope="module")
-def monitoring_template(dev_config: EnvConfig) -> assertions.Template:
+def monitoring_template() -> assertions.Template:
     app = cdk.App()
     from opennewsletter.monitoring_stack import MonitoringStack
 
-    stack = MonitoringStack(app, "TestMonitoringStack", config=dev_config, env=AWS_ENV)
+    stack = MonitoringStack(
+        app, "TestMonitoringStack", config=load_config("prod"), env=AWS_ENV
+    )
     return assertions.Template.from_stack(stack)
 
 
@@ -1059,7 +1094,7 @@ def test_push_failure_rate_alarm_exists(
     monitoring_template.has_resource_properties(
         "AWS::CloudWatch::Alarm",
         {
-            "AlarmName": "OpenNewsletter-PushFailureRate-dev",
+            "AlarmName": "OpenNewsletter-PushFailureRate-prod",
             "Threshold": 0.2,
             "AlarmDescription": assertions.Match.string_like_regexp(
                 "Push failure rate"
@@ -1072,7 +1107,7 @@ def test_push_failure_rate_alarm_exists(
     (push_alarm,) = [
         a
         for a in alarms.values()
-        if a["Properties"]["AlarmName"] == "OpenNewsletter-PushFailureRate-dev"
+        if a["Properties"]["AlarmName"] == "OpenNewsletter-PushFailureRate-prod"
     ]
     periods = [
         q["MetricStat"]["Period"]
@@ -1090,17 +1125,14 @@ def test_push_failure_rate_alarm_exists(
     assert "FILL(sent, 0)" in expression
 
 
-def test_notify_tick_errors_alarm_exists(
+def test_notify_tick_has_no_separate_errors_alarm(
     monitoring_template: assertions.Template,
 ) -> None:
-    monitoring_template.has_resource_properties(
-        "AWS::CloudWatch::Alarm",
-        {
-            "AlarmName": "OpenNewsletter-NotifyTick-Errors-dev",
-            "Threshold": 1,
-            "AlarmDescription": assertions.Match.string_like_regexp("NotifyTick"),
-        },
-    )
+    # Dropped to stay within the 10 free alarm metrics: notify-tick failures
+    # surface as push failures, already alarmed (`01` §9.2).
+    alarms = monitoring_template.find_resources("AWS::CloudWatch::Alarm")
+    names = {a["Properties"]["AlarmName"] for a in alarms.values()}
+    assert not any("NotifyTick" in name for name in names)
 
 
 def test_cycle_tick_errors_alarm_exists(
@@ -1109,8 +1141,429 @@ def test_cycle_tick_errors_alarm_exists(
     monitoring_template.has_resource_properties(
         "AWS::CloudWatch::Alarm",
         {
-            "AlarmName": "OpenNewsletter-CycleTick-Errors-dev",
+            "AlarmName": "OpenNewsletter-CycleTick-Errors-prod",
             "Threshold": 1,
             "AlarmDescription": assertions.Match.string_like_regexp("CycleTick"),
         },
+    )
+
+
+def test_cycle_tick_alarm_also_counts_abandoned_auto_publishes(
+    monitoring_template: assertions.Template,
+) -> None:
+    # Auto-publish giving up on drafts doesn't fail the invocation, so the
+    # alarm reads the tick's `AutoPublishAbandoned` EMF metric too.
+    monitoring_template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "OpenNewsletter-CycleTick-Errors-prod",
+            "Metrics": assertions.Match.array_with(
+                [
+                    assertions.Match.object_like(
+                        {
+                            "MetricStat": assertions.Match.object_like(
+                                {
+                                    "Metric": assertions.Match.object_like(
+                                        {
+                                            "MetricName": "AutoPublishAbandoned",
+                                            "Namespace": "OpenNewsletter/prod",
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    )
+                ]
+            ),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# M13.5 — cost, auth and media-deletion changes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def prod_auth_template() -> assertions.Template:
+    app = cdk.App()
+    stack = AuthStack(app, "ProdAuthStackOnly", config=load_config("prod"), env=AWS_ENV)
+    return assertions.Template.from_stack(stack)
+
+
+def _media_persistent_template(env: str) -> assertions.Template:
+    app = cdk.App()
+    config = load_config(env)
+    data_stack = DataStack(app, "MediaDataStack", config=config, env=AWS_ENV)
+    frontend_stack = FrontendStack(
+        app, "MediaFrontendStack", config=config, env=AWS_ENV
+    )
+    stack = MediaPersistentStack(
+        app,
+        "MediaPersistentStackOnly",
+        config=config,
+        table=data_stack.table,
+        certificate=frontend_stack.certificate,
+        env=AWS_ENV,
+    )
+    return assertions.Template.from_stack(stack)
+
+
+def test_dynamodb_table_uses_the_aws_owned_key(
+    data_template: assertions.Template,
+) -> None:
+    # AWS-owned key = SSE not explicitly enabled (enabling it selects the
+    # billed AWS-managed `aws/dynamodb` KMS key). `01` §3.1.
+    (table,) = data_template.find_resources("AWS::DynamoDB::Table").values()
+    sse = table["Properties"].get("SSESpecification", {})
+    assert sse.get("SSEEnabled", False) is False
+    assert "KMSMasterKeyId" not in sse
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_no_media_bucket_is_versioned(env: str) -> None:
+    # A real delete must not leave the object behind a delete marker (`01` §5.1).
+    buckets = _media_persistent_template(env).find_resources("AWS::S3::Bucket")
+    assert len(buckets) == 4
+    for bucket in buckets.values():
+        assert "VersioningConfiguration" not in bucket["Properties"]
+
+
+def test_media_persistent_stack_no_longer_outputs_a_signing_secret_arn(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    assert "CloudFrontSigningKeySecretArn" not in persistent.find_outputs("*")
+
+
+def test_google_idp_maps_email_verified(auth_template: assertions.Template) -> None:
+    # `POST /invites/redeem` checks it for email-bound invites (`05` §4.2).
+    auth_template.has_resource_properties(
+        "AWS::Cognito::UserPoolIdentityProvider",
+        {
+            "ProviderName": "Google",
+            "AttributeMapping": {
+                "email": "email",
+                "name": "name",
+                "email_verified": "email_verified",
+            },
+        },
+    )
+
+
+def test_idps_read_credentials_from_the_app_secret(
+    auth_template: assertions.Template,
+) -> None:
+    idps = {
+        idp["Properties"]["ProviderName"]: idp["Properties"]["ProviderDetails"]
+        for idp in auth_template.find_resources(
+            "AWS::Cognito::UserPoolIdentityProvider"
+        ).values()
+    }
+    secret = load_config("dev").app_secret_arn
+    ref = f"{{{{resolve:secretsmanager:{secret}:SecretString:"
+    assert idps["Google"]["client_id"] == f"{ref}google_client_id}}}}"
+    # `SecretValue.secrets_manager` appends empty version-stage/id fields.
+    assert idps["Google"]["client_secret"].startswith(f"{ref}google_client_secret:")
+    assert idps["Facebook"]["client_id"] == f"{ref}facebook_app_id}}}}"
+    assert idps["Facebook"]["client_secret"] == f"{ref}facebook_app_secret}}}}"
+
+
+def test_dev_outputs_the_bootstrap_client_id(
+    auth_template: assertions.Template,
+) -> None:
+    assert "UserPoolBootstrapClientId" in auth_template.find_outputs("*")
+
+
+def test_prod_has_no_bootstrap_client(prod_auth_template: assertions.Template) -> None:
+    # Prod has no password auth at all (`01` §4.3, `05` §9.1a).
+    prod_auth_template.resource_count_is("AWS::Cognito::UserPoolClient", 1)
+    prod_auth_template.has_resource_properties(
+        "AWS::Cognito::UserPoolClient", {"ClientName": "frontend"}
+    )
+    assert "UserPoolBootstrapClientId" not in prod_auth_template.find_outputs("*")
+
+
+def test_new_groups_default_to_a_seven_day_window(
+    api_template: assertions.Template,
+) -> None:
+    (groups_fn,) = api_template.find_resources(
+        "AWS::Lambda::Function",
+        {"Properties": {"FunctionName": "OpenNewsletter-Groups-dev"}},
+    ).values()
+    config_json = json.loads(
+        groups_fn["Properties"]["Environment"]["Variables"]["CONFIG_JSON"]
+    )
+    assert config_json["responseWindowDays"] == 7
+
+
+def test_groups_vapid_public_key_comes_from_the_app_secret(
+    api_template: assertions.Template,
+) -> None:
+    secret = load_config("dev").app_secret_arn
+    api_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-Groups-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "VAPID_PUBLIC_KEY": (
+                            f"{{{{resolve:secretsmanager:{secret}"
+                            ":SecretString:vapid_public_key}}"
+                        )
+                    }
+                )
+            },
+        },
+    )
+
+
+_OLD_SECRET_NAMES = (
+    "VAPID_SECRET_ARN",
+    "CDN_SIGNING_SECRET_ARN",
+    "GOOGLE_OAUTH_SECRET_ARN",
+    "FACEBOOK_OAUTH_SECRET_ARN",
+)
+
+
+def test_config_has_one_app_secret_field() -> None:
+    fields = {field.name for field in dataclasses.fields(EnvConfig)}
+    assert "app_secret_arn" in fields
+    assert not fields & {
+        "google_oauth_secret_arn",
+        "facebook_oauth_secret_arn",
+        "vapid_secret_arn",
+        "cdn_signing_secret_arn",
+    }
+
+
+def test_no_template_references_the_old_secret_env_vars(
+    api_template: assertions.Template,
+    prod_api_template: assertions.Template,
+    notifications_template: assertions.Template,
+) -> None:
+    for template in (api_template, prod_api_template, notifications_template):
+        rendered = json.dumps(template.to_json())
+        for name in _OLD_SECRET_NAMES:
+            assert name not in rendered
+
+
+def test_notify_tick_has_no_vapid_secret_env_var(
+    notifications_template: assertions.Template,
+) -> None:
+    (fn,) = notifications_template.find_resources(
+        "AWS::Lambda::Function",
+        {"Properties": {"FunctionName": "OpenNewsletter-NotifyTick-dev"}},
+    ).values()
+    assert "VAPID_SECRET_ARN" not in fn["Properties"]["Environment"]["Variables"]
+
+
+# --- IAM: per-Lambda role statements ---
+
+
+def _role_statements(
+    template: assertions.Template, function_name: str
+) -> list[dict[str, Any]]:
+    (fn,) = template.find_resources(
+        "AWS::Lambda::Function", {"Properties": {"FunctionName": function_name}}
+    ).values()
+    role_id = fn["Properties"]["Role"]["Fn::GetAtt"][0]
+    statements: list[dict[str, Any]] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        if {"Ref": role_id} in policy["Properties"]["Roles"]:
+            statements.extend(policy["Properties"]["PolicyDocument"]["Statement"])
+    return statements
+
+
+def _statements_with(
+    template: assertions.Template, function_name: str, action: str
+) -> list[dict[str, Any]]:
+    def actions(statement: dict[str, Any]) -> list[str]:
+        action_field = statement["Action"]
+        return [action_field] if isinstance(action_field, str) else list(action_field)
+
+    return [
+        s for s in _role_statements(template, function_name) if action in actions(s)
+    ]
+
+
+def _bucket_and_prefix(resource: Any) -> tuple[str, str]:
+    """Name the bucket an `arn_for_objects(prefix)` ARN points at, by the
+    logical id CDK embeds in the cross-stack reference."""
+    reference, suffix = resource["Fn::Join"][1]
+    rendered = str(reference)
+    for fragment, bucket in (
+        ("AvatarsOriginalsBucket", "avatars-originals"),
+        ("AvatarsProcessedBucket", "avatars-processed"),
+        ("OriginalsBucket", "media-originals"),
+        ("ProcessedBucket", "media-processed"),
+    ):
+        if fragment in rendered:
+            return bucket, suffix
+    raise AssertionError(f"unrecognised bucket reference: {rendered}")
+
+
+def _delete_targets(
+    template: assertions.Template, function_name: str
+) -> set[tuple[str, str]]:
+    targets: set[tuple[str, str]] = set()
+    for statement in _statements_with(template, function_name, "s3:DeleteObject"):
+        assert statement["Action"] == "s3:DeleteObject"
+        resources = statement["Resource"]
+        for resource in resources if isinstance(resources, list) else [resources]:
+            targets.add(_bucket_and_prefix(resource))
+    return targets
+
+
+_MEDIA_DELETE = {("media-originals", "/uploads/*"), ("media-processed", "/img/*")}
+_AVATAR_DELETE = {
+    ("avatars-originals", "/uploads/*"),
+    ("avatars-processed", "/avatar/*"),
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Media", _MEDIA_DELETE | _AVATAR_DELETE),
+        ("Engagement", _MEDIA_DELETE),
+        ("Groups", _AVATAR_DELETE),
+        ("Invites", set()),
+        ("Newsletters", set()),
+        ("Questions", set()),
+        ("Responses", set()),
+        ("Push", set()),
+    ],
+)
+def test_s3_delete_is_scoped_per_lambda(
+    api_template: assertions.Template, name: str, expected: set[tuple[str, str]]
+) -> None:
+    assert _delete_targets(api_template, f"OpenNewsletter-{name}-dev") == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "allowed"),
+    [
+        ("Media", True),
+        ("Engagement", True),
+        ("Groups", True),
+        ("Invites", False),
+        ("Newsletters", False),
+        ("Questions", False),
+        ("Responses", False),
+        ("Push", False),
+    ],
+)
+def test_cloudfront_invalidation_is_scoped_to_the_one_distribution(
+    api_template: assertions.Template, name: str, allowed: bool
+) -> None:
+    statements = _statements_with(
+        api_template, f"OpenNewsletter-{name}-dev", "cloudfront:CreateInvalidation"
+    )
+    if not allowed:
+        assert statements == []
+        return
+    (statement,) = statements
+    rendered = json.dumps(statement["Resource"])
+    assert statement["Resource"] != "*"
+    assert ":cloudfront::" in rendered
+    assert ":distribution/" in rendered
+    assert "Distribution" in rendered  # the MediaPersistentStack distribution ref
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_keys"),
+    [
+        (
+            "Media",
+            {
+                "MEDIA_ORIGINALS_BUCKET",
+                "PROCESSED_BUCKET",
+                "AVATARS_ORIGINALS_BUCKET",
+                "AVATARS_PROCESSED_BUCKET",
+                "CDN_DISTRIBUTION_ID",
+            },
+        ),
+        (
+            "Engagement",
+            {"MEDIA_ORIGINALS_BUCKET", "PROCESSED_BUCKET", "CDN_DISTRIBUTION_ID"},
+        ),
+        (
+            "Groups",
+            {
+                "AVATARS_ORIGINALS_BUCKET",
+                "AVATARS_PROCESSED_BUCKET",
+                "CDN_DISTRIBUTION_ID",
+            },
+        ),
+    ],
+)
+def test_media_delete_env_vars(
+    api_template: assertions.Template, name: str, expected_keys: set[str]
+) -> None:
+    (fn,) = api_template.find_resources(
+        "AWS::Lambda::Function",
+        {"Properties": {"FunctionName": f"OpenNewsletter-{name}-dev"}},
+    ).values()
+    variables = fn["Properties"]["Environment"]["Variables"]
+    assert expected_keys <= set(variables)
+    # Media-delete Lambdas get only the buckets they delete from.
+    delete_buckets = {
+        "MEDIA_ORIGINALS_BUCKET",
+        "PROCESSED_BUCKET",
+        "AVATARS_ORIGINALS_BUCKET",
+        "AVATARS_PROCESSED_BUCKET",
+    }
+    assert set(variables) & delete_buckets == expected_keys & delete_buckets
+
+
+@pytest.mark.parametrize(
+    ("name", "allowed"),
+    [
+        ("Media", True),
+        ("Push", True),
+        ("Groups", False),
+        ("Invites", False),
+        ("Newsletters", False),
+        ("Questions", False),
+        ("Responses", False),
+        ("Engagement", False),
+    ],
+)
+def test_app_secret_read_is_limited_to_media_and_push(
+    api_template: assertions.Template, name: str, allowed: bool
+) -> None:
+    function_name = f"OpenNewsletter-{name}-dev"
+    statements = _statements_with(
+        api_template, function_name, "secretsmanager:GetSecretValue"
+    )
+    if not allowed:
+        assert statements == []
+        return
+    (statement,) = statements
+    assert statement["Resource"] == load_config("dev").app_secret_arn
+    (fn,) = api_template.find_resources(
+        "AWS::Lambda::Function", {"Properties": {"FunctionName": function_name}}
+    ).values()
+    variables = fn["Properties"]["Environment"]["Variables"]
+    assert variables["APP_SECRET_ARN"] == load_config("dev").app_secret_arn
+
+
+def test_notify_tick_reads_the_app_secret_and_cycle_tick_does_not(
+    notifications_template: assertions.Template,
+) -> None:
+    (statement,) = _statements_with(
+        notifications_template,
+        "OpenNewsletter-NotifyTick-dev",
+        "secretsmanager:GetSecretValue",
+    )
+    assert statement["Resource"] == load_config("dev").app_secret_arn
+    assert (
+        _statements_with(
+            notifications_template,
+            "OpenNewsletter-CycleTick-dev",
+            "secretsmanager:GetSecretValue",
+        )
+        == []
     )

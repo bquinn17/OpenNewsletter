@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { components } from "../types/api";
 import { mockEngagementRoute } from "./mockEngagement";
 import { findPublishedAnswer } from "./mockNewsletters";
-import { NO_MOCK_ROUTE, OPEN_CYCLE_ID, PUBLISHED_CYCLE_ID, type MockRequest } from "./mockShared";
+import {
+  imageRows,
+  NO_MOCK_ROUTE,
+  OPEN_CYCLE_ID,
+  PUBLISHED_CYCLE_ID,
+  type MockRequest,
+} from "./mockShared";
 
 // This module mutates the same module-level fixture objects `mockNewsletters.ts`
 // serves (there's no separate engagement data store), so — like
@@ -104,6 +110,25 @@ describe("mockEngagementRoute", () => {
       expect(
         mockEngagementRoute(req("DELETE", `${BASE}/comments/${created.commentId}`)),
       ).toBeUndefined();
+    });
+
+    it("really deletes a comment image when it's replaced, and when the comment is deleted (D8)", () => {
+      const row = (imageId: string) =>
+        ({ imageId, status: "ready", purpose: "comment" }) as S["ImageMediaResponse"];
+      imageRows.set("img_c1", row("img_c1"));
+      imageRows.set("img_c2", row("img_c2"));
+
+      const created = mockEngagementRoute(
+        req("POST", `${BASE}/comments`, { body: "", imageMediaId: "img_c1" }),
+      ) as S["CommentResponse"];
+      mockEngagementRoute(
+        req("PATCH", `${BASE}/comments/${created.commentId}`, { imageMediaId: "img_c2" }),
+      );
+      expect(imageRows.has("img_c1")).toBe(false);
+      expect(imageRows.has("img_c2")).toBe(true);
+
+      mockEngagementRoute(req("DELETE", `${BASE}/comments/${created.commentId}`));
+      expect(imageRows.has("img_c2")).toBe(false);
     });
 
     it("403s a PATCH from a non-author even when the caller is a group admin", () => {

@@ -2,7 +2,7 @@
 
 pub const DEFAULT_QUESTIONS_PER_CYCLE: u32 = 5;
 pub const DEFAULT_VOTES_PER_USER_PER_CYCLE: u32 = 3;
-pub const DEFAULT_RESPONSE_WINDOW_DAYS: u32 = 4;
+pub const DEFAULT_RESPONSE_WINDOW_DAYS: u32 = 7;
 pub const DEFAULT_MEMBER_SOFT_CAP: u32 = 50;
 pub const DEFAULT_TIMEZONE: &str = "America/New_York";
 pub const DEFAULT_NOTIFY_OFFSETS_HOURS: &[u32] = &[96, 48, 24];
@@ -36,6 +36,12 @@ pub fn derive_avatar_color(user_id: &str) -> &'static str {
     AVATAR_COLOR_SLUGS[sum as usize % AVATAR_COLOR_SLUGS.len()]
 }
 
+/// Close-time auto-publish (`plans/06-newsletter-lifecycle.md` §5.3): after
+/// this many cycle ticks whose sweep left some draft unpublished by an error,
+/// the cycle publishes anyway without those drafts. The tick runs every 5
+/// minutes, so a broken draft holds its group's edition back about 15 minutes.
+pub const AUTO_PUBLISH_MAX_FAILED_SWEEPS: u32 = 3;
+
 pub const MIN_QUESTIONS_PER_CYCLE: u32 = 1;
 pub const MAX_QUESTIONS_PER_CYCLE: u32 = 20;
 pub const MIN_RESPONSE_WINDOW_DAYS: u32 = 1;
@@ -57,6 +63,18 @@ pub const THUMB_LONG_EDGE_PX: u32 = 400;
 pub const THUMB_QUALITY: f32 = 75.0;
 pub const AVATAR_SIZE_PX: u32 = 256;
 pub const AVATAR_QUALITY: f32 = 82.0;
+
+/// `lambda-image-process` decode budget, checked against the header before any
+/// pixel buffer is allocated. A 15 MB upload can declare a canvas that decodes
+/// to gigabytes and kill the 1024 MB Lambda mid-run, which would leave its row
+/// `pending` forever. 256 MB of decoded pixels covers a 48 MP RGB photo and
+/// leaves room for the rotated copy EXIF orientation makes.
+pub const MAX_IMAGE_EDGE_PX: u32 = 16_384;
+pub const MAX_DECODED_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+/// GIF frames are decoded at full canvas size, once per variant; these bound the
+/// memory and CPU a single animated upload can take within the 60s timeout.
+pub const MAX_GIF_FRAMES: usize = 300;
+pub const MAX_GIF_TOTAL_PIXELS: u64 = 100_000_000;
 pub const MAX_DISPLAY_NAME_CHARS: usize = 40;
 pub const MAX_IMAGE_CAPTION_CHARS: usize = 140;
 
@@ -70,6 +88,8 @@ pub const INVITE_DEFAULT_TTL_DAYS: u32 = 7;
 /// boundary can't be driven out of range.
 pub const INVITE_MAX_TTL_DAYS: u32 = 90;
 pub const INVITE_AUDIT_RETENTION_DAYS: i64 = 30;
+/// RFC 5321's limit on a forward path; caps `POST /admin/invites`'s `boundEmail`.
+pub const MAX_BOUND_EMAIL_CHARS: usize = 254;
 
 pub const MEMBERSHIP_CACHE_TTL_SECONDS: u64 = 60;
 

@@ -1,0 +1,161 @@
+//! `PATCH /groups/{g}` applies `responseWindowDays` to the current cycles
+//! (`plans/06-newsletter-lifecycle.md` §6, `03-api-contract.md` §4.3).
+//!
+//! Each test uses its own group id: `persistence::auth` keeps a process-wide
+//! membership cache keyed by `(userId, groupId)`, and tests run concurrently.
+
+mod common;
+
+use aws_sdk_dynamodb::types::AttributeValue;
+use chrono::{Duration, Utc};
+use common::{seed, state};
+use domain::api::{CycleSettingsPatch, PatchGroupRequest};
+use domain::{ApiErrorCode, GroupId, Newsletter, NewsletterStatus, Role, UserId};
+use groups::group_routes;
+use persistence::keys::{attr, group_pk, newsletter_gsi2sk, newsletter_sk};
+use persistence::{groups as group_repo, newsletters, questions, test_factories, Repo};
+use pretty_assertions::assert_eq;
+
+fn window_patch(days: u32) -> PatchGroupRequest {
+    PatchGroupRequest {
+        name: None,
+        timezone: None,
+        gradient: None,
+        cycle_settings: Some(CycleSettingsPatch {
+            questions_per_cycle: None,
+            votes_per_user_per_cycle: None,
+            response_window_days: Some(days),
+        }),
+        notification_settings: None,
+        member_soft_cap: None,
+    }
+}
+
+/// An `open` cycle that opened three days ago on the default 7-day window.
+async fn seed_open_cycle(repo: &Repo, group_id: &str) -> Newsletter {
+    let now = Utc::now();
+    let open_at = now - Duration::days(3);
+    let nl = Newsletter {
+        group_id: GroupId::new(group_id),
+        cycle_id: domain::CycleId::new("202610"),
+        status: NewsletterStatus::Open,
+        vote_window_open_at: open_at - Duration::days(30),
+        vote_window_close_at: open_at,
+        response_open_at: open_at,
+        response_close_at: open_at + Duration::days(7),
+        published_at: None,
+        next_transition_at: Some(open_at + Duration::days(7)),
+        locked_question_ids: Vec::new(),
+        notified_offsets_hours: Vec::new(),
+        notified_on_open: false,
+    };
+    newsletters::write_status_transition(repo, &nl)
+        .await
+        .unwrap();
+    nl
+}
+
+async fn raw_gsi2sk(repo: &Repo, nl: &Newsletter) -> String {
+    let item = repo
+        .client
+        .get_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(group_pk(&nl.group_id)))
+        .key(attr::SK, AttributeValue::S(newsletter_sk(&nl.cycle_id)))
+        .send()
+        .await
+        .unwrap()
+        .item
+        .unwrap();
+    item[attr::GSI2SK].as_s().unwrap().clone()
+}
+
+async fn reload(repo: &Repo, nl: &Newsletter) -> Newsletter {
+    newsletters::get_newsletter(repo, &nl.group_id, &nl.cycle_id)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn lengthening_the_window_moves_the_open_cycle_s_close() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-extend", &[("a1", Role::Admin)]).await;
+    let nl = seed_open_cycle(&repo, "g-extend").await;
+    let state = state(repo);
+
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-extend"),
+        window_patch(10),
+    )
+    .await
+    .unwrap();
+
+    let moved = reload(&state.repo, &nl).await;
+    let expected_close = nl.response_open_at + Duration::days(10);
+    assert_eq!(moved.response_close_at, expected_close);
+    assert_eq!(moved.next_transition_at, Some(expected_close));
+    assert_eq!(moved.status, NewsletterStatus::Open);
+    assert_eq!(
+        raw_gsi2sk(&state.repo, &nl).await,
+        newsletter_gsi2sk(expected_close, &nl.group_id, &nl.cycle_id)
+    );
+}
+
+#[tokio::test]
+async fn a_window_that_would_close_the_open_cycle_in_the_past_is_rejected_unchanged() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-shrink", &[("a1", Role::Admin)]).await;
+    let nl = seed_open_cycle(&repo, "g-shrink").await;
+    let state = state(repo);
+
+    let err = group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-shrink"),
+        window_patch(2),
+    )
+    .await
+    .expect_err("opened 3 days ago, so a 2-day window closed yesterday");
+
+    assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    assert_eq!(err.field_errors[0].field, "responseWindowDays");
+    assert_eq!(err.field_errors[0].code, "CLOSES_IN_PAST");
+    let group = group_repo::get_group(&state.repo, &GroupId::new("g-shrink"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(group.cycle_settings.response_window_days, 7);
+    assert_eq!(reload(&state.repo, &nl).await, nl);
+}
+
+#[tokio::test]
+async fn a_voting_cycle_with_candidates_is_rescheduled() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-voting", &[("a1", Role::Admin)]).await;
+    let tz: chrono_tz::Tz = shared::config::DEFAULT_TIMEZONE.parse().unwrap();
+    let voting =
+        newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-voting"), tz, 7, Utc::now())
+            .await
+            .unwrap();
+    let candidate = test_factories::candidate("g-voting", voting.cycle_id.as_str(), "q1", "a1", 2);
+    questions::put_candidate(&repo, &candidate).await.unwrap();
+    let state = state(repo);
+
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-voting"),
+        window_patch(10),
+    )
+    .await
+    .unwrap();
+
+    let rescheduled = reload(&state.repo, &voting).await;
+    assert_eq!(
+        rescheduled.response_close_at,
+        voting.response_open_at + Duration::days(10)
+    );
+}

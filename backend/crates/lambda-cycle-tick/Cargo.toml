@@ -23,6 +23,10 @@ uuid.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
+persistence = { path = "../persistence", features = ["test-utils"] }
+serde_dynamo.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
 
 [lib]
 name = "cycle_tick"

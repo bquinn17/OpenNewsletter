@@ -119,11 +119,11 @@ OpenNewsletter/
 ├── plans/                          # this directory
 │
 ├── .github/workflows/
-│   ├── frontend-ci.yml             # build + test PRs
-│   ├── frontend-deploy.yml         # push to gh-pages branch on main
-│   ├── backend-ci.yml              # cargo test + clippy
-│   ├── backend-deploy.yml          # cargo lambda build + cdk deploy
-│   └── infra-ci.yml                # cdk synth + cdk diff on PR
+│   ├── frontend-ci.yml             # typecheck, lint, test, build
+│   ├── backend-ci.yml              # fmt, clippy, cargo deny, cargo test, Lambda cross-build
+│   ├── infra-ci.yml                # ruff, mypy, pytest, cdk synth; cdk diff on PR
+│   ├── deploy.yml                  # main → dev; gated promote-prod → prod backend + gh-pages (M13.5)
+│   └── e2e.yml                     # nightly Playwright
 │
 ├── CLAUDE.md                       # runtime guidance for AI assistants in-repo
 ├── OpenNewsletter_concept.md       # original concept (read-only reference)

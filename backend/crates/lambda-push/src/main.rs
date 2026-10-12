@@ -22,13 +22,13 @@ async fn main() -> Result<(), Error> {
 
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let table = std::env::var("TABLE_NAME").map_err(|_| "TABLE_NAME is not set")?;
-    let vapid_secret_arn =
-        std::env::var("VAPID_SECRET_ARN").map_err(|_| "VAPID_SECRET_ARN is not set")?;
+    let app_secret_arn =
+        std::env::var("APP_SECRET_ARN").map_err(|_| "APP_SECRET_ARN is not set")?;
 
     let state = Arc::new(AppState::new(
         Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
         aws_sdk_secretsmanager::Client::new(&aws_config),
-        vapid_secret_arn,
+        app_secret_arn,
         Arc::new(ReqwestPushSender::new()),
         std::env::var("ENV").unwrap_or_default(),
     ));

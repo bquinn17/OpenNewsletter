@@ -33,7 +33,7 @@ Read: `05-auth-flow.md` §10.
 A human operator (the user) completes the out-of-band setup:
 - [ ] Register Google, Facebook OAuth apps with the Cognito redirect URI (need Cognito domain set up first, OR placeholder updated after Milestone 3). No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple Developer membership is $99/yr.
 - [ ] Generate VAPID keys (`scripts/generate_vapid_keys.py`) and store in Secrets Manager.
-- [ ] Generate CloudFront signing keypair; store private in Secrets Manager, commit public key file to `infra/keys/cf-signing.pub.pem`.
+- [ ] Generate a CloudFront signing keypair per env, **RSA 2048** (not ECDSA — `05` §10); store the private half as `cdn_signing_private_key` in `opennewsletter/{env}`, and commit the public half to `infra/keys/cf-signing.pub.pem` (dev) or `infra/keys/cf-signing-prod.pub.pem` (prod).
 - [ ] Configure DNS for the chosen domain (`opennewsletter.example.com`, `cdn.opennewsletter.example.com`, `api.opennewsletter.example.com`). If using Route53, note the hosted zone ID.
 
 Subagents cannot execute this milestone — flag for the operator. Subagents proceed using placeholder ARNs for any blocking steps.
@@ -256,7 +256,7 @@ Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
 
 **Deliverables**:
 - All tests in `11-testing-ci-cd.md` §2–§4 implemented (gaps from prior milestones filled).
-- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; `11` §6).
+- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; `11` §6). *Superseded in M13.5: `deploy.yml` replaced `frontend-deploy` and `backend-deploy`, leaving five workflows (`11` §6.4).*
 - Monitoring alarms wired to a working SNS topic + email.
 - CSP set on the frontend; verified by a Playwright test.
 - Manual smoke runbook (`docs/smoke.md`) executed and observed clean.

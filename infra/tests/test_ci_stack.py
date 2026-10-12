@@ -1,10 +1,12 @@
-"""CiStack assertions per 11-testing-ci-cd.md / M13 (GitHub OIDC deploy roles).
+"""CiStack assertions per 11-testing-ci-cd.md / M13 (GitHub OIDC deploy roles)
+and 01-infrastructure-cdk.md §9.2a (the one account-wide budget, M13.5).
 
 Run with: pytest infra/tests/
 """
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,7 +18,7 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk import assertions
 
-from opennewsletter.ci_stack import CiStack
+from opennewsletter.ci_stack import MONTHLY_BUDGET_USD, CiStack
 from opennewsletter.config import EnvConfig, load_config
 
 AWS_ENV = cdk.Environment(region="us-east-1")
@@ -75,17 +77,20 @@ def test_exactly_two_named_github_roles(ci_template: assertions.Template) -> Non
     assert len(named) == 2
 
 
-def test_deploy_role_trust_is_scoped_to_main_branch(
+def test_deploy_role_trust_is_scoped_to_main_and_the_production_environment(
     ci_template: assertions.Template,
 ) -> None:
+    # A job with `environment: production` (deploy.yml's promote-prod) gets an
+    # `environment:production` OIDC subject instead of its ref.
     deploy_role = _role_by_name(ci_template, "OpenNewsletter-GithubDeploy")
     statement = deploy_role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
-    assert (
-        statement["Condition"]["StringEquals"][
-            "token.actions.githubusercontent.com:sub"
-        ]
-        == "repo:bquinn17/OpenNewsletter:ref:refs/heads/main"
-    )
+    assert statement["Condition"]["StringEquals"][
+        "token.actions.githubusercontent.com:sub"
+    ] == [
+        "repo:bquinn17/OpenNewsletter:ref:refs/heads/main",
+        "repo:bquinn17/OpenNewsletter:environment:production",
+    ]
+    assert "StringLike" not in statement["Condition"]
     assert (
         statement["Condition"]["StringEquals"][
             "token.actions.githubusercontent.com:aud"
@@ -176,3 +181,50 @@ def test_outputs_both_role_arns(ci_template: assertions.Template) -> None:
     outputs = ci_template.find_outputs("*")
     assert "GithubDeployRoleArn" in outputs
     assert "GithubDiffRoleArn" in outputs
+
+
+# ---------------------------------------------------------------------------
+# Account-wide budget (`01` §9.2a)
+# ---------------------------------------------------------------------------
+
+
+def _budget_template(alarm_email: str | None) -> assertions.Template:
+    config = dataclasses.replace(load_config("dev"), alarm_email=alarm_email)
+    app = cdk.App()
+    stack = CiStack(app, "TestCiStackBudget", config=config, env=AWS_ENV)
+    return assertions.Template.from_stack(stack)
+
+
+def test_one_five_dollar_monthly_budget(ci_template: assertions.Template) -> None:
+    ci_template.resource_count_is("AWS::Budgets::Budget", 1)
+    ci_template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {
+            "Budget": {
+                "BudgetType": "COST",
+                "TimeUnit": "MONTHLY",
+                "BudgetLimit": {"Amount": 5, "Unit": "USD"},
+            }
+        },
+    )
+    assert MONTHLY_BUDGET_USD == 5
+
+
+def test_budget_alerts_at_80_actual_and_100_forecasted() -> None:
+    template = _budget_template("ops@example.com")
+    (budget,) = template.find_resources("AWS::Budgets::Budget").values()
+    notifications = budget["Properties"]["NotificationsWithSubscribers"]
+    assert sorted(
+        (n["Notification"]["NotificationType"], n["Notification"]["Threshold"])
+        for n in notifications
+    ) == [("ACTUAL", 80), ("FORECASTED", 100)]
+    for n in notifications:
+        assert n["Subscribers"] == [
+            {"SubscriptionType": "EMAIL", "Address": "ops@example.com"}
+        ]
+
+
+def test_budget_exists_without_an_alarm_email() -> None:
+    template = _budget_template(None)
+    (budget,) = template.find_resources("AWS::Budgets::Budget").values()
+    assert not budget["Properties"].get("NotificationsWithSubscribers")

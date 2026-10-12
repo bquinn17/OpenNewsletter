@@ -3,6 +3,7 @@
 //! view and the dedicated engagement routes hydrate image/avatar URLs
 //! identically.
 
+use media_delete::MediaDeleter;
 use persistence::Repo;
 
 pub struct AppState {
@@ -11,6 +12,8 @@ pub struct AppState {
     /// [`AppState::image_url`] returns `None`) until infra wires
     /// `CDN_BASE_URL` for this Lambda.
     pub cdn_base_url: String,
+    /// Deletes an image a comment releases (`plans/09-engagement.md` §1.1).
+    pub image_deleter: MediaDeleter,
 }
 
 impl AppState {

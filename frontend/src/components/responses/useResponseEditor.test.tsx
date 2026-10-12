@@ -231,6 +231,84 @@ describe("useResponseEditor", () => {
     );
   });
 
+  describe("detachImage (D8)", () => {
+    const initial = {
+      responseId: "r1",
+      status: "draft" as const,
+      body: "Look ![](image:img1)\n",
+      imageMediaIds: ["img1"],
+      updatedAt: "2026-06-01T00:00:00Z",
+      publishedAt: null,
+    };
+
+    function renderEditor() {
+      return renderHook(
+        () =>
+          useResponseEditor({
+            groupId: "g1",
+            cycleId: "202606",
+            questionId: "q1",
+            userId: "u1",
+            initial,
+          }),
+        { wrapper },
+      );
+    }
+
+    it("saves the draft without the image right away and resolves once that save lands", async () => {
+      let resolveSave!: (value: ReturnType<typeof responseDto>) => void;
+      saveMyResponse.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSave = resolve;
+          }),
+      );
+      const { result } = renderEditor();
+
+      let detached = false;
+      await act(async () => {
+        void result.current
+          .detachImage("img1", (body) => body.replace("![](image:img1)\n", ""))
+          .then(() => {
+            detached = true;
+          });
+        await flushMicrotasks();
+      });
+
+      // No debounce: the save goes out immediately, already without the image.
+      expect(saveMyResponse).toHaveBeenCalledWith("g1", "202606", "q1", {
+        kind: "text",
+        body: "Look ",
+        imageMediaIds: [],
+        publish: false,
+      });
+      expect(result.current.imageMediaIds).toEqual([]);
+      expect(detached).toBe(false);
+
+      await act(async () => {
+        resolveSave(responseDto({ body: "Look ", imageMediaIds: [] }));
+        await flushMicrotasks();
+      });
+      expect(detached).toBe(true);
+    });
+
+    it("rejects when the cycle has closed, so the caller never deletes a referenced image", async () => {
+      saveMyResponse.mockRejectedValue(new ApiError(409, "CYCLE_NOT_OPEN", null));
+      const { result } = renderEditor();
+
+      let outcome: unknown = null;
+      await act(async () => {
+        await result.current
+          .detachImage("img1", (body) => body)
+          .catch((error: unknown) => {
+            outcome = error;
+          });
+      });
+
+      expect(outcome).toBeInstanceOf(ApiError);
+    });
+  });
+
   it("retries with exponential backoff on a 5xx and eventually succeeds", async () => {
     saveMyResponse
       .mockRejectedValueOnce(new ApiError(500, "INTERNAL", null))

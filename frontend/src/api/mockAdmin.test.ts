@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { components } from "../types/api";
 import { mockAdminRoute } from "./mockAdmin";
-import { CALLER_ID, groups, NO_MOCK_ROUTE, type MockRequest } from "./mockShared";
+import { ApiError } from "./client";
+import { CALLER_ID, groups, newsletters, NO_MOCK_ROUTE, type MockRequest } from "./mockShared";
 
 type S = components["schemas"];
 
@@ -26,10 +27,14 @@ const NON_ADMIN_GROUP_ID = "g_game";
 // `groups` (settings, roles, membership), and the fixture is a shared
 // module-level singleton within this file's test run.
 const originalGroups = structuredClone(groups);
+const originalNewsletters = structuredClone(newsletters);
 
 beforeEach(() => {
   for (const [groupId, group] of Object.entries(originalGroups)) {
     groups[groupId] = structuredClone(group);
+  }
+  for (const [groupId, list] of Object.entries(originalNewsletters)) {
+    newsletters[groupId] = structuredClone(list);
   }
 });
 
@@ -252,6 +257,46 @@ describe("mockAdminRoute", () => {
         votesPerUserPerCycle: 4,
         responseWindowDays: 5,
       });
+    });
+
+    it("moves the open cycle's close when a window change keeps it in the future (D10)", () => {
+      const open = newsletters[ADMIN_GROUP_ID]!.find((n) => n.status === "open")!;
+      const expected = new Date(
+        new Date(open.responseOpenAt).getTime() + 10 * 24 * 60 * 60_000,
+      ).toISOString();
+
+      mockAdminRoute(
+        req("PATCH", `/groups/${ADMIN_GROUP_ID}`, {
+          cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 10 },
+        }),
+      );
+
+      expect(open.responseCloseAt).toBe(expected);
+    });
+
+    it("422s with CLOSES_IN_PAST on responseWindowDays when the open cycle would close in the past", () => {
+      const open = newsletters[ADMIN_GROUP_ID]!.find((n) => n.status === "open")!;
+      const closeBefore = open.responseCloseAt;
+      let caught: unknown;
+      try {
+        // The fixture's open cycle opened two days ago, so a 1-day window has already ended.
+        mockAdminRoute(
+          req("PATCH", `/groups/${ADMIN_GROUP_ID}`, {
+            cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 1 },
+          }),
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(ApiError);
+      expect((caught as ApiError).status).toBe(422);
+      expect((caught as ApiError).problem?.fieldErrors?.[0]).toMatchObject({
+        field: "responseWindowDays",
+        code: "CLOSES_IN_PAST",
+      });
+      expect(groups[ADMIN_GROUP_ID]!.cycleSettings.responseWindowDays).toBe(7);
+      expect(open.responseCloseAt).toBe(closeBefore);
     });
   });
 });

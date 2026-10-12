@@ -1,0 +1,225 @@
+# Trigger: every push to main.
+# Purpose: deploy the backend to dev, then — behind the `production`
+# environment's required reviewer — deploy the same build to prod and publish
+# the frontend to gh-pages (plans/11-testing-ci-cd.md §6.4). The Lambdas are
+# built once, in the dev job, and the prod job deploys that exact artifact, so
+# what gets promoted is what ran in dev. Backend before frontend, always from
+# one SHA: API changes are expand → contract (coding-standards.md §8).
+# Inert until the repo variable DEPLOY_ENABLED is "true". AWS access is GitHub
+# OIDC into CiStack's GithubDeployRole (infra/opennewsletter/ci_stack.py) — no
+# long-lived AWS keys in this repo.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never run two deploys at once, and never cancel one halfway through a
+# CloudFormation update; a newer push queues behind the running one.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    # Read by infra/opennewsletter/config.py (EnvConfig). Dev's values are the
+    # DEV_-prefixed repo variables, so dev can never silently pick up a prod
+    # value; prod's are unprefixed (see .github/workflows/README.md). These
+    # are resource identifiers, not credentials, so they're Variables.
+    env:
+      ROOT_DOMAIN: ${{ vars.DEV_ROOT_DOMAIN }}
+      API_DOMAIN: ${{ vars.DEV_API_DOMAIN }}
+      HOSTED_ZONE_ID: ${{ vars.DEV_HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.DEV_HOSTED_ZONE_NAME }}
+      COGNITO_DOMAIN_PREFIX: ${{ vars.DEV_COGNITO_DOMAIN_PREFIX }}
+      APP_SECRET_ARN: ${{ vars.DEV_APP_SECRET_ARN }}
+      # Account-wide (CiStack's budget), so the same value in both jobs.
+      ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+      GITHUB_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Without it config.py falls back to a placeholder ARN and the deploy
+      # fails late, inside CloudFormation.
+      - name: Check dev config
+        run: |
+          if [ -z "$APP_SECRET_ARN" ]; then
+            echo "::error::Repo variable DEV_APP_SECRET_ARN is not set."
+            exit 1
+          fi
+
+      # rustup on ubuntu-latest reads rust-toolchain.toml (repo root) and
+      # installs/pins the toolchain it names.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      # ubuntu-latest's system Python refuses `pip install` (PEP 668).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # cargo-lambda's PyPI package bundles zig, which it uses as the arm64
+      # cross-linker.
+      - name: Install cargo-lambda
+        run: pip install cargo-lambda
+
+      - name: Build Lambda binaries
+        working-directory: backend
+        env:
+          # Compiled into `GET /healthz` (lambda-groups), as `make build-lambdas` does.
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          BUILD_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export BUILD_AT
+          cargo lambda build --release --arm64
+
+      # CDK silently falls back to a shell stub for a missing binary
+      # (infra/opennewsletter/lambda_assets.py), so check before packaging.
+      - name: Check every Lambda binary was built
+        run: ./scripts/check_lambda_binaries.sh
+
+      # A tarball, because upload-artifact drops the executable bit that
+      # Lambda needs on `bootstrap`.
+      - name: Package Lambda binaries
+        run: tar -czf lambda-binaries.tgz -C backend/target lambda
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-binaries
+          path: lambda-binaries.tgz
+          if-no-files-found: error
+          # Long enough for a promotion to wait on the reviewer.
+          retention-days: 30
+
+      - run: pip install -r infra/requirements.txt
+
+      # Needed for `npx aws-cdk@2`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: cdk deploy (dev)
+        working-directory: infra
+        run: npx aws-cdk@2 deploy --context env=dev --all --require-approval never
+
+      # Later: run the Playwright `dev` project here (11 §6.4 step 4).
+
+  promote-prod:
+    needs: dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The gate: the `production` environment's required reviewer approves
+    # each promotion. Environment-level variables/secrets, if any, override
+    # the repo-level ones below.
+    environment: production
+    permissions:
+      id-token: write
+      contents: write # peaceiris/actions-gh-pages pushes the gh-pages branch
+    env:
+      ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
+      API_DOMAIN: ${{ vars.API_DOMAIN }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
+      COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+      APP_SECRET_ARN: ${{ vars.APP_SECRET_ARN }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+      ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+      GITHUB_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check prod config
+        run: |
+          missing=0
+          for name in APP_SECRET_ARN ROOT_DOMAIN API_DOMAIN COGNITO_DOMAIN_PREFIX; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Variable $name is not set for prod."
+              missing=1
+            fi
+          done
+          if [ -z "${{ vars.FRONTEND_DOMAIN }}" ]; then
+            echo "::error::Variable FRONTEND_DOMAIN is not set."
+            missing=1
+          fi
+          exit "$missing"
+
+      # The exact binaries the dev job built and deployed — no rebuild.
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambda-binaries
+
+      - name: Unpack Lambda binaries
+        run: |
+          mkdir -p backend/target
+          tar -xzf lambda-binaries.tgz -C backend/target
+
+      - name: Check every Lambda binary is present
+        run: ./scripts/check_lambda_binaries.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r infra/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Backend first: the frontend below may depend on what this ships.
+      - name: cdk deploy (prod)
+        working-directory: infra
+        run: npx aws-cdk@2 deploy --context env=prod --all --require-approval never
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (prod)
+        working-directory: frontend
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_CDN_BASE_URL: ${{ secrets.VITE_CDN_BASE_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_CLIENT_ID: ${{ secrets.VITE_COGNITO_CLIENT_ID }}
+          VITE_COGNITO_HOSTED_DOMAIN: ${{ secrets.VITE_COGNITO_HOSTED_DOMAIN }}
+          VITE_REDIRECT_URI: ${{ secrets.VITE_REDIRECT_URI }}
+          VITE_ENV: prod
+          VITE_USE_MOCKS: "false"
+          VITE_BUILD_SHA: ${{ github.sha }}
+
+      - name: Write GitHub Pages CNAME
+        working-directory: frontend
+        run: echo "${{ vars.FRONTEND_DOMAIN }}" > dist/CNAME
+
+      - name: SPA fallback for deep links (04-frontend-architecture.md §14.5)
+        working-directory: frontend
+        run: cp dist/index.html dist/404.html
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: frontend/dist

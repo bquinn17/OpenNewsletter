@@ -191,48 +191,39 @@ pub async fn set_image_caption(
     Ok(())
 }
 
-/// `DELETE /uploads/{imageId}` (§9.4) — unconditional; marks the row `failed`
-/// with `errorMessage: "DELETED"` so it's idempotent (an already-`failed` row
-/// is a no-op success).
-pub async fn mark_image_deleted(
+/// Deletes an `ImageMedia` row outright (`03-api-contract.md` §9.4). Called
+/// by the `media-delete` helper only after the image's S3 objects and CDN
+/// copies are gone. Deleting an absent row succeeds, so a retry is harmless.
+pub async fn delete_image_row(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
     image_id: &ImageId,
 ) -> Result<(), RepoError> {
     repo.client
-        .update_item()
+        .delete_item()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
-        .update_expression("SET #status = :failed, error_message = :msg")
-        .expression_attribute_names("#status", "status")
-        .expression_attribute_values(":failed", AttributeValue::S("failed".into()))
-        .expression_attribute_values(":msg", AttributeValue::S("DELETED".into()))
         .send()
-        .await
-        .map_err(error::from_update_item_error)?;
+        .await?;
     Ok(())
 }
 
-/// `DELETE /avatars/{avatarId}` (§9.7) — same shape as [`mark_image_deleted`].
-pub async fn mark_avatar_deleted(
+/// Deletes an `AvatarMedia` row outright (§9.7); same contract as
+/// [`delete_image_row`].
+pub async fn delete_avatar_row(
     repo: &Repo,
     user_id: &UserId,
     avatar_id: &AvatarId,
 ) -> Result<(), RepoError> {
     repo.client
-        .update_item()
+        .delete_item()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(user_pk(user_id)))
         .key(attr::SK, AttributeValue::S(avatar_sk(avatar_id)))
-        .update_expression("SET #status = :failed, error_message = :msg")
-        .expression_attribute_names("#status", "status")
-        .expression_attribute_values(":failed", AttributeValue::S("failed".into()))
-        .expression_attribute_values(":msg", AttributeValue::S("DELETED".into()))
         .send()
-        .await
-        .map_err(error::from_update_item_error)?;
+        .await?;
     Ok(())
 }
 

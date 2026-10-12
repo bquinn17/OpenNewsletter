@@ -10,8 +10,11 @@ use domain::{
     QuestionId, QuestionKind, Response, ResponseId, ResponseStatus, Role, UserId,
 };
 use media::state::AppState;
+use media_delete::fakes::{RecordingInvalidator, RecordingObjectStore};
+use media_delete::MediaDeleter;
 use persistence::{groups, media as media_persist, test_factories, Repo};
 use rsa::RsaPrivateKey;
+use std::sync::Arc;
 
 pub use test_factories::{candidate, group, locked_question, membership, user, vote};
 
@@ -30,46 +33,65 @@ pub fn test_signing_key() -> RsaPrivateKey {
     media::cloudfront::parse_private_key(TEST_SIGNING_KEY_PEM).expect("valid test signing key")
 }
 
+/// Bucket names the test state's media deleters use.
+pub const MEDIA_ORIGINALS: &str = "test-media-originals";
+pub const MEDIA_PROCESSED: &str = "test-media-processed";
+pub const AVATARS_ORIGINALS: &str = "test-avatars-originals";
+pub const AVATARS_PROCESSED: &str = "test-avatars-processed";
+
+/// The recording fakes behind a test state's media deleters, shared by the
+/// image and avatar deleters.
+pub struct Fakes {
+    pub store: Arc<RecordingObjectStore>,
+    pub cdn: Arc<RecordingInvalidator>,
+}
+
 /// An `AppState` wired for offline tests: a real `aws-sdk-s3` client built
 /// with static test credentials (presigning needs no network — it only
 /// builds and signs a request locally), a Secrets Manager client that is
-/// never actually called because the signing key is injected directly, and
-/// a non-empty `MEDIA_COOKIE_DOMAIN` so `/media-cookie` emits `Set-Cookie`
-/// headers by default (`test_state_without_cookie_domain` covers the dev
-/// case where it doesn't).
+/// never actually called because the signing key is injected directly,
+/// recording fakes for media deletion, and a non-empty `MEDIA_COOKIE_DOMAIN`
+/// so `/media-cookie` emits `Set-Cookie` headers by default
+/// (`test_state_without_cookie_domain` covers the dev case where it doesn't).
 pub fn test_state(repo: Repo) -> AppState {
-    let state = AppState::new(
-        repo,
-        test_s3_client(),
-        test_secrets_client(),
-        "test-media-originals".into(),
-        "test-avatars-originals".into(),
-        "https://cdn.example.com".into(),
-        "KTESTKEYPAIR".into(),
-        "arn:aws:secretsmanager:us-east-1:123456789012:secret:unused".into(),
-        ".example.com".into(),
-    );
-    state.set_signing_key_for_test(test_signing_key());
-    state
+    test_state_with_fakes(repo).0
+}
+
+pub fn test_state_with_fakes(repo: Repo) -> (AppState, Fakes) {
+    build_state(repo, ".example.com".into())
 }
 
 /// Same as [`test_state`] but with `MEDIA_COOKIE_DOMAIN` empty, matching dev
 /// (`08-media-uploads.md` §4.5) — `/media-cookie` must emit no `Set-Cookie`
 /// headers in this configuration.
 pub fn test_state_without_cookie_domain(repo: Repo) -> AppState {
+    build_state(repo, String::new()).0
+}
+
+fn build_state(repo: Repo, media_cookie_domain: String) -> (AppState, Fakes) {
+    let store = Arc::new(RecordingObjectStore::default());
+    let cdn = Arc::new(RecordingInvalidator::default());
+    let deleter = |originals: &str, processed: &str| MediaDeleter {
+        store: store.clone(),
+        cdn: cdn.clone(),
+        originals_bucket: originals.into(),
+        processed_bucket: processed.into(),
+    };
     let state = AppState::new(
         repo,
         test_s3_client(),
         test_secrets_client(),
-        "test-media-originals".into(),
-        "test-avatars-originals".into(),
+        MEDIA_ORIGINALS.into(),
+        AVATARS_ORIGINALS.into(),
         "https://cdn.example.com".into(),
         "KTESTKEYPAIR".into(),
         "arn:aws:secretsmanager:us-east-1:123456789012:secret:unused".into(),
-        String::new(),
+        media_cookie_domain,
+        deleter(MEDIA_ORIGINALS, MEDIA_PROCESSED),
+        deleter(AVATARS_ORIGINALS, AVATARS_PROCESSED),
     );
     state.set_signing_key_for_test(test_signing_key());
-    state
+    (state, Fakes { store, cdn })
 }
 
 fn test_credentials() -> aws_sdk_s3::config::Credentials {
@@ -247,6 +269,41 @@ pub async fn seed_image(
         .await
         .expect("image written");
     img.image_id
+}
+
+/// A processed (`ready`) response image, with display/thumb keys laid out as
+/// `lambda-image-process` writes them.
+pub async fn seed_ready_image(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    image_id: &str,
+    user_id: &str,
+) -> ImageMedia {
+    let id = seed_image(
+        repo,
+        group_id,
+        cycle_id,
+        question_id,
+        image_id,
+        user_id,
+        MediaStatus::Ready,
+        ImagePurpose::Response,
+    )
+    .await;
+    let mut img =
+        media_persist::get_image(repo, &GroupId::new(group_id), &CycleId::new(cycle_id), &id)
+            .await
+            .expect("image lookup")
+            .expect("image exists");
+    let dir = format!("img/{group_id}/{cycle_id}/{question_id}/{user_id}/{image_id}");
+    img.display_key = Some(format!("{dir}/display.webp"));
+    img.thumb_key = Some(format!("{dir}/thumb.webp"));
+    media_persist::put_image(repo, &img)
+        .await
+        .expect("image re-written with processed keys");
+    img
 }
 
 /// Claims a `purpose=comment` image for a comment, bypassing the comment

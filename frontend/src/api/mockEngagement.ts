@@ -4,6 +4,7 @@ import { ApiError } from "./client";
 import { findPublishedAnswer } from "./mockNewsletters";
 import {
   CALLER_ID,
+  deleteMockImage,
   MOCK_IMAGE_DATA_URL,
   fail,
   newsletters,
@@ -123,9 +124,13 @@ function patchComment(
     validationFailed("body", "a comment needs either text or an image");
   }
 
+  // Removing or replacing the image releases it, which deletes it for real (D8).
+  const released =
+    comment.image && comment.image.imageId !== nextImage?.imageId ? comment.image.imageId : null;
   comment.body = nextBody;
   comment.image = nextImage;
   comment.editedAt = new Date().toISOString();
+  if (released) deleteMockImage(released);
   return { ...comment };
 }
 
@@ -210,6 +215,8 @@ export function mockEngagementRoute(request: MockRequest): unknown {
           }
           comment.deletedAt = new Date().toISOString();
           comment.body = "";
+          // A deleted comment's image is deleted for real too (`09` §1, D8).
+          if (comment.image) deleteMockImage(comment.image.imageId);
           comment.image = null;
         }
         return undefined;

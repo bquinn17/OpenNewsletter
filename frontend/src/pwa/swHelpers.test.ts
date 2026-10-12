@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { buildNotificationOptions, parsePushPayload, resolveNotificationUrl } from "./swHelpers";
+import { describe, expect, it, vi } from "vitest";
+import {
+  activatePromptly,
+  buildNotificationOptions,
+  parsePushPayload,
+  resolveNotificationUrl,
+  type ActivationScope,
+} from "./swHelpers";
 
 describe("parsePushPayload", () => {
   it("passes through a well-formed payload", () => {
@@ -83,5 +89,47 @@ describe("resolveNotificationUrl", () => {
     expect(resolveNotificationUrl("http://[::1", "https://app.example.com")).toBe(
       "https://app.example.com",
     );
+  });
+
+  it("falls back to the bare origin for an off-origin url", () => {
+    for (const url of ["https://evil.example/x", "//evil.example/x", "javascript:alert(1)"]) {
+      expect(resolveNotificationUrl(url, "https://app.example.com")).toBe(
+        "https://app.example.com",
+      );
+    }
+  });
+});
+
+describe("activatePromptly (D6)", () => {
+  function fakeScope() {
+    const listeners = new Map<string, (event: { waitUntil(p: Promise<unknown>): void }) => void>();
+    const scope: ActivationScope = {
+      skipWaiting: vi.fn().mockResolvedValue(undefined),
+      clients: { claim: vi.fn().mockResolvedValue(undefined) },
+      addEventListener: (type, listener) => listeners.set(type, listener),
+    };
+    function fire(type: string): Promise<unknown>[] {
+      const waited: Promise<unknown>[] = [];
+      listeners.get(type)?.({ waitUntil: (p) => waited.push(p) });
+      return waited;
+    }
+    return { scope, fire };
+  }
+
+  it("skips waiting on install, so a new deploy doesn't wait for every tab to close", () => {
+    const { scope, fire } = fakeScope();
+    activatePromptly(scope);
+
+    expect(fire("install")).toHaveLength(1);
+    expect(scope.skipWaiting).toHaveBeenCalledTimes(1);
+    expect(scope.clients.claim).not.toHaveBeenCalled();
+  });
+
+  it("claims open clients on activate", () => {
+    const { scope, fire } = fakeScope();
+    activatePromptly(scope);
+
+    expect(fire("activate")).toHaveLength(1);
+    expect(scope.clients.claim).toHaveBeenCalledTimes(1);
   });
 });

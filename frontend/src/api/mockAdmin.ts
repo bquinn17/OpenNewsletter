@@ -5,6 +5,7 @@ import {
   fail,
   groups,
   hasOtherAdmin,
+  newsletters,
   NO_MOCK_ROUTE,
   type MockRequest,
 } from "./mockShared";
@@ -37,11 +38,16 @@ interface InviteRow {
   expiresAt: string;
   consumedBy: string | null;
   consumedAt: string | null;
+  boundEmail: string | null;
 }
 
 let invites: InviteRow[] = [];
 
-function validationFailed(field: string, message: string): never {
+function validationFailed(
+  field: string,
+  message: string,
+  code: S["FieldErrorCode"] = "INVALID",
+): never {
   const problem: S["ProblemDetails"] = {
     type: "https://api.opennewsletter.example.com/errors/validation-failed",
     title: "Validation failed",
@@ -49,7 +55,7 @@ function validationFailed(field: string, message: string): never {
     detail: message,
     code: "VALIDATION_FAILED",
     correlationId: "mock-correlation-id",
-    fieldErrors: [{ field, code: "INVALID", message }],
+    fieldErrors: [{ field, code, message }],
   };
   throw new ApiError(422, "VALIDATION_FAILED", problem);
 }
@@ -107,6 +113,7 @@ function handleCreateInvite(body: unknown): S["CreateInviteResponse"] {
     expiresAt: new Date(now.getTime() + ttlDays * DAY_MS).toISOString(),
     consumedBy: null,
     consumedAt: null,
+    boundEmail: null,
   };
   invites = [...invites, row];
   return {
@@ -114,6 +121,7 @@ function handleCreateInvite(body: unknown): S["CreateInviteResponse"] {
     groupId: row.groupId,
     expiresAt: row.expiresAt,
     roleOnRedeem: row.roleOnRedeem,
+    boundEmail: row.boundEmail,
   };
 }
 
@@ -228,6 +236,23 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
     notificationSettings = next;
   }
 
+  // D10 (`06-newsletter-lifecycle.md` §6): a window change moves the open
+  // cycle's close, but only to an instant still in the future — else 422.
+  const openCycle = newsletters[groupId]?.find((n) => n.status === "open");
+  let openCycleCloseAt: string | null = null;
+  if (openCycle && cycleSettings.responseWindowDays !== group.cycleSettings.responseWindowDays) {
+    const closeMs =
+      new Date(openCycle.responseOpenAt).getTime() + cycleSettings.responseWindowDays * DAY_MS;
+    if (closeMs <= Date.now()) {
+      validationFailed(
+        "responseWindowDays",
+        `responseWindowDays ${cycleSettings.responseWindowDays} would close the open cycle in the past`,
+        "CLOSES_IN_PAST",
+      );
+    }
+    openCycleCloseAt = new Date(closeMs).toISOString();
+  }
+
   if (request.memberSoftCap !== undefined) {
     if (request.memberSoftCap < group.memberCount) {
       validationFailed(
@@ -243,6 +268,7 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
   group.cycleSettings = cycleSettings;
   group.notificationSettings = notificationSettings;
   if (request.memberSoftCap !== undefined) group.memberSoftCap = request.memberSoftCap;
+  if (openCycle && openCycleCloseAt) openCycle.responseCloseAt = openCycleCloseAt;
 
   return { ...group, members: [...group.members] };
 }

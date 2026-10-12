@@ -145,9 +145,9 @@ If the page is closed mid-upload, the partial S3 object is cleaned up by the buc
 
 Recap from `01-infrastructure-cdk.md` §5.2:
 - One distribution; default behavior maps `/img/*` to the processed bucket via OAC.
-- Trusted KeyGroup with one CloudFront public key.
+- Trusted KeyGroup with one CloudFront public key: RSA 2048, its own pair per env (`05` §10). The `rsa_sha1_sign` below can't use an ECDSA key.
 - Custom domain: `cdn.opennewsletter.example.com`.
-- **Decided 2026-10-07; lands in M13.5:** a real image delete (§8.0) issues a `CreateInvalidation` for the deleted image's `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/*` path, so a cached edge copy doesn't keep serving it after the row and originals are gone.
+- **Decided 2026-10-07; lands in M13.5:** a real image delete (§8.0) issues a `CreateInvalidation` for the deleted image's exact display and thumb paths under `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/` (not a `/*` wildcard, which CloudFront caps at 15 in progress per distribution; changed 2026-10-08), so a cached edge copy doesn't keep serving it after the row and originals are gone.
 
 ### 4.2 Signed-cookie scope
 
@@ -360,9 +360,9 @@ This indirection means we can change the CDN host (or rotate signed cookies) wit
 
 ### 8.0 Explicit deletion (decided 2026-10-07; lands in M13.5)
 
-`DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards unchanged) now deletes for real: the original object, both processed variants, a CloudFront invalidation for `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/*` (the first 1,000 invalidation paths/month are free), then the `ImageMedia` row. S3 deletes run first; on S3 failure the handler returns 500 and keeps the row so a retry can finish the job. A repeat `DELETE` of an already-gone row returns 204 (idempotent — nothing left to leak). `ImageMedia.error_message` is no longer written as `"DELETED"` for a removed image; the row itself is deleted instead.
+`DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards unchanged) now deletes for real: the original object, both processed variants, a CloudFront invalidation for the exact display and thumb paths (exact paths, not a `/*` wildcard: CloudFront allows only 15 wildcard invalidations in progress per distribution; changed 2026-10-08, review fix) (the first 1,000 invalidation paths/month are free), then the `ImageMedia` row. S3 deletes run first; on S3 failure the handler returns 500 and keeps the row so a retry can finish the job. A repeat `DELETE` of an already-gone row returns 204 (idempotent — nothing left to leak). **As built (M13.5):** the invalidation path comes from the row's processed-key directory. A row with no processed key (`pending`/`failed`) was never served, so only its original is deleted and no invalidation is issued. `ImageMedia.error_message` is no longer written as `"DELETED"` for a removed image; the row itself is deleted instead.
 
-One shared helper in the `shared` crate performs the delete; `lambda-media`, `lambda-engagement` and `lambda-groups` each get `s3:DeleteObject` on the relevant buckets/prefixes and `cloudfront:CreateInvalidation` on the distribution (`01-infrastructure-cdk.md`).
+One shared helper performs the delete: the `media-delete` library crate (`backend/crates/media-delete`, decided M13.5 — not `shared`, because `shared` can't depend on `persistence` and the helper deletes the row). A failed CloudFront invalidation is treated like a failed S3 delete (500, row kept, a retry redoes the idempotent steps; decided M13.5), so a successful delete never leaves an edge copy cached past the call. `lambda-media`, `lambda-engagement` and `lambda-groups` each get `s3:DeleteObject` on the relevant buckets/prefixes and `cloudfront:CreateInvalidation` on the distribution (`01-infrastructure-cdk.md`).
 
 Callers: the response editor's "remove image" (`04-frontend-architecture.md` §7.3/§8.4), a comment's image on comment soft-delete or image removal/replacement (`09-engagement.md` §1.1/§1.4/§4.3 — best effort, failure logged at ERROR), and avatar removal/replacement (§11.4 below).
 
@@ -390,6 +390,7 @@ Both buckets transition to `INTELLIGENT_TIERING` after 30 days (configured in CD
 | MIME mismatch (file changed since presign) | S3 rejects (403). SPA shows "couldn't upload — try again". |
 | Image too large | Caught client-side first; if bypassed, `lambda-image-process` marks the row `failed` and deletes the original (§3.2). SPA polling sees `failed` and shows the error. |
 | Encoder failure | `lambda-image-process` sets `status=failed`. SPA polling sees `failed`, shows error with re-upload button. |
+| Decode budget exceeded (decided 2026-10-08) | Before allocating pixels, `lambda-image-process` refuses a header wider or taller than `MAX_IMAGE_EDGE_PX` (16384) or decoding to more than `MAX_DECODED_IMAGE_BYTES` (256 MB). GIFs are streamed one frame at a time and capped at `MAX_GIF_FRAMES` (300) and `MAX_GIF_TOTAL_PIXELS` (100 M). Over budget is handled like "image too large": `IMAGE_TOO_LARGE`, and the original is deleted. Without it, a small, highly compressed upload could run the 1024 MB Lambda out of memory and leave its row `pending` forever. |
 | CloudFront cookie expired during a long browse session | `<img>` request → 403 → SPA's image error handler refreshes cookie and retries. |
 | Delete removes the S3 objects but fails before the row delete (decided 2026-10-07; lands in M13.5) | `DELETE /uploads/{id}` returns 500; the `ImageMedia` row is kept so a retry can finish (the S3 deletes themselves are idempotent — a missing object is not an error, §8.0). |
 
@@ -445,4 +446,4 @@ A second CloudFront **behavior** (not a second distribution) on the same `cdn.{d
 
 ### 11.4 Cleanup
 
-**Decided 2026-10-07; lands in M13.5** (replaces the soft-mark-and-leave-it design this section previously described): `DELETE /avatars/{id}` and avatar replacement (`PATCH /me` with a new `avatarMediaId`) delete the old avatar's original and processed objects, invalidate `/avatar/{avatarId}/*`, and delete the `AvatarMedia` row — the same shared-helper mechanics as §8.0. The UI goes through a `ConfirmDialog` warning the delete is permanent (`04-frontend-architecture.md` §7.6). No bucket versioning on the avatars buckets either, so there's no delete-marker fallback; the accepted residual copies are the same two as §8.0 (SW/browser image cache, prod PITR on the row).
+**Decided 2026-10-07; lands in M13.5** (replaces the soft-mark-and-leave-it design this section previously described): `DELETE /avatars/{id}`, avatar replacement (`PATCH /me` with a new `avatarMediaId`) and clearing (`PATCH /me` with `avatarMediaId: null`, added 2026-10-08) delete the old avatar's original and processed objects, invalidate `/avatar/{avatarId}/display.webp`, and delete the `AvatarMedia` row — the same shared-helper mechanics as §8.0. The UI goes through a `ConfirmDialog` warning the delete is permanent (`04-frontend-architecture.md` §7.6). No bucket versioning on the avatars buckets either, so there's no delete-marker fallback; the accepted residual copies are the same two as §8.0 (SW/browser image cache, prod PITR on the row).

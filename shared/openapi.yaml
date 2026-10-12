@@ -142,7 +142,8 @@ paths:
             example:
               groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
               ttlDays: 7
-              roleOnRedeem: "member"
+              roleOnRedeem: "admin"
+              boundEmail: "quinn@example.com"
       responses:
         "201":
           description: The created invite.
@@ -154,7 +155,8 @@ paths:
                 code: "ABCD-EFGH-JKMN-PQRS"
                 groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
                 expiresAt: "2026-02-01T00:00:00Z"
-                roleOnRedeem: "member"
+                roleOnRedeem: "admin"
+                boundEmail: "quinn@example.com"
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -185,6 +187,7 @@ paths:
                     expiresAt: "2026-02-01T00:00:00Z"
                     consumedBy: null
                     consumedAt: null
+                    boundEmail: null
                 nextCursor: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -237,6 +240,22 @@ paths:
                 role: "member"
         "400":
           $ref: "#/components/responses/InviteInvalid"
+        "403":
+          description: >
+            `INVITE_EMAIL_MISMATCH` — the invite has `boundEmail` set and the
+            caller's ID-token `email` (compared lowercased) doesn't match it,
+            or `email_verified` isn't true (`05-auth-flow.md` §4.2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/invite-email-mismatch"
+                title: "Invite is bound to a different email"
+                status: 403
+                detail: "this invite is for a different email address; sign in with Google using the invited address"
+                code: "INVITE_EMAIL_MISMATCH"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
         "409":
           $ref: "#/components/responses/Conflict"
         "410":
@@ -286,7 +305,7 @@ paths:
                 cycleSettings:
                   questionsPerCycle: 5
                   votesPerUserPerCycle: 3
-                  responseWindowDays: 4
+                  responseWindowDays: 7
                 notificationSettings:
                   offsetsHoursBeforeClose: [96, 48, 24]
                   onCycleOpen: true
@@ -308,7 +327,13 @@ paths:
     patch:
       operationId: patchGroup
       tags: [groups]
-      summary: Update group settings. Admin only.
+      summary: >
+        Update group settings. Admin only. A `responseWindowDays` change applies
+        to the current cycles (`06-newsletter-lifecycle.md` §6): the `voting`
+        cycle is rescheduled, and an `open` cycle's close moves to
+        `responseOpenAt + days` if that is still in the future, else the request
+        is refused with a 422 whose field error is `responseWindowDays` with
+        code `CLOSES_IN_PAST`, and nothing changes.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
       requestBody:
@@ -322,7 +347,7 @@ paths:
               cycleSettings:
                 questionsPerCycle: 5
                 votesPerUserPerCycle: 3
-                responseWindowDays: 4
+                responseWindowDays: 7
       responses:
         "200":
           description: The updated group.
@@ -338,7 +363,7 @@ paths:
                 cycleSettings:
                   questionsPerCycle: 5
                   votesPerUserPerCycle: 3
-                  responseWindowDays: 4
+                  responseWindowDays: 7
                 notificationSettings:
                   offsetsHoursBeforeClose: [96, 48, 24]
                   onCycleOpen: true
@@ -356,7 +381,22 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
-          $ref: "#/components/responses/ValidationFailed"
+          description: Validation failed; see `fieldErrors`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/validation-failed"
+                title: "Validation failed"
+                status: 422
+                detail: "responseWindowDays 2 would close the open cycle in the past"
+                code: "VALIDATION_FAILED"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                fieldErrors:
+                  - field: "responseWindowDays"
+                    code: "CLOSES_IN_PAST"
+                    message: "responseWindowDays 2 would close the open cycle in the past"
 
   /groups/{groupId}/members/{userId}:
     delete:
@@ -1234,22 +1274,23 @@ paths:
       operationId: deleteUpload
       tags: [media]
       summary: >
-        Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`;
-        the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4).
-        Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when
-        the caller's published answer still references it, or (for a
-        `purpose: "comment"` image) a live comment has it attached.
+        Permanently delete an image: its original and processed S3 objects, a
+        CloudFront invalidation of its path, then its row
+        (`03-api-contract.md` §9.4). Caller must own the image. Refused with
+        `IMAGE_IN_USE` when the caller's published answer still references it,
+        or (for a `purpose: "comment"` image) a live comment has it attached.
+        Idempotent: an image that is already gone returns 204. If the S3 or
+        CloudFront step fails, returns 500 and keeps the row so a retry can
+        finish.
       parameters:
         - $ref: "#/components/parameters/ImageIdPath"
         - $ref: "#/components/parameters/GroupIdQuery"
         - $ref: "#/components/parameters/CycleIdQuery"
       responses:
         "204":
-          description: Deleted.
+          description: Deleted, or already gone.
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -1397,16 +1438,19 @@ paths:
       operationId: deleteAvatar
       tags: [media]
       summary: >
-        Soft-delete one of the caller's avatars (marks it `failed` with
-        `errorMessage: "DELETED"`). If it is the caller's current
-        `avatarMediaId`, that is cleared to `null`. Idempotent.
+        Permanently delete one of the caller's avatars: its original and
+        processed S3 objects, a CloudFront invalidation of
+        `/avatar/{avatarId}/*`, then its row (`03-api-contract.md` §9.7). If it
+        is the caller's current `avatarMediaId`, that is cleared to `null`
+        first. Idempotent: the lookup is under the caller's own user, so an
+        avatar that is already gone (or isn't theirs) returns 204 and touches
+        nothing. If the S3 or CloudFront step fails, returns 500 and keeps the
+        row.
       parameters:
         - $ref: "#/components/parameters/AvatarIdPath"
       responses:
         "204":
-          description: Deleted.
-        "404":
-          $ref: "#/components/responses/NotFound"
+          description: Deleted, or already gone.
 
   /push/subscribe:
     post:
@@ -1868,11 +1912,23 @@ components:
       required: [field, code, message]
       properties:
         field:
+          description: >-
+            The request field's camelCase wire name. A nested field uses its
+            bare name (`responseWindowDays`, not `cycleSettings.responseWindowDays`).
           type: string
         code:
-          type: string
+          $ref: "#/components/schemas/FieldErrorCode"
         message:
           type: string
+
+    FieldErrorCode:
+      description: >-
+        Why the field failed. `INVALID` covers almost everything, and `message`
+        says what's wrong. `CLOSES_IN_PAST`: a `responseWindowDays` change would
+        close the group's open cycle in the past. Clients should treat an
+        unknown code as `INVALID`.
+      type: string
+      enum: [INVALID, CLOSES_IN_PAST]
 
     ProblemDetails:
       type: object
@@ -1963,7 +2019,10 @@ components:
         avatarColor:
           $ref: "#/components/schemas/AvatarColorSlug"
         avatarMediaId:
-          description: Absent leaves the photo alone; an explicit `null` clears it.
+          description: >-
+            Absent leaves the photo alone. A new id replaces the photo, and an
+            explicit `null` clears it. Either way the displaced avatar is
+            permanently deleted (`03-api-contract.md` §9.7).
           type: [string, "null"]
 
     # ---- §3 Invite & membership routes ----
@@ -1980,10 +2039,17 @@ components:
           description: Defaults to the group's invite TTL setting when omitted.
         roleOnRedeem:
           $ref: "#/components/schemas/Role"
+        boundEmail:
+          type: string
+          maxLength: 254
+          description: >
+            Restricts redemption to a caller whose verified ID-token `email`
+            matches it, case-insensitively. Trimmed and stored lowercased; must
+            contain `@`.
 
     CreateInviteResponse:
       type: object
-      required: [code, groupId, expiresAt, roleOnRedeem]
+      required: [code, groupId, expiresAt, roleOnRedeem, boundEmail]
       properties:
         code:
           type: string
@@ -1994,6 +2060,9 @@ components:
           format: date-time
         roleOnRedeem:
           $ref: "#/components/schemas/Role"
+        boundEmail:
+          type: [string, "null"]
+          description: The lowercased bound email, or `null` for an unbound invite.
 
     InviteSummary:
       type: object
@@ -2007,6 +2076,7 @@ components:
         - expiresAt
         - consumedBy
         - consumedAt
+        - boundEmail
       properties:
         code:
           type: string
@@ -2029,6 +2099,9 @@ components:
         consumedAt:
           type: [string, "null"]
           format: date-time
+        boundEmail:
+          type: [string, "null"]
+          description: The lowercased bound email, or `null` for an unbound invite.
 
     InviteListResponse:
       type: object
@@ -2860,8 +2933,9 @@ components:
         errorMessage:
           type: [string, "null"]
           description: >
-            Set when `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED`
-            or `DELETED`.
+            Set when `status=failed`: `IMAGE_TOO_LARGE` or
+            `IMAGE_DECODE_FAILED`. A deleted image has no row, so `DELETED` is
+            no longer returned.
         uploadedAt:
           type: string
           format: date-time

@@ -44,6 +44,8 @@ export function decodeIdTokenClaims(idToken: string): UserProfile {
 
 /** Whether a stored session came from the `admin-bootstrap` client (its ID token's `aud`). */
 export function isBootstrapSession(user: User): boolean {
+  // Prod has no `admin-bootstrap` client, so no session can come from one.
+  if (env.cognitoBootstrapClientId === null) return false;
   const aud: unknown = user.profile?.aud;
   const audiences = Array.isArray(aud) ? aud : [aud];
   return audiences.includes(env.cognitoBootstrapClientId);
@@ -55,6 +57,10 @@ export function isBootstrapSession(user: User): boolean {
  * Cognito's message on rejection.
  */
 export async function bootstrapAuth(request: BootstrapAuthRequest): Promise<User> {
+  const clientId = env.cognitoBootstrapClientId;
+  if (clientId === null) {
+    throw new CognitoAuthError("Password sign-in isn't available in this environment.");
+  }
   const authParameters =
     request.flow === "USER_PASSWORD_AUTH"
       ? { USERNAME: request.username, PASSWORD: request.password }
@@ -70,7 +76,7 @@ export async function bootstrapAuth(request: BootstrapAuthRequest): Promise<User
       },
       body: JSON.stringify({
         AuthFlow: request.flow,
-        ClientId: env.cognitoBootstrapClientId,
+        ClientId: clientId,
         AuthParameters: authParameters,
       }),
     });

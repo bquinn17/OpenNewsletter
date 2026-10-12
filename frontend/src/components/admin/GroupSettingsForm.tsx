@@ -205,6 +205,14 @@ const SERVER_FIELD_TO_FORM_FIELD: Record<string, keyof FormValues> = {
   memberSoftCap: "memberSoftCap",
 };
 
+/**
+ * Copy for the `CLOSES_IN_PAST` field error: a `responseWindowDays` change
+ * that would close the already-open cycle in the past
+ * (`06-newsletter-lifecycle.md` §6, D10). The form shows its own copy
+ * (`04` §7.7) rather than the server's detail.
+ */
+const CLOSES_IN_PAST_MESSAGE = "Would close the open cycle in the past.";
+
 type Props = {
   group: GroupResponse;
 };
@@ -250,7 +258,9 @@ export function GroupSettingsForm({ group }: Props) {
         const fieldErrors = error.problem?.fieldErrors ?? [];
         for (const fieldError of fieldErrors) {
           const formField = SERVER_FIELD_TO_FORM_FIELD[fieldError.field];
-          if (formField === "reminderOffsets") {
+          if (fieldError.code === "CLOSES_IN_PAST") {
+            setError("responseWindowDays", { message: CLOSES_IN_PAST_MESSAGE });
+          } else if (formField === "reminderOffsets") {
             setError("reminderOffsets", { message: fieldError.message });
           } else if (formField) {
             setError(formField, { message: fieldError.message });
@@ -325,7 +335,7 @@ export function GroupSettingsForm({ group }: Props) {
         id="group-timezone"
         label="Timezone"
         error={errors.timezone?.message}
-        hint="Changing this reschedules the current voting cycle's dates."
+        hint="Timezone changes affect the current voting cycle's open time."
       >
         {typeof Intl.supportedValuesOf === "function" ? (
           <select
@@ -378,7 +388,7 @@ export function GroupSettingsForm({ group }: Props) {
         id="group-response-window"
         label="Response window (days)"
         error={errors.responseWindowDays?.message}
-        hint="Changing this reschedules the current voting cycle's dates."
+        hint="Moves the current voting cycle's close, and an open cycle's close if it's still in the future."
       >
         <input
           id="group-response-window"
@@ -387,6 +397,8 @@ export function GroupSettingsForm({ group }: Props) {
           className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
         />
       </Field>
+
+      <p className="text-xs text-inkmuted">Changes apply to the current cycle where possible.</p>
 
       <fieldset>
         <legend className="mb-2 text-xs font-bold uppercase tracking-widest text-inkmuted">
