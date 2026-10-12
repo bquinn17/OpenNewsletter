@@ -7,7 +7,8 @@ use crate::keys::{
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Update};
 use domain::{
-    AvatarId, AvatarMedia, CommentId, CycleId, GroupId, ImageId, ImageMedia, QuestionId, UserId,
+    AvatarId, AvatarMedia, CommentId, CycleId, GroupId, ImageId, ImageMedia, MediaStatus,
+    QuestionId, UserId,
 };
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
@@ -191,39 +192,57 @@ pub async fn set_image_caption(
     Ok(())
 }
 
-/// Deletes an `ImageMedia` row outright (`03-api-contract.md` §9.4). Called
-/// by the `media-delete` helper only after the image's S3 objects and CDN
-/// copies are gone. Deleting an absent row succeeds, so a retry is harmless.
+/// Deletes an `ImageMedia` row (`03-api-contract.md` §9.4). Called by the
+/// `media-delete` helper only after the image's S3 objects and CDN copies are
+/// gone. Deleting an absent row succeeds, so a retry is harmless.
+///
+/// Conditioned on the row still having the `status` the caller read. The
+/// caller chose which processed objects to delete from that read, so if
+/// processing finished in between (`pending` → `ready`), it wrote objects the
+/// caller didn't delete; that lost race is `RepoError::ConditionalCheckFailed`
+/// and the caller rereads and goes again.
 pub async fn delete_image_row(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
     image_id: &ImageId,
+    status: MediaStatus,
 ) -> Result<(), RepoError> {
     repo.client
         .delete_item()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
+        .condition_expression("attribute_not_exists(#pk) OR #s = :status")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":status", serde_dynamo::to_attribute_value(status)?)
         .send()
-        .await?;
+        .await
+        .map_err(error::from_delete_item_error)?;
     Ok(())
 }
 
-/// Deletes an `AvatarMedia` row outright (§9.7); same contract as
+/// Deletes an `AvatarMedia` row (§9.7); same contract as
 /// [`delete_image_row`].
 pub async fn delete_avatar_row(
     repo: &Repo,
     user_id: &UserId,
     avatar_id: &AvatarId,
+    status: MediaStatus,
 ) -> Result<(), RepoError> {
     repo.client
         .delete_item()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(user_pk(user_id)))
         .key(attr::SK, AttributeValue::S(avatar_sk(avatar_id)))
+        .condition_expression("attribute_not_exists(#pk) OR #s = :status")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":status", serde_dynamo::to_attribute_value(status)?)
         .send()
-        .await?;
+        .await
+        .map_err(error::from_delete_item_error)?;
     Ok(())
 }
 

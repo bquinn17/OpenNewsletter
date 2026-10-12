@@ -11,7 +11,7 @@ blockers resolve. Authoritative milestone definitions live in
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | M0 | Repo skeleton | ✅ done | Layout, READMEs, `.gitignore`, `rust-toolchain.toml`, etc. landed in prior commits. |
-| M1 | Operator prerequisites | 🟡 partial | Domain, Cognito domain prefix, `cdk bootstrap`, IAM user credentials, and all four Secrets Manager entries (Google, Facebook, VAPID, CDN signing) exist; re-checked 2026-10-07. The dev CloudFront key is now RSA-2048 (2026-10-07). Still to do (B5): confirm the OAuth secrets' contents and redirect URIs, and generate the separate prod CloudFront pair. No Apple IdP — dropped (see B5 decision). |
+| M1 | Operator prerequisites | 🟡 partial | Domain, Cognito domain prefix, `cdk bootstrap`, IAM user credentials, and the combined secrets `opennewsletter/dev` (all 8 keys) and `opennewsletter/prod` (CloudFront key only so far) exist. Both CloudFront pairs are RSA-2048 and separate per env (2026-10-11). Still to do (B5): confirm the OAuth values and redirect URIs, and fill in the rest of `opennewsletter/prod` (M14). No Apple IdP — dropped (see B5 decision). |
 | **M2** | **Backend foundations (domain + persistence)** | ✅ **done** | See "M2 detail" below. All 64 tests green (`cargo test -p persistence`), fmt + clippy clean. Small follow-ups from the 2026-08-09 plan reconciliation listed under "M2 follow-ups". |
 | **M3** | **Infrastructure baseline (CDK)** | 🟡 **synth + tests verified, deploy unverified** | See "M3 detail" below. |
 | **M3.5** | **Dev environment online** | 🟡 **code-complete, unverified** | See "M3.5 detail" below. |
@@ -25,7 +25,7 @@ blockers resolve. Authoritative milestone definitions live in
 | **M11** | **Notifications** | 🟡 **code-complete, deploy unverified** | See "M11 detail" below. 430 backend (427 + 3 from the post-M11 review fixes), 68 CDK and 220 frontend tests green. fmt, clippy (`-D warnings`), ruff, mypy, typecheck, ESLint (0 problems), Prettier, `vite build` and `cdk synth` (dev + prod) are clean. The subscribe → test push → simulated-cycle gate needs a deployed stack (B5) and real devices. |
 | **M12** | **Admin UI** | 🟡 **code-complete, deploy unverified** | See "M12 detail" below. 267 frontend (was 220; first recorded as 265, recounted in M13), 431 backend (+1) and 68 CDK tests green. typecheck, ESLint (0 problems), Prettier, `vite build`, fmt and clippy (`-D warnings`) are clean. The create-invite → share → new-member-appears gate needs a deployed stack (B5). |
 | **M13** | **Hardening** | 🟡 **code-complete, deploy unverified** | See "M13 detail" below. 444 backend (+13), 86 CDK (+18), 293 frontend Vitest (+26) and 7 Playwright tests green. fmt, clippy (`-D warnings`), `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `cdk synth` (dev + prod) and `actionlint` are clean. The six workflows haven't run on GitHub yet (nothing pushed). The smoke run, the dev-stack E2E and the alarm-email check need a deployed stack (B5). |
-| **M13.5** | **Plan-review follow-ups** | ✅ **code-complete** | See "M13.5 detail" below. Lead-verified 2026-10-08: 486 backend tests (448 + M13.5 + the parallel bug-hunt's), 155 CDK, 331 Vitest and 8 Playwright, all green. After the code-review follow-ups (2026-10-08/09): 493 backend and 156 CDK. fmt, clippy (`-D warnings`), `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` dev are clean. Prod synth and the prod-config CDK tests pass only with a stand-in prod CloudFront key: the real `cf-signing-prod.pub.pem` doesn't exist yet (B5). The deploy-shaped checks join the M14 gate. |
+| **M13.5** | **Plan-review follow-ups** | ✅ **code-complete** | See "M13.5 detail" below. Lead-verified 2026-10-08: 486 backend tests (448 + M13.5 + the parallel bug-hunt's), 155 CDK, 331 Vitest and 8 Playwright, all green. After the code-review follow-ups (2026-10-08/09): 493 backend and 156 CDK. fmt, clippy (`-D warnings`), `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` dev are clean. The real `cf-signing-prod.pub.pem` was generated on 2026-10-11, so prod synth and the prod-config CDK tests no longer need a stand-in key. The deploy-shaped checks join the M14 gate. |
 | M14 | Production deploy | ⬜ **next** | Operator prerequisites first: the prod CloudFront key, the combined secrets and the GitHub settings ("Suggested next steps" 1). |
 
 M0 and M2 are complete; M3's `cdk synth`/`pytest infra/tests/` are verified (a real cyclic-stack-dependency bug was found and fixed — see M3 detail), but the actual `cdk deploy` gate in `12-build-order.md` still requires an AWS account and is unverified. M3.5 through M13 are code-complete and awaiting the same deploy step. Everything deploy-shaped is blocked on B5 (M1 operator tasks).
@@ -84,9 +84,13 @@ A read-through of `plans/00`–`13` after M13. Stale text was corrected to match
 **Bug hunt (2026-10-08), fixed in code** (alongside the in-flight M13.5 work, in separate edits):
 - **The lifecycle could stop.** If `create_next_voting_cycle` failed after promotion committed, nothing retried it, so the group never got another cycle. Each tick now repairs a missing successor for every `open` cycle (`06` §5.4). Regression test in `lambda-questions/tests/lifecycle.rs`.
 - **Image decode bomb.** `lambda-image-process` had no decode limits, and GIFs collected every frame at full canvas size. A small crafted upload could run it out of memory and leave the row `pending` forever. It now has a header-checked budget and streamed GIF frames, and treats an over-budget image as `IMAGE_TOO_LARGE` (`08` §9, new `shared::config` constants). Unit tests in `process/tests.rs`.
-- **Orphan vote on candidate delete.** The admin delete cascaded the votes before deleting the candidate, so a vote cast in between survived and held its voter's tally slot. The candidate is now deleted first, which makes a late vote fail its `vote_count` condition.
+- **Orphan vote on candidate delete.** The admin delete cascaded the votes before deleting the candidate, so a vote cast in between survived and held its voter's tally slot. It now sweeps the votes, deletes the candidate, then sweeps again (`delete_candidate_and_votes`). The first sweep keeps a failed delete retryable, because the candidate still exists for the retry to find. The second catches a vote cast between the first sweep and the delete. After the delete, a late vote fails its `vote_count` condition.
 - **Push hardening.** `resolveNotificationUrl` now falls back to the app origin for any off-origin URL. The push-endpoint allowlist rejects non-443 ports.
-- **Open, needs owner input:** see "Bug hunt open items" under Known gaps.
+- **Owner decisions on the open items (2026-10-11), all resolved:**
+  - **PR code could read user data.** The PR `cdk diff` job runs the branch's own code, and `GithubDiffRole` could assume the CDK lookup role (`ReadOnlyAccess`: `dynamodb:Scan`, `s3:GetObject`; on the AWS-owned table key its `kms:Decrypt` deny no longer protects the table). The diff role now assumes no bootstrap role. It keeps only `DescribeStacks`/`GetTemplate` on the prod stacks and `CiStack`; the app makes no context lookups. `infra-ci` runs `cdk diff --no-change-set`, and `test_diff_role_policy_only_reads_stack_templates` pins it (`11` §6).
+  - **Actions are SHA-pinned.** Every `uses:` across the five workflows is pinned to a full commit SHA with a `# vX.Y.Z` comment, at the release its major tag pointed to on 2026-10-11. `.github/dependabot.yml` bumps them in one grouped weekly PR. The convention is in `.github/workflows/README.md`.
+  - **Offline CDN images now cache.** CloudFront sends credentialed CORS for the SPA's origins on `/img/*` and `/avatar/*` (`01` §5.2). `CdnImage` and `Avatar` load with `crossorigin="use-credentials"`. The SW therefore sees real statuses and caches only 200s, and its cache key drops dev's signed-URL params (`04` §5.2). Safe to switch now because nothing has deployed yet, so no browser holds a no-cors copy (processed images are cached for at most 60 days; see below). Tests: `test_cdn_behaviors_send_credentialed_cors_for_the_app_origin_only` and `stripMediaAuthParams`.
+  - **The per-container membership cache is accepted.** Up to `MEMBERSHIP_CACHE_TTL_SECONDS` (60s) of stale access after removal or demotion is fine.
 
 **Code review (2026-10-08), fixed in code** (`/code-review` of the branch; regression tests where noted):
 - **A bound invite could be redeemed through Facebook.** PreSignUp set `autoVerifyEmail` for every federated signup, so Facebook users also had `email_verified=true`. It's now always false, and `email_verified` comes only from Google's attribute mapping (`05` §3.3). Nothing had been deployed yet, so no existing users carry the old value.
@@ -108,6 +112,14 @@ A read-through of `plans/00`–`13` after M13. Stale text was corrected to match
   - starts at most 4 containers at a time per test process
 
   `persistence`'s own tests now use the same factory (a dev-dependency on itself with `test-utils`), so the duplicate setup is gone. A 6-binary concurrent stress run that failed every round before is clean while the machine stays awake.
+
+**Code review follow-ups (2026-10-11):**
+- **A `responseWindowDays` change could reopen a closed cycle.** A cycle past its close but not yet published is no longer moved; the setting applies from the next cycle. `reschedule_open_cycle_close` is also conditioned on `response_close_at > now` (`06` §6). Tests: `group_settings.rs::a_cycle_past_its_close_is_not_reopened_by_a_longer_window`, `::rescheduling_refuses_a_cycle_whose_close_has_passed`.
+- **The narrower mid-processing delete window (above) is closed.** The media row delete is conditioned on the status the deleter read; on a lost race it rereads and deletes the new variants (`08` §8.0). Tests: `media-delete/tests/delete.rs::an_image_that_finishes_processing_mid_delete_loses_its_processed_objects_too`, `persistence/tests/media.rs::an_image_row_delete_refuses_a_row_whose_status_changed`.
+- **Promotion read only the first page of candidates.** `list_candidates` now follows `LastEvaluatedKey`, and the tick skips an unreadable candidate instead of failing the promotion (`06` §5.2).
+- **A failed poll save left the unsaved pick showing.** `RespondPage` puts the selection back on the last saved option. Test: `RespondPage.test.tsx` "puts the pick back on the saved option when a save fails".
+- **The emoji picker was the only lazy chunk**, and D6's prompt activation drops the old build's precache, so an open tab couldn't load it after a deploy. It's now bundled eagerly, and ESLint (`no-restricted-syntax` on `ImportExpression`) forbids lazy chunks in `src/`.
+- Cleanups: the successor repair's two GSI2 queries run concurrently and the `voting` one projects only `group_id`. `MediaDeleter::from_env` replaces three copies of the deleter setup. `list_top_candidates_by_votes` (AP11) is removed. `Response::has_text_body` is the one "non-empty body" rule.
 
 ---
 
@@ -483,8 +495,10 @@ After M7, every known gap was worked through and two read-only review agents (ba
 
 **Re-assessed 2026-10-07.** All four secret ARNs in `.env.local` (`opennewsletter/oauth/google/dev`, `…/oauth/facebook/dev`, `…/vapid/dev`, `…/cdn-signing/dev`) now carry the random suffix AWS adds when a secret is created, so the secrets have been created. Their contents couldn't be checked: the `aws login` session had expired. What remains:
 - ~~**CloudFront key-type mismatch.**~~ **Dev fixed 2026-10-07.** The M12 commit had replaced `infra/keys/cf-signing.pub.pem` with an **EC P-256** key, because `docs/milestone-1-operator-runbook.md` §6 told the operator to generate ECDSA, contradicting `05` §10. `lambda-media` signs RSA-SHA1 only, so every `GET /media-cookie` would have failed. The runbook is corrected. The dev pair was regenerated as RSA-2048: the private half went into `opennewsletter/cdn-signing/dev`, and the secret was checked to match the committed public key. It still has to be folded into the combined `opennewsletter/dev` secret when M13.5 lands (D7). **Rejected alternative:** sign ECDSA in `cloudfront.rs`. It would drop the `rsa` crate and its advisory, but it's unverified against CloudFront.
-- **Separate prod CloudFront key (decided 2026-10-07).** Each env gets its own RSA-2048 pair, so a leaked dev key can't sign prod cookies. `MediaPersistentStack` reads `cf-signing.pub.pem` (dev) or `cf-signing-prod.pub.pem` (prod). The prod private half goes into `opennewsletter/prod` as `{"cdn_signing_private_key": …}`, and M14 merges the other keys into that secret. `infra/tests/test_cf_signing_keys.py` checks that both files are distinct RSA-2048 keys. **Until the operator generates the prod pair, prod synth fails** because `cf-signing-prod.pub.pem` is missing.
-- **Confirm the OAuth secrets hold real client IDs and secrets**, and that each IdP app lists the Cognito hosted-UI redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
+- ~~**Separate prod CloudFront key (decided 2026-10-07).**~~ **Done 2026-10-11.** Each env gets its own RSA-2048 pair, so a leaked dev key can't sign prod cookies. `MediaPersistentStack` reads `cf-signing.pub.pem` (dev) or `cf-signing-prod.pub.pem` (prod). The prod pair has been generated: `cf-signing-prod.pub.pem` is in place, and `opennewsletter/prod` was created holding only `{"cdn_signing_private_key": …}`. M14 *merges* the remaining prod keys into it. `infra/tests/test_cf_signing_keys.py` checks that both files are distinct RSA-2048 keys.
+- ~~**Combined dev secret (M13.5, D7).**~~ **Done 2026-10-11.** `opennewsletter/dev` was built from the four old dev secrets: OAuth `clientId`/`clientSecret` → `google_*`/`facebook_app_*`, VAPID `publicKey`/`privateKey`/`subject` → `vapid_*`, and the raw PEM → `cdn_signing_private_key`. The migration refused to run on any missing or empty field and checked the signing key against `cf-signing.pub.pem`; the secret was read back and compared. `.env.local` now holds only `APP_SECRET_ARN` (the four old `*_SECRET_ARN` lines are gone). `cdk synth --context env=dev` resolves all 11 secret references to `opennewsletter/dev`, and `pytest infra/tests` passes (157). The four old secrets are **scheduled for deletion with a 7-day recovery window (until 2026-10-18)**. If the first dev deploy shows a problem with the new secret, restore one with `aws secretsmanager restore-secret --secret-id <name>`.
+- **`.env.local` also applies to prod, and it overrides environment variables** (`load_config`). A prod synth or deploy from a workstation would therefore pick up the *dev* `APP_SECRET_ARN`. CI has no `.env.local`, so it isn't affected. Before a local prod bring-up, make `.env.local` dev-only or override it.
+- **Confirm the OAuth secrets hold real client IDs and secrets.** The migration showed the fields are present and non-empty, but not that the values are valid. Also confirm that each IdP app lists the Cognito hosted-UI redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
 - ~~Re-run `aws login`~~ (done 2026-10-07 as `bquinn17`; these sessions expire, so re-check with `aws sts get-caller-identity` before deploying).
 
 These don't block code work. They block every deploy gate (M3–M13).
@@ -512,16 +526,16 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
 
 1. **Finish the M1 operator tasks** to clear B5:
    - ~~replace the EC CloudFront keypair with RSA-2048~~ (dev done 2026-10-07)
-   - **generate the prod CloudFront pair**: commit `infra/keys/cf-signing-prod.pub.pem` and create `opennewsletter/prod` holding its private half (B5)
+   - ~~generate the prod CloudFront pair~~ (done 2026-10-11; commit the untracked `infra/keys/cf-signing-prod.pub.pem`)
    - confirm the Google/Facebook secrets hold real client credentials and that both IdP apps list the Cognito `/oauth2/idpresponse` redirect
-   - **(M13.5, D7) fold the four dev secrets into one `opennewsletter/dev` secret** (`docs/milestone-1-operator-runbook.md` §7 has the `jq` command), add `APP_SECRET_ARN` to `.env.local`, deploy, then delete the four old secrets. Until `APP_SECRET_ARN` is set, local synth and deploy use a placeholder ARN.
+   - ~~(M13.5, D7) fold the four dev secrets into `opennewsletter/dev`~~ (done 2026-10-11, B5). Deploy dev before 2026-10-18, when the old secrets' recovery window closes.
    - **(M13.5, D5) set `BOOTSTRAP_ADMIN_EMAIL`** for prod
    - **(M13.5, D6) GitHub settings** per `.github/workflows/README.md`:
      - repo variables: `DEPLOY_ENABLED`, `DEV_APP_SECRET_ARN`, `APP_SECRET_ARN`, `BOOTSTRAP_ADMIN_EMAIL`, `FRONTEND_DOMAIN`, and optionally the `DEV_*` domain variables
      - the `production` environment, with a required reviewer and a `main`-only deployment-branch rule
      - delete the old `*_SECRET_ARN` variables, `FRONTEND_DEPLOY_ENABLED`/`BACKEND_DEPLOY_ENABLED`, and the `VITE_COGNITO_BOOTSTRAP_CLIENT_ID` secret
 
-   The four Secrets Manager entries, VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+   `opennewsletter/dev`, both RSA CloudFront pairs, VAPID, `cdk bootstrap` and `cargo-lambda` (macOS) are done. See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 2. **Rebuild every Lambda artifact** with `make build-lambdas` (`make deploy-dev` does it first). `push-api`, `notify-tick` and `cycle-tick` were built on 2026-10-06 and the rest on 2026-10-04, so all of them predate M13. `engagement-api` has never been built (B6).
 3. *(done 2026-10-05: CDK bootstrap)*
 4. **Deploy and verify M3–M5**: `make deploy-dev && make seed && make fe` (see `docs/RUNBOOK.md`). M4 gate: `bootstrap_admin.py` then `curl -H "Authorization: Bearer $TOKEN" "$API_ENDPOINT/me"`. M5 gate: the five-step manual flow in `12` M5 using `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
@@ -531,7 +545,7 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
    - redeem an invite made by `POST /admin/invites` and see the group on Home
    - log out
    Also try `/admin/bootstrap-login` with the `bootstrap_admin.py` credentials.
-7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build cross-compiled on macOS on 2026-10-04. Its first Linux build is `backend-ci`'s first run. The gate also needs the RSA CloudFront key (B5). Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403.
+7. **M8 gate**: after deploy, `cargo lambda build --release --arm64` must succeed for `image-process`. Its `libwebp-sys` C build cross-compiled on macOS on 2026-10-04. Its first Linux build is `backend-ci`'s first run. The gate also needs the RSA CloudFront key (B5). Then upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and confirm it renders via CloudFront. In dev that uses the signed-URL query params; check that a group-B image URL with group-A params is a 403. **Also run the CDN CORS check** (`docs/smoke.md` §6). Images load in CORS mode, so a wrong CloudFront CORS policy breaks every image and avatar.
 8. **M9 gate**: after deploy, run a simulated month in the UI:
    - suggest and vote on candidates
    - `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy` to promote and open
@@ -561,12 +575,6 @@ Run `make build-lambdas` immediately before any deploy (`make deploy-dev` alread
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
 
 ### Known gaps carried forward
-
-**Bug hunt open items (2026-10-08), need owner input:**
-- **The CDK lookup role can read user data.** `infra-ci`'s `diff` job runs the PR branch's own Python (`pip install`, then `cdk diff`) and chains to the bootstrap lookup role. That role has `ReadOnlyAccess`, which includes `dynamodb:Scan` and `s3:GetObject`. On the AWS-owned table key (decision 7), its `kms:Decrypt` deny no longer applies to the table. Any same-repo PR branch could read all rows and private photos; fork PRs are safe because they can't get an OIDC token. Options: explicit denies for that role on the table and media buckets, or run the diff job only on trusted branches.
-- **Third-party Actions aren't SHA-pinned.** `Swatinem/rust-cache`, `taiki-e/install-action`, `peaceiris/actions-gh-pages`, `marocchino/sticky-pull-request-comment` and `aws-actions/configure-aws-credentials` all run in jobs that can reach AWS deploy roles or hold `contents: write`. Pin them to commit SHAs, with Dependabot for `github-actions`. Deferred until the M13.5 `deploy.yml` work settles.
-- **The SW `cdn-images` cache likely never stores anything.** CDN `<img>` loads are cross-origin no-cors, so the responses are opaque, and Workbox `CacheFirst` caches only status 200 by default. Allowing status 0 would pin 403s for 30 days. A real fix needs `crossorigin="use-credentials"` on `CdnImage` and CloudFront CORS headers (`Access-Control-Allow-Credentials`, an explicit origin). Decide whether offline images are worth that.
-- **The membership cache is per container.** A removed member, or a demoted admin, keeps access in other warm Lambda containers for up to `MEMBERSHIP_CACHE_TTL_SECONDS` (60s). Accept it, or shorten the TTL.
 
 **From M13.5 (2026-10-08):**
 - **The fixed `BottomNav` covers RespondPage's bottom bar** ("Save & exit", "Publish") at 700px. Both are `fixed bottom-3 z-40`. The new e2e test works around it with `goBack()`. Pre-existing; fix the stacking.
@@ -695,7 +703,7 @@ The lead read the decided sections first. Before spawning agents, they settled f
   - the lambda-media delete tests
   - parser unit tests
 
-  A few of the 486 belong to the parallel bug-hunt session. The first full run hit DynamoDB Local connection drops at container start, which were not test bugs. That start-up flakiness has since been fixed in `test_factories::make_test_repo` (see "Code review follow-ups"), so a plain `cargo test --workspace` is reliable.
+  A few of the 486 belong to the parallel bug-hunt session. The first full run hit DynamoDB Local connection drops at container start, which were not test bugs. That start-up flakiness has since been fixed in `test_factories::make_test_repo` (see "Code review follow-ups"), so a plain `cargo test --workspace` is reliable. Verified 2026-10-11: two back-to-back runs at default parallelism (CLAUDE.md's command, as `backend-ci` runs it) passed 493/493.
 - **Code-review follow-ups (2026-10-08/09):** backend 493 (+7), CDK 156 (+1). Vitest stays at 331; existing tests were updated for the field-error change.
 - **CDK:** 155, up from 86. New `test_config.py` and `test_bootstrap_admin.py`. `test_monitoring_stack.py` was rewritten. `test_cf_signing_keys.py` (3) comes from the prod-key session.
 - **Frontend:** 331 Vitest (up from 293), and 8 Playwright (up from 7; the new test covers a poll draft plus the auto-publish note).
@@ -952,7 +960,7 @@ The lead settled the contract first: every media route and DTO went into `shared
 - The client hashes with `crypto.subtle.digest`, not a Web Worker.
 - A PUT-403 retry calls `POST /uploads` again and gets a new ID; the abandoned `pending` row is tolerated per `08` §8.1.
 - Lossy WebP needs `libwebp` (the `webp` crate), because `image`'s own WebP encoder is lossless-only.
-- Processed objects carry `Cache-Control: public, max-age=31536000, immutable` (img) or `max-age=86400` (avatar).
+- Processed objects carry `Cache-Control: public, max-age=31536000, immutable` (img; cut to 60 days on 2026-10-11) or `max-age=86400` (avatar).
 
 ### Tests
 Backend 308 (was 217), CDK 53 (was 42), frontend 52 (was 28). Of the `08` §10 list, the backend covers:
@@ -1145,8 +1153,7 @@ For the next agent picking this up cold:
 
 1. **Orient.** Read `CLAUDE.md`, `12` M14, `docs/RUNBOOK.md` M14 and "M13.5 detail" above. M14 is mostly operator work. An agent can prepare and verify, but every `cdk deploy`, secret write and DNS change needs the owner.
 2. **Operator prerequisites, in order** (also "Suggested next steps" 1–2):
-   - generate the prod CloudFront pair (`infra/keys/cf-signing-prod.pub.pem`); until then prod synth fails
-   - create the combined secrets `opennewsletter/dev` and `opennewsletter/prod` (`docs/milestone-1-operator-runbook.md` §7), set `APP_SECRET_ARN` in `.env.local`, then delete the four old dev secrets
+   - ~~generate the prod CloudFront pair~~ and ~~create `opennewsletter/dev`~~: done 2026-10-11 (B5). `opennewsletter/prod` exists but holds only `cdn_signing_private_key`, so merge the OAuth, VAPID and other keys into it.
    - set the repo variables in `.github/workflows/README.md`, create the `production` environment with a required reviewer **and a `main`-only deployment-branch rule**, and set `DEPLOY_ENABLED=true`
 3. **Prep items still open:**
    - pick the real prod hostnames (`betterloop.site`) in place of the `opennewsletter.example.com` placeholders

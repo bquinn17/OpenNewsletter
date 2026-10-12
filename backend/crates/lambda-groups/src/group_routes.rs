@@ -77,8 +77,17 @@ async fn open_cycle_close_change(
     let Some(open) = open else {
         return Ok(None);
     };
+    let now = Utc::now();
+    // Past its close but not yet published: the tick runs every 5 minutes, and
+    // failed auto-publish sweeps can hold a cycle open a little longer (§5.3).
+    // Its window is over, so moving the close would reopen it to edits after
+    // some drafts already auto-published. The setting applies from the next
+    // cycle instead.
+    if open.response_close_at <= now {
+        return Ok(None);
+    }
     let new_close = open.response_open_at + Duration::days(days.into());
-    if new_close <= Utc::now() {
+    if new_close <= now {
         return Err(ApiError::invalid_field_because(
             "responseWindowDays",
             FieldErrorCode::ClosesInPast,
@@ -103,7 +112,7 @@ async fn move_open_cycle_close(
     {
         Ok(()) => {}
         Err(e) if e.is_lost_race() => {
-            tracing::info!(group_id = %group_id, cycle_id = %cycle_id, "open cycle published before its close could move");
+            tracing::info!(group_id = %group_id, cycle_id = %cycle_id, "open cycle closed or published before its close could move");
         }
         Err(e) => {
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "failed to move the open cycle's close");

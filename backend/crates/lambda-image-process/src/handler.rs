@@ -24,7 +24,9 @@ use crate::state::AppState;
 
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
 const IMAGE_DECODE_FAILED: &str = "IMAGE_DECODE_FAILED";
-const IMAGE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+/// 60 days. Kept at two months or less so a browser or CDN copy can't outlive
+/// a fix for long, such as a header or CORS change (`08` §5.1).
+const IMAGE_CACHE_CONTROL: &str = "public, max-age=5184000, immutable";
 const AVATAR_CACHE_CONTROL: &str = "public, max-age=86400, immutable";
 
 /// Processes every record in the event, continuing past a terminal failure

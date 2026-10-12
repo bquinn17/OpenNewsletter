@@ -1567,3 +1567,22 @@ def test_notify_tick_reads_the_app_secret_and_cycle_tick_does_not(
         )
         == []
     )
+
+
+def test_cdn_behaviors_send_credentialed_cors_for_the_app_origin_only() -> None:
+    # The SPA loads CDN images with `crossorigin`, so both behaviors need CORS,
+    # and credentialed CORS can't use `*`. Without it every image fails to load.
+    template = _media_persistent_template("dev")
+    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
+    ((policy_id, policy),) = policies.items()
+    cors = policy["Properties"]["ResponseHeadersPolicyConfig"]["CorsConfig"]
+    assert cors["AccessControlAllowCredentials"] is True
+    assert cors["OriginOverride"] is True
+    origins = cors["AccessControlAllowOrigins"]["Items"]
+    assert "*" not in origins
+    assert "http://localhost:5173" in origins
+
+    (dist,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = dist["Properties"]["DistributionConfig"]
+    for behavior in [config["DefaultCacheBehavior"], *config["CacheBehaviors"]]:
+        assert behavior["ResponseHeadersPolicyId"] == {"Ref": policy_id}

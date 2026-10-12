@@ -34,6 +34,15 @@ tarball so `bootstrap` keeps its executable bit. The artifact is kept 30 days.
 binary for a stub. Runs share one `deploy` concurrency group: a newer push
 queues behind a running deploy rather than cancelling it mid-update.
 
+## Action pinning
+
+Every `uses:` is pinned to a full commit SHA, with its release as a trailing
+comment: `actions/checkout@11d5960a… # v4.4.0`. Tags can be moved, and several of
+these jobs hold AWS credentials or `contents: write`. Copy that form when you add
+an action; `git ls-remote --tags https://github.com/<owner>/<repo>.git` gives the
+SHA (use the `^{}` line for an annotated tag). `.github/dependabot.yml` bumps the
+SHA and the comment together, in one grouped weekly PR.
+
 ## The `production` environment
 
 `promote-prod` runs under a GitHub **Environment** named `production`, with

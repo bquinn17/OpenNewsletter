@@ -233,12 +233,14 @@ impl Response {
     /// totals (`plans/06-newsletter-lifecycle.md` §5.3, `07-notifications.md` §7.2).
     pub fn is_non_empty(&self) -> bool {
         match self.kind {
-            QuestionKind::Text => {
-                self.body.as_deref().is_some_and(|b| !b.trim().is_empty())
-                    || !self.image_media_ids.is_empty()
-            }
+            QuestionKind::Text => self.has_text_body() || !self.image_media_ids.is_empty(),
             QuestionKind::Poll => self.poll_option_id.is_some(),
         }
+    }
+
+    /// Whether the body has any non-whitespace text.
+    pub fn has_text_body(&self) -> bool {
+        self.body.as_deref().is_some_and(|b| !b.trim().is_empty())
     }
 }
 

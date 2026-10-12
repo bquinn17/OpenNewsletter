@@ -1,10 +1,11 @@
 //! Candidate questions, candidate votes, locked questions.
-//! AP10, AP11, AP12, AP13 plus transactions §4 #1, #2, #3.
+//! AP10, AP12, AP13 plus transactions §4 #1, #2, #3. AP11 has no reader
+//! (`plans/02-data-model-dynamodb.md` §2.6).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, candidate_gsi1pk, candidate_gsi1sk, candidate_pk, candidate_sk, candidate_vote_pk,
-    candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
+    candidate_vote_sk, group_pk, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, CANDIDATE_VOTE_SK_PREFIX, VOTER_TALLY_SK,
 };
 use crate::repo::Repo;
@@ -16,61 +17,85 @@ use domain::{
     NewsletterStatus, QuestionId, UserId,
 };
 use serde_dynamo::{from_item, to_item};
+use std::collections::HashMap;
 
-/// AP10 — list candidate questions for the next cycle.
+/// AP10 — list candidate questions for the next cycle. Follows
+/// `LastEvaluatedKey`, so a pool past one 1 MB page is never silently cut.
 pub async fn list_candidates(
     repo: &Repo,
     group_id: &GroupId,
     next_cycle_id: &CycleId,
 ) -> Result<Vec<CandidateQuestion>, RepoError> {
-    let resp = repo
-        .client
-        .query()
-        .table_name(&repo.table)
-        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
-        .expression_attribute_names("#pk", attr::PK)
-        .expression_attribute_names("#sk", attr::SK)
-        .expression_attribute_values(
-            ":pk",
-            AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
-        )
-        .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+    query_candidate_items(repo, group_id, next_cycle_id)
+        .await?
         .into_iter()
-        .map(|i| from_item::<_, CandidateQuestion>(i).map_err(RepoError::from))
+        .map(|item| Ok(from_item::<_, CandidateQuestion>(item)?))
         .collect()
 }
 
-/// AP11 — top N candidates by vote count.
-pub async fn list_top_candidates_by_votes(
+/// A candidate row that wouldn't deserialize, identified by its sort key.
+#[derive(Debug)]
+pub struct UnreadableCandidate {
+    pub sk: String,
+    pub error: String,
+}
+
+/// [`list_candidates`] for promotion: a row that doesn't deserialize comes
+/// back in the second list instead of failing the whole listing, so one
+/// corrupt candidate can't hold the group's cycle in `voting` forever
+/// (`06-newsletter-lifecycle.md` §5.2).
+pub async fn list_candidates_lenient(
     repo: &Repo,
     group_id: &GroupId,
     next_cycle_id: &CycleId,
-    limit: i32,
-) -> Result<Vec<CandidateQuestion>, RepoError> {
-    let resp = repo
-        .client
-        .query()
-        .table_name(&repo.table)
-        .index_name(index::GSI1)
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", attr::GSI1PK)
-        .expression_attribute_values(
-            ":pk",
-            AttributeValue::S(candidate_gsi1pk(group_id, next_cycle_id)),
-        )
-        .scan_index_forward(false)
-        .limit(limit)
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
-        .into_iter()
-        .map(|i| from_item::<_, CandidateQuestion>(i).map_err(RepoError::from))
-        .collect()
+) -> Result<(Vec<CandidateQuestion>, Vec<UnreadableCandidate>), RepoError> {
+    let mut candidates = Vec::new();
+    let mut unreadable = Vec::new();
+    for item in query_candidate_items(repo, group_id, next_cycle_id).await? {
+        let sk = match item.get(attr::SK) {
+            Some(AttributeValue::S(sk)) => sk.clone(),
+            _ => String::new(),
+        };
+        match from_item::<_, CandidateQuestion>(item) {
+            Ok(candidate) => candidates.push(candidate),
+            Err(e) => unreadable.push(UnreadableCandidate {
+                sk,
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok((candidates, unreadable))
+}
+
+async fn query_candidate_items(
+    repo: &Repo,
+    group_id: &GroupId,
+    next_cycle_id: &CycleId,
+) -> Result<Vec<HashMap<String, AttributeValue>>, RepoError> {
+    let mut items = Vec::new();
+    let mut start_key = None;
+    loop {
+        let resp = repo
+            .client
+            .query()
+            .table_name(&repo.table)
+            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+            .expression_attribute_names("#pk", attr::PK)
+            .expression_attribute_names("#sk", attr::SK)
+            .expression_attribute_values(
+                ":pk",
+                AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
+            )
+            .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()))
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await?;
+        items.extend(resp.items.unwrap_or_default());
+        match resp.last_evaluated_key {
+            Some(key) if !key.is_empty() => start_key = Some(key),
+            _ => return Ok(items),
+        }
+    }
 }
 
 /// AP12 — list a voter's votes for one cycle.

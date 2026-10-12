@@ -3,9 +3,7 @@
 
 use lambda_http::{service_fn, Error};
 use media::{router, state::AppState};
-use media_delete::{
-    CdnInvalidator, CloudFrontInvalidator, MediaDeleter, MediaObjectStore, S3ObjectStore,
-};
+use media_delete::MediaDeleter;
 use persistence::Repo;
 use std::sync::Arc;
 
@@ -25,29 +23,12 @@ async fn main() -> Result<(), Error> {
         .build();
 
     let s3 = aws_sdk_s3::Client::from_conf(s3_config);
-    let media_originals_bucket =
-        std::env::var("MEDIA_ORIGINALS_BUCKET").map_err(|_| "MEDIA_ORIGINALS_BUCKET is not set")?;
-    let avatars_originals_bucket = std::env::var("AVATARS_ORIGINALS_BUCKET")
-        .map_err(|_| "AVATARS_ORIGINALS_BUCKET is not set")?;
-    let store: Arc<dyn MediaObjectStore> = Arc::new(S3ObjectStore::new(s3.clone()));
-    let cdn: Arc<dyn CdnInvalidator> = Arc::new(CloudFrontInvalidator::new(
-        aws_sdk_cloudfront::Client::new(&aws_config),
-        std::env::var("CDN_DISTRIBUTION_ID").map_err(|_| "CDN_DISTRIBUTION_ID is not set")?,
-    ));
-    let image_deleter = MediaDeleter {
-        store: store.clone(),
-        cdn: cdn.clone(),
-        originals_bucket: media_originals_bucket.clone(),
-        processed_bucket: std::env::var("PROCESSED_BUCKET")
-            .map_err(|_| "PROCESSED_BUCKET is not set")?,
-    };
-    let avatar_deleter = MediaDeleter {
-        store,
-        cdn,
-        originals_bucket: avatars_originals_bucket.clone(),
-        processed_bucket: std::env::var("AVATARS_PROCESSED_BUCKET")
-            .map_err(|_| "AVATARS_PROCESSED_BUCKET is not set")?,
-    };
+    let image_deleter =
+        MediaDeleter::from_env(&aws_config, "MEDIA_ORIGINALS_BUCKET", "PROCESSED_BUCKET")?;
+    let avatar_deleter = image_deleter
+        .with_buckets_from_env("AVATARS_ORIGINALS_BUCKET", "AVATARS_PROCESSED_BUCKET")?;
+    let media_originals_bucket = image_deleter.originals_bucket.clone();
+    let avatars_originals_bucket = avatar_deleter.originals_bucket.clone();
 
     let state = Arc::new(AppState::new(
         Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),

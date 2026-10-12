@@ -1,4 +1,5 @@
 use aws_sdk_dynamodb::error::SdkError;
+use aws_sdk_dynamodb::operation::delete_item::DeleteItemError;
 use aws_sdk_dynamodb::operation::put_item::PutItemError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::operation::update_item::UpdateItemError;
@@ -63,6 +64,14 @@ pub fn from_put_item_error<R: std::fmt::Debug>(err: SdkError<PutItemError, R>) -
 
 /// Classify an `UpdateItem` failure the same way as [`from_put_item_error`].
 pub fn from_update_item_error<R: std::fmt::Debug>(err: SdkError<UpdateItemError, R>) -> RepoError {
+    match err.as_service_error() {
+        Some(e) if e.is_conditional_check_failed_exception() => RepoError::ConditionalCheckFailed,
+        _ => RepoError::Dynamo(format!("{err:?}")),
+    }
+}
+
+/// Classify a `DeleteItem` failure the same way as [`from_put_item_error`].
+pub fn from_delete_item_error<R: std::fmt::Debug>(err: SdkError<DeleteItemError, R>) -> RepoError {
     match err.as_service_error() {
         Some(e) if e.is_conditional_check_failed_exception() => RepoError::ConditionalCheckFailed,
         _ => RepoError::Dynamo(format!("{err:?}")),

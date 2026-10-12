@@ -148,7 +148,7 @@ def test_diff_role_trust_is_pull_request_only(ci_template: assertions.Template) 
     assert "ref:refs/heads/main" not in str(statement["Condition"])
 
 
-def test_diff_role_policy_only_assumes_lookup_role(
+def test_diff_role_policy_only_reads_stack_templates(
     ci_template: assertions.Template,
 ) -> None:
     policies = ci_template.find_resources("AWS::IAM::Policy")
@@ -158,20 +158,14 @@ def test_diff_role_policy_only_assumes_lookup_role(
         for p in policies.values()
         if any(r["Ref"] == diff_role_logical_id for r in p["Properties"]["Roles"])
     ]
-    actions = {
-        statement["Action"]
-        if isinstance(statement["Action"], str)
-        else tuple(statement["Action"])
-        for statement in diff_policy["Properties"]["PolicyDocument"]["Statement"]
-    }
-    assert "sts:AssumeRole" in actions
-    # No action in the diff role's policy may be a write/deploy action.
+    # The PR job runs untrusted branch code with this role, so it may only read
+    # stack templates. In particular no `sts:AssumeRole`: the CDK lookup role
+    # carries `ReadOnlyAccess`, which can scan the table and read media.
     for statement in diff_policy["Properties"]["PolicyDocument"]["Statement"]:
         action = statement["Action"]
         actions_list = [action] if isinstance(action, str) else action
         for a in actions_list:
             assert a in (
-                "sts:AssumeRole",
                 "cloudformation:DescribeStacks",
                 "cloudformation:GetTemplate",
             )

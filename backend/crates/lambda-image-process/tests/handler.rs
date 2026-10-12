@@ -75,7 +75,7 @@ async fn a_pending_image_becomes_ready_with_both_variants_uploaded() {
     assert_eq!(display_object.content_type, "image/webp");
     assert_eq!(
         display_object.cache_control,
-        "public, max-age=31536000, immutable"
+        "public, max-age=5184000, immutable"
     );
 }
 
@@ -207,6 +207,7 @@ impl ObjectStore for DeleteRowDuringUpload {
             &self.row.group_id,
             &self.row.cycle_id,
             &self.row.image_id,
+            self.row.status,
         )
         .await
         .unwrap();

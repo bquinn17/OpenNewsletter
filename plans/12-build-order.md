@@ -195,6 +195,8 @@ Read: `08-media-uploads.md`.
 
 **Done when**: I can upload a 5MB JPEG, see thumbnail render in the editor, and reload the page to see the image rendered via CloudFront.
 
+**Also verify CDN CORS at this gate (added 2026-10-11).** CDN images and avatars load with `crossorigin="use-credentials"` (`04` §5.2), so a wrong CloudFront CORS policy breaks every image, not just offline caching. Run the CDN CORS check in [`docs/smoke.md`](../docs/smoke.md) §6: the right `Access-Control-Allow-*` headers, no CORS console errors, and a `cdn-images` cache entry. Run it again after the first prod deploy (M14).
+
 ---
 
 ## Milestone 9 — Newsletter UI (2 days)

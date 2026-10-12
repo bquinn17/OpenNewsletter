@@ -201,6 +201,8 @@ function QuestionBody({
   const [pollOptionId, setPollOptionId] = useState<string | null>(
     question.myResponse?.pollOptionId ?? null,
   );
+  // The pick the server holds, so a failed save can put the UI back on it.
+  const savedPollOptionIdRef = useRef<string | null>(question.myResponse?.pollOptionId ?? null);
   const [pollSaving, setPollSaving] = useState(false);
   const [pollResponse, setPollResponse] = useState<S["ResponseDto"] | null>(null);
   const [pollClosed, setPollClosed] = useState(false);
@@ -220,12 +222,16 @@ function QuestionBody({
         publish,
       });
       setPollResponse(response);
+      savedPollOptionIdRef.current = response.pollOptionId ?? optionId;
       cacheSavedResponse(queryClient, groupId, cycleId, question.questionId, response);
       if (response.status === "published" && prevStatusRef.current !== "published") {
         pushToast("Published — friends can see this when the edition publishes.", "success");
       }
       prevStatusRef.current = response.status;
     } catch (err) {
+      // The server still holds the last saved pick, and that's what would
+      // auto-publish, so show that rather than the unsaved one.
+      setPollOptionId(savedPollOptionIdRef.current);
       if (err instanceof ApiError && err.status === 409) {
         setPollClosed(true);
       }

@@ -212,7 +212,7 @@ async fn it_deletes_an_image_row_idempotently() {
     let img = common::image_media("gdel", "202606", "img-01", "u1");
     media::put_image(&repo, &img).await.unwrap();
 
-    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id)
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
         .await
         .unwrap();
     let got = media::get_image(&repo, &group_id, &cycle_id, &image_id)
@@ -221,9 +221,30 @@ async fn it_deletes_an_image_row_idempotently() {
     assert_eq!(got, None);
 
     // Idempotent: deleting an already-gone row succeeds.
-    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id)
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn an_image_row_delete_refuses_a_row_whose_status_changed() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("gdel-race");
+    let cycle_id = CycleId::new("202606");
+    let image_id = ImageId::new("img-01");
+    let mut img = common::image_media("gdel-race", "202606", "img-01", "u1");
+    img.status = MediaStatus::Ready;
+    media::put_image(&repo, &img).await.unwrap();
+
+    let err = media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
+        .await
+        .expect_err("the row finished processing since the caller read it");
+
+    assert!(err.is_lost_race());
+    let got = media::get_image(&repo, &group_id, &cycle_id, &image_id)
+        .await
+        .unwrap();
+    assert_eq!(got, Some(img));
 }
 
 #[tokio::test]
@@ -234,7 +255,7 @@ async fn it_deletes_an_avatar_row() {
     let av = common::avatar_media("u1", "av-01");
     media::put_avatar(&repo, &av).await.unwrap();
 
-    media::delete_avatar_row(&repo, &user_id, &avatar_id)
+    media::delete_avatar_row(&repo, &user_id, &avatar_id, MediaStatus::Pending)
         .await
         .unwrap();
     let got = media::get_avatar(&repo, &user_id, &avatar_id)

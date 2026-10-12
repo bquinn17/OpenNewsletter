@@ -4,6 +4,7 @@ import {
   buildNotificationOptions,
   parsePushPayload,
   resolveNotificationUrl,
+  stripMediaAuthParams,
   type ActivationScope,
 } from "./swHelpers";
 
@@ -131,5 +132,24 @@ describe("activatePromptly (D6)", () => {
 
     expect(fire("activate")).toHaveLength(1);
     expect(scope.clients.claim).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("stripMediaAuthParams", () => {
+  it("drops CloudFront's signed-URL params so the cache key survives re-signing", () => {
+    expect(
+      stripMediaAuthParams(
+        "https://cdn.example.com/img/g1/c/q/u/i/thumb.webp?Policy=abc&Signature=def&Key-Pair-Id=K1",
+      ),
+    ).toBe("https://cdn.example.com/img/g1/c/q/u/i/thumb.webp");
+  });
+
+  it("leaves an unsigned URL and unrelated params alone", () => {
+    expect(stripMediaAuthParams("https://cdn.example.com/avatar/a1/display.webp")).toBe(
+      "https://cdn.example.com/avatar/a1/display.webp",
+    );
+    expect(stripMediaAuthParams("https://cdn.example.com/img/x.webp?v=2&Signature=s")).toBe(
+      "https://cdn.example.com/img/x.webp?v=2",
+    );
   });
 });

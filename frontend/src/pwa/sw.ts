@@ -17,6 +17,7 @@ import {
   buildNotificationOptions,
   parsePushPayload,
   resolveNotificationUrl,
+  stripMediaAuthParams,
 } from "./swHelpers";
 
 declare let self: ServiceWorkerGlobalScope & {
@@ -27,6 +28,9 @@ declare let self: ServiceWorkerGlobalScope & {
 // than after every tab closes. `main.tsx` keeps vite-plugin-pwa's default
 // `prompt` registerType, whose `autoUpdate` alternative would reload open
 // pages mid-session; here a page picks up the new build on its next load.
+// Activating drops the old build's precache, and GitHub Pages no longer
+// serves its hashed files, so an open tab can't fetch a lazy chunk of the
+// build it's running. Keep the app free of `import()`/`React.lazy` chunks.
 activatePromptly(self);
 
 precacheAndRoute(self.__WB_MANIFEST);
@@ -41,7 +45,10 @@ const CDN_ORIGIN: string | null = (() => {
 })();
 
 // CDN images only (`/img/*`, `/avatar/*`) — the signed-cookie URL is the same
-// path for every viewer, so caching is effective (`04` §5.2).
+// path for every viewer, so caching is effective (`04` §5.2). `CdnImage` and
+// `Avatar` load these in CORS mode, so responses aren't opaque and `CacheFirst`'s
+// default stores only status 200s: a 403 from a stale cookie is never pinned.
+// Keys drop dev's rotating signed-URL params, or dev would never get a hit.
 registerRoute(
   ({ url }) =>
     CDN_ORIGIN !== null &&
@@ -49,7 +56,10 @@ registerRoute(
     (url.pathname.startsWith("/img/") || url.pathname.startsWith("/avatar/")),
   new CacheFirst({
     cacheName: "cdn-images",
-    plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 30 * 24 * 60 * 60 })],
+    plugins: [
+      { cacheKeyWillBeUsed: async ({ request }) => stripMediaAuthParams(request.url) },
+      new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+    ],
   }),
 );
 

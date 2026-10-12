@@ -1,7 +1,8 @@
 import clsx from "clsx";
-import { lazy, Suspense, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useToggleReaction } from "../../api/mutations";
 import type { components } from "../../types/api";
+import EmojiPickerPopover from "./EmojiPickerPopover";
 
 type ReactionGroup = components["schemas"]["ReactionGroupResponse"];
 
@@ -16,10 +17,6 @@ type Props = {
 // One-tap quick pills for anything not already shown as a group
 // (`09-engagement.md` §2.5).
 const QUICK_EMOJI = ["🔥", "🤣", "❤️", "😍", "👍", "🎉"];
-
-// The full curated-grid picker is only needed once the caller asks for "+",
-// so lazy-load it.
-const EmojiPickerPopover = lazy(() => import("./EmojiPickerPopover"));
 
 /** `[🔥 4] [🤣 2] [+]` — `09-engagement.md` §2.5, §4.2. */
 export function ReactionBar({ groupId, cycleId, questionId, responseId, reactionGroups }: Props) {
@@ -83,16 +80,14 @@ export function ReactionBar({ groupId, cycleId, questionId, responseId, reaction
       </button>
 
       {pickerOpen && (
-        <Suspense fallback={null}>
-          <EmojiPickerPopover
-            anchorRef={addButtonRef}
-            onPick={(emoji) => {
-              toggleEmoji(emoji, true);
-              closePicker();
-            }}
-            onClose={closePicker}
-          />
-        </Suspense>
+        <EmojiPickerPopover
+          anchorRef={addButtonRef}
+          onPick={(emoji) => {
+            toggleEmoji(emoji, true);
+            closePicker();
+          }}
+          onClose={closePicker}
+        />
       )}
     </div>
   );

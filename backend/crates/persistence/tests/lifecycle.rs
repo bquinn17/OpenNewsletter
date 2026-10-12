@@ -15,7 +15,7 @@ mod common;
 
 use chrono::{Duration, TimeZone, Utc};
 use chrono_tz::America;
-use domain::{CycleId, GroupId, NewsletterStatus, UserId};
+use domain::{CandidateQuestion, CycleId, GroupId, NewsletterStatus, UserId};
 use persistence::{newsletters, questions};
 use pretty_assertions::assert_eq;
 
@@ -36,10 +36,11 @@ async fn tick_promotes_only_the_top_n_candidates_by_vote() {
     }
 
     // questionsPerCycle = 2: only the top 2 by vote count get promoted.
-    let top2 = questions::list_top_candidates_by_votes(&repo, &group_id, &cycle_id, 2)
+    let mut top2 = questions::list_candidates(&repo, &group_id, &cycle_id)
         .await
         .unwrap();
-    assert_eq!(top2.len(), 2);
+    top2.sort_by(CandidateQuestion::promotion_order);
+    top2.truncate(2);
 
     let locked: Vec<_> = top2
         .into_iter()

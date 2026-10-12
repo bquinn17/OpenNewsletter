@@ -91,3 +91,18 @@ export function activatePromptly(scope: ActivationScope): void {
   scope.addEventListener("install", (event) => event.waitUntil(scope.skipWaiting()));
   scope.addEventListener("activate", (event) => event.waitUntil(scope.clients.claim()));
 }
+
+/** CloudFront signed-URL query params (`08-media-uploads.md` §4.5). */
+const MEDIA_AUTH_PARAMS = ["Policy", "Signature", "Key-Pair-Id", "Expires"];
+
+/**
+ * The `cdn-images` cache key for `url`: the URL without CloudFront's signed-URL
+ * params. Dev signs image URLs with query params that change every hour, so
+ * keying on the full URL would never hit. Prod URLs carry none (cookies do the
+ * work), so this leaves them unchanged.
+ */
+export function stripMediaAuthParams(url: string): string {
+  const parsed = new URL(url);
+  for (const param of MEDIA_AUTH_PARAMS) parsed.searchParams.delete(param);
+  return parsed.toString();
+}

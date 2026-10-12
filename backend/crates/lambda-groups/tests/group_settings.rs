@@ -33,8 +33,14 @@ fn window_patch(days: u32) -> PatchGroupRequest {
 
 /// An `open` cycle that opened three days ago on the default 7-day window.
 async fn seed_open_cycle(repo: &Repo, group_id: &str) -> Newsletter {
+    seed_open_cycle_opened_days_ago(repo, group_id, 3).await
+}
+
+/// An `open` cycle on the default 7-day window that opened `days` ago. Past
+/// 7, its close has passed but the tick hasn't published it yet.
+async fn seed_open_cycle_opened_days_ago(repo: &Repo, group_id: &str, days: i64) -> Newsletter {
     let now = Utc::now();
-    let open_at = now - Duration::days(3);
+    let open_at = now - Duration::days(days);
     let nl = Newsletter {
         group_id: GroupId::new(group_id),
         cycle_id: domain::CycleId::new("202610"),
@@ -129,6 +135,49 @@ async fn a_window_that_would_close_the_open_cycle_in_the_past_is_rejected_unchan
         .unwrap();
     assert_eq!(group.cycle_settings.response_window_days, 7);
     assert_eq!(reload(&state.repo, &nl).await, nl);
+}
+
+#[tokio::test]
+async fn a_cycle_past_its_close_is_not_reopened_by_a_longer_window() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-closed", &[("a1", Role::Admin)]).await;
+    let nl = seed_open_cycle_opened_days_ago(&repo, "g-closed", 8).await;
+    let state = state(repo);
+
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-closed"),
+        window_patch(10),
+    )
+    .await
+    .expect("the setting still saves for later cycles");
+
+    let group = group_repo::get_group(&state.repo, &GroupId::new("g-closed"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(group.cycle_settings.response_window_days, 10);
+    assert_eq!(reload(&state.repo, &nl).await, nl);
+}
+
+#[tokio::test]
+async fn rescheduling_refuses_a_cycle_whose_close_has_passed() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-closed-race", &[("a1", Role::Admin)]).await;
+    let nl = seed_open_cycle_opened_days_ago(&repo, "g-closed-race", 8).await;
+
+    let err = newsletters::reschedule_open_cycle_close(
+        &repo,
+        &nl.group_id,
+        &nl.cycle_id,
+        Utc::now() + Duration::days(2),
+    )
+    .await
+    .expect_err("the window already closed");
+
+    assert!(err.is_lost_race());
+    assert_eq!(reload(&repo, &nl).await, nl);
 }
 
 #[tokio::test]

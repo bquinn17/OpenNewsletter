@@ -69,6 +69,12 @@ aws lambda invoke --function-name OpenNewsletter-CycleTick-$ENV \
 - [ ] Publish the answer, and answer any poll question.
 - [ ] Fast-forward to publication (same curl as step 5). The response shows `open → published`, and a new `voting` cycle with `from: null`.
 - [ ] Open the published edition. B's answer and image render, and the image loads from the CDN origin.
+- [ ] **CDN CORS (decided 2026-10-11, `01` §5.2).** `CdnImage` and `Avatar` load in CORS mode, so if CloudFront's CORS policy is wrong, *every* CDN image and avatar fails to load, not just offline caching. In DevTools → Network, pick the image request and check:
+  - its response has `Access-Control-Allow-Origin` set to this app's exact origin, never `*`
+  - it has `Access-Control-Allow-Credentials: true`
+  - the Console shows no "blocked by CORS policy" errors
+
+  Then, under Application → Cache Storage → `cdn-images`, the image has an entry. A broken image here is a CORS failure. Check that `MediaCorsPolicy` is attached to both distribution behaviors, and that its origins match the SPA's origin exactly (scheme, host, port, no trailing slash). The quickest way to get images back is a frontend-only rollback that removes `crossOrigin` from `CdnImage` and `Avatar`.
 - [ ] As A, comment on B's answer, then edit the comment. As B, reload: the edited comment shows.
 - [ ] React with 👍. Toggle it off, then react with 👨‍👩‍👧‍👦. The counts update and survive a reload.
 

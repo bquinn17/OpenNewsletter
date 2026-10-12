@@ -5,11 +5,11 @@ Account-wide, not suffixed by env: `app.py` instantiates this once as the
 plain id "CiStack", so either `--context env=dev` or `env=prod` includes it,
 and deploying from either context manages the same CloudFormation stack.
 
-The real deploy/lookup privileges stay on the CDK bootstrap roles
-(`cdk-hnb659fds-*`, created by `cdk bootstrap`); these roles are granted only
-`sts:AssumeRole` onto those, so a compromised Actions run is bounded by
-whatever the bootstrap roles themselves allow — this stack never hands out
-direct resource permissions.
+The real deploy privileges stay on the CDK bootstrap roles
+(`cdk-hnb659fds-*`, created by `cdk bootstrap`). The deploy role is granted only
+`sts:AssumeRole` onto those, so a compromised Actions run is bounded by whatever
+the bootstrap roles themselves allow. The PR diff role can't reach them at all:
+it gets read access to the stacks' templates and nothing else.
 
 The $5/mo AWS Budget lives here because it's account-wide too: dev and prod
 share the account, and a per-env budget would only see part of the bill
@@ -52,12 +52,6 @@ class CiStack(cdk.Stack):
             resource="role",
             resource_name="cdk-hnb659fds-*",
         )
-        lookup_role_arn = self.format_arn(
-            service="iam",
-            region="",
-            resource="role",
-            resource_name="cdk-hnb659fds-lookup-role-*",
-        )
 
         # Assumed by both deploy.yml jobs on push to main. GitHub sets the
         # OIDC `sub` claim per job: the `dev` job's is the `main` ref, but a
@@ -97,9 +91,12 @@ class CiStack(cdk.Stack):
         )
 
         # Assumed by infra-ci's PR job to post a read-only `cdk diff` against
-        # prod. Only the lookup role (read-only) is assumable, plus the two
-        # describe calls diff issues directly against the live stacks, scoped
-        # to prod stack ARNs rather than "*".
+        # prod. That job runs the PR branch's own code, so this role gets only
+        # the two calls diff makes against the live stacks, scoped to the stacks
+        # it diffs: prod's and the account-wide CiStack. It deliberately can't
+        # assume the CDK lookup role. That role carries `ReadOnlyAccess`
+        # (`dynamodb:Scan`, `s3:GetObject`), and the app makes no context
+        # lookups that would need it.
         self.diff_role = iam.Role(
             self,
             "GithubDiffRole",
@@ -123,19 +120,14 @@ class CiStack(cdk.Stack):
         )
         self.diff_role.add_to_policy(
             iam.PolicyStatement(
-                actions=["sts:AssumeRole"],
-                resources=[lookup_role_arn],
-            )
-        )
-        self.diff_role.add_to_policy(
-            iam.PolicyStatement(
                 actions=["cloudformation:DescribeStacks", "cloudformation:GetTemplate"],
                 resources=[
                     self.format_arn(
                         service="cloudformation",
                         resource="stack",
-                        resource_name="*-prod/*",
+                        resource_name=name,
                     )
+                    for name in ("*-prod/*", f"{self.stack_name}/*")
                 ],
             )
         )

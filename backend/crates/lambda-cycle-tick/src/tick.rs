@@ -12,7 +12,6 @@ use domain::{
 use persistence::responses::AutoPublishOutcome;
 use persistence::{groups, media, newsletters, questions, responses, Repo, RepoError};
 use serde::Serialize;
-use std::collections::HashSet;
 
 use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 
@@ -59,15 +58,17 @@ pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> TickSummary 
     // Before publication, so a cycle closing this tick is still `open` here.
     // One GSI2 query for every group's `voting` cycle rather than a per-group
     // lookup: the successor almost always exists, so this is usually a no-op.
-    // GSI2 is eventually consistent. A successor created moments ago that
+    // The two queries run concurrently, and the `voting` one reads only group
+    // ids. GSI2 is eventually consistent. A successor created moments ago that
     // doesn't show yet only means a create that loses its race. A cycle
     // promoted moments ago that still shows as `voting` only defers its
     // group's repair by one tick.
-    let open = newsletters::list_cycles_in_status(repo, NewsletterStatus::Open).await;
-    let voting = newsletters::list_cycles_in_status(repo, NewsletterStatus::Voting).await;
-    match (open, voting) {
-        (Ok(open), Ok(voting)) => {
-            let has_voting: HashSet<GroupId> = voting.into_iter().map(|nl| nl.group_id).collect();
+    let (open, has_voting) = tokio::join!(
+        newsletters::list_cycles_in_status(repo, NewsletterStatus::Open),
+        newsletters::list_group_ids_in_status(repo, NewsletterStatus::Voting),
+    );
+    match (open, has_voting) {
+        (Ok(open), Ok(has_voting)) => {
             for nl in open.iter().filter(|nl| !has_voting.contains(&nl.group_id)) {
                 transitions.extend(ensure_next_voting_cycle(repo, nl).await);
             }
@@ -120,8 +121,17 @@ async fn promote_and_open(
 
     // The whole pool, sorted in memory: GSI1's vote-count order breaks ties
     // newest-first, but promotion breaks them oldest-first (§5.2).
-    let mut chosen = match questions::list_candidates(repo, &nl.group_id, &nl.cycle_id).await {
-        Ok(c) => c,
+    // Lenient: an unreadable candidate is logged and left out rather than
+    // holding the cycle in `voting` on every tick.
+    let mut chosen = match questions::list_candidates_lenient(repo, &nl.group_id, &nl.cycle_id)
+        .await
+    {
+        Ok((candidates, unreadable)) => {
+            for bad in unreadable {
+                tracing::error!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, sk = %bad.sk, error = %bad.error, "skipping an unreadable candidate at promotion");
+            }
+            candidates
+        }
         Err(e) => {
             tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, "failed to list candidates");
             return Vec::new();
@@ -414,8 +424,7 @@ fn emit_auto_publish_abandoned(count: u32) {
 /// its images still exists and hasn't failed processing. Otherwise it would
 /// publish as an empty answer.
 async fn has_live_content(repo: &Repo, draft: &Response) -> Result<bool, RepoError> {
-    let has_body = draft.body.as_deref().is_some_and(|b| !b.trim().is_empty());
-    if draft.kind != QuestionKind::Text || has_body {
+    if draft.kind != QuestionKind::Text || draft.has_text_body() {
         return Ok(true);
     }
     for image_id in &draft.image_media_ids {

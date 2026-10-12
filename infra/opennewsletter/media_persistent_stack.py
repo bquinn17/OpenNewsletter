@@ -49,14 +49,16 @@ class MediaPersistentStack(cdk.Stack):
             cdk.RemovalPolicy.DESTROY if is_dev else cdk.RemovalPolicy.RETAIN
         )
 
+        # The SPA's origins: browser uploads here, and CDN reads (below).
+        spa_origins = (
+            [f"https://{config.domain}", "http://localhost:5173"]
+            if is_dev
+            else [f"https://{config.domain}"]
+        )
         cors_rules = [
             s3.CorsRule(
                 allowed_methods=[s3.HttpMethods.PUT, s3.HttpMethods.POST],
-                allowed_origins=(
-                    [f"https://{config.domain}", "http://localhost:5173"]
-                    if is_dev
-                    else [f"https://{config.domain}"]
-                ),
+                allowed_origins=spa_origins,
                 allowed_headers=["*"],
                 exposed_headers=["ETag"],
             )
@@ -192,6 +194,26 @@ class MediaPersistentStack(cdk.Stack):
             self.avatars_processed_bucket
         )
 
+        # CORS on every CDN response, so the SPA can load images with
+        # `crossorigin`. Without it they load no-cors, the service worker sees
+        # opaque status-0 responses, and its `cdn-images` cache can't tell a 403
+        # from an image, so it stores nothing (`04` §5.2). Credentialed because
+        # prod's signed cookies ride along; that requires an explicit origin
+        # list, never `*`.
+        media_cors_policy = cloudfront.ResponseHeadersPolicy(
+            self,
+            "MediaCorsPolicy",
+            comment=f"OpenNewsletter CDN CORS for the SPA ({config.env})",
+            cors_behavior=cloudfront.ResponseHeadersCorsBehavior(
+                access_control_allow_credentials=True,
+                access_control_allow_headers=["Range"],
+                access_control_allow_methods=["GET", "HEAD"],
+                access_control_allow_origins=spa_origins,
+                access_control_max_age=cdk.Duration.minutes(10),
+                origin_override=True,
+            ),
+        )
+
         self.distribution = cloudfront.Distribution(
             self,
             "Distribution",
@@ -204,6 +226,7 @@ class MediaPersistentStack(cdk.Stack):
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
                 trusted_key_groups=[self.key_group],
+                response_headers_policy=media_cors_policy,
             ),
             additional_behaviors={
                 "/avatar/*": cloudfront.BehaviorOptions(
@@ -211,6 +234,7 @@ class MediaPersistentStack(cdk.Stack):
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                     allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                    response_headers_policy=media_cors_policy,
                 )
             },
         )

@@ -598,6 +598,46 @@ describe("RespondPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("puts the pick back on the saved option when a save fails", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q2",
+          kind: "poll",
+          prompt: "Pick one",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: true,
+          pollOptions: [
+            { optionId: "optA", label: "Option A" },
+            { optionId: "optB", label: "Option B" },
+          ],
+          myResponse: {
+            responseId: "r2",
+            status: "draft",
+            imageMediaIds: [],
+            pollOptionId: "optA",
+            updatedAt: "2026-06-02T00:00:00Z",
+            publishedAt: null,
+          },
+        },
+      ]),
+    );
+    saveMyResponse.mockRejectedValue(new ApiError(500, "INTERNAL", null));
+
+    renderAt("q2");
+
+    const optionB = await screen.findByRole("button", { name: "Option B" });
+    await act(async () => {
+      fireEvent.click(optionB);
+      await flush();
+    });
+
+    expect(saveMyResponse).toHaveBeenCalledTimes(1);
+    expect(optionB).not.toHaveClass("border-grape");
+    expect(screen.getByRole("button", { name: "Option A" })).toHaveClass("border-grape");
+  });
+
   describe("auto-publish note (D2)", () => {
     const closeAt = "2026-06-08T03:59:00Z";
 

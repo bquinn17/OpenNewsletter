@@ -2498,9 +2498,7 @@ name = "lambda-engagement"
 version = "0.1.0"
 dependencies = [
  "aws-config",
- "aws-sdk-cloudfront",
  "aws-sdk-dynamodb",
- "aws-sdk-s3",
  "chrono",
  "domain",
  "lambda_http",
@@ -2522,9 +2520,7 @@ name = "lambda-groups"
 version = "0.1.0"
 dependencies = [
  "aws-config",
- "aws-sdk-cloudfront",
  "aws-sdk-dynamodb",
- "aws-sdk-s3",
  "chrono",
  "chrono-tz",
  "domain",
@@ -2959,6 +2955,7 @@ name = "media-delete"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "aws-config",
  "aws-sdk-cloudfront",
  "aws-sdk-s3",
  "chrono",

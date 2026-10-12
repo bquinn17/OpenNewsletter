@@ -437,7 +437,7 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP8 | Get newsletter | GetItem | base |
 | AP9 | Cycles by status with next transition due | Query | GSI2 |
 | AP10 | List candidate questions for next cycle | Query | base |
-| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — unused by promotion as of 2026-10-07 (D4, §2.6); its tie order is newest-first, promotion needs oldest-first |
+| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — unused by promotion as of 2026-10-07 (D4, §2.6); its tie order is newest-first, promotion needs oldest-first. No reader; the `list_top_candidates_by_votes` helper was removed 2026-10-11 |
 | AP12 | List my votes this cycle | Query | base |
 | AP13 | List locked questions for newsletter | Query | base |
 | AP14 | List answers to a question (post-publish) | Query | base |
@@ -549,7 +549,7 @@ In `backend/crates/persistence/src/`:
 - `repo.rs` — `Repo` struct holding the `aws_sdk_dynamodb::Client` and table name
 - `keys.rs` — pure functions building all the `pk`/`sk`/`gsi1pk`/`gsi1sk`/`gsi2pk`/`gsi2sk` strings, plus the `attr`/`index` modules centralizing literal attribute and index names. Single source of truth for key formats. Unit-tested.
 - Entity structs live in `backend/crates/domain/src/entities.rs` (`serde::{Serialize, Deserialize}`, no `rename_all` on struct fields — Rust field name *is* the DynamoDB attribute name); `persistence`'s per-family modules call `serde_dynamo::{to_item, from_item}` directly rather than through a dedicated `model.rs`.
-- `users.rs`, `groups.rs`, `invites.rs`, `newsletters.rs`, `questions.rs`, `responses.rs`, `engagement.rs`, `media.rs`, `push.rs` — one file per entity family with focused query/mutation functions named after the access pattern (e.g. `list_top_candidates_by_votes`, `cast_vote_tx`, `save_response`).
+- `users.rs`, `groups.rs`, `invites.rs`, `newsletters.rs`, `questions.rs`, `responses.rs`, `engagement.rs`, `media.rs`, `push.rs` — one file per entity family with focused query/mutation functions named after the access pattern (e.g. `list_candidates`, `cast_vote_tx`, `save_response`).
 - `auth.rs` — caller resolution and tenant-isolation gate (`require_user_id`, `require_membership`), with the per-cold-start membership cache described in §6.
 - `expr.rs` — shared `UpdateExpression` builder (`set_fields`) that aliases every patched attribute behind a numbered placeholder, so reserved words never need special-casing.
 - `tests/` — integration tests against a local DynamoDB container (see `11-testing-ci-cd.md`).

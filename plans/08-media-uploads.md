@@ -236,7 +236,7 @@ Implementation notes (decided M8):
 - The ready/failed updates are conditioned on `status = pending`. A lost condition means another invocation already finished, so it is logged and skipped, not retried.
 - Size and decode failures are terminal and recorded on the row (`error_message` = `IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED`). Transient S3/DynamoDB errors return `Err` so Lambda's async retry runs.
 - Variants are never upscaled. Recorded `width`/`height` are the original's after EXIF orientation.
-- Cache-Control on writes: `public, max-age=31536000, immutable` for `img/*`, `public, max-age=86400, immutable` for `avatar/*`.
+- Cache-Control on writes: `public, max-age=5184000, immutable` (60 days; decided 2026-10-11, never more than two months) for `img/*`, `public, max-age=86400, immutable` for `avatar/*`.
 
 ### 5.2 Algorithm (Rust)
 
@@ -363,6 +363,8 @@ This indirection means we can change the CDN host (or rotate signed cookies) wit
 `DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards unchanged) now deletes for real: the original object, both processed variants, a CloudFront invalidation for the exact display and thumb paths (exact paths, not a `/*` wildcard: CloudFront allows only 15 wildcard invalidations in progress per distribution; changed 2026-10-08, review fix) (the first 1,000 invalidation paths/month are free), then the `ImageMedia` row. S3 deletes run first; on S3 failure the handler returns 500 and keeps the row so a retry can finish the job. A repeat `DELETE` of an already-gone row returns 204 (idempotent — nothing left to leak). **As built (M13.5):** the invalidation path comes from the row's processed-key directory. A row with no processed key (`pending`/`failed`) was never served, so only its original is deleted and no invalidation is issued. `ImageMedia.error_message` is no longer written as `"DELETED"` for a removed image; the row itself is deleted instead.
 
 One shared helper performs the delete: the `media-delete` library crate (`backend/crates/media-delete`, decided M13.5 — not `shared`, because `shared` can't depend on `persistence` and the helper deletes the row). A failed CloudFront invalidation is treated like a failed S3 delete (500, row kept, a retry redoes the idempotent steps; decided M13.5), so a successful delete never leaves an edge copy cached past the call. `lambda-media`, `lambda-engagement` and `lambda-groups` each get `s3:DeleteObject` on the relevant buckets/prefixes and `cloudfront:CreateInvalidation` on the distribution (`01-infrastructure-cdk.md`).
+
+**Processing finishing mid-delete (decided 2026-10-11, review fix).** The row delete is conditioned on the row still having the `status` the helper read (`attribute_not_exists(pk) OR status = :read`). If image-process marked a `pending` row `ready` between that read and the row delete, it wrote variants the helper didn't know to delete. The condition then fails, and the helper rereads the row and runs the delete again with its processed keys. A row leaves `pending` once, so this happens at most once. If the helper's row delete lands first instead, image-process's own `status = pending` update fails on the missing row and it removes the variants it wrote (§5.2). Avatars work the same way.
 
 Callers: the response editor's "remove image" (`04-frontend-architecture.md` §7.3/§8.4), a comment's image on comment soft-delete or image removal/replacement (`09-engagement.md` §1.1/§1.4/§4.3 — best effort, failure logged at ERROR), and avatar removal/replacement (§11.4 below).
 

@@ -23,29 +23,6 @@ async fn it_puts_and_lists_candidates() {
 }
 
 #[tokio::test]
-async fn it_lists_top_candidates_by_votes_descending() {
-    let (_c, repo) = common::make_repo().await;
-    let low = common::candidate("g1", "202606", "q-low", "u1", 1);
-    let mid = common::candidate("g1", "202606", "q-mid", "u1", 5);
-    let top = common::candidate("g1", "202606", "q-top", "u1", 10);
-    questions::put_candidate(&repo, &low).await.unwrap();
-    questions::put_candidate(&repo, &mid).await.unwrap();
-    questions::put_candidate(&repo, &top).await.unwrap();
-
-    let top2 = questions::list_top_candidates_by_votes(
-        &repo,
-        &GroupId::new("g1"),
-        &CycleId::new("202606"),
-        2,
-    )
-    .await
-    .unwrap();
-    assert_eq!(top2.len(), 2);
-    assert_eq!(top2[0].question_id, top.question_id);
-    assert_eq!(top2[1].question_id, mid.question_id);
-}
-
-#[tokio::test]
 async fn it_lists_my_votes_for_a_cycle() {
     let (_c, repo) = common::make_repo().await;
     let q1 = common::candidate("g1", "202606", "q1", "u1", 0);

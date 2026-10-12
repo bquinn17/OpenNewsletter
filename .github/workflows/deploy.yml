@@ -46,7 +46,7 @@ jobs:
       ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
       GITHUB_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Without it config.py falls back to a placeholder ARN and the deploy
       # fails late, inside CloudFormation.
@@ -59,12 +59,12 @@ jobs:
 
       # rustup on ubuntu-latest reads rust-toolchain.toml (repo root) and
       # installs/pins the toolchain it names.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: backend
 
       # ubuntu-latest's system Python refuses `pip install` (PEP 668).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -93,7 +93,7 @@ jobs:
       - name: Package Lambda binaries
         run: tar -czf lambda-binaries.tgz -C backend/target lambda
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lambda-binaries
           path: lambda-binaries.tgz
@@ -104,11 +104,11 @@ jobs:
       - run: pip install -r infra/requirements.txt
 
       # Needed for `npx aws-cdk@2`.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
@@ -141,7 +141,7 @@ jobs:
       ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
       GITHUB_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Check prod config
         run: |
@@ -159,7 +159,7 @@ jobs:
           exit "$missing"
 
       # The exact binaries the dev job built and deployed — no rebuild.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: lambda-binaries
 
@@ -171,19 +171,19 @@ jobs:
       - name: Check every Lambda binary is present
         run: ./scripts/check_lambda_binaries.sh
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - run: pip install -r infra/requirements.txt
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
@@ -219,7 +219,7 @@ jobs:
         working-directory: frontend
         run: cp dist/index.html dist/404.html
 
-      - uses: peaceiris/actions-gh-pages@v4
+      - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: frontend/dist

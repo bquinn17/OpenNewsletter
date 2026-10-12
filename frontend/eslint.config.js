@@ -49,6 +49,23 @@ export default tseslint.config(
     },
   },
   {
+    // `src/pwa/sw.ts` activates a new deploy at once and drops the old
+    // build's precache, so an open tab can't load a lazy chunk of the build
+    // it's running. Tests are exempt: they aren't bundled.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression",
+          message:
+            "No lazy chunks: an open tab can't fetch one after a new deploy activates (src/pwa/sw.ts).",
+        },
+      ],
+    },
+  },
+  {
     files: ["*.config.{js,ts}"],
     languageOptions: {
       globals: { ...globals.node },

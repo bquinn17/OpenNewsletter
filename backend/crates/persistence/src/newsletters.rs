@@ -14,7 +14,7 @@ use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
 use serde_dynamo::{from_item, to_item};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// AP7 — list newsletters in a group, newest first.
 pub async fn list_newsletters_for_group(
@@ -156,6 +156,44 @@ pub async fn list_cycles_in_status(
     }
 }
 
+/// The groups with a cycle currently in `status`, from the same GSI2 query as
+/// [`list_cycles_in_status`] but projecting only `group_id`, for callers that
+/// only need to know which groups have one.
+pub async fn list_group_ids_in_status(
+    repo: &Repo,
+    status: NewsletterStatus,
+) -> Result<HashSet<GroupId>, RepoError> {
+    let mut group_ids = HashSet::new();
+    let mut start_key = None;
+    loop {
+        let resp = repo
+            .client
+            .query()
+            .table_name(&repo.table)
+            .index_name(index::GSI2)
+            .key_condition_expression("#pk = :pk")
+            .projection_expression("#g")
+            .expression_attribute_names("#pk", attr::GSI2PK)
+            .expression_attribute_names("#g", "group_id")
+            .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await?;
+        for item in resp.items.unwrap_or_default() {
+            match item.get("group_id") {
+                Some(AttributeValue::S(id)) => {
+                    group_ids.insert(GroupId::new(id));
+                }
+                _ => return Err(RepoError::Serde("a cycle row has no group_id".into())),
+            }
+        }
+        match resp.last_evaluated_key {
+            Some(key) if !key.is_empty() => start_key = Some(key),
+            _ => return Ok(group_ids),
+        }
+    }
+}
+
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
 /// for state transitions referenced in §9 of `02-data-model-dynamodb.md`.
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
@@ -210,8 +248,10 @@ fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, R
 /// Move an `open` cycle's close (`06` §6, `responseWindowDays` applied to the
 /// current cycle): `response_close_at`, `next_transition_at` (which equals it
 /// while open) and the GSI2 sort key change together. Conditioned on the row
-/// still being `open`, so a tick that published it in the meantime isn't
-/// undone; that lost race is `RepoError::ConditionalCheckFailed`.
+/// still being `open` and its current close still in the future, so neither a
+/// tick that published it in the meantime is undone nor a window that has
+/// already closed reopens; either lost race is
+/// `RepoError::ConditionalCheckFailed`.
 pub async fn reschedule_open_cycle_close(
     repo: &Repo,
     group_id: &GroupId,
@@ -219,6 +259,7 @@ pub async fn reschedule_open_cycle_close(
     new_close: DateTime<Utc>,
 ) -> Result<(), RepoError> {
     let close_av = serde_dynamo::to_attribute_value(new_close)?;
+    let now = Utc::now();
     repo.client
         .update_item()
         .table_name(&repo.table)
@@ -227,10 +268,12 @@ pub async fn reschedule_open_cycle_close(
         .update_expression(
             "SET response_close_at = :close, next_transition_at = :close, #g2sk = :g2sk",
         )
-        .condition_expression("#s = :open")
+        // Same comparison as `save_response`'s cycle check.
+        .condition_expression("#s = :open AND response_close_at > :now")
         .expression_attribute_names("#s", "status")
         .expression_attribute_names("#g2sk", attr::GSI2SK)
         .expression_attribute_values(":close", close_av)
+        .expression_attribute_values(":now", AttributeValue::S(key_timestamp(now)))
         .expression_attribute_values(
             ":g2sk",
             AttributeValue::S(newsletter_gsi2sk(new_close, group_id, cycle_id)),

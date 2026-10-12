@@ -167,7 +167,7 @@ Time fast-forwarding uses the dev-only `POST /admin/dev/tick/{cycle|notify}` rou
 
 **Decided 2026-10-07; lands in M13.5.** `deploy.yml` (§6.4) replaces `frontend-deploy.yml` and `backend-deploy.yml`: one workflow deploys the backend to `dev` on every push to `main`, then — behind a manual promotion gate — deploys the backend to `prod` and publishes the frontend to `gh-pages`, both from the same commit SHA. Repo variables collapse accordingly: `BACKEND_DEPLOY_ENABLED`/`FRONTEND_DEPLOY_ENABLED` become one `DEPLOY_ENABLED` (gates the dev auto-deploy); the prod leg is gated by the GitHub Environment approval instead of a variable. `infra-ci.yml`'s `cdk diff` step still runs only when `vars.AWS_DIFF_ROLE_ARN` is set, and `e2e.yml`'s `dev` project still skips unless `vars.E2E_BASE_URL` is set.
 
-OIDC roles (`GithubDeployRole` on `main`, `GithubDiffRole` on pull requests) live in `CiStack` (`infra/opennewsletter/ci_stack.py`). They only assume the CDK bootstrap roles. The variable and secret list is in [`.github/workflows/README.md`](../.github/workflows/README.md).
+OIDC roles (`GithubDeployRole` on `main`, `GithubDiffRole` on pull requests) live in `CiStack` (`infra/opennewsletter/ci_stack.py`). The deploy role only assumes the CDK bootstrap roles. The diff role assumes none of them: the PR job runs the branch's own code, and the bootstrap lookup role carries `ReadOnlyAccess`, which can scan the table and read private media. It gets only `DescribeStacks`/`GetTemplate` on the prod stacks and `CiStack`, and `cdk diff` runs with `--no-change-set` (decided 2026-10-11). The variable and secret list is in [`.github/workflows/README.md`](../.github/workflows/README.md).
 
 ### 6.1 `frontend-ci.yml`
 
