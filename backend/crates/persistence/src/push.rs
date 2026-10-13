@@ -6,6 +6,7 @@ use crate::keys::{
     attr, notified_close_sk, notified_open_pk, npref_sk, push_sk, user_pk, NOTIFIED_OPEN_SK,
     NOTIFIED_PUBLISH_SK, TICK_NOTIFY_SK, TICK_PK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use chrono::{DateTime, Utc};
@@ -18,7 +19,7 @@ pub async fn list_subs_for_user(
     repo: &Repo,
     user_id: &UserId,
 ) -> Result<Vec<PushSubscription>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -26,11 +27,9 @@ pub async fn list_subs_for_user(
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(user_pk(user_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("PUSH#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S("PUSH#".into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, PushSubscription>(i).map_err(RepoError::from))
         .collect()

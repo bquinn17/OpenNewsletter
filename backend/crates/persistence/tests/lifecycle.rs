@@ -403,3 +403,40 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
         .unwrap();
     assert_eq!(persisted, created);
 }
+
+/// `find_voting_cycle`/`find_open_cycle` read only a group's newest `NL#` rows
+/// (`02` §3); a long published history must not hide the live cycles.
+#[tokio::test]
+async fn current_cycles_resolve_behind_a_long_published_history() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-history");
+
+    for month in 1..=9 {
+        let mut nl = common::voting_newsletter("g-history", &format!("20260{month}"));
+        nl.status = NewsletterStatus::Published;
+        nl.next_transition_at = None;
+        newsletters::write_status_transition(&repo, &nl)
+            .await
+            .unwrap();
+    }
+    let mut open = common::voting_newsletter("g-history", "202610");
+    open.status = NewsletterStatus::Open;
+    newsletters::write_status_transition(&repo, &open)
+        .await
+        .unwrap();
+    let voting = common::voting_newsletter("g-history", "202611");
+    newsletters::write_status_transition(&repo, &voting)
+        .await
+        .unwrap();
+
+    let found_voting = newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("voting cycle found");
+    let found_open = newsletters::find_open_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("open cycle found");
+    assert_eq!(found_voting.cycle_id, CycleId::new("202611"));
+    assert_eq!(found_open.cycle_id, CycleId::new("202610"));
+}

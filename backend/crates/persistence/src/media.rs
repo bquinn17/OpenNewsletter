@@ -1,9 +1,11 @@
 //! ImageMedia and AvatarMedia (AP17 + avatar lookups).
 
+use crate::batch::batch_get_items;
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, avatar_sk, image_gsi1pk, image_gsi1sk, image_pk, image_sk, index, user_pk,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Update};
 use domain::{
@@ -61,21 +63,56 @@ pub async fn put_image(repo: &Repo, img: &ImageMedia) -> Result<(), RepoError> {
 
 /// AP17 — list a user's image uploads (admin/audit; via GSI1).
 pub async fn list_user_images(repo: &Repo, user_id: &UserId) -> Result<Vec<ImageMedia>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
         .index_name(index::GSI1)
         .key_condition_expression("#pk = :pk")
         .expression_attribute_names("#pk", attr::GSI1PK)
-        .expression_attribute_values(":pk", AttributeValue::S(image_gsi1pk(user_id)))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":pk", AttributeValue::S(image_gsi1pk(user_id)));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, ImageMedia>(i).map_err(RepoError::from))
         .collect()
+}
+
+/// Fetch many images of one `(groupId, cycleId)` partition in one round
+/// trip, keyed by `ImageId`. Duplicate ids are fine; missing ids are absent
+/// from the map. Chunking and `UnprocessedKeys` retry are handled by
+/// [`batch_get_items`].
+pub async fn get_images_batch(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    image_ids: &[ImageId],
+) -> Result<HashMap<ImageId, ImageMedia>, RepoError> {
+    if image_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // BatchGetItem rejects a request that names the same key twice.
+    let unique: std::collections::HashSet<&ImageId> = image_ids.iter().collect();
+    let keys = unique
+        .into_iter()
+        .map(|image_id| {
+            HashMap::from([
+                (
+                    attr::PK.to_owned(),
+                    AttributeValue::S(image_pk(group_id, cycle_id)),
+                ),
+                (attr::SK.to_owned(), AttributeValue::S(image_sk(image_id))),
+            ])
+        })
+        .collect();
+
+    let mut images = HashMap::with_capacity(image_ids.len());
+    for item in batch_get_items(repo, keys).await? {
+        let image: ImageMedia = from_item(item)?;
+        images.insert(image.image_id.clone(), image);
+    }
+    Ok(images)
 }
 
 pub async fn get_avatar(
@@ -128,42 +165,26 @@ pub async fn count_active_response_images(
     user_id: &UserId,
     question_id: &QuestionId,
 ) -> Result<usize, RepoError> {
-    let mut total = 0usize;
-    let mut exclusive_start_key: Option<HashMap<String, AttributeValue>> = None;
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .filter_expression(
+            "user_id = :user_id AND question_id = :question_id AND purpose = :purpose \
+             AND #status <> :failed",
+        )
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":pk", AttributeValue::S(image_pk(group_id, cycle_id)))
+        .expression_attribute_values(":prefix", AttributeValue::S("IMG#".into()))
+        .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
+        .expression_attribute_values(":question_id", AttributeValue::S(question_id.to_string()))
+        .expression_attribute_values(":purpose", AttributeValue::S("response".into()))
+        .expression_attribute_values(":failed", AttributeValue::S("failed".into()));
 
-    loop {
-        let mut request = repo
-            .client
-            .query()
-            .table_name(&repo.table)
-            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
-            .filter_expression(
-                "user_id = :user_id AND question_id = :question_id AND purpose = :purpose \
-                 AND #status <> :failed",
-            )
-            .expression_attribute_names("#pk", attr::PK)
-            .expression_attribute_names("#sk", attr::SK)
-            .expression_attribute_names("#status", "status")
-            .expression_attribute_values(":pk", AttributeValue::S(image_pk(group_id, cycle_id)))
-            .expression_attribute_values(":prefix", AttributeValue::S("IMG#".into()))
-            .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
-            .expression_attribute_values(":question_id", AttributeValue::S(question_id.to_string()))
-            .expression_attribute_values(":purpose", AttributeValue::S("response".into()))
-            .expression_attribute_values(":failed", AttributeValue::S("failed".into()));
-        if let Some(key) = exclusive_start_key.take() {
-            request = request.set_exclusive_start_key(Some(key));
-        }
-
-        let resp = request.send().await?;
-        total += resp.count.max(0) as usize;
-
-        match resp.last_evaluated_key {
-            Some(key) if !key.is_empty() => exclusive_start_key = Some(key),
-            _ => break,
-        }
-    }
-
-    Ok(total)
+    Ok(query_all(request).await?.len())
 }
 
 /// `PATCH /uploads/{imageId}` (§9.6) — overwrite just the caption. The caller

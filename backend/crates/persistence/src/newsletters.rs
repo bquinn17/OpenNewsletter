@@ -6,6 +6,7 @@ use crate::keys::{
     attr, group_pk, index, key_timestamp, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, TICK_CYCLE_SK, TICK_PK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -21,7 +22,7 @@ pub async fn list_newsletters_for_group(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Vec<Newsletter>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -30,11 +31,9 @@ pub async fn list_newsletters_for_group(
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(group_pk(group_id)))
         .expression_attribute_values(":prefix", AttributeValue::S("NL#".into()))
-        .scan_index_forward(false)
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .scan_index_forward(false);
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
@@ -69,7 +68,7 @@ pub async fn list_cycles_due(
     now: DateTime<Utc>,
 ) -> Result<Vec<Newsletter>, RepoError> {
     let upper = format!("{}#~~~", key_timestamp(now));
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -78,11 +77,9 @@ pub async fn list_cycles_due(
         .expression_attribute_names("#pk", attr::GSI2PK)
         .expression_attribute_names("#sk", attr::GSI2SK)
         .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
-        .expression_attribute_values(":upper", AttributeValue::S(upper))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":upper", AttributeValue::S(upper));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
@@ -101,7 +98,7 @@ pub async fn list_open_cycles_closing_within(
 ) -> Result<Vec<Newsletter>, RepoError> {
     let lower = key_timestamp(now);
     let upper = format!("{}#~~~", key_timestamp(now + max_offset));
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -114,11 +111,9 @@ pub async fn list_open_cycles_closing_within(
             AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Open)),
         )
         .expression_attribute_values(":lower", AttributeValue::S(lower))
-        .expression_attribute_values(":upper", AttributeValue::S(upper))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":upper", AttributeValue::S(upper));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
@@ -132,28 +127,19 @@ pub async fn list_cycles_in_status(
     repo: &Repo,
     status: NewsletterStatus,
 ) -> Result<Vec<Newsletter>, RepoError> {
-    let mut cycles = Vec::new();
-    let mut start_key = None;
-    loop {
-        let resp = repo
-            .client
-            .query()
-            .table_name(&repo.table)
-            .index_name(index::GSI2)
-            .key_condition_expression("#pk = :pk")
-            .expression_attribute_names("#pk", attr::GSI2PK)
-            .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
-            .set_exclusive_start_key(start_key)
-            .send()
-            .await?;
-        for item in resp.items.unwrap_or_default() {
-            cycles.push(from_item::<_, Newsletter>(item)?);
-        }
-        match resp.last_evaluated_key {
-            Some(key) if !key.is_empty() => start_key = Some(key),
-            _ => return Ok(cycles),
-        }
-    }
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)));
+    query_all(request)
+        .await?
+        .into_iter()
+        .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
+        .collect()
 }
 
 /// The groups with a cycle currently in `status`, from the same GSI2 query as
@@ -163,35 +149,24 @@ pub async fn list_group_ids_in_status(
     repo: &Repo,
     status: NewsletterStatus,
 ) -> Result<HashSet<GroupId>, RepoError> {
-    let mut group_ids = HashSet::new();
-    let mut start_key = None;
-    loop {
-        let resp = repo
-            .client
-            .query()
-            .table_name(&repo.table)
-            .index_name(index::GSI2)
-            .key_condition_expression("#pk = :pk")
-            .projection_expression("#g")
-            .expression_attribute_names("#pk", attr::GSI2PK)
-            .expression_attribute_names("#g", "group_id")
-            .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
-            .set_exclusive_start_key(start_key)
-            .send()
-            .await?;
-        for item in resp.items.unwrap_or_default() {
-            match item.get("group_id") {
-                Some(AttributeValue::S(id)) => {
-                    group_ids.insert(GroupId::new(id));
-                }
-                _ => return Err(RepoError::Serde("a cycle row has no group_id".into())),
-            }
-        }
-        match resp.last_evaluated_key {
-            Some(key) if !key.is_empty() => start_key = Some(key),
-            _ => return Ok(group_ids),
-        }
-    }
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .projection_expression("#g")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_names("#g", "group_id")
+        .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)));
+    query_all(request)
+        .await?
+        .into_iter()
+        .map(|item| match item.get("group_id") {
+            Some(AttributeValue::S(id)) => Ok(GroupId::new(id)),
+            _ => Err(RepoError::Serde("a cycle row has no group_id".into())),
+        })
+        .collect()
 }
 
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
@@ -319,13 +294,45 @@ pub async fn record_failed_sweep(
         .ok_or_else(|| RepoError::Dynamo("ADD returned no auto_publish_failed_sweeps".into()))
 }
 
+/// The group's 3 most-recent `NL#` rows, newest first.
+///
+/// Invariant this relies on (`plans/02-data-model-dynamodb.md` §3, decided
+/// 2026-10-08): cycle ids are `yyyymm` and a group gains a new cycle only
+/// when the tick creates the month after the one it just opened (§5.4 of
+/// `06`). So a group's non-terminal cycles are always its newest rows: the
+/// `voting` cycle (if any) is the newest, the `open` cycle (if any) is the
+/// month before it, and every `published`/`archived` cycle is older still.
+/// Three rows leave one row of slack. [`find_voting_cycle`] and
+/// [`find_open_cycle`] read this fixed-size window instead of the group's
+/// entire history.
+async fn recent_newsletters(repo: &Repo, group_id: &GroupId) -> Result<Vec<Newsletter>, RepoError> {
+    let resp = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_values(":pk", AttributeValue::S(group_pk(group_id)))
+        .expression_attribute_values(":prefix", AttributeValue::S("NL#".into()))
+        .scan_index_forward(false)
+        .limit(3)
+        .send()
+        .await?;
+    let items = resp.items.unwrap_or_default();
+    items
+        .into_iter()
+        .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
+        .collect()
+}
+
 /// §10 — the current `voting` cycle for a group, if any. Candidate-question
 /// endpoints use this to resolve "the next cycle."
 pub async fn find_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Option<Newsletter>, RepoError> {
-    let cycles = list_newsletters_for_group(repo, group_id).await?;
+    let cycles = recent_newsletters(repo, group_id).await?;
     Ok(cycles
         .into_iter()
         .find(|nl| nl.status == NewsletterStatus::Voting))
@@ -336,7 +343,7 @@ pub async fn find_open_cycle(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Option<Newsletter>, RepoError> {
-    let cycles = list_newsletters_for_group(repo, group_id).await?;
+    let cycles = recent_newsletters(repo, group_id).await?;
     Ok(cycles
         .into_iter()
         .find(|nl| nl.status == NewsletterStatus::Open))

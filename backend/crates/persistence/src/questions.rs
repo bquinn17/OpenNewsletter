@@ -8,6 +8,7 @@ use crate::keys::{
     candidate_vote_sk, group_pk, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, CANDIDATE_VOTE_SK_PREFIX, VOTER_TALLY_SK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
@@ -72,30 +73,19 @@ async fn query_candidate_items(
     group_id: &GroupId,
     next_cycle_id: &CycleId,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, RepoError> {
-    let mut items = Vec::new();
-    let mut start_key = None;
-    loop {
-        let resp = repo
-            .client
-            .query()
-            .table_name(&repo.table)
-            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
-            .expression_attribute_names("#pk", attr::PK)
-            .expression_attribute_names("#sk", attr::SK)
-            .expression_attribute_values(
-                ":pk",
-                AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
-            )
-            .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()))
-            .set_exclusive_start_key(start_key)
-            .send()
-            .await?;
-        items.extend(resp.items.unwrap_or_default());
-        match resp.last_evaluated_key {
-            Some(key) if !key.is_empty() => start_key = Some(key),
-            _ => return Ok(items),
-        }
-    }
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
+        )
+        .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()));
+    query_all(request).await
 }
 
 /// AP12 — list a voter's votes for one cycle.
@@ -105,7 +95,7 @@ pub async fn list_my_votes(
     next_cycle_id: &CycleId,
     user_id: &UserId,
 ) -> Result<Vec<CandidateVote>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -119,11 +109,9 @@ pub async fn list_my_votes(
         .expression_attribute_values(
             ":vote",
             AttributeValue::S(CANDIDATE_VOTE_SK_PREFIX.to_owned()),
-        )
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        );
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, CandidateVote>(i).map_err(RepoError::from))
         .collect()
@@ -135,7 +123,7 @@ pub async fn list_locked_questions(
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<Vec<LockedQuestion>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -143,11 +131,9 @@ pub async fn list_locked_questions(
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(locked_pk(group_id, cycle_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("Q#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S("Q#".into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, LockedQuestion>(i).map_err(RepoError::from))
         .collect()

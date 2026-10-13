@@ -7,11 +7,12 @@ use crate::state::AppState;
 use crate::{delivery, metrics::FanoutMetrics};
 use chrono::Utc;
 use domain::{
-    CycleId, Group, GroupId, Newsletter, NewsletterStatus, NotificationPref, QuestionKind,
-    ResponseStatus,
+    CycleId, Group, GroupId, Newsletter, NewsletterStatus, NotificationPref, PushSubscription,
+    QuestionKind, ResponseStatus, UserId,
 };
+use futures::{stream, StreamExt};
 use persistence::{groups, newsletters, push as push_repo, questions, responses};
-use shared::config::PUSH_FANOUT_SEND_CUTOFF_SECS;
+use shared::config::{PUSH_FANOUT_SEND_CUTOFF_SECS, PUSH_MEMBER_READ_CONCURRENCY};
 use std::time::{Duration, Instant};
 
 /// `cycle_open_fanout` (`07-notifications.md` §6.1). Skipped entirely when
@@ -231,28 +232,44 @@ async fn fan_out_to_members(
         }
     };
 
-    let mut targets = Vec::new();
-    for member in members {
-        let pref = match push_repo::get_pref(&state.repo, &member.user_id, group_id).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, group_id = %group_id, "fanout: pref lookup failed");
-                continue;
+    // Per-member pref + subscription reads are independent of each other, so
+    // they run together; per-member *work* is independent across members too,
+    // so it's bounded-concurrent rather than one member at a time.
+    let should_send = &should_send;
+    let targets: Vec<(UserId, PushSubscription)> = stream::iter(members)
+        .map(|member| async move {
+            let (pref_result, subs_result) = futures::join!(
+                push_repo::get_pref(&state.repo, &member.user_id, group_id),
+                push_repo::list_subs_for_user(&state.repo, &member.user_id),
+            );
+            let pref = match pref_result {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, group_id = %group_id, "fanout: pref lookup failed");
+                    return Vec::new();
+                }
+            };
+            if !should_send(pref.as_ref()) {
+                return Vec::new();
             }
-        };
-        if !should_send(pref.as_ref()) {
-            continue;
-        }
 
-        let subs = match push_repo::list_subs_for_user(&state.repo, &member.user_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, "fanout: subscription listing failed");
-                continue;
-            }
-        };
-        targets.extend(subs.into_iter().map(|sub| (member.user_id.clone(), sub)));
-    }
+            let subs = match subs_result {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, "fanout: subscription listing failed");
+                    return Vec::new();
+                }
+            };
+            subs.into_iter()
+                .map(|sub| (member.user_id.clone(), sub))
+                .collect::<Vec<_>>()
+        })
+        .buffer_unordered(PUSH_MEMBER_READ_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     let deliveries: Vec<_> = targets
         .iter()

@@ -195,6 +195,14 @@ Returns the full edition. Behavior depends on status:
 - `published` → questions list with all published answers, comments, and reactions hydrated; poll questions include vote tallies.
 - `archived` → 410 Gone with link header to archive blob (per `10-archival.md` §4).
 
+**Read plan for `published` (decided 2026-10-08, design review).** The handler reads in a fixed number of concurrent waves rather than per answer, so latency doesn't grow with group size. (It used to make about six sequential DynamoDB calls per answer; a 50-member group with image-heavy answers would have exceeded the 10 s Lambda timeout.) The waves are:
+1. AP13, the locked questions.
+2. AP14 for every question at once.
+3. One engagement-partition read per published text answer (`02` §3, AP18 + AP19 combined), 16 at a time (`EDITION_READ_CONCURRENCY`).
+4. One `BatchGetItem` for every user profile and one for every image the edition references, run together.
+
+The output is unchanged: question, answer, image and comment order, the skip rules for images that aren't `ready`, `[deleted]` placeholders and poll tallies are all as before.
+
 Response 200 (published): `NewsletterDetailResponse` in `shared/openapi.yaml` (the `published`-status branch), nesting `PublishedQuestionResponse` → `PublishedAnswerResponse` → `CommentResponse`/`ReactionGroupResponse` for text questions, or `PublishedPollOptionResponse` + `myVoteOptionId` for polls. Poll questions carry no top-level comments — comments are always attached to a specific text answer (§8); poll widgets are comment-free in v1.
 
 Image URLs are absolute CloudFront URLs. The frontend MUST first call `/media-cookie` (§9.5) to receive signed cookies before requesting any image.

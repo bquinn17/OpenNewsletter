@@ -263,6 +263,46 @@ def test_cloudfront_redirect_to_https(
     )
 
 
+def _bucket_lifecycle_rules(
+    persistent: assertions.Template, logical_id_prefix: str
+) -> list[dict[str, Any]]:
+    """Lifecycle rules for the one bucket whose logical ID starts with
+    `logical_id_prefix` (CDK suffixes a hash, e.g. `ProcessedBucketDE59930C`).
+    A plain prefix match is unambiguous here: none of the four bucket
+    construct IDs is itself a prefix of another."""
+    resources = persistent.find_resources("AWS::S3::Bucket")
+    matches = [v for k, v in resources.items() if k.startswith(logical_id_prefix)]
+    assert len(matches) == 1, (
+        f"expected exactly one {logical_id_prefix}*, found {len(matches)}"
+    )
+    rules: list[dict[str, Any]] = matches[0]["Properties"]["LifecycleConfiguration"][
+        "Rules"
+    ]
+    return rules
+
+
+def test_processed_buckets_have_no_intelligent_tiering_transition(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # Processed variants (WebP display/thumb images, 256px avatars) are well
+    # under the 128 KB floor where Intelligent-Tiering ever pays for itself,
+    # so the transition would be pure per-object cost for no benefit.
+    persistent, _ = media_templates
+    for prefix in ("ProcessedBucket", "AvatarsProcessedBucket"):
+        rules = _bucket_lifecycle_rules(persistent, prefix)
+        assert all("Transitions" not in rule for rule in rules)
+
+
+def test_originals_buckets_still_transition_to_intelligent_tiering(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    persistent, _ = media_templates
+    for prefix in ("OriginalsBucket", "AvatarsOriginalsBucket"):
+        rules = _bucket_lifecycle_rules(persistent, prefix)
+        transitions = [t for rule in rules for t in rule.get("Transitions", [])]
+        assert any(t["StorageClass"] == "INTELLIGENT_TIERING" for t in transitions)
+
+
 # ---------------------------------------------------------------------------
 # MediaPipelineStack
 # ---------------------------------------------------------------------------
@@ -1282,19 +1322,6 @@ def test_prod_has_no_bootstrap_client(prod_auth_template: assertions.Template) -
         "AWS::Cognito::UserPoolClient", {"ClientName": "frontend"}
     )
     assert "UserPoolBootstrapClientId" not in prod_auth_template.find_outputs("*")
-
-
-def test_new_groups_default_to_a_seven_day_window(
-    api_template: assertions.Template,
-) -> None:
-    (groups_fn,) = api_template.find_resources(
-        "AWS::Lambda::Function",
-        {"Properties": {"FunctionName": "OpenNewsletter-Groups-dev"}},
-    ).values()
-    config_json = json.loads(
-        groups_fn["Properties"]["Environment"]["Variables"]["CONFIG_JSON"]
-    )
-    assert config_json["responseWindowDays"] == 7
 
 
 def test_groups_vapid_public_key_comes_from_the_app_secret(

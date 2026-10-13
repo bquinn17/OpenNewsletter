@@ -6,13 +6,16 @@
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use domain::api::{DeadlineFanout, DeadlineFanoutKind, DevTickNotifyResponse};
-use domain::{Group, Newsletter, ResponseStatus};
+use domain::{Group, Newsletter, PushSubscription, ResponseStatus, UserId};
+use futures::{stream, StreamExt};
 use persistence::{groups, newsletters, push as push_repo, responses};
 use push::metrics::FanoutMetrics;
+use push::payload::PushPayload;
 use push::state::AppState;
 use push::{delivery, payload};
 use shared::config::{
     MAX_REMINDER_OFFSET_HOURS, NOTIFY_TICK_CYCLE_CUTOFF_SECS, NOTIFY_TICK_SEND_CUTOFF_SECS,
+    PUSH_MEMBER_READ_CONCURRENCY,
 };
 use std::time::Instant;
 
@@ -194,69 +197,80 @@ async fn fan_out_deadline_reminder(
 
     let total_questions = nl.locked_question_ids.len() as u32;
 
-    // Each member's message differs (their own progress), so gather
-    // (user, subscriptions, message) first, then send everything at once.
-    let mut targets = Vec::new();
-    for member in members {
-        let pref = match push_repo::get_pref(&state.repo, &member.user_id, &nl.group_id).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: pref lookup failed");
-                continue;
+    // Each member's message differs (their own progress). The three reads
+    // behind it (pref, answered count, subscriptions) don't depend
+    // on each other's results, so they run together; per-member work is
+    // likewise independent across members, so it's bounded-concurrent rather
+    // than one member at a time.
+    let targets: Vec<(UserId, Vec<PushSubscription>, PushPayload)> = stream::iter(members)
+        .map(|member| async move {
+            let (pref_result, responses_result, subs_result) = futures::join!(
+                push_repo::get_pref(&state.repo, &member.user_id, &nl.group_id),
+                responses::list_my_responses_in_cycle(
+                    &state.repo,
+                    &member.user_id,
+                    &nl.group_id,
+                    &nl.cycle_id,
+                ),
+                push_repo::list_subs_for_user(&state.repo, &member.user_id),
+            );
+
+            let pref = match pref_result {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: pref lookup failed");
+                    return None;
+                }
+            };
+            if !pref.map(|p| p.deadline_reminders).unwrap_or(true) {
+                return None;
             }
-        };
-        if !pref.map(|p| p.deadline_reminders).unwrap_or(true) {
-            continue;
-        }
 
-        // A non-empty draft counts as answered: it auto-publishes at close (`07` §7.2).
-        let answered_count = match responses::list_my_responses_in_cycle(
-            &state.repo,
-            &member.user_id,
-            &nl.group_id,
-            &nl.cycle_id,
-        )
-        .await
-        {
-            Ok(list) => list
-                .iter()
-                .filter(|r| r.status == ResponseStatus::Published || r.is_non_empty())
-                .count() as u32,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
-                continue;
+            // A non-empty draft counts as answered: it auto-publishes at close (`07` §7.2).
+            let answered_count = match responses_result {
+                Ok(list) => list
+                    .iter()
+                    .filter(|r| r.status == ResponseStatus::Published || r.is_non_empty())
+                    .count() as u32,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
+                    return None;
+                }
+            };
+            let is_done = total_questions > 0 && answered_count >= total_questions;
+            if is_done && offset_hours == smallest_offset_overall {
+                return None;
             }
-        };
-        let is_done = total_questions > 0 && answered_count >= total_questions;
-        if is_done && offset_hours == smallest_offset_overall {
-            continue;
-        }
 
-        let subs = match push_repo::list_subs_for_user(&state.repo, &member.user_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, "notify tick: subscription listing failed");
-                continue;
+            let subs = match subs_result {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, "notify tick: subscription listing failed");
+                    return None;
+                }
+            };
+            if subs.is_empty() {
+                return None;
             }
-        };
-        if subs.is_empty() {
-            continue;
-        }
 
-        let message = payload::deadline_reminder(
-            &group.name,
-            &nl.group_id,
-            &nl.cycle_id,
-            offset_hours,
-            nl.response_close_at,
-            tz,
-            answered_count,
-            total_questions,
-            is_done,
-        );
+            let message = payload::deadline_reminder(
+                &group.name,
+                &nl.group_id,
+                &nl.cycle_id,
+                offset_hours,
+                nl.response_close_at,
+                tz,
+                answered_count,
+                total_questions,
+                is_done,
+            );
 
-        targets.push((member.user_id, subs, message));
-    }
+            Some((member.user_id, subs, message))
+        })
+        .buffer_unordered(PUSH_MEMBER_READ_CONCURRENCY)
+        .filter_map(futures::future::ready)
+        .collect()
+        .await;
 
     let deliveries: Vec<_> = targets
         .iter()

@@ -5,8 +5,9 @@ mod common;
 use chrono::{TimeZone, Utc};
 use domain::api::NewsletterDetailResponse;
 use domain::{
-    ApiErrorCode, Comment, CommentId, CycleId, GroupId, LockedQuestion, PollOption, PollOptionId,
-    QuestionId, QuestionKind, Reaction, Response, ResponseId, ResponseStatus, Role, UserId,
+    ApiErrorCode, Comment, CommentId, CycleId, GroupId, ImageId, ImageMedia, ImageMimeType,
+    ImagePurpose, LockedQuestion, MediaStatus, PollOption, PollOptionId, QuestionId, QuestionKind,
+    Reaction, Response, ResponseId, ResponseStatus, Role, UserId,
 };
 use newsletters::handlers;
 use newsletters::state::AppState;
@@ -389,6 +390,246 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
         }
         other => panic!("expected Published, got {other:?}"),
     }
+}
+
+fn ready_image(image_id: &str, owner: &str, purpose: ImagePurpose) -> ImageMedia {
+    ImageMedia {
+        image_id: ImageId::new(image_id),
+        user_id: UserId::new(owner),
+        group_id: GroupId::new("gpi"),
+        cycle_id: CycleId::new("202606"),
+        question_id: Some(QuestionId::new("q1")),
+        purpose,
+        mime_type: ImageMimeType::Jpeg,
+        original_key: format!("uploads/{image_id}.jpg"),
+        display_key: Some(format!("img/gpi/{image_id}/display.webp")),
+        thumb_key: Some(format!("img/gpi/{image_id}/thumb.webp")),
+        status: MediaStatus::Ready,
+        bytes: 1000,
+        width: Some(1200),
+        height: Some(800),
+        caption: None,
+        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
+        processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 2, 0, 1, 0).unwrap()),
+        error_message: None,
+        attached_comment_id: None,
+    }
+}
+
+fn published_text(user: &str, response_id: &str, images: &[&str]) -> Response {
+    Response {
+        response_id: ResponseId::new(response_id),
+        user_id: UserId::new(user),
+        question_id: QuestionId::new("q1"),
+        group_id: GroupId::new("gpi"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Text,
+        status: ResponseStatus::Published,
+        body: Some(format!("{user}'s answer")),
+        poll_option_id: None,
+        image_media_ids: images.iter().map(|id| ImageId::new(*id)).collect(),
+        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
+        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+    }
+}
+
+fn comment_on_u2(comment_id: &str, author: &str, image: Option<&str>, hour: u32) -> Comment {
+    Comment {
+        comment_id: CommentId::new(comment_id),
+        group_id: GroupId::new("gpi"),
+        cycle_id: CycleId::new("202606"),
+        question_id: QuestionId::new("q1"),
+        answer_user_id: UserId::new("u2"),
+        author_user_id: UserId::new(author),
+        body: format!("comment {comment_id}"),
+        image_media_id: image.map(ImageId::new),
+        created_at: Utc.with_ymd_and_hms(2026, 6, 4, hour, 0, 0).unwrap(),
+        edited_at: None,
+        deleted_at: None,
+    }
+}
+
+/// The published edition is read in batched waves; this pins what the old
+/// per-answer reads produced: answer order, draft exclusion, image order with
+/// non-ready images skipped, comment images, `[deleted]` placeholders and
+/// poll tallies.
+#[tokio::test]
+async fn published_detail_hydrates_images_and_deleted_comments_across_answers() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gpi", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    for id in ["u2", "u3"] {
+        common::seed_group_and_membership(&repo, &group, id, Role::Member).await;
+    }
+    for id in ["u1", "u2", "u3"] {
+        persistence::users::put_user(&repo, &common::user(id))
+            .await
+            .unwrap();
+    }
+
+    let mut published = common::voting_newsletter("gpi", "202606");
+    published.status = domain::NewsletterStatus::Published;
+    published.published_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    published.locked_question_ids = vec![QuestionId::new("q1"), QuestionId::new("q2")];
+    nl_repo::write_status_transition(&repo, &published)
+        .await
+        .unwrap();
+
+    let text_lq = LockedQuestion {
+        question_id: QuestionId::new("q1"),
+        group_id: GroupId::new("gpi"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Text,
+        prompt: "Best hike?".into(),
+        poll_options: None,
+        display_order: 0,
+        submitted_by: UserId::new("u1"),
+        is_anonymous: false,
+        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+    };
+    let poll_lq = LockedQuestion {
+        question_id: QuestionId::new("q2"),
+        group_id: GroupId::new("gpi"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Poll,
+        prompt: "Best trailhead?".into(),
+        poll_options: Some(vec![
+            PollOption {
+                option_id: PollOptionId::new("opt-a"),
+                label: "North lot".into(),
+            },
+            PollOption {
+                option_id: PollOptionId::new("opt-b"),
+                label: "South lot".into(),
+            },
+        ]),
+        display_order: 1,
+        submitted_by: UserId::new("u2"),
+        is_anonymous: false,
+        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+    };
+    for lq in [&text_lq, &poll_lq] {
+        put_locked_question_directly(&repo, lq).await;
+    }
+
+    for img in [
+        ready_image("img-a", "u2", ImagePurpose::Response),
+        ready_image("img-b", "u2", ImagePurpose::Response),
+        ImageMedia {
+            status: MediaStatus::Pending,
+            ..ready_image("img-pending", "u2", ImagePurpose::Response)
+        },
+        ImageMedia {
+            caption: Some("trail".into()),
+            ..ready_image("img-c", "u3", ImagePurpose::Comment)
+        },
+        ready_image("img-d", "u1", ImagePurpose::Comment),
+    ] {
+        persistence::media::put_image(&repo, &img).await.unwrap();
+    }
+
+    common::put_response(
+        &repo,
+        &published_text("u2", "r-u2", &["img-b", "img-pending", "img-a"]),
+    )
+    .await;
+    common::put_response(&repo, &published_text("u3", "r-u3", &[])).await;
+    common::put_response(
+        &repo,
+        &Response {
+            status: ResponseStatus::Draft,
+            published_at: None,
+            ..published_text("u1", "r-u1", &[])
+        },
+    )
+    .await;
+    for (user, option) in [("u1", "opt-b"), ("u2", "opt-a"), ("u3", "opt-a")] {
+        common::put_response(
+            &repo,
+            &Response {
+                response_id: ResponseId::new(format!("p-{user}")),
+                question_id: QuestionId::new("q2"),
+                kind: QuestionKind::Poll,
+                body: None,
+                poll_option_id: Some(PollOptionId::new(option)),
+                ..published_text(user, "unused", &[])
+            },
+        )
+        .await;
+    }
+
+    engagement::put_comment(&repo, &comment_on_u2("c1", "u3", Some("img-c"), 1))
+        .await
+        .unwrap();
+    engagement::put_comment(
+        &repo,
+        &Comment {
+            deleted_at: Some(Utc.with_ymd_and_hms(2026, 6, 4, 3, 0, 0).unwrap()),
+            ..comment_on_u2("c2", "u1", Some("img-d"), 2)
+        },
+    )
+    .await
+    .unwrap();
+
+    let state = AppState {
+        repo,
+        cdn_base_url: "https://cdn.test".into(),
+    };
+    let detail = handlers::get_newsletter_detail(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gpi"),
+        &CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
+
+    let NewsletterDetailResponse::Published { questions, .. } = detail else {
+        panic!("expected Published, got {detail:?}");
+    };
+    assert_eq!(questions.len(), 2);
+
+    let answers = questions[0].answers.as_ref().expect("text answers");
+    let authors: Vec<&str> = answers.iter().map(|a| a.user_id.as_str()).collect();
+    assert_eq!(authors, vec!["u2", "u3"], "AP14 order, draft excluded");
+
+    let u2 = &answers[0];
+    let image_ids: Vec<&str> = u2.images.iter().map(|i| i.image_id.as_str()).collect();
+    assert_eq!(
+        image_ids,
+        vec!["img-b", "img-a"],
+        "request order, pending skipped"
+    );
+    assert!(u2.images[0].display_url.starts_with("https://cdn.test/"));
+
+    assert_eq!(u2.comments.len(), 2);
+    let live = &u2.comments[0];
+    assert_eq!(live.comment_id.as_str(), "c1");
+    assert_eq!(live.body, "comment c1");
+    let live_image = live.image.as_ref().expect("ready comment image hydrated");
+    assert_eq!(live_image.caption.as_deref(), Some("trail"));
+    let deleted = &u2.comments[1];
+    assert_eq!(deleted.comment_id.as_str(), "c2");
+    assert!(deleted.deleted_at.is_some());
+    assert_eq!(deleted.body, "");
+    assert!(deleted.image.is_none());
+
+    assert!(answers[1].images.is_empty());
+    assert!(answers[1].comments.is_empty());
+
+    let poll = &questions[1];
+    let tallies: Vec<(&str, u32)> = poll
+        .options
+        .as_ref()
+        .expect("poll options")
+        .iter()
+        .map(|o| (o.option_id.as_str(), o.vote_count))
+        .collect();
+    assert_eq!(tallies, vec![("opt-a", 2), ("opt-b", 1)]);
+    assert_eq!(
+        poll.my_vote_option_id.as_ref().map(PollOptionId::as_str),
+        Some("opt-b")
+    );
 }
 
 async fn put_locked_question_directly(repo: &persistence::Repo, lq: &LockedQuestion) {

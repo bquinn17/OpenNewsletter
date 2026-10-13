@@ -263,3 +263,26 @@ async fn it_deletes_an_avatar_row() {
         .unwrap();
     assert_eq!(got, None);
 }
+
+#[tokio::test]
+async fn get_images_batch_tolerates_duplicates_and_skips_missing_ids() {
+    let (_c, repo) = common::make_repo().await;
+    let a = common::image_media("g1", "202606", "img-a", "u1");
+    let b = common::image_media("g1", "202606", "img-b", "u1");
+    media::put_image(&repo, &a).await.unwrap();
+    media::put_image(&repo, &b).await.unwrap();
+
+    let ids = [
+        ImageId::new("img-a"),
+        ImageId::new("img-a"),
+        ImageId::new("img-b"),
+        ImageId::new("img-missing"),
+    ];
+    let got = media::get_images_batch(&repo, &GroupId::new("g1"), &CycleId::new("202606"), &ids)
+        .await
+        .unwrap();
+
+    assert_eq!(got.len(), 2);
+    assert_eq!(got.get(&ImageId::new("img-a")), Some(&a));
+    assert_eq!(got.get(&ImageId::new("img-b")), Some(&b));
+}

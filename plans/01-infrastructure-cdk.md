@@ -167,7 +167,7 @@ Two buckets, both private (Block Public Access fully on):
 
 - **`opennewsletter-media-processed-{env}-{accountId}`**
   - No versioning.
-  - Lifecycle: same as originals.
+  - Lifecycle: abort incomplete multipart uploads after 1 day only. No Intelligent-Tiering transition (decided 2026-10-08, design review): the WebP display/thumb variants are mostly under the 128 KB floor below which Intelligent-Tiering never moves an object to a cheaper tier, so each per-object transition fee would buy nothing. The same goes for avatars-processed below.
   - Read access only via CloudFront origin access control (OAC).
 
 Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — avatars cross group boundaries, so they don't share the media buckets' group-scoped key layout or signing):
@@ -176,7 +176,7 @@ Two more buckets for the **avatar pipeline** (`08-media-uploads.md` §11 — ava
   - Same CORS, lifecycle, and encryption settings as media originals; no versioning.
   - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes the same `lambda-image-process` (wired in `MediaPipelineStack`).
 - **`opennewsletter-avatars-processed-{env}-{accountId}`**
-  - No versioning. Read access only via the CloudFront `/avatar/*` behavior (§5.2) — no key group.
+  - No versioning. Lifecycle: abort incomplete multipart uploads only (no Intelligent-Tiering, as for media-processed). Read access only via the CloudFront `/avatar/*` behavior (§5.2) — no key group.
 
 ### 5.2 CloudFront distribution (`MediaPersistentStack`)
 
@@ -265,7 +265,7 @@ The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, `03-api
 The `PreSignUp` trigger binary is compiled from `lambda-invites` but its CDK `Function` is defined in **`AuthStack`**, not here. `user_pool.add_trigger()` attaches the wiring to the user pool's own stack, so building the function in `ApiStack` makes `AuthStack` depend on `ApiStack` while `ApiStack` already depends on `AuthStack` for the JWT authorizer — a cyclic reference that fails at synth. (Same failure mode as the `MediaPersistentStack`/`MediaPipelineStack` notification bug; the rule is: define a resource in the stack that owns the thing it attaches to.)
 
 All Lambdas share:
-- Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `CONFIG_JSON=` (group-defaults JSON; see §6.4), `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
+- Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
 - `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference against the `vapid_public_key` JSON key of the app secret, echoed by `GET /config` per §7.1)
 - `CDN_BASE_URL` goes to every Lambda that builds media URLs: `lambda-groups`, `-newsletters`, `-questions` and `-media`. It is `https://cdn.{domain}` in prod and `https://{distribution domain}.cloudfront.net` in dev, which has no custom domains.
 - `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET`, `CDN_KEY_PAIR_ID` (the CloudFront public key's ID), `APP_SECRET_ARN` (the signing key is the `cdn_signing_private_key` JSON key within it) and `MEDIA_COOKIE_DOMAIN` (`.{domain}` in prod, empty in dev, where no `Set-Cookie` is sent — `08` §4.5)
@@ -283,7 +283,7 @@ For each route in `03-api-contract.md`, CDK creates:
 
 ### 6.4 Group-default config JSON
 
-A static JSON document baked into Lambda env at deploy time, providing defaults for newly-created groups:
+The defaults for newly-created groups, served as `groupDefaults` on `GET /config`. `lambda-groups` builds this object from the constants in `backend/crates/shared/src/config.rs` (`shared::config::default_group_settings`). It used to be a hand-copied `CONFIG_JSON` env var in `api_stack.py`, which had already drifted from `config.rs` once (`responseWindowDays` stayed at 4 after the default became 7); the env var is gone (decided 2026-10-08, design review). The keys are:
 
 ```json
 {
@@ -465,3 +465,7 @@ Target ≈ $1–2/mo at ~30 monthly active users, prod + dev in one account:
 Domain registration (Namecheap) is outside AWS; DNS stays on Namecheap (`PROGRESS.md` B5), so there is no Route53 hosted zone. Prices are approximate list prices (us-east-1).
 
 This depends on: one Secrets Manager secret per env, `opennewsletter/{env}` (§2, §7.1); alarms in prod only, ≤10 alarm metrics (§9.2), with dev keeping its dashboard but no alarms; one account-wide AWS Budget at $5/mo in `CiStack`, not per-env (§9.2a); and DynamoDB on the AWS-owned key rather than the AWS-managed `aws/dynamodb` KMS key (§3.1). `13-dev-environments.md` §12 covers the dev-only slice of this total (≈ $0.40–1/mo).
+
+**At scale (design review, 2026-10-08).** The table above is for ~30 users. Most of it stays near zero as groups grow: Lambda and DynamoDB scale with requests and remain cents to low dollars, and CloudFront's always-free 1 TB covers image egress well into the thousands of users. Two lines grow instead:
+- **Cognito**: free up to 10,000 monthly active users, then billed per MAU at a rate set by the user pool's feature plan (Lite is the cheapest; check the pool's plan and current pricing before crossing 10k).
+- **S3 originals**: originals are kept after processing — only an oversized upload or a user delete removes one (`08` §3.2, §8) — so storage grows by roughly 100 MB per active group per month of phone photos. Intelligent-Tiering on the originals buckets (§5.1) moves untouched objects to cheaper tiers, so this stays small, but it never stops growing. Whether to keep originals at all is an open owner decision (`PROGRESS.md`).

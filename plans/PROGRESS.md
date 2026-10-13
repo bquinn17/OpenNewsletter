@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-11: M0–M13.5 code-complete, nothing deployed, M14 next. This file is read at the start of every session, so it holds only the current state. Milestone definitions and gates are in [`12-build-order.md`](12-build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
+Snapshot as of 2026-10-12: M0–M13.5 code-complete plus the design-review fixes, nothing deployed, M14 next. This file is read at the start of every session, so it holds only the current state. Milestone definitions and gates are in [`12-build-order.md`](12-build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
 
 ---
 
@@ -13,9 +13,10 @@ Snapshot as of 2026-10-11: M0–M13.5 code-complete, nothing deployed, M14 next.
 | M2 | Domain + persistence | ✅ done |
 | M3–M13 | Infra → Hardening | 🟡 code-complete; every deploy-shaped gate (`12`) waits on a dev deploy (B5) |
 | M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
+| — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-12):** backend 498 (`cargo test --workspace -- --list`; 498 last full green run), CDK 157 (`pytest infra/tests`), Vitest 334, Playwright 8 (mock project). fmt, clippy `-D warnings`, `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` (dev + prod) are clean.
+**Test baselines (2026-10-12):** backend 505 (`cargo test --workspace`, last full green run), CDK 158 (`pytest infra/tests`), Vitest 334, Playwright 8 (mock project). fmt, clippy `-D warnings`, `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` (dev + prod) are clean.
 
 ---
 
@@ -36,7 +37,7 @@ These block every deploy gate (M3–M14), not code work.
 
 ### B6 — Lambda release builds
 
-- **macOS:** artifacts in `backend/target/lambda/` date from 2026-10-04/06 and predate M13 and later fixes; `engagement-api` has never been built. Run `make build-lambdas` right before any deploy (`make deploy-dev` does). `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing; `deploy.yml` guards against that with `scripts/check_lambda_binaries.sh`.
+- **macOS:** all 12 artifacts in `backend/target/lambda/` were built 2026-10-11/12, but they predate the last M13.5 fixes and the design review. Run `make build-lambdas` right before any deploy (`make deploy-dev` does). `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing; `deploy.yml` guards against that with `scripts/check_lambda_binaries.sh`.
 - **Windows/WSL2:** release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain. Debug builds and tests are unaffected.
 - `backend-ci`'s first run is also the first Linux build of `image-process` (`libwebp-sys`).
 
@@ -53,6 +54,15 @@ These block every deploy gate (M3–M14), not code work.
 4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, merge the prod secret, then deploy (`12` M14).
 
 Workstation setup for either machine: [`13-dev-environments.md`](13-dev-environments.md) §0.
+
+### Open owner questions (design review, 2026-10-08)
+
+Not changed in code; each needs the owner's call before or soon after M14.
+1. **Merge the 8 API Lambdas into one?** Fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and one build artifact, against a broader IAM role (every function already has table read/write).
+2. **Keep originals after processing?** They're the storage that keeps growing and they retain EXIF/GPS. Options: delete on success, or expire after N days, unless reprocessing at new sizes is wanted (`01` §12).
+3. **Cap cost exposure.** Any Google/Facebook user can get a JWT. Reserved concurrency on the API function (easiest after 1) and/or lower per-route throttles.
+4. **Omit `policy`/`signature` from the prod `/media-cookie` body.** The HttpOnly cookie is moot while the body carries them; a contract change, so expand → contract.
+5. **Raise the Lambda account concurrency quota.** It's 50, shared by dev and prod: fine for launch, too low before inviting many groups.
 
 ---
 
@@ -81,6 +91,13 @@ Standing decisions that plan docs and code refer to by ID. Each is written into 
 - **CI hardening** (2026-10-11): the PR `cdk diff` role assumes no bootstrap role (stack templates only, `11` §6); every action is SHA-pinned, with Dependabot bumping them weekly.
 - **CDN images load with credentialed CORS** so the service worker can cache them offline (2026-10-11, `01` §5.2, `04` §5.2).
 - **Up to 60 s of stale access** after removal or demotion (the per-container membership cache) is accepted (2026-10-11).
+
+**2026-10-08 design review (landed 2026-10-12):**
+- Every whole-set Query goes through `persistence::query::query_all` and follows `LastEvaluatedKey`; only cursor-paged routes and deliberately capped reads stop early (`02` §3).
+- `find_voting_cycle`/`find_open_cycle` read only the 3 newest `NL#` rows; this relies on `yyyymm` cycle ids and one successor at a time (`02` §3).
+- The published edition reads in four concurrent waves, not per answer (`03` §5.2).
+- Group defaults on `GET /config` come from `shared::config::default_group_settings`; the `CONFIG_JSON` env var is gone (`01` §6.4).
+- Processed-image buckets have no Intelligent-Tiering (objects are under the 128 KB floor); originals keep it (`01` §5.1).
 
 ---
 

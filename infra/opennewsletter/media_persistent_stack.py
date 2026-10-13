@@ -99,17 +99,12 @@ class MediaPersistentStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            # No Intelligent-Tiering transition here: processed WebP variants
+            # are well under the 128 KB floor where that tier ever pays for
+            # itself, so the per-object transition fee would be pure cost.
             lifecycle_rules=[
                 s3.LifecycleRule(
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
-                ),
-                s3.LifecycleRule(
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
-                            transition_after=cdk.Duration.days(30),
-                        )
-                    ]
                 ),
             ],
             auto_delete_objects=is_dev,
@@ -149,17 +144,12 @@ class MediaPersistentStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            # No Intelligent-Tiering transition here: 256px processed avatars
+            # are well under the 128 KB floor where that tier ever pays for
+            # itself, so the per-object transition fee would be pure cost.
             lifecycle_rules=[
                 s3.LifecycleRule(
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
-                ),
-                s3.LifecycleRule(
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
-                            transition_after=cdk.Duration.days(30),
-                        )
-                    ]
                 ),
             ],
             auto_delete_objects=is_dev,

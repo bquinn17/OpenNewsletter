@@ -82,6 +82,10 @@ pub const MAX_POLL_OPTIONS: usize = 6;
 pub const MIN_POLL_OPTIONS: usize = 2;
 pub const MAX_POLL_OPTION_LABEL_CHARS: usize = 80;
 
+/// Debounce for the response-draft autosave, enforced client-side; echoed to
+/// the frontend via `GET /config` (`plans/03-api-contract.md` §2).
+pub const AUTOSAVE_DEBOUNCE_MS: u32 = 1500;
+
 pub const INVITE_CODE_LEN: usize = 16;
 pub const INVITE_DEFAULT_TTL_DAYS: u32 = 7;
 /// Upper bound on an admin-supplied `ttlDays`, so date arithmetic at the API
@@ -129,6 +133,12 @@ pub const PUSH_SEND_TIMEOUT_SECS: u64 = 10;
 /// one slot for up to `PUSH_SEND_TIMEOUT_SECS` instead of stalling every
 /// member queued behind it.
 pub const PUSH_SEND_CONCURRENCY: usize = 16;
+/// How many per-answer engagement reads (`GET .../newsletters/{c}` on a
+/// published edition) one request keeps in flight at once.
+pub const EDITION_READ_CONCURRENCY: usize = 16;
+/// How many members' preference/subscription reads a fan-out (`lambda-push`
+/// and `lambda-notify-tick`) keeps in flight at once, ahead of the send step.
+pub const PUSH_MEMBER_READ_CONCURRENCY: usize = 16;
 /// Send cutoffs: no *new* send starts once this many seconds have passed
 /// since the work began; sends already in flight run to completion. Each
 /// cutoff leaves `PUSH_SEND_TIMEOUT_SECS` plus ~5s of bookkeeping headroom
@@ -164,9 +174,59 @@ pub const PUSH_ENDPOINT_HOST_SUFFIXES: &[&str] = &[
     ".push.apple.com",
 ];
 
+/// Default group settings served verbatim by `GET /config`
+/// (`plans/03-api-contract.md` §2, `plans/01-infrastructure-cdk.md` §6.4).
+/// Single source of truth so the CDK stack no longer hand-copies these.
+pub fn default_group_settings() -> serde_json::Value {
+    serde_json::json!({
+        "questionsPerCycle": DEFAULT_QUESTIONS_PER_CYCLE,
+        "votesPerUserPerCycle": DEFAULT_VOTES_PER_USER_PER_CYCLE,
+        "responseWindowDays": DEFAULT_RESPONSE_WINDOW_DAYS,
+        "timezone": DEFAULT_TIMEZONE,
+        "memberSoftCap": DEFAULT_MEMBER_SOFT_CAP,
+        "imagesPerAnswerMax": MAX_IMAGES_PER_RESPONSE,
+        "imageMaxBytes": MAX_IMAGE_BYTES,
+        "inviteTtlDays": INVITE_DEFAULT_TTL_DAYS,
+        "autosaveDebounceMs": AUTOSAVE_DEBOUNCE_MS,
+        "notificationOffsetsHoursBeforeClose": DEFAULT_NOTIFY_OFFSETS_HOURS,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_group_settings_has_the_keys_get_config_contracts_on() {
+        let settings = default_group_settings();
+        let mut keys: Vec<&str> = settings
+            .as_object()
+            .expect("defaults are a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "autosaveDebounceMs",
+                "imageMaxBytes",
+                "imagesPerAnswerMax",
+                "inviteTtlDays",
+                "memberSoftCap",
+                "notificationOffsetsHoursBeforeClose",
+                "questionsPerCycle",
+                "responseWindowDays",
+                "timezone",
+                "votesPerUserPerCycle",
+            ]
+        );
+    }
+
+    #[test]
+    fn new_groups_default_to_a_seven_day_window() {
+        assert_eq!(default_group_settings()["responseWindowDays"], 7);
+    }
 
     #[test]
     fn avatar_colour_is_stable_for_the_same_user() {

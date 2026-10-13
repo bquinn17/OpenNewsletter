@@ -444,6 +444,12 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
 
+**Every "list everything" Query paginates (decided 2026-10-08, design review).** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
+
+**The current-cycle lookup reads 3 rows (decided 2026-10-08).** `find_voting_cycle`/`find_open_cycle` (`06` §10) run AP7 newest-first with `Limit=3` instead of reading the group's whole history. That's safe because cycle ids are `yyyymm` and a group gains a cycle only when the tick creates the month after the one it just opened (`06` §5.4). So the `voting` cycle, if any, is always the newest `NL#` row and the `open` cycle, if any, is the one before it; every published or archived cycle is older.
+
+**AP18 + AP19 can be one read.** Comments (`C#`) and reactions (`R#`) share the engagement partition, so `engagement::list_engagement` reads both with one paginated Query of the partition; the published-edition read (`03` §5.2) uses it.
+
 **AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: `my-responses`, the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
 
 ---

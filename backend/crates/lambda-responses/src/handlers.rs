@@ -6,8 +6,8 @@ use crate::validation;
 use chrono::Utc;
 use domain::api::{MyResponsesList, ResponseDto, SaveResponseRequest};
 use domain::{
-    ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, LockedQuestion, MediaStatus,
-    NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, UserId,
+    ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImageMedia, ImagePurpose, LockedQuestion,
+    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, UserId,
 };
 use persistence::responses::ResponseSave;
 use persistence::{auth, media, newsletters, questions, responses};
@@ -74,10 +74,17 @@ pub async fn save_response(
     request: SaveResponseRequest,
 ) -> Result<ResponseDto, ApiError> {
     auth::require_membership(&state.repo, caller, group_id, false).await?;
-    require_newsletter_not_archived(state, group_id, cycle_id).await?;
 
-    let question = questions::get_locked_question(&state.repo, group_id, cycle_id, question_id)
-        .await
+    // The three pre-reads are independent, so they run together; their results
+    // are checked in the order above so the error a caller sees doesn't depend
+    // on which read finished first.
+    let (not_archived, question, my_responses) = futures::join!(
+        require_newsletter_not_archived(state, group_id, cycle_id),
+        questions::get_locked_question(&state.repo, group_id, cycle_id, question_id),
+        responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id),
+    );
+    not_archived?;
+    let question = question
         .map_err(|e| {
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "locked question lookup failed");
             ApiError::internal("failed to load question")
@@ -86,12 +93,10 @@ pub async fn save_response(
 
     let content = validate_content(state, caller, group_id, cycle_id, &question, request).await?;
 
-    let my_responses = responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");
-            ApiError::internal("failed to list your responses")
-        })?;
+    let my_responses = my_responses.map_err(|e| {
+        tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");
+        ApiError::internal("failed to list your responses")
+    })?;
     let already_published_in_cycle = my_responses
         .iter()
         .any(|r| r.status == ResponseStatus::Published);
@@ -167,8 +172,14 @@ async fn validate_content(
             }
             let body = validation::body(&body)?;
             let image_media_ids = validation::dedupe_image_ids(image_media_ids)?;
+            let images = media::get_images_batch(&state.repo, group_id, cycle_id, &image_media_ids)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "image lookup failed");
+                    ApiError::internal("failed to load images")
+                })?;
             for image_id in &image_media_ids {
-                validate_response_image(state, caller, group_id, cycle_id, image_id).await?;
+                validate_response_image(caller, image_id, images.get(image_id))?;
             }
             Ok(ValidatedContent {
                 kind: QuestionKind::Text,
@@ -202,22 +213,20 @@ async fn validate_content(
 
 /// An attached image must exist, belong to the caller, be `ready`, have
 /// `purpose=response`, and reference this group/cycle (`03-api-contract.md`
-/// §7.3). `media::get_image` is keyed by `(groupId, cycleId, imageId)`, so a
-/// successful lookup already guarantees the group/cycle match.
-async fn validate_response_image(
-    state: &AppState,
+/// §7.3). Images are looked up by `(groupId, cycleId, imageId)`, so finding
+/// one already guarantees the group/cycle match; `image` is `None` when the
+/// lookup found nothing.
+fn validate_response_image(
     caller: &UserId,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
     image_id: &ImageId,
+    image: Option<&ImageMedia>,
 ) -> Result<(), ApiError> {
-    let image = media::get_image(&state.repo, group_id, cycle_id, image_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "image lookup failed");
-            ApiError::internal("failed to load image")
-        })?
-        .ok_or_else(|| ApiError::invalid_field("imageMediaIds", format!("image `{image_id}` does not exist")))?;
+    let image = image.ok_or_else(|| {
+        ApiError::invalid_field(
+            "imageMediaIds",
+            format!("image `{image_id}` does not exist"),
+        )
+    })?;
 
     let valid = image.user_id == *caller
         && image.status == MediaStatus::Ready

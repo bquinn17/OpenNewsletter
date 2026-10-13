@@ -42,21 +42,6 @@ from .config import APP_SECRET_VAPID_PUBLIC_KEY, EnvConfig, secret_ref
 from .lambda_assets import lambda_code
 from .ssm_refs import http_api_id_parameter_name
 
-# Defaults for newly-created groups, baked into every handler's env
-# (`plans/01-infrastructure-cdk.md` §6.4).
-_GROUP_DEFAULTS: dict[str, Any] = {
-    "questionsPerCycle": 5,
-    "votesPerUserPerCycle": 3,
-    "responseWindowDays": 7,
-    "timezone": "America/New_York",
-    "memberSoftCap": 50,
-    "imagesPerAnswerMax": 10,
-    "imageMaxBytes": 15728640,
-    "inviteTtlDays": 7,
-    "autosaveDebounceMs": 1500,
-    "notificationOffsetsHoursBeforeClose": [96, 48, 24],
-}
-
 # (handler key, method, path). Every route carries the JWT authorizer — there are
 # no public routes (`plans/01-infrastructure-cdk.md` §6.5).
 _ROUTES: list[tuple[str, str, str]] = [
@@ -473,7 +458,6 @@ class ApiStack(cdk.Stack):
             "TABLE_NAME": self._table.table_name,
             "RUST_LOG": "info",
             "ENV": self._config.env,
-            "CONFIG_JSON": json.dumps(_GROUP_DEFAULTS, separators=(",", ":")),
             "API_BASE_URL": f"https://{self._config.api_domain}",
             **(extra_environment or {}),
         }

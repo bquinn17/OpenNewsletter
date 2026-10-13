@@ -597,3 +597,27 @@ async fn save_response_stores_a_poll_vote() {
     assert_eq!(saved.body, None);
     assert_eq!(saved.status, ResponseStatus::Published);
 }
+
+/// A Query page stops at 1 MB; 60 answers at the 20,000-char body cap are
+/// ~1.2 MB, so this only passes if `list_answers` follows `LastEvaluatedKey`.
+#[tokio::test]
+async fn list_answers_reads_past_the_one_megabyte_query_page() {
+    let (_c, repo) = common::make_repo().await;
+    let body = "x".repeat(shared::config::MAX_RESPONSE_BODY_CHARS);
+    for n in 0..60 {
+        let mut r = common::draft_response("g-page", "202606", "q1", &format!("u{n:02}"));
+        r.response_id = domain::ResponseId::new(format!("resp-{n:02}"));
+        r.body = Some(body.clone());
+        common::put_response(&repo, &r).await;
+    }
+
+    let answers = responses::list_answers(
+        &repo,
+        &GroupId::new("g-page"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answers.len(), 60);
+}

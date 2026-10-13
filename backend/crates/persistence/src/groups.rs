@@ -6,6 +6,7 @@ use crate::expr::set_fields;
 use crate::keys::{
     attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk, GROUP_META_SK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Delete, TransactWriteItem, Update};
 use domain::{CycleSettings, Group, GroupId, GroupMembership, NotificationSettings, Role, UserId};
@@ -79,7 +80,7 @@ pub async fn list_memberships_for_user(
     repo: &Repo,
     user_id: &UserId,
 ) -> Result<Vec<GroupMembership>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -87,12 +88,10 @@ pub async fn list_memberships_for_user(
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(user_pk(user_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("GROUP#".into()))
-        .send()
-        .await?;
+        .expression_attribute_values(":prefix", AttributeValue::S("GROUP#".into()));
 
-    let items = resp.items.unwrap_or_default();
-    items
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, GroupMembership>(i).map_err(RepoError::from))
         .collect()
@@ -103,7 +102,7 @@ pub async fn list_members_for_group(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Vec<GroupMembership>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -112,12 +111,10 @@ pub async fn list_members_for_group(
         .expression_attribute_names("#pk", attr::GSI1PK)
         .expression_attribute_names("#sk", attr::GSI1SK)
         .expression_attribute_values(":pk", AttributeValue::S(membership_gsi1pk(group_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("MEMBER#".into()))
-        .send()
-        .await?;
+        .expression_attribute_values(":prefix", AttributeValue::S("MEMBER#".into()));
 
-    let items = resp.items.unwrap_or_default();
-    items
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, GroupMembership>(i).map_err(RepoError::from))
         .collect()

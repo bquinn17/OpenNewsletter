@@ -13,6 +13,7 @@ pub mod cursor;
 pub mod error;
 pub mod expr;
 pub mod keys;
+mod query;
 pub mod repo;
 
 pub mod engagement;

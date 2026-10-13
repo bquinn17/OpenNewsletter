@@ -270,3 +270,31 @@ async fn it_toggles_reaction_off_by_deleting_it() {
     .unwrap();
     assert_eq!(reactions.len(), 0);
 }
+
+#[tokio::test]
+async fn list_engagement_reads_comments_and_reactions_in_one_query() {
+    let (_c, repo) = common::make_repo().await;
+    let c1 = common::comment("g1", "202606", "q1", "u1", "u2", "cmt-01");
+    let c2 = common::comment("g1", "202606", "q1", "u1", "u3", "cmt-02");
+    let r1 = common::reaction("g1", "202606", "q1", "u1", "u2");
+    let other_answer = common::comment("g1", "202606", "q1", "u9", "u2", "cmt-03");
+    for c in [&c2, &c1, &other_answer] {
+        engagement::put_comment(&repo, c).await.unwrap();
+    }
+    engagement::put_reaction(&repo, &r1).await.unwrap();
+
+    let (comments, reactions) = engagement::list_engagement(
+        &repo,
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        &UserId::new("u1"),
+    )
+    .await
+    .unwrap();
+
+    // Same order as `list_comments`, and nothing from another answer.
+    let ids: Vec<&str> = comments.iter().map(|c| c.comment_id.as_str()).collect();
+    assert_eq!(ids, vec!["cmt-01", "cmt-02"]);
+    assert_eq!(reactions, vec![r1]);
+}

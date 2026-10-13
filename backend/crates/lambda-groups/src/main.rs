@@ -23,10 +23,7 @@ async fn main() -> Result<(), Error> {
 
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
-        group_defaults: std::env::var("CONFIG_JSON")
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_else(|| serde_json::json!({})),
+        group_defaults: shared::config::default_group_settings(),
         vapid_public_key: std::env::var("VAPID_PUBLIC_KEY").unwrap_or_default(),
         cdn_base_url: std::env::var("CDN_BASE_URL").unwrap_or_default(),
         avatar_deleter,

@@ -4,7 +4,7 @@ History moved out of [`../PROGRESS.md`](../PROGRESS.md) on 2026-10-11 so the liv
 
 The current design is in the plan docs (`00`–`14`); where this log and a plan doc disagree, the plan doc wins. Use this file for *why* something is the way it is: what each milestone landed, the bugs found in review, and the decisions taken along the way.
 
-Contents: M2 · M3 · M3.5 · M4 · Plan-set reconciliation (2026-08-09) · M5 · M6 · M7 · Post-M7 gap pass · M8 · M9 · M10 · M11 · M12 · M13 · Plan review, bug hunt and code reviews (2026-10-07 → 10-11) · M13.5 · B5/B6 blocker history · Known gaps as of 2026-10-11
+Contents: M2 · M3 · M3.5 · M4 · Plan-set reconciliation (2026-08-09) · M5 · M6 · M7 · Post-M7 gap pass · M8 · M9 · M10 · M11 · M12 · M13 · Plan review, bug hunt and code reviews (2026-10-07 → 10-11) · M13.5 · B5/B6 blocker history · Known gaps as of 2026-10-11 · Design review (2026-10-08, landed 10-12)
 
 ---
 
@@ -1124,3 +1124,26 @@ The post-M7 gap pass (2026-09-27, above) cleared most of the earlier list. What 
 - **`VOTE_CAP_REACHED` lists the already-voted questions in `detail`** (free text), not a structured field. `fieldErrors` now exists but is per-field validation, not a cap conflict.
 - **`lambda-cycle-tick` needs `#![recursion_limit = "256"]`** since it gained a `lib.rs`. Harmless, but if it creeps up again, box the dispatch futures.
 - **`02` carries 5 "Note (reconciled 2026-09-27)" flags** for discrepancies the doc sweep didn't resolve by renaming. Four are attributes the code writes but `02` omits: `cognito_sub` on the sub lookup, and the denormalized IDs on `CandidateVote`/`Comment`/`Reaction`. The fifth (the `NOTIFIED#…`/`TICK#NOTIFY` rows) is resolved: M11 writes them.
+
+---
+
+## Design review detail — what landed (2026-10-08, merged 2026-10-12)
+
+A whole-system review for performance, cost and security ahead of prod. Overall it rated **B+**: sound, cheap architecture and strong transactional correctness. The weak spots were request paths whose latency grew with group size, list queries that silently truncated at DynamoDB's 1 MB page, and the fact that nothing had been deployed yet. Built on `bquinn/design-review-perf` from `d0d81b5` and rebased onto `4698ebd` on 2026-10-12.
+
+**Fixed in code** (decisions recorded in `01` §5.1/§6.4/§12, `02` §3, `03` §5.2):
+- **Published-edition read was a serial N+1.** It made about six sequential DynamoDB calls per answer, which at the 50-member cap with image-heavy answers would have exceeded the 10 s Lambda timeout. It now reads in four concurrent waves (`03` §5.2), using the new `engagement::list_engagement` and `media::get_images_batch`. A new handler test pins the output: answer order, draft exclusion, image order with non-`ready` images skipped, comment images, `[deleted]` placeholders and poll tallies.
+- **List queries didn't paginate.** `persistence::query::query_all` now follows `LastEvaluatedKey` for every whole-set Query (`02` §3). Regression test: 60 answers at the body cap (about 1.2 MB) all come back. M13.5 had independently added page loops to `list_candidates`, `list_answers` and the GSI2 status queries; the rebase folded those into `query_all`, keeping M13.5's lenient-listing variants.
+- **`find_voting_cycle`/`find_open_cycle` read the group's whole history** on every candidate request. They now read the 3 newest `NL#` rows (`02` §3 invariant), with a test behind nine published cycles.
+- **Smaller latency wins:**
+  - `GET …/newsletters` runs its per-cycle AP15 reads concurrently.
+  - `PUT …/my-response` batches its image checks into one `BatchGetItem` and overlaps its three pre-reads. Error precedence is unchanged.
+  - Push and notify-tick fan-outs read each member's pref, responses and subscriptions concurrently (16 in flight, `PUSH_MEMBER_READ_CONCURRENCY`). The notify tick keeps M13.5's D2 rule that a non-empty draft counts as answered.
+- **`CONFIG_JSON` removed.** `groupDefaults` on `GET /config` now comes from `shared::config::default_group_settings`. The hand-copied env var in `api_stack.py` had drifted once already (`responseWindowDays`). The M13.5 CDK test for the 7-day default moved to a `shared::config` unit test. New `AUTOSAVE_DEBOUNCE_MS`.
+- **No Intelligent-Tiering on the processed buckets.** The objects are under the 128 KB floor, so each transition fee bought nothing (`01` §5.1). Originals buckets unchanged. CDK tests pin both.
+
+**Verified after the rebase:** backend 505 (498 + 7 new) and CDK 158 (157 − 1 moved + 2 new) pass. fmt, clippy (`-D warnings`), ruff (check + format), `mypy --strict .` and `cdk synth` (dev + prod) are clean. Frontend untouched.
+
+**Checked:** the Lambda account concurrency limit is **50** (dev and prod share it).
+
+**Open owner questions** are listed in PROGRESS.md. A fifth, trimming PROGRESS.md, was done separately on 2026-10-11.

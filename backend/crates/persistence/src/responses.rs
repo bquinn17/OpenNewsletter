@@ -6,6 +6,7 @@ use crate::keys::{
     attr, group_pk, index, key_timestamp, membership_sk, newsletter_sk, response_gsi1pk,
     response_gsi1sk, response_pk, response_sk, user_pk,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
@@ -73,30 +74,19 @@ async fn query_answer_items(
     cycle_id: &CycleId,
     question_id: &QuestionId,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, RepoError> {
-    let mut items = Vec::new();
-    let mut start_key = None;
-    loop {
-        let resp = repo
-            .client
-            .query()
-            .table_name(&repo.table)
-            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
-            .expression_attribute_names("#pk", attr::PK)
-            .expression_attribute_names("#sk", attr::SK)
-            .expression_attribute_values(
-                ":pk",
-                AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
-            )
-            .expression_attribute_values(":prefix", AttributeValue::S("A#".into()))
-            .set_exclusive_start_key(start_key)
-            .send()
-            .await?;
-        items.extend(resp.items.unwrap_or_default());
-        match resp.last_evaluated_key {
-            Some(key) if !key.is_empty() => start_key = Some(key),
-            _ => return Ok(items),
-        }
-    }
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+        )
+        .expression_attribute_values(":prefix", AttributeValue::S("A#".into()));
+    query_all(request).await
 }
 
 /// AP15 — list a user's drafts/publishes for one group's cycle (via GSI1).
@@ -109,18 +99,16 @@ pub async fn list_my_responses_in_cycle(
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<Vec<Response>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
         .index_name(index::GSI1)
         .key_condition_expression("#pk = :pk")
         .expression_attribute_names("#pk", attr::GSI1PK)
-        .expression_attribute_values(":pk", AttributeValue::S(response_gsi1pk(user_id, cycle_id)))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    let all: Vec<Response> = items
+        .expression_attribute_values(":pk", AttributeValue::S(response_gsi1pk(user_id, cycle_id)));
+    let all: Vec<Response> = query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Response>(i).map_err(RepoError::from))
         .collect::<Result<_, _>>()?;
