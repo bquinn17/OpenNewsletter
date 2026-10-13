@@ -9,7 +9,7 @@ mod common;
 use chrono::{Duration, Utc};
 use cycle_tick::notify::{FanoutKind, Notifier};
 use cycle_tick::tick::run_tick_with;
-use domain::api::CreateCandidateRequest;
+use domain::api::{CreateCandidateRequest, CycleTransition};
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus, QuestionKind, Role, UserId};
 use persistence::newsletters;
 use pretty_assertions::assert_eq;
@@ -129,10 +129,9 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     let notifier = RecordingNotifier::default();
     let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
-        summary
-            .transitions
-            .iter()
-            .any(|t| t.cycle_id == cycle_id.as_str() && t.from == Some("voting") && t.to == "open"),
+        summary.transitions.iter().any(|t| t.cycle_id == cycle_id
+            && t.from == Some(NewsletterStatus::Voting)
+            && t.to == NewsletterStatus::Open),
         "tick must promote the voting cycle to open: {:?}",
         summary.transitions
     );
@@ -166,12 +165,9 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .expect("group has an active (open) cycle to rewind");
     let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
-        summary
-            .transitions
-            .iter()
-            .any(|t| t.cycle_id == cycle_id.as_str()
-                && t.from == Some("open")
-                && t.to == "published"),
+        summary.transitions.iter().any(|t| t.cycle_id == cycle_id
+            && t.from == Some(NewsletterStatus::Open)
+            && t.to == NewsletterStatus::Published),
         "tick must publish the open cycle: {:?}",
         summary.transitions
     );
@@ -254,11 +250,11 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
     let next_id = shared::cycle_time::cycle_id_for(following, tz);
     assert_eq!(
         summary.transitions,
-        vec![cycle_tick::tick::Transition {
-            group_id: group_id.to_string(),
-            cycle_id: next_id.to_string(),
+        vec![CycleTransition {
+            group_id: group_id.clone(),
+            cycle_id: next_id.clone(),
             from: None,
-            to: "voting",
+            to: NewsletterStatus::Voting,
         }]
     );
     let voting = newsletters::find_voting_cycle(&repo, &group_id)

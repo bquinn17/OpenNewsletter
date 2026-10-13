@@ -954,6 +954,69 @@ pub struct HealthResponse {
     pub build_at: Option<String>,
 }
 
+// ===== `03-api-contract.md` §11a — Dev-only tick routes =====
+
+/// `POST /admin/dev/tick/cycle` request body (§11a.1). Both fields are
+/// optional, and an absent or empty body runs the tick globally.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevTickCycleRequest {
+    /// Required when `advance_cycle_closes_by` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<GroupId>,
+    /// An integer plus `m`/`h`/`d`, between 0 and 366 days.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advance_cycle_closes_by: Option<String>,
+}
+
+/// One state change a cycle tick made. `from: None` marks a freshly created
+/// `voting` cycle rather than an existing row's transition (§11a.1).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CycleTransition {
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub from: Option<NewsletterStatus>,
+    pub to: NewsletterStatus,
+}
+
+/// `POST /admin/dev/tick/cycle` response (§11a.1). The scheduled tick logs the
+/// same shape.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevTickCycleResponse {
+    pub transitions: Vec<CycleTransition>,
+}
+
+/// The only fan-out notify-tick runs. Cycle-open and publication fan-outs
+/// happen in `lambda-push` and aren't reported by either dev route (§11a.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeadlineFanoutKind {
+    DeadlineReminder,
+}
+
+/// One deadline-reminder fan-out a notify tick ran (§11a.2).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeadlineFanout {
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub kind: DeadlineFanoutKind,
+    pub offset_hours: u32,
+    pub delivered: u32,
+    /// Expired and failed sends together.
+    pub failed: u32,
+}
+
+/// `POST /admin/dev/tick/notify` response (§11a.2). The scheduled tick logs the
+/// same shape.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevTickNotifyResponse {
+    pub fanouts: Vec<DeadlineFanout>,
+}
+
 // ===== `03-api-contract.md` §1.1 — RFC-7807 error shape =====
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

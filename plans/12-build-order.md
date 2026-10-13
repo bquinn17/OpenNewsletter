@@ -1,381 +1,60 @@
 # 12 — Build Order
 
-This is the recommended sequence to take OpenNewsletter from empty repo to a deployable v1. Each milestone names the plan documents to consult, the deliverables, and an explicit "done when" gate. A subagent should be able to pick up at any milestone and execute against it without re-reading earlier ones (although the Overview is always assumed).
+The milestone sequence from empty repo to a deployed v1. Each milestone names its plan docs, deliverables and a "done when" gate. Before starting one, read [`00-overview.md`](00-overview.md) and [`coding-standards.md`](coding-standards.md); the §8 pre-flight checklist in the latter applies before any PR.
 
-**Before starting any milestone, read these two files in full:**
-1. [`00-overview.md`](00-overview.md) — system map, glossary, repo layout
-2. [`coding-standards.md`](coding-standards.md) — style, linting, testing, error handling, naming, comments, commit/PR conventions
-
-These are non-negotiable preamble for every milestone below. The pre-flight checklist at the bottom of `coding-standards.md` (§8) applies before opening any PR.
+M0–M13.5 are code-complete. Their full definitions (deliverables lists, effort estimates) are archived in [`archive/build-order-m0-m13.5.md`](archive/build-order-m0-m13.5.md), and what each landed is in [`archive/progress-log.md`](archive/progress-log.md). Live status is in [`PROGRESS.md`](PROGRESS.md).
 
 ---
 
-## Milestone 0 — Repo skeleton (½ day)
-
-**Goal**: Empty but well-shaped repo. Nothing runs, but every directory and config file exists so subsequent milestones can drop code into the right place.
-
-**Deliverables**:
-- Repo layout per `00-overview.md` §4 created with empty placeholder files (`README.md` in each dir explaining its purpose).
-- Top-level `README.md` describing how to run dev locally (filling in detail later).
-- `CLAUDE.md` summarizing repo conventions for AI assistants (use the same language as `00-overview.md`).
-- `.gitignore` covering `node_modules/`, `target/`, `cdk.out/`, `.env*`, `*.pem`, `dist/`.
-- `.editorconfig` (2-space JS/Py/Yaml, 4-space Rust, LF line endings).
-- `.nvmrc` (20 at the time; now 24), `rust-toolchain.toml` (1.79+ stable at the time; now pinned to 1.99.0), `infra/runtime.txt` (3.12).
-
-**Done when**: `tree -L 2 .` matches the layout in `00-overview.md` §4.
-
----
-
-## Milestone 1 — Operator prerequisites (½ day, parallelizable with M0)
-
-Read: `05-auth-flow.md` §10.
-
-A human operator (the user) completes the out-of-band setup:
-- [ ] Register Google, Facebook OAuth apps with the Cognito redirect URI (need Cognito domain set up first, OR placeholder updated after Milestone 3). No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple Developer membership is $99/yr.
-- [ ] Generate VAPID keys (`scripts/generate_vapid_keys.py`) and store in Secrets Manager.
-- [ ] Generate a CloudFront signing keypair per env, **RSA 2048** (not ECDSA — `05` §10); store the private half as `cdn_signing_private_key` in `opennewsletter/{env}`, and commit the public half to `infra/keys/cf-signing.pub.pem` (dev) or `infra/keys/cf-signing-prod.pub.pem` (prod).
-- [ ] Configure DNS for the chosen domain (`opennewsletter.example.com`, `cdn.opennewsletter.example.com`, `api.opennewsletter.example.com`). If using Route53, note the hosted zone ID.
-
-Subagents cannot execute this milestone — flag for the operator. Subagents proceed using placeholder ARNs for any blocking steps.
-
-**Done when**: All ARNs/IDs are recorded in `infra/opennewsletter/config.py` (or a sibling `.env.local` for dev).
-
----
-
-## Milestone 2 — Backend foundations: domain + persistence (1.5 days)
-
-Read: `02-data-model-dynamodb.md`, `00-overview.md` §6.
-
-**Deliverables**:
-- `backend/` Cargo workspace with empty crates per `00-overview.md` §4.
-- `domain/` crate: every entity struct (`User`, `Group`, `GroupMembership`, `Invite`, `Newsletter`, `CandidateQuestion`, `LockedQuestion`, `Response`, `ImageMedia`, `Comment`, `Reaction`, `PushSubscription`, `NotificationPref`) as serde-friendly Rust types. `Role` and `Status`-style enums. `ApiError` enum with HTTP status mappings.
-- `persistence/keys.rs`: every key-builder function from `02-data-model-dynamodb.md`. Unit tests for each.
-- `persistence/`: `Repo` struct holding `aws_sdk_dynamodb::Client` and table name. One file per entity-family (`users.rs`, `groups.rs`, `invites.rs`, `newsletters.rs`, `questions.rs`, `responses.rs`, `engagement.rs`, `media.rs`, `push.rs`).
-- For each access pattern AP1–AP21 in `02-data-model-dynamodb.md` §3: implement the corresponding query/get function. For each transaction in §4: implement using `TransactWriteItems`.
-- `persistence/test_factories.rs` (cfg-test only).
-- Integration tests against DDB-local using `testcontainers`. ≥1 test per access pattern, ≥1 per transaction.
-
-**Done when**: `cargo test -p persistence` is green.
-
----
-
-## Milestone 3 — Infrastructure baseline (1 day)
-
-Read: `01-infrastructure-cdk.md`.
-
-**Deliverables**:
-- `infra/` CDK Python project with `cdk.json`, `requirements.txt`, `app.py`.
-- `infra/opennewsletter/config.py` with `EnvConfig` dataclass and dev/prod loaders.
-- `DataStack` — DynamoDB table + GSIs.
-- `AuthStack` — Cognito user pool + 2 IdPs (Google, Facebook) + app clients + hosted UI domain (use placeholder secret ARNs from M1; refresh once the operator finalizes).
-- `MediaPersistentStack` — S3 buckets + CloudFront + KeyGroup.
-- `MediaPipelineStack` — `lambda-image-process` (the Lambda code can be a stub at this point; replaced in M8) and its S3 event subscription.
-- `FrontendStack` — ACM cert and DNS records.
-- `MonitoringStack` skeleton (alarms wired empty for now).
-- `infra/tests/test_stacks.py` per `11-testing-ci-cd.md` §3.
-
-**Done when**: `cdk synth --context env=dev` succeeds; `pytest infra/tests/` is green; a manual `cdk deploy --context env=dev DataStack AuthStack MediaPersistentStack MediaPipelineStack FrontendStack` produces working resources (verifiable via console).
-
----
-
-## Milestone 3.5 — Dev environment online (½ day)
-
-Read: [`13-dev-environments.md`](13-dev-environments.md).
-
-**Goal**: Make the `dev` AWS environment usable for daily work. Every milestone after this is testable end-to-end against real AWS from the moment its code lands.
-
-**Deliverables**:
-- `Makefile` targets: `make deploy-dev`, `make seed`, `make redeploy-volatile`, `make reset-all`, `make deploy-lambda LAMBDA=...`, `make fe`.
-- `scripts/seed_dev_data.py` — idempotent + destructive: scans + batch-deletes the DynamoDB table, empties S3 prefixes, writes the small fixture (one group, bootstrap admin as sole member, one `voting` cycle). Does NOT touch Cognito. Prints sign-in credentials. See [`13-dev-environments.md` §4](13-dev-environments.md).
-- `scripts/write_frontend_env.py` — reads `cdk.out/dev-outputs.json`, writes `frontend/.env.dev` with API/CDN/Cognito values per [`13-dev-environments.md` §7](13-dev-environments.md).
-- Dev-environment removal-policy overrides applied across all CDK stacks per [`01-infrastructure-cdk.md` §10.5](01-infrastructure-cdk.md).
-- `MediaStack` split into `MediaPersistentStack` + `MediaPipelineStack` per [`01-infrastructure-cdk.md` §5](01-infrastructure-cdk.md).
-- `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations landed in M5 (cycle) and M11 (notify); the routes exist now so manual testing has a fast-forward path.
-- AWS Budgets alarm at $10/mo wired to `config.alarm_email`.
-
-**Done when**: `make deploy-dev && make seed && make fe`, sign in via the `/admin/bootstrap-login` route as the seeded admin, and see the seeded group's home page. `make redeploy-volatile` succeeds end-to-end (proves the dev removal-policy overrides are correct).
-
----
-
-## Milestone 4 — Auth + bootstrap (1 day)
-
-Read: `05-auth-flow.md`.
-
-**Deliverables**:
-- `lambda-invites` crate compiled to `bootstrap` binary; supports both API routes (`POST /admin/invites`, `POST /invites/redeem`, `POST /admin/invites/{code}/revoke`, `GET /admin/groups/{g}/invites`) and a `PreSignUp` Cognito trigger (pass-through per §3.3).
-- `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
-- **Create `ApiStack`** (`01-infrastructure-cdk.md` §6 — HTTP API, CORS, JWT authorizer, throttling, access logs; this stack does not exist before M4) and wire both Lambdas' routes into it. The dev-only tick routes stubbed in M3.5 get their API Gateway wiring in M5 when the tick Lambdas land.
-- `scripts/bootstrap_admin.py` per `05-auth-flow.md` §9.1.
-- The `admin-bootstrap` Cognito app client.
-
-**Done when**: an operator can `python scripts/bootstrap_admin.py --env dev --admin-email me@example.com --group-name "Test"` and produce a working group + admin user in DynamoDB, AND that user can hit `GET /me` with a Cognito-issued token via curl.
-
----
-
-## Milestone 5 — Lifecycle engine + cycle CRUD (1.5 days)
-
-Read: `06-newsletter-lifecycle.md`, `03-api-contract.md` §5.
-
-**Deliverables**:
-- `lambda-newsletters` with `GET /groups/{g}/newsletters` and `GET /groups/{g}/newsletters/{c}` (handles all four status branches).
-- `lambda-questions` with candidate question CRUD per `03-api-contract.md` §6. No admin curate/promote surface — voting is the sole source of truth (see `03-api-contract.md` §6.5 and `06-newsletter-lifecycle.md` §7). The only admin mutation is `DELETE /admin/groups/{g}/candidate-questions/{q}` for abusive content.
-- **Create `NotificationsStack`** (`01-infrastructure-cdk.md` §7 — EventBridge schedules + VAPID secret reference; this stack does not exist before M5) with `lambda-cycle-tick` per `06-newsletter-lifecycle.md` §5 on the 5-minute schedule. `lambda-notify-tick` joins the stack in M11. Wire the dev-only `POST /admin/dev/tick/*` routes into `ApiStack` now.
-- The "create-next-voting-cycle" logic that runs on group creation (in `bootstrap_admin.py` or in the group-creation transaction in `lambda-groups`).
-- Lifecycle integration test suite per `06-newsletter-lifecycle.md` §11.
-- **Establish `shared/openapi.yaml`** — see "OpenAPI contract" below.
-
-### OpenAPI contract (deferred from M4, owned here)
-
-`shared/openapi.yaml` is named as the contract's source of truth by `coding-standards.md` §1.12, `03-api-contract.md` §12, `00-overview.md` §4, and the §8 pre-flight checklist — but it was never created, so M4's routes and DTOs were written from `03-api-contract.md` prose directly. M5 is where that debt gets paid, before the route count grows further and the backlog becomes a slog.
-
-Deliverables:
-- **`shared/openapi.yaml`** — OpenAPI 3.1, hand-maintained, covering every route shipped through M5: M4's 13 (`03-api-contract.md` §2–§4) plus M5's newsletter and candidate-question routes (§5–§6). Include the `gradient` and `avatarColor` enums, which §2.3/§4.3 already designate this file as the canonical home for.
-- **Consolidate the Rust wire types into `backend/crates/domain/src/api.rs`.** M4 put them in per-crate `dto.rs` files (`lambda-groups/src/dto.rs`, `lambda-invites/src/dto.rs`), which works but gives the contract test no single target. Move them, re-export per crate, and keep entities (`domain/entities.rs`) separate from wire shapes — they are allowed to differ, and already do (DynamoDB attributes are snake_case, the HTTP contract is camelCase).
-- **`scripts/codegen_types.sh`** — runs `openapi-typescript` into `frontend/src/types/api.ts`. Referenced by `scripts/README.md` and `00-overview.md` §4; also missing. The frontend consumes its output starting in M7, but the script belongs with the YAML.
-- **The contract test from `11-testing-ci-cd.md` §2.3** — loads the YAML and round-trips each route's example payloads through the corresponding `domain/api.rs` struct. This is what makes the YAML authoritative rather than decorative.
-
-**Standing rule from M5 onward**: a milestone that adds or changes a route updates `shared/openapi.yaml` in the same PR. The §8 pre-flight already says this; it only becomes enforceable once the file and its contract test exist.
-
-**Done when**: a manual flow produces:
-1. A group is created with a `voting` cycle.
-2. Members suggest candidate questions (via curl).
-3. Tick is invoked manually with a fast-forwarded `responseOpenAt` → cycle transitions to `open`.
-4. Tick is invoked again with fast-forwarded `responseCloseAt` → cycle transitions to `published`.
-5. The next `voting` cycle was created automatically.
-
-AND `shared/openapi.yaml` describes every route through M5, with the §2.3 contract test green in CI.
-
----
-
-## Milestone 6 — Responses + drafts (1 day)
-
-Read: `03-api-contract.md` §7, `04-frontend-architecture.md` §8.
-
-**Deliverables**:
-- `lambda-responses` with all routes from §7.
-- Last-write-wins draft saves — the response row is overwritten unconditionally, with no version tokens or conflict errors. Only the cycle-open check applies. (`03-api-contract.md` §7.3, `02-data-model-dynamodb.md` §5).
-- Validation: cycle status, image-id ownership / `ready` status / `purpose=response`, body length, image count.
-- Integration tests for: save draft, interleaved saves resolve last-write-wins, publish, attempt to publish past deadline.
-
-**Done when**: `cargo test -p lambda-responses` green AND a curl-based dance (save → save → publish) produces correct DDB state.
-
----
-
-## Milestone 7 — Frontend skeleton + auth (1.5 days)
-
-Read: `04-frontend-architecture.md`, `05-auth-flow.md`.
-
-**Deliverables**:
-- Vite project initialized, Tailwind configured, React Router set up with all routes from `04-frontend-architecture.md` §3 as stubs.
-- `auth/` module: OIDC client, callback page, token storage, `AuthProvider`, `useAuth`.
-- `api/client.ts` with auth + correlation header.
-- `types/api.ts` from `openapi-typescript` against `shared/openapi.yaml` (via `scripts/codegen_types.sh`; decided in M7 — `coding-standards.md` §3.3 already named this path).
-- `pages/HomePage` rendering memberships.
-- `pages/JoinPage` implementing the invite-redemption flow.
-- `pages/SettingsPage` rendering basic profile.
-- `AppShell`, `BottomNav`, `GroupSwitcher`.
-
-**Done when**: Running `npm run dev` and pointing at the dev API:
-- I can sign in via Google.
-- An invited user can redeem and see their group.
-- Logout works.
-
----
-
-## Milestone 8 — Media pipeline (1.5 days)
-
-Read: `08-media-uploads.md`.
-
-**Deliverables**:
-- `lambda-media` with all nine routes (`POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{id}`, `POST /uploads/{id}/complete`, `GET /media-cookie`, and the three `/avatars` routes; `03` §9).
-- `lambda-image-process` real implementation (replacing the M3 stub) — reads originals, generates display + thumb WebP/GIF, writes to processed bucket, marks DDB row ready.
-- `frontend/src/components/responses/ImageUploader.tsx` with the drag-drop, presign, PUT, poll loop.
-- CloudFront signed-cookie issuance integrated end-to-end (frontend `ensureCookie`, sets `credentials: include`).
-- Image-pipeline integration tests per `08-media-uploads.md` §10.
-
-**Done when**: I can upload a 5MB JPEG, see thumbnail render in the editor, and reload the page to see the image rendered via CloudFront.
-
-**Also verify CDN CORS at this gate (added 2026-10-11).** CDN images and avatars load with `crossorigin="use-credentials"` (`04` §5.2), so a wrong CloudFront CORS policy breaks every image, not just offline caching. Run the CDN CORS check in [`docs/smoke.md`](../docs/smoke.md) §6: the right `Access-Control-Allow-*` headers, no CORS console errors, and a `cdn-images` cache entry. Run it again after the first prod deploy (M14).
-
----
-
-## Milestone 9 — Newsletter UI (2 days)
-
-Read: `04-frontend-architecture.md` §7, `06-newsletter-lifecycle.md`.
-
-**Deliverables**:
-- `pages/CandidatesPage` with list + voting + suggestion link.
-- `pages/SuggestPage` with the form (text + poll).
-- `pages/NewsletterPage` rendering all three of `voting`/`open`/`published` layouts.
-- `pages/RespondPage` with editor + autosave + Publish.
-- `components/newsletter/PollWidget`, `AnswerCard`, `ImageGallery`, `QuestionPrompt`.
-- Group-TZ-aware date display.
-
-**Done when**: A simulated month round-trip (using fast-forward time) works end-to-end in the UI.
-
----
-
-## Milestone 10 — Engagement (1 day)
-
-Read: `09-engagement.md`, `03-api-contract.md` §8.
-
-**Deliverables**:
-- `lambda-engagement` for comments + reactions.
-- `frontend` `CommentList`, `ReactionBar` components.
-- Markdown sanitizer applied consistently.
-- Engagement integration tests per `09-engagement.md` §8.
-
-**Done when**: Two users can comment on each other's published answers and react with arbitrary emoji.
-
----
-
-## Milestone 11 — Notifications (1 day)
-
-Read: `07-notifications.md`.
-
-**Deliverables**:
-- `lambda-push` for subscribe/unsubscribe/list/test/preferences + cycle-open / publication / deadline fan-out functions.
-- `lambda-notify-tick` and EventBridge schedule.
-- Frontend service worker push handler + Settings UI toggle + per-group preferences.
-- The `ensurePushSubscription` flow.
-
-**Done when**: I can opt in on Settings, manually invoke the cycle-tick or notify-tick, and receive a real OS notification.
-
----
-
-## Milestone 12 — Admin UI (½ day)
-
-Read: `04-frontend-architecture.md` §7.7, `03-api-contract.md` §3, §6.5.
-
-**Deliverables**:
-- `pages/GroupAdminPage` with the three tabs (Members, Invites, Settings). No Curate tab — admins do not override voting.
-
-**Done when**: I can create an invite, copy the URL, share, and see the new member appear.
-
----
-
-## Milestone 13 — Hardening (1 day)
-
-**Deliverables**:
-- All tests in `11-testing-ci-cd.md` §2–§4 implemented (gaps from prior milestones filled).
-- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; `11` §6). *Superseded in M13.5: `deploy.yml` replaced `frontend-deploy` and `backend-deploy`, leaving five workflows (`11` §6.4).*
-- Monitoring alarms wired to a working SNS topic + email.
-- CSP set on the frontend; verified by a Playwright test.
-- Manual smoke runbook (`docs/smoke.md`) executed and observed clean.
-- 5-min E2E run against the deployed dev stack.
-
-**Done when**: A new contributor can clone, follow `README.md`, run dev locally, and contribute a PR with passing CI.
-
----
-
-## Milestone 13.5 — Plan-review follow-ups (2 days)
-
-Read: the "Plan review (2026-10-07)" section of `PROGRESS.md`. Then read each plan section named below; every one is marked "decided 2026-10-07".
-
-**Goal**: implement the owner's 2026-10-07 decisions before the first prod deploy. Several of them change prod-only setup (secrets, alarms, budget, bootstrap, deploy gate), which is far cheaper to do before prod exists.
-
-**Deliverables** (split by directory for parallel agents, per `CLAUDE.md`):
-- **Auth (D1, D5)**:
-  - Frontend:
-    - tokens move to `localStorage`
-    - logout revokes the refresh token via `/oauth2/revoke` (`04` §6, `05` §8)
-  - Backend:
-    - `Invite.bound_email` and optional `boundEmail` on `POST /admin/invites`
-    - `POST /invites/redeem` checks `email` and `email_verified`; a mismatch is 403 `INVITE_EMAIL_MISMATCH` (`02` §2.4, `03` §3, `05` §4)
-  - Infra:
-    - Google `email_verified` attribute mapping
-    - the `admin-bootstrap` client is dev-only, and the prod authorizer audience is the frontend client only
-  - Script: `bootstrap_admin.py` prod mode (`BOOTSTRAP_ADMIN_EMAIL`, no Cognito user, an email-bound admin invite; `05` §9)
-- **Auto-publish (D2)**:
-  - `lambda-cycle-tick` `publish(nl)` auto-publishes non-empty drafts before the status flip (`06` §5.3).
-  - Reminder and publication counts include non-empty drafts (`07` §5.1, §7.2).
-  - Frontend: the RespondPage auto-publish warning and DraftStatusBadge copy; a poll pick saves immediately as a draft (`04` §7.3).
-- **Window and promotion (D3, D4)**:
-  - `DEFAULT_RESPONSE_WINDOW_DAYS = 7`
-  - promotion and `sort=top` order by votes desc, then oldest first (`06` §5.2, `03` §6.1)
-- **Settings apply now (D10)**: `PATCH /groups/{g}` reschedules the current `voting` cycle regardless of candidates, and moves an `open` cycle's close when it's still in the future, else 422 (`06` §6). Update the admin Settings copy.
-- **Real media deletion (D8)**:
-  - Backend: a shared delete helper (S3 objects + CloudFront invalidation + row) used by `DELETE /uploads`, comment image release, and avatar delete/replace (`03` §9.4/§9.7, `08` §8).
-  - Infra:
-    - IAM for the media, engagement and groups Lambdas
-    - no bucket versioning
-  - Frontend: permanent-delete `ConfirmDialog`s (`04` §7.3/§7.6, `09` §1).
-- **Cost (D7)**:
-  - One Secrets Manager secret per env (`app_secret_arn`); migrate the four dev secrets, then delete them.
-  - Prod-only alarms, at most 10 alarm metrics.
-  - One account-wide $5 budget in `CiStack`.
-  - DynamoDB on an AWS-owned key (`01` §2/§3.1/§9/§12).
-- **Deploy gate (D6)**:
-  - One `deploy.yml`: `main` → dev automatically, then a `promote-prod` job behind the `production` environment that deploys the backend, then the frontend, from the same SHA (`11` §6).
-  - The service worker activates updates promptly.
-  - The expand → contract API rule goes in `coding-standards.md` §8.
-- OpenAPI, `ROUTE_TABLE` and `frontend/src/types/api.ts` updated for `boundEmail` and the new error code.
-
-**Done when**: all checks are green (fmt, clippy, `cargo test --workspace`, `pytest infra/tests`, ruff, mypy, `cdk synth` dev + prod, and the frontend checks), plus integration tests for:
-- auto-publish (including a crash-and-rerun)
-- the tie order
-- bound-invite accept and reject
-- an open-cycle window change
-- media deletion removing the objects and the row
-
-The deploy-shaped checks join the M14 gate.
+## Completed milestones and their gates
+
+Every gate from M3 onward needs a deployed dev stack, so none has been run yet (blocker B5). Run them all against dev before M14, in order. `docs/RUNBOOK.md` has the commands for M3–M5, M7, M11, M13 and M14, and `docs/smoke.md` is the end-to-end checklist.
+
+| Milestone | Read | Done when |
+|---|---|---|
+| **M0** Repo skeleton | `00` §4 | Layout matches `00` §4. ✅ |
+| **M1** Operator prerequisites | `05` §10, `docs/milestone-1-operator-runbook.md` | All ARNs/IDs recorded in `config.py` / `.env.local` (dev) and in the `opennewsletter/{env}` secret. Operator-only; agents use placeholders. Partly done — see B5. |
+| **M2** Domain + persistence | `02` | `cargo test -p persistence` green. ✅ |
+| **M3** Infra baseline | `01` | `cdk synth` (dev) and `pytest infra/tests` green ✅; `cdk deploy` of the base stacks produces working resources. |
+| **M3.5** Dev environment online | `13` | `make deploy-dev && make seed && make fe`, sign in at `/admin/bootstrap-login` as the seeded admin and see the seeded group; `make redeploy-volatile` succeeds. |
+| **M4** Auth + bootstrap | `05` | `bootstrap_admin.py --env dev …` creates a working group + admin, and that user's Cognito token gets `GET /me` via curl. |
+| **M5** Lifecycle + cycle CRUD + OpenAPI | `06`, `03` §5–§6 | Manual flow via `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`: group has a `voting` cycle → candidates suggested → tick → `open` → tick → `published` → next `voting` cycle exists. Contract test green ✅. |
+| **M6** Responses + drafts | `03` §7, `04` §8 | `cargo test -p lambda-responses` green ✅; curl save → save → publish against `PUT …/my-response` gives the right DynamoDB state. |
+| **M7** Frontend skeleton + auth | `04`, `05` | Against the dev API: sign in with Google, redeem an invite made by `POST /admin/invites` and see the group on Home, log out. Also try `/admin/bootstrap-login`. |
+| **M8** Media pipeline | `08` | Upload a 5 MB JPEG through `ImageUploader`, see the thumbnail, reload, and see it via CloudFront. **Also:** in dev a group-B image URL with group-A signed params is a 403; run the CDN CORS check (`docs/smoke.md` §6) — images load with `crossorigin="use-credentials"`, so a wrong CORS policy breaks every image. Repeat the CORS check after the first prod deploy. |
+| **M9** Newsletter UI | `04` §7, `06` | A simulated month in the UI: suggest and vote → tick to promote and open → draft with images, reload, publish text and poll answers → tick to publish → read the edition. |
+| **M10** Engagement | `09`, `03` §8 | Two users comment on each other's published answers (one with an image), edit and delete a comment, react with a ZWJ emoji (👨‍👩‍👧‍👦) and a flag; an admin deletes the other user's comment. Check whether API Gateway passes the emoji path param decoded or encoded (the handler accepts both, `03` §8.6). |
+| **M11** Notifications | `07` | Enable push on desktop Chrome and an installed iOS PWA; "Send test push" reaches both and "My devices" lists both. Tick to open → one cycle-open push (re-tick: no duplicate). Rewind into the reminder window and `POST /admin/dev/tick/notify` → one reminder, not a burst. Tick to publish → publication push opens the edition. A member with "Deadline reminders" off is skipped. `PushSent`/`PushFailed` EMF metrics appear in CloudWatch. |
+| **M12** Admin UI | `04` §7.7, `03` §3 | As an admin: create a member invite, open it signed in as a second Google account → new member on the Members tab, invite shows "used by {name}". Promote, demote, then remove them. Rename the group and change its gradient → Home and the switcher update without a reload. |
+| **M13** Hardening | `11` | A new contributor can clone, follow `README.md`, run dev locally and open a PR with passing CI. **Also:** the five workflows go green on GitHub (only checked locally and with `actionlint` so far — `backend-ci` is also the first Linux `cargo lambda build` of `image-process`/`libwebp-sys`); deploy `CiStack` and paste its role ARNs into the repo variables; run `docs/smoke.md` against dev; fill in the `e2e/dev/` Playwright bodies once a Cognito test user exists. |
+| **M13.5** Plan-review follow-ups (D1–D12) | `PROGRESS.md` decisions | All checks green ✅. Deploy-shaped checks join M14: a bound-invite redeem via Google; a Facebook sign-up gets `email_verified=false`; an auto-publish at a real close; a media delete that 403s at the CDN afterwards; the `AutoPublishAbandoned` metric reaches CloudWatch and feeds the `CycleTick-Errors` alarm; the first `promote-prod`. |
 
 ---
 
 ## Milestone 14 — Production deploy (½ day)
+
+Read: `docs/RUNBOOK.md` M14, `11` §6.4, `05` §9.1a. Mostly operator work: an agent can prepare and verify, but every `cdk deploy`, secret write and DNS change needs the owner.
 
 **Deliverables**:
 - `cdk deploy --context env=prod --all` runs clean.
 - DNS records swung to prod.
 - Bootstrap admin flow exercised in prod: `bootstrap_admin.py --env prod` with `BOOTSTRAP_ADMIN_EMAIL` prints an email-bound admin invite, and the owner redeems it by signing in with Google (`05` §9).
 - First promotion through the `production` environment gate (`11` §6).
-- Push notifications tested in prod.
+- Push notifications tested in prod. Prod alarms (10 alarm metrics) sit in `OK`; the SNS and budget email subscriptions are confirmed.
 - README updated with prod URLs.
 
-**Done when**: The user can sign in to `https://opennewsletter.example.com` and use the app for real.
+**Done when**: the owner can sign in to the prod domain and use the app for real.
 
 ---
 
 ## Cross-cutting checklist (revisit before each milestone PR)
 
 - [ ] All public types in changed files have rustdoc / TSDoc when non-obvious.
-- [ ] No new dependency added without justification in PR description.
+- [ ] No new dependency added without justification in the PR description.
 - [ ] No secrets, ARNs, or environment-specific URLs hard-coded outside `config.py` / `env.ts`.
 - [ ] `cargo deny check` clean.
 - [ ] OpenAPI YAML updated alongside any new/changed route; codegen re-run.
 - [ ] Tests added for new access patterns / transactions.
 - [ ] CloudWatch logs were inspected after the change deployed to dev.
 
----
-
-## When something is ambiguous
-
-If a plan document seems wrong or contradicts another, **stop and surface it** rather than guessing. The plan documents are intended to be edited as we learn — keeping them accurate is more valuable than racing to ship a milestone that diverges from them. Open a thread with the user, propose the change, update the doc, then continue.
-
-If you find a gap (a behavior not specified anywhere): pick the simplest, most boring default, document it as a new section in the appropriate plan file in the same PR, and continue. The bias is "decide and document," not "stop and ask," for low-stakes details.
-
----
-
-## Estimated total effort
-
-| Milestone | Days |
-|---|---|
-| 0 Skeleton | 0.5 |
-| 1 Prerequisites | 0.5 (operator, parallel) |
-| 2 Backend foundations | 1.5 |
-| 3 Infra baseline | 1.0 |
-| 4 Auth + bootstrap | 1.0 |
-| 5 Lifecycle | 1.5 |
-| 6 Responses | 1.0 |
-| 7 Frontend skeleton | 1.5 |
-| 8 Media | 1.5 |
-| 9 Newsletter UI | 2.0 |
-| 10 Engagement | 1.0 |
-| 11 Notifications | 1.0 |
-| 12 Admin UI | 0.5 |
-| 13 Hardening | 1.0 |
-| 13.5 Plan-review follow-ups | 2.0 |
-| 14 Prod deploy | 0.5 |
-| **Total** | **~18 days** |
-
-This is "focused engineer time," not calendar time.
+When a plan doc is ambiguous or wrong, follow `CLAUDE.md` "When something is ambiguous" and `coding-standards.md` §7.

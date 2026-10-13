@@ -12,7 +12,7 @@ OpenNewsletter sends notifications for three events: a new cycle opens for respo
 | `lambda-push` | Subscribe / unsubscribe / list / test / preferences endpoints; also async-invoked by `lambda-cycle-tick` for the cycle-open and publication fan-outs |
 | `lambda-cycle-tick` | Triggers the cycle-open and publication fan-outs when a cycle transitions to `open` / `published` |
 | `lambda-notify-tick` | Runs every 15 min; finds open cycles with deadlines within configured offsets and sends reminder pushes in-process via the `push` library |
-| Secrets Manager `opennewsletter/{env}` | Holds VAPID public key, private key, and subject as JSON keys (`vapid_public_key`/`vapid_private_key`/`vapid_subject`) inside the one per-env app secret — decided 2026-10-07, lands in M13.5, D7; was a dedicated `opennewsletter/vapid/{env}` secret; see `01` §2/§7.1/§12 |
+| Secrets Manager `opennewsletter/{env}` | Holds VAPID public key, private key, and subject as JSON keys (`vapid_public_key`/`vapid_private_key`/`vapid_subject`) inside the one per-env app secret; see `01` §2/§7.1/§12 |
 | DynamoDB | Stores `PushSubscription` rows and idempotency markers |
 
 ---
@@ -27,9 +27,9 @@ python scripts/generate_vapid_keys.py
 # {"publicKey": "BPV...", "privateKey": "Vmt...", "subject": "mailto:admin@opennewsletter.example.com"}
 ```
 
-The script encodes the keys itself with `cryptography` (RFC 8292 raw-point encoding). It originally called `py_vapid`, whose installed version lacks the methods it used (`PROGRESS.md` B5). The output is merged into the one per-env app secret `opennewsletter/{env}` as `vapid_public_key`/`vapid_private_key`/`vapid_subject` (decided 2026-10-07; lands in M13.5, D7 — was its own `opennewsletter/vapid/{env}` secret). Public key is exposed via `GET /config`.
+The script encodes the keys itself with `cryptography` (RFC 8292 raw-point encoding), not `py_vapid`, whose installed version lacks the methods it needs (`PROGRESS.md` B5). The output is merged into the one per-env app secret `opennewsletter/{env}` as `vapid_public_key`/`vapid_private_key`/`vapid_subject`. Public key is exposed via `GET /config`.
 
-The Rust `lambda-notify-tick` and `lambda-push` share `lambda-push`'s library (`push`), which implements Web Push itself (§10 — **not** the `web-push` crate, decided M11). Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value` on `APP_SECRET_ARN` (was `VAPID_SECRET_ARN` against a dedicated secret), cached in `OnceCell` for the warm container's lifetime, then the `vapid_private_key` JSON key is read out of the parsed secret. The value is the raw 32-byte P-256 scalar, URL-safe base64 unpadded (the format `scripts/generate_vapid_keys.py` writes); the Rust side loads it directly — **no PEM conversion step exists anywhere**.
+The Rust `lambda-notify-tick` and `lambda-push` share `lambda-push`'s library (`push`), which implements Web Push itself (§10 — **not** the `web-push` crate). Cold-start fetch of the secret: `aws_sdk_secretsmanager::get_secret_value` on `APP_SECRET_ARN`, cached in `OnceCell` for the warm container's lifetime, then the `vapid_private_key` JSON key is read out of the parsed secret. The value is the raw 32-byte P-256 scalar, URL-safe base64 unpadded (the format `scripts/generate_vapid_keys.py` writes); the Rust side loads it directly — **no PEM conversion step exists anywhere**.
 
 ---
 
@@ -45,7 +45,7 @@ The frontend's `pushSetup.ts`:
 
 `lambda-push` upserts the row keyed by `(userId, sha256(endpoint))`. If a row already exists for this `(user, endpoint)`, it is overwritten — handles re-subscriptions after the browser rotates the endpoint.
 
-**Decided M13: endpoint hosts are allowlisted.** `POST /push/subscribe` rejects an `endpoint` whose host isn't a known Web Push service, with a 422 on field `endpoint` ("endpoint must be a known Web Push service"). Without this, `POST /push/test` would POST to any host a signed-in user registered. The list is `PUSH_ENDPOINT_HOST_SUFFIXES` in `shared::config`: `fcm.googleapis.com` (Chrome, Edge-on-Android), `*.push.services.mozilla.com` (Firefox), `web.push.apple.com` and `*.push.apple.com` (Safari/iOS), and `*.notify.windows.com` (legacy Edge). The host must match exactly or end in a suffix, compared case-insensitively on the parsed host, so `fcm.googleapis.com.evil.com` and userinfo tricks fail. A browser on an unlisted service can't subscribe; add its host here if one turns up.
+**Endpoint hosts are allowlisted.** `POST /push/subscribe` rejects an `endpoint` whose host isn't a known Web Push service, with a 422 on field `endpoint` ("endpoint must be a known Web Push service"). Without this, `POST /push/test` would POST to any host a signed-in user registered. The list is `PUSH_ENDPOINT_HOST_SUFFIXES` in `shared::config`: `fcm.googleapis.com` (Chrome, Edge-on-Android), `*.push.services.mozilla.com` (Firefox), `web.push.apple.com` and `*.push.apple.com` (Safari/iOS), and `*.notify.windows.com` (legacy Edge). The host must match exactly or end in a suffix, compared case-insensitively on the parsed host, so `fcm.googleapis.com.evil.com` and userinfo tricks fail. A browser on an unlisted service can't subscribe; add its host here if one turns up.
 
 ### 3.2 Pruning failures
 
@@ -92,7 +92,7 @@ Every push is a JSON document:
 }
 ```
 
-`url` is root-relative (decided M11; was absolute): the service worker resolves it against its own origin, so the backend needs no frontend-origin setting and dev/prod differ only by where the SPA is served. The test push uses `/settings` and tag `test`.
+`url` is root-relative: the service worker resolves it against its own origin, so the backend needs no frontend-origin setting and dev/prod differ only by where the SPA is served. The test push uses `/settings` and tag `test`.
 
 The service worker reads this, calls `showNotification`, and uses `tag` to coalesce re-deliveries (the OS shows only the latest per tag). On click, the SW navigates to `url`.
 
@@ -107,11 +107,11 @@ The service worker reads this, calls `showNotification`, and uses `tag` to coale
 | `publication` | "{groupName}: this month's edition is out" | "{N} answers, {polls} polls — go read it." |
 | `test` | "Test push from OpenNewsletter" | "If you got this, your device is wired up." |
 
-The default response window is **7 days** (decided 2026-10-07; lands in M13.5, D3 — was 4; `DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`). The default reminder offsets stay `[96, 48, 24]` hours, so against a 7-day window all three now actually fire (at day 4, day 6, and day 7 of the window) — previously the 96h offset against a 4-day window was moot (§7.1).
+The default response window is **7 days** (`DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`). The default reminder offsets are `[96, 48, 24]` hours; against a 7-day window all three actually fire (at day 4, day 6, and day 7 of the window — see the moot-offset rule in §7.1).
 
-`{N}`, `{remaining}`, and `{dueDate}` are computed per-recipient using their own draft state and the group's TZ. `N` counts published responses **and non-empty unpublished drafts** (decided 2026-10-07; lands in M13.5, D2 — text with a non-whitespace `body` or images, or a poll with a pick) — both will be published automatically at close (`06` §5.3), so reminders and the "done" message should reflect that, not just explicitly-published answers. The "skip members who've answered everything" rule (§7.2) uses the same count.
+`{N}`, `{remaining}`, and `{dueDate}` are computed per-recipient using their own draft state and the group's TZ. `N` counts published responses and non-empty unpublished drafts (text with a non-whitespace `body` or images, or a poll with a pick) — both publish automatically at close (`06` §5.3), so reminders and the "done" message reflect that, not just explicitly-published answers. The "skip members who've answered everything" rule (§7.2) uses the same count.
 
-**Generalised for any configured offset (decided M11).** Offsets are admin-configurable up to 168h, so the table above is the 96/48/24 instance of these rules, keyed on the offset `h` being sent:
+**Generalised for any configured offset.** Offsets are admin-configurable up to 168h, so the table above is the 96/48/24 instance of these rules, keyed on the offset `h` being sent:
 - Title: `h ≥ 48` → "{groupName}: {round(h/24)} days left"; `24 ≤ h < 48` → "due tomorrow"; `h < 24` → "{h} hours left".
 - Body: `h ≥ 72` → the `{dueDate}` copy; `36 ≤ h < 72` → the `{N} of {total}` copy; `h < 36` → the "Last call" copy.
 - `cycle_open` body uses the real counts: "{total} questions are waiting. You have {window} days to respond.", window = the response window in whole days. `publication` omits the polls clause when there are none. Singular forms throughout.
@@ -121,7 +121,7 @@ The default response window is **7 days** (decided 2026-10-07; lands in M13.5, D
 
 ## 6. Cycle-open fan-out
 
-Triggered from `lambda-cycle-tick` immediately after promoting a cycle to `open`. Implemented as an async Lambda invoke (fire-and-forget) of `lambda-push`'s internal handler `cycle_open_fanout`. The function name comes from env `PUSH_FUNCTION_NAME`; an invoke failure is logged and never fails the tick. Skipped entirely when the group's `notificationSettings.onCycleOpen` is `false` (decided M11 — that group switch already existed in `02` §2.3 but nothing read it).
+Triggered from `lambda-cycle-tick` immediately after promoting a cycle to `open`. Implemented as an async Lambda invoke (fire-and-forget) of `lambda-push`'s internal handler `cycle_open_fanout`. The function name comes from env `PUSH_FUNCTION_NAME`; an invoke failure is logged and never fails the tick. Skipped entirely when the group's `notificationSettings.onCycleOpen` is `false`.
 
 `lambda-push` serves API Gateway routes and these direct invokes from a single binary, dispatching on **event shape**: if the incoming JSON has a `requestContext` field it's an API Gateway event and routes by method+path; if it has an `internal` field it's a fan-out invoke. `requestContext` is checked first: API Gateway always wraps the client's body, so an HTTP caller can't forge an `internal` event. The direct-invoke envelope is:
 
@@ -156,9 +156,9 @@ for member in members:
 
 ### 6.2 Concurrency
 
-Every fan-out (cycle-open, deadline reminder, publication, test push) first gathers its recipients' subscriptions, then sends via `delivery::send_all`: up to `PUSH_SEND_CONCURRENCY` (16) requests in flight at once, each with the `PUSH_SEND_TIMEOUT_SECS` (10s) timeout. A dead endpoint costs one slot for 10s instead of delaying everyone queued behind it. Sending one at a time was dropped after the M11 review: with each send able to take up to 10s, 6 hung endpoints were enough to exhaust the 60s `push-api` timeout.
+Every fan-out (cycle-open, deadline reminder, publication, test push) first gathers its recipients' subscriptions, then sends via `delivery::send_all`: up to `PUSH_SEND_CONCURRENCY` (16) requests in flight at once, each with the `PUSH_SEND_TIMEOUT_SECS` (10s) timeout. A dead endpoint costs one slot for 10s instead of delaying everyone queued behind it — sending one at a time would let a handful of hung endpoints exhaust the 60s `push-api` timeout.
 
-**Send cutoffs (decided post-M11 review).** No *new* send starts after a cutoff measured from the start of the work. Sends already in flight always finish, so their §3.2 bookkeeping lands. Each cutoff leaves the 10s send timeout plus ~5s headroom under the hard limit it protects:
+**Send cutoffs.** No *new* send starts after a cutoff measured from the start of the work. Sends already in flight always finish, so their §3.2 bookkeeping lands. Each cutoff leaves the 10s send timeout plus ~5s headroom under the hard limit it protects:
 
 | Work | Hard limit | Cutoff (`shared::config`) |
 |---|---|---|
@@ -205,9 +205,9 @@ for nl in candidates:
         fanout_deadline_reminder(nl, group, min(claimed))
 ```
 
-**Decided M11** (the original pseudo-code put each marker *after* its fan-out, and sent every overdue offset):
+Rules:
 - **Claim first.** Markers are conditional puts written *before* sending, so two overlapping ticks can't both send. A crash mid-fan-out drops the rest of that reminder rather than risk duplicates.
-- **Moot offsets are never sent.** An offset that lands at or before `responseOpenAt` (e.g. a 168h offset against a 7-day window — exactly the boundary, decided 2026-10-07/D3; the default 96h offset against the new 7-day window is no longer moot, unlike the old 4-day default) would arrive minutes after the cycle-open push. Its marker is written and nothing is sent.
+- **Moot offsets are never sent.** An offset that lands at or before `responseOpenAt` (e.g. a 168h offset against a 7-day window is exactly the boundary) would arrive minutes after the cycle-open push. Its marker is written and nothing is sent.
 - **Only the most urgent due offset is sent.** If several are due at once (a late tick, or `advanceCycleClosesBy` in dev), the smallest is sent and all of them are marked, so members don't get a burst.
 
 The 15-minute cadence means the actual delivery may be ≤15 min late versus the configured offset — acceptable for human reminders.
@@ -216,10 +216,10 @@ The 15-minute cadence means the actual delivery may be ≤15 min late versus the
 
 For each member:
 - Fetch member's drafts and published responses for this cycle (AP15 — single Query).
-- `N = published.len() + non_empty_drafts.len()`, `total = nl.lockedQuestionIds.len()`, `remaining = total - N` (updated 2026-10-07; lands in M13.5, D2 — `N` previously counted published responses only; a non-empty draft now counts too, since it will auto-publish at close, `06` §5.3). Non-empty: text with a non-whitespace `body` or non-empty `imageMediaIds`; poll with `pollOptionId` set.
+- `N = published.len() + non_empty_drafts.len()`, `total = nl.lockedQuestionIds.len()`, `remaining = total - N`. A non-empty draft counts because it auto-publishes at close (`06` §5.3). Non-empty: text with a non-whitespace `body` or non-empty `imageMediaIds`; poll with `pollOptionId` set.
 - Inject into the body template per §5.1.
 
-Members who already have `N == total` get a different soft message: "{N}/{total} answers in. You're done — but you can still edit." Optional: skip them entirely. **Default: skip them at the 24h reminder, send them the 96h/48h ones.** Configurable later. Generalised in M11: they're skipped at the group's *smallest* configured offset. `N` counts published responses and non-empty drafts of any question kind.
+Members who already have `N == total` get a different soft message: "{N}/{total} answers in. You're done — but you can still edit." They're skipped entirely at the group's *smallest* configured offset, and sent the others. `N` counts published responses and non-empty drafts of any question kind.
 
 ---
 
@@ -227,9 +227,9 @@ Members who already have `N == total` get a different soft message: "{N}/{total}
 
 When `publish(nl)` runs in `lambda-cycle-tick`, async-invoke `lambda-push`'s `publication_fanout` with `{ groupId, cycleId }`.
 
-Idempotency marker: `NOTIFIED#PUBLISH` (claimed first, like §6.1). `{N}` counts published answers to text questions, `{polls}` the cycle's poll questions. Same algorithm as §6 but with the `publication` payload. Because this fan-out runs after `publish(nl)`'s auto-publish sweep (`06` §5.3), `{N}` naturally **includes answers that were auto-published from non-empty drafts**, not just ones the author explicitly published (decided 2026-10-07; lands in M13.5, D2) — by the time this fan-out reads the answers, there's no distinction left to make.
+Idempotency marker: `NOTIFIED#PUBLISH` (claimed first, like §6.1). `{N}` counts published answers to text questions, `{polls}` the cycle's poll questions. Same algorithm as §6 but with the `publication` payload. Because this fan-out runs after `publish(nl)`'s auto-publish sweep (`06` §5.3), `{N}` naturally includes answers that were auto-published from non-empty drafts, not just ones the author explicitly published — by the time this fan-out reads the answers, there's no distinction left to make.
 
-This was not on the original requirement list (the spec only mentioned cycle-open + deadline reminders) but is the natural counterpart: users want to know when there's a new edition to read. **Always on; no user-facing toggle.** The only kill-switch is the OS-/browser-level push permission. `NotificationPref` carries no `publication` field; `Group.notificationSettings` carries no `onPublication`. The fan-out still respects "user has zero subscriptions" — those users simply receive nothing.
+**Always on; no user-facing toggle.** The only kill-switch is the OS-/browser-level push permission. `NotificationPref` carries no `publication` field; `Group.notificationSettings` carries no `onPublication`. The fan-out still respects "user has zero subscriptions" — those users simply receive nothing.
 
 ---
 
@@ -243,28 +243,11 @@ This was not on the original requirement list (the spec only mentioned cycle-ope
 
 ## 10. Web Push delivery details (Rust)
 
-**Decided M11: implemented directly, not with the `web-push` crate.** `web-push` 0.10 pulls `ece` (OpenSSL backend) and `isahc` (libcurl), two C builds that put the arm64 `cargo lambda` cross-compile at risk (PROGRESS.md B6). `lambda-push`'s `webpush` module instead does RFC 8291 `aes128gcm` encryption (`p256` ECDH, `hkdf`, `aes-gcm`; tested against the RFC's Appendix A vector) and an RFC 8292 VAPID ES256 JWT (`aud` = endpoint origin, `exp` = now + 12h, `sub` from the secret), sent with `reqwest` over rustls with a 10 s timeout. Headers: `TTL: 86400`, `Urgency: normal`, `Content-Encoding: aes128gcm`, `Authorization: vapid t=…, k=…`. The sketch below is the original plan, kept for the behaviour it describes.
+**Implemented directly, not with the `web-push` crate:** `web-push` 0.10 pulls `ece` (OpenSSL backend) and `isahc` (libcurl), two C builds that put the arm64 `cargo lambda` cross-compile at risk (PROGRESS.md B6).
 
-```rust
-async fn send_push(sub: &PushSubscription, payload: &Payload) -> SendResult {
-    let info = SubscriptionInfo::new(&sub.endpoint, &sub.p256dh, &sub.auth);
-    let body = serde_json::to_vec(payload).unwrap();
+`lambda-push`'s `webpush` module (`backend/crates/lambda-push/src/webpush.rs`) is pure crypto, no network I/O: RFC 8291 `aes128gcm` message encryption (ECDH over `p256`, `hkdf` for the key/nonce derivation, `aes-gcm` for the AEAD; unit-tested against the RFC's Appendix A vector, including a decrypt round-trip) and an RFC 8292 VAPID ES256 JWT (`aud` = the endpoint's scheme+host with no path, `exp` = now + 12h, `sub` = the configured subject, signed with `p256::ecdsa`). `VapidKeys::parse` verifies the configured private key actually derives the configured public key at load time, so a mismatched pair fails at cold start instead of silently at send time.
 
-    let mut builder = WebPushMessageBuilder::new(&info);
-    builder.set_payload(ContentEncoding::Aes128Gcm, &body);
-    builder.set_ttl(86400);                      // 24h: don't deliver if app reopens later
-    builder.set_urgency(Urgency::Normal);
-    let msg = builder.build()?;
-
-    // Private key is stored as URL-safe base64 raw bytes (py_vapid's output format).
-    let signer = VapidSignatureBuilder::from_base64(VAPID_PRIVATE_KEY_B64, URL_SAFE_NO_PAD, &info)?
-        .add_claim("sub", VAPID_SUBJECT)
-        .build()?;
-
-    let client = IsahcWebPushClient::new()?;
-    client.send_with_signer(msg, &signer).await
-}
-```
+`sender.rs`'s `ReqwestPushSender` does the actual POST, over `reqwest`/rustls with a `PUSH_SEND_TIMEOUT_SECS` (10s) timeout. `delivery.rs`'s `send_one` wires the two together per message: encrypt, build the VAPID header, then send with headers `Authorization: vapid t=…, k=…`, `TTL: 86400` (`PUSH_TTL_SECONDS`), `Urgency: normal`, `Content-Type: application/octet-stream`, `Content-Encoding: aes128gcm`.
 
 Error mapping:
 
@@ -295,20 +278,11 @@ A single toggle "Push notifications" (on = permission granted AND this browser h
 
 ### 11.2 Re-subscribe-on-load
 
-In `App.tsx`, after auth:
-
-```ts
-useEffect(() => {
-  if (!user) return;
-  ensurePushSubscription(config.vapidPublicKey).catch(reportError);
-}, [user]);
-```
-
-`ensurePushSubscription` is a no-op if permission was previously denied; only refreshes the server-side subscription record if one exists locally. It never prompts on load (`{ prompt: false }`); Settings calls it with `{ prompt: true }`. If the local subscription was made with a different VAPID key it is replaced. Logout calls `disablePush()` best-effort before tokens are cleared.
+Subscription/permission flow, the SW push handler, and the `App.tsx` re-subscribe-on-load wiring are owned by `04-frontend-architecture.md` §5.3/§5.4 and §14.3/§14.4. Push-specific behavior not covered there: `ensurePushSubscription` is a no-op if permission was previously denied; it never prompts on load (`{ prompt: false }`), only Settings does (`{ prompt: true }`); if the local subscription was made with a different VAPID key it is replaced; and logout calls `disablePush()` best-effort before tokens are cleared.
 
 ### 11.3 PWA install prompt
 
-Listen for `beforeinstallprompt`, stash the event, and surface an "Install OpenNewsletter" button on the home page (dismissible) and on Settings. iOS Safari can't be triggered programmatically; show a banner with instructions on iOS user-agent.
+Owned by `04-frontend-architecture.md` §14.4 — nothing push-specific here.
 
 ---
 

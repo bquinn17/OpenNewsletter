@@ -5,44 +5,27 @@
 
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
+use domain::api::{CycleTransition, DevTickCycleResponse};
 use domain::{
     CandidateQuestion, CycleId, GroupId, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus,
     QuestionKind, Response, ResponseStatus,
 };
 use persistence::responses::AutoPublishOutcome;
 use persistence::{groups, media, newsletters, questions, responses, Repo, RepoError};
-use serde::Serialize;
 
 use crate::notify::{FanoutKind, NoopNotifier, Notifier};
-
-/// One state change this tick made, or a new cycle it created. `from: null`
-/// marks a freshly created `voting` cycle rather than an existing row's
-/// transition (`plans/03-api-contract.md` §11a.1).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Transition {
-    pub group_id: String,
-    pub cycle_id: String,
-    pub from: Option<&'static str>,
-    pub to: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct TickSummary {
-    pub transitions: Vec<Transition>,
-}
 
 /// Run one full tick: promote due `voting` cycles, publish due `open` cycles,
 /// then record the sentinel. Every per-cycle failure is logged and skipped —
 /// one group's bad data never blocks another group's tick (§8). Fan-outs go
 /// nowhere; see [`run_tick_with`].
-pub async fn run_tick(repo: &Repo) -> TickSummary {
+pub async fn run_tick(repo: &Repo) -> DevTickCycleResponse {
     run_tick_with(repo, &NoopNotifier).await
 }
 
 /// [`run_tick`], triggering a notification fan-out through `notifier` after
 /// each cycle opens or publishes.
-pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> TickSummary {
+pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> DevTickCycleResponse {
     let now = Utc::now();
     let mut transitions = Vec::new();
 
@@ -94,7 +77,7 @@ pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> TickSummary 
         tracing::error!(error = ?e, "failed to upsert the tick sentinel row");
     }
 
-    TickSummary { transitions }
+    DevTickCycleResponse { transitions }
 }
 
 /// §5.2 — promote the top-N candidates into locked questions, flip the cycle
@@ -106,7 +89,7 @@ async fn promote_and_open(
     notifier: &dyn Notifier,
     nl: &Newsletter,
     now: DateTime<Utc>,
-) -> Vec<Transition> {
+) -> Vec<CycleTransition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -178,20 +161,20 @@ async fn promote_and_open(
         .fanout(FanoutKind::CycleOpen, &nl.group_id, &nl.cycle_id)
         .await;
 
-    let mut transitions = vec![Transition {
-        group_id: nl.group_id.to_string(),
-        cycle_id: nl.cycle_id.to_string(),
-        from: Some("voting"),
-        to: "open",
+    let mut transitions = vec![CycleTransition {
+        group_id: nl.group_id.clone(),
+        cycle_id: nl.cycle_id.clone(),
+        from: Some(NewsletterStatus::Voting),
+        to: NewsletterStatus::Open,
     }];
 
     if let Some(created) = create_next_voting_cycle(repo, &nl.group_id, &group, &nl.cycle_id).await
     {
-        transitions.push(Transition {
-            group_id: nl.group_id.to_string(),
-            cycle_id: created.to_string(),
+        transitions.push(CycleTransition {
+            group_id: nl.group_id.clone(),
+            cycle_id: created,
             from: None,
-            to: "voting",
+            to: NewsletterStatus::Voting,
         });
     }
 
@@ -204,7 +187,7 @@ async fn promote_and_open(
 /// voting-due query — so the group's lifecycle would stop after this edition
 /// publishes. Called only for an `open` cycle whose group showed no `voting`
 /// cycle on GSI2 this tick.
-async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<Transition> {
+async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<CycleTransition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -219,11 +202,11 @@ async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<Transi
 
     let created = create_next_voting_cycle(repo, &nl.group_id, &group, &nl.cycle_id).await?;
     tracing::warn!(group_id = %nl.group_id, cycle_id = %created, "repaired a missing next voting cycle");
-    Some(Transition {
-        group_id: nl.group_id.to_string(),
-        cycle_id: created.to_string(),
+    Some(CycleTransition {
+        group_id: nl.group_id.clone(),
+        cycle_id: created,
         from: None,
-        to: "voting",
+        to: NewsletterStatus::Voting,
     })
 }
 
@@ -282,7 +265,7 @@ async fn publish(
     notifier: &dyn Notifier,
     nl: &Newsletter,
     now: DateTime<Utc>,
-) -> Option<Transition> {
+) -> Option<CycleTransition> {
     let sweep = auto_publish_drafts(repo, nl).await;
     if sweep.failed > 0 {
         let max = shared::config::AUTO_PUBLISH_MAX_FAILED_SWEEPS;
@@ -311,11 +294,11 @@ async fn publish(
             notifier
                 .fanout(FanoutKind::Publication, &nl.group_id, &nl.cycle_id)
                 .await;
-            Some(Transition {
-                group_id: nl.group_id.to_string(),
-                cycle_id: nl.cycle_id.to_string(),
-                from: Some("open"),
-                to: "published",
+            Some(CycleTransition {
+                group_id: nl.group_id.clone(),
+                cycle_id: nl.cycle_id.clone(),
+                from: Some(NewsletterStatus::Open),
+                to: NewsletterStatus::Published,
             })
         }
         Err(e) if e.is_lost_race() => {

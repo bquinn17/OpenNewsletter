@@ -577,6 +577,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/dev/tick/cycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the cycle tick now (`03-api-contract.md` §11a.1). This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. With `advanceCycleClosesBy`, the group's active cycle (its `open` cycle if it has one, else its `voting` cycle) has its deadline rewound by that duration first, so its transition is due at once. `groupId` is then required and the caller must be that group's admin. Without it, the tick runs globally and the caller must be an admin of at least one group. An absent or empty body is allowed. */
+        post: operations["devTickCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/dev/tick/notify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the notify tick now, globally (`03-api-contract.md` §11a.2). No request body. This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. The caller must be an admin of at least one group. Only deadline reminders run here. Cycle-open and publication fan-outs come from the cycle tick via `lambda-push` and aren't reported by either dev route. */
+        post: operations["devTickNotify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1134,6 +1168,35 @@ export interface components {
             version: string;
             /** Format: date-time */
             buildAt: string | null;
+        };
+        DevTickCycleRequest: {
+            /** @description Required when `advanceCycleClosesBy` is set. */
+            groupId?: string;
+            /** @description An integer plus `m`, `h` or `d` (`5m`, `2h`, `4d`), between 0 and 366 days. */
+            advanceCycleClosesBy?: string;
+        };
+        CycleTransition: {
+            groupId: string;
+            cycleId: string;
+            /** @description `null` when the tick created this cycle. */
+            from: components["schemas"]["NewsletterStatus"] | null;
+            to: components["schemas"]["NewsletterStatus"];
+        };
+        DevTickCycleResponse: {
+            transitions: components["schemas"]["CycleTransition"][];
+        };
+        DeadlineFanout: {
+            groupId: string;
+            cycleId: string;
+            /** @enum {string} */
+            kind: "deadline_reminder";
+            offsetHours: number;
+            delivered: number;
+            /** @description Expired and failed sends together. */
+            failed: number;
+        };
+        DevTickNotifyResponse: {
+            fanouts: components["schemas"]["DeadlineFanout"][];
         };
     };
     responses: {
@@ -3349,6 +3412,162 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+        };
+    };
+    devTickCycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                 *       "advanceCycleClosesBy": "7d"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DevTickCycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Every state change the tick made, across all groups. `from: null` marks a newly created `voting` cycle (`06-newsletter-lifecycle.md` §5.4) rather than a transition of an existing one. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "transitions": [
+                     *         {
+                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *           "cycleId": "202610",
+                     *           "from": "voting",
+                     *           "to": "open"
+                     *         },
+                     *         {
+                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *           "cycleId": "202611",
+                     *           "from": null,
+                     *           "to": "voting"
+                     *         },
+                     *         {
+                     *           "groupId": "01HG2F3K4M5N6P7Q8R9S0T1V2W",
+                     *           "cycleId": "202609",
+                     *           "from": "open",
+                     *           "to": "published"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DevTickCycleResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not `ENV=dev`. The example is the Lambda's own refusal, a backstop. Outside dev the route isn't deployed, so API Gateway answers first with its own body. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.opennewsletter.example.com/errors/not-found",
+                     *       "title": "Not found",
+                     *       "status": 404,
+                     *       "detail": "dev routes are only available when ENV=dev",
+                     *       "code": "NOT_FOUND",
+                     *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description `advanceCycleClosesBy` isn't an integer plus `m`/`h`/`d` between 0 and 366 days, or it was sent without `groupId`, or the body isn't valid JSON. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.opennewsletter.example.com/errors/validation-failed",
+                     *       "title": "Validation failed",
+                     *       "status": 422,
+                     *       "detail": "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')",
+                     *       "code": "VALIDATION_FAILED",
+                     *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
+                     *       "fieldErrors": [
+                     *         {
+                     *           "field": "advanceCycleClosesBy",
+                     *           "code": "INVALID",
+                     *           "message": "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    devTickNotify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per deadline reminder sent this tick. `failed` counts expired and failed sends together. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "fanouts": [
+                     *         {
+                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *           "cycleId": "202610",
+                     *           "kind": "deadline_reminder",
+                     *           "offsetHours": 24,
+                     *           "delivered": 5,
+                     *           "failed": 1
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DevTickNotifyResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not `ENV=dev`. The example is the Lambda's own refusal, a backstop. Outside dev the route isn't deployed, so API Gateway answers first with its own body. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.opennewsletter.example.com/errors/not-found",
+                     *       "title": "Not found",
+                     *       "status": 404,
+                     *       "detail": "dev routes are only available when ENV=dev",
+                     *       "code": "NOT_FOUND",
+                     *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
         };
     };
 }

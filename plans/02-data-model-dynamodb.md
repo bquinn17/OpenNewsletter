@@ -2,7 +2,7 @@
 
 This document defines every entity stored in the `OpenNewsletter-{env}` table. Read this in conjunction with `03-api-contract.md` (which references the access patterns by name) and `06-newsletter-lifecycle.md` (which references the cycle state transitions).
 
-**Naming convention.** Every attribute name in this document — table headers, key formulas, transaction descriptions — is the literal DynamoDB item attribute name, and those are **snake_case** (`member_count`, `response_close_at`, `editions_answered`, …), matching the Rust entity structs in `backend/crates/domain/src/entities.rs`, which `persistence` serializes via `serde_dynamo::{to_item, from_item}` with no `rename_all` on struct fields. The HTTP/JSON API contract (`03-api-contract.md`, `shared/openapi.yaml`) is **camelCase**, as specified there. Lambda handlers map entities to DTOs explicitly at the boundary — there is no automatic camelCase ⇄ snake_case conversion, so a field renamed on one side does not silently follow on the other. (Reconciled 2026-09-27 — this doc previously documented item attributes in camelCase, a gap called out since M4.)
+**Naming convention.** Every attribute name in this document — table headers, key formulas, transaction descriptions — is the literal DynamoDB item attribute name, and those are **snake_case** (`member_count`, `response_close_at`, `editions_answered`, …), matching the Rust entity structs in `backend/crates/domain/src/entities.rs`, which `persistence` serializes via `serde_dynamo::{to_item, from_item}` with no `rename_all` on struct fields. The HTTP/JSON API contract (`03-api-contract.md`, `shared/openapi.yaml`) is **camelCase**, as specified there. Lambda handlers map entities to DTOs explicitly at the boundary — there is no automatic camelCase ⇄ snake_case conversion, so a field renamed on one side does not silently follow on the other.
 
 ---
 
@@ -26,7 +26,7 @@ All keys are strings. All ID values are UUIDv7 unless noted.
 
 ## 2. Entity catalog
 
-For each entity below: `pk`, `sk`, optional GSI keys, the application attributes, and a brief explanation. `entity` attribute is set on every item for debugging (and for the future archival stream consumer — streams themselves are off in v1). All `Attr` values below are DynamoDB item attribute names (snake_case) — not to be confused with the camelCase JSON field names of the same entity in the HTTP contract (`03-api-contract.md`).
+For each entity below: `pk`, `sk`, optional GSI keys, the application attributes, and a brief explanation. `entity` attribute is set on every item for debugging (and for the future archival stream consumer — streams themselves are off in v1).
 
 ### 2.1 User
 
@@ -55,11 +55,10 @@ A Cognito-authenticated person.
 | `pk` | `COGNITO_SUB#{sub}` |
 | `sk` | `USER_ID` |
 | `entity` | `CognitoSubLookup` |
+| `cognito_sub` | string (redundant with the value already encoded in `pk`; kept for scan/debug convenience) |
 | `user_id` | UUIDv7 |
 
 Created in the same `TransactWriteItems` as the User row (during invite redemption). Read on every authenticated request to resolve `claims.sub` → our `user_id`. Cached per cold-start for ≤60s alongside the membership cache.
-
-> **Note (reconciled 2026-09-27):** `persistence::invites::join_via_invite_tx` builds this item via `to_item(CognitoSubLookup { cognito_sub, user_id })` (`backend/crates/persistence/src/invites.rs`), so the item also carries a `cognito_sub` attribute (redundant with the value already encoded in `pk`) that this doc does not document. Flagging for the lead to decide whether to keep it (harmless denormalization, occasionally handy for a scan/debug) or trim the struct to `user_id` only.
 
 ### 2.2 GroupMembership (also serves as Group → user index via GSI1)
 
@@ -77,7 +76,7 @@ A user's membership in one group.
 | `role` | `admin` \| `member` |
 | `joined_at` | ISO-8601 |
 | `editions_answered` | number (denormalized; incremented in the publish-response transaction the first time a user publishes any answer in a given cycle) |
-| `last_answered_cycle` | `yyyymm` \| absent. The cycle `editions_answered` last counted. The bump is conditioned on this not already being the current cycle, so two concurrent first publishes count once (added M13; §4 #4). |
+| `last_answered_cycle` | `yyyymm` \| absent. The cycle `editions_answered` last counted. The bump is conditioned on this not already being the current cycle, so two concurrent first publishes count once (§4 #4). |
 
 Access patterns served:
 - "What groups am I in?" → `Query pk = USER#{user_id} AND begins_with(sk, GROUP#)`
@@ -122,7 +121,7 @@ The tenant.
 | `consumed_by` | user_id \| null |
 | `consumed_at` | ISO-8601 \| null |
 | `role_on_redeem` | `admin` \| `member` (defaults to `member`; admins can issue admin invites) |
-| `bound_email` | string (lowercased) \| null — when set, `POST /invites/redeem` requires the caller's ID-token `email` (lowercased) to equal it AND `email_verified` to be true, else 403 `INVITE_EMAIL_MISMATCH` (`03` §1.1, §3.4). Set by `POST /admin/invites`'s optional `boundEmail`, and always set on the invite `scripts/bootstrap_admin.py` creates for the prod bootstrap admin (`05` §9). (Decided 2026-10-07; lands in M13.5.) |
+| `bound_email` | string (lowercased) \| null — when set, `POST /invites/redeem` requires the caller's ID-token `email` (lowercased) to equal it AND `email_verified` to be true, else 403 `INVITE_EMAIL_MISMATCH` (`03` §1.1, §3.4). Set by `POST /admin/invites`'s optional `boundEmail`, and always set on the invite `scripts/bootstrap_admin.py` creates for the prod bootstrap admin (`05` §9). |
 
 Access patterns:
 - "Validate invite by code" → `GetItem pk=INVITE#{code} sk=META`
@@ -187,7 +186,7 @@ Access patterns:
 - "List candidates for a cycle" → `Query pk=GROUP#{g}#CYCLE#{c} AND begins_with(sk, QC#)`
 - "Top N candidates by votes" → `Query GSI1 gsi1pk=GROUP#{g}#CYCLE#{c}#VOTES` ScanIndexForward=false Limit=N
 
-**AP11 is no longer used for promotion** (decided 2026-10-07; lands in M13.5, D4). `gsi1sk`'s `ScanIndexForward=false` order breaks ties newest-first, but promotion must break ties oldest-first (`06` §5.2). `lambda-cycle-tick` now reads the full candidate pool via AP10 (bounded by group membership) and sorts in memory by `vote_count` DESC, then `submitted_at` ASC, then `question_id` ASC. `GET …/candidate-questions?sort=top` (`03` §6.1) does the same in-memory sort for the same reason. GSI1 `#VOTES` keys are still written on every vote (§4 #1/#2) — nothing currently reads them — kept in case a future leaderboard view wants the cheap top-N query and doesn't need tie-order to match promotion.
+**AP11 is not used for promotion** (D4). `gsi1sk`'s `ScanIndexForward=false` order breaks ties newest-first, but promotion must break ties oldest-first (`06` §5.2). `lambda-cycle-tick` reads the full candidate pool via AP10 (bounded by group membership) and sorts in memory by `vote_count` DESC, then `submitted_at` ASC, then `question_id` ASC. `GET …/candidate-questions?sort=top` (`03` §6.1) does the same in-memory sort for the same reason. GSI1 `#VOTES` keys are still written on every vote (§4 #1/#2) — nothing currently reads them — kept in case a future leaderboard view wants the cheap top-N query and doesn't need tie-order to match promotion.
 
 ### 2.7 Candidate vote
 
@@ -199,12 +198,12 @@ Records that a user upvoted a candidate question.
 | `sk` | `QC#{question_id}` |
 | `entity` | `CandidateVote` |
 | `user_id` | UUIDv7 |
+| `group_id` | UUIDv7 (redundant with `pk`; kept so the item is self-describing if ever read outside its own partition) |
+| `cycle_id` | string (redundant with `pk`, same reason) |
 | `question_id` | UUIDv7 |
 | `voted_at` | ISO-8601 |
 
 The `votes_per_user_per_cycle` cap is enforced inside the vote transactions by the voter's `VoterTally` row (§2.7a, §4 #1). The handler also pre-reads the voter partition, but only to build a helpful `VOTE_CAP_REACHED` detail; it isn't the guard.
-
-> **Note (reconciled 2026-09-27):** the `CandidateVote` struct in `backend/crates/domain/src/entities.rs` also carries `group_id` and `cycle_id` fields, and `persistence::questions::cast_vote_tx`/`withdraw_vote_tx` serialize the whole struct via `to_item`, so the item also has `group_id` and `cycle_id` attributes (redundant with the values already encoded in `pk`) that this doc's table above did not list. Flagging for the lead — likely fine to keep (useful if this item is ever read outside its own partition) but worth a conscious decision either way.
 
 Access patterns:
 - "List my votes this cycle" → `Query pk=GROUP#{g}#CYCLE#{c}#VOTER#{u} AND begins_with(sk, QC#)` (the prefix skips the tally row)
@@ -212,7 +211,7 @@ Access patterns:
 
 ### 2.7a Voter tally
 
-One per voter per cycle, in the same partition as their votes. Its counter is the transactional guard for `votes_per_user_per_cycle`. Added 2026-09-27: before that the cap was only a pre-read, so concurrent votes on different candidates could exceed it.
+One per voter per cycle, in the same partition as their votes. Its counter is the transactional guard for `votes_per_user_per_cycle` — a pre-read alone can't enforce the cap, since concurrent votes on different candidates would both see a stale count and both succeed.
 
 | Attr | Value |
 |---|---|
@@ -302,10 +301,10 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `caption` | string \| null (author-supplied, ≤140 chars; rendered beneath the image in the published view) |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
-| `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` (added M8; `08` §3.2). `DELETED` is no longer written: `DELETE /uploads/{imageId}` now deletes the row outright instead of soft-marking it `failed` (decided 2026-10-07; lands in M13.5, D8; `03` §9.4). |
-| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` image is attached to. Set and cleared in the same transaction as the comment write, and checked by `DELETE /uploads` (added M10; `03` §8.2, §9.4). Absent on rows written before M10, which reads as null. |
+| `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` (`08` §3.2). `DELETED` is not written: `DELETE /uploads/{imageId}` deletes the row outright instead of soft-marking it `failed` (D8; `03` §9.4). |
+| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` image is attached to. Set and cleared in the same transaction as the comment write, and checked by `DELETE /uploads` (`03` §8.2, §9.4). Absent (reads as null) on rows written before this attribute was introduced. |
 
-`question_id` is set at `POST /uploads` time (the route requires `questionId`), so in practice it is never null for rows created since M8.
+`question_id` is set at `POST /uploads` time (the route requires `questionId`), so in practice it is never null for rows created with it.
 
 ### 2.11 Comment
 
@@ -317,14 +316,13 @@ Flat reply to a published response.
 | `sk` | `C#{created_at}#{comment_id}` — `created_at` in the canonical key-timestamp format (§1) |
 | `entity` | `Comment` |
 | `comment_id` | UUIDv7 |
+| `group_id` / `cycle_id` / `question_id` / `answer_user_id` | redundant with the values already encoded in `pk`; kept so the item is self-describing if ever read outside its own partition |
 | `author_user_id` | UUIDv7 |
 | `body` | string (≤2000 chars; markdown-safe) |
 | `image_media_id` | string \| null (optional single image attached to the comment; references an `ImageMedia` row owned by the comment author) |
 | `created_at` | ISO-8601 |
 | `edited_at` | ISO-8601 \| null |
 | `deleted_at` | ISO-8601 \| null (soft delete; `body` and `image_media_id` cleared when set) |
-
-> **Note (reconciled 2026-09-27):** the `Comment` struct (`backend/crates/domain/src/entities.rs`) also carries `group_id`, `cycle_id`, `question_id`, and `answer_user_id` fields, and `persistence::engagement::put_comment` serializes the whole struct via `to_item`, so the item also has those four attributes (redundant with the values already encoded in `pk`) that this doc's table above did not list. Same pattern as `CandidateVote` above — flagging for the lead rather than silently documenting it as intentional.
 
 Access patterns:
 - "Comments on an answer, oldest first" → `Query pk=GROUP#{g}#NL#{c}#Q#{q}#A#{u} AND begins_with(sk, C#)`
@@ -338,11 +336,10 @@ Emoji reaction. Last-write-wins per `(answer, reactor, emoji)`.
 | `pk` | `GROUP#{group_id}#NL#{cycle_id}#Q#{question_id}#A#{answer_user_id}` |
 | `sk` | `R#{reactor_user_id}#{emoji}` |
 | `entity` | `Reaction` |
+| `group_id` / `cycle_id` / `question_id` / `answer_user_id` | redundant with the values already encoded in `pk`; same reason as `Comment` above |
 | `reactor_user_id` | UUIDv7 |
 | `emoji` | string (1–12 codepoints) |
 | `created_at` | ISO-8601 |
-
-> **Note (reconciled 2026-09-27):** same pattern as `Comment` above — the `Reaction` struct also carries `group_id`, `cycle_id`, `question_id`, and `answer_user_id`, and `persistence::engagement::put_reaction` writes them as item attributes via `to_item`, undocumented in the table above.
 
 To remove a reaction, delete the item.
 
@@ -389,15 +386,13 @@ Publication notifications are always-on with no user toggle; there is no `public
 
 A few small entities for atomic bookkeeping:
 
-- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#OPEN` — written when cycle-open notification fans out, prevents duplicates.
-- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#CLOSE#{offset_hours}` — likewise per offset.
-- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#PUBLISH` — likewise for the publication fan-out (added M11).
+- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#OPEN` — claimed by `lambda-push` before the cycle-open fan-out runs.
+- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#CLOSE#{offset_hours}` — claimed by `lambda-notify-tick` before a deadline-reminder fan-out, one per offset.
+- `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#PUBLISH` — claimed by `lambda-push` before the publication fan-out runs.
 
-All `NOTIFIED#…` markers are claimed with `attribute_not_exists(pk)` **before** the fan-out runs (at-most-once: a crash mid-fan-out drops the remaining recipients rather than risk duplicates). They carry `entity=NotifiedMarker` and `created_at`. Decided M11; this makes the `Newsletter.notified_offsets_hours` / `notified_on_open` attributes (§2.5) vestigial — they're still written with their defaults but nothing reads them.
+Each is claimed with `attribute_not_exists(pk)` before its fan-out runs (at-most-once: a crash mid-fan-out drops the remaining recipients rather than risk duplicates). They carry `entity=NotifiedMarker` and `created_at`. Fan-out algorithms and payloads: `07-notifications.md` §6–8. These markers make the `Newsletter.notified_offsets_hours` / `notified_on_open` attributes (§2.5) vestigial — still written with their defaults but nothing reads them.
 - `pk=TICK` `sk=CYCLE` — single record updated on each `lambda-cycle-tick` run with `last_ran_at`.
-- `pk=TICK` `sk=NOTIFY` — likewise for `lambda-notify-tick`.
-
-All of these rows are written as of M11: `lambda-cycle-tick` writes `TICK`/`CYCLE`, `lambda-push` claims `NOTIFIED#OPEN`/`NOTIFIED#PUBLISH`, and `lambda-notify-tick` claims `NOTIFIED#CLOSE#{offset_hours}` and writes `TICK`/`NOTIFY` (`persistence::push`).
+- `pk=TICK` `sk=NOTIFY` — likewise for `lambda-notify-tick`, which also writes it after claiming the `NOTIFIED#CLOSE#{offset_hours}` markers above (`persistence::push`).
 
 ### 2.16 AvatarMedia
 
@@ -417,7 +412,7 @@ User avatars are uploaded via a dedicated pipeline (separate from the per-questi
 | `bytes` | number |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
-| `error_message` | string \| null — same values as `ImageMedia.error_message` (added M8). As with `ImageMedia`, `DELETED` is no longer a possible value: `DELETE /avatars/{id}` deletes the row (decided 2026-10-07; lands in M13.5, D8). |
+| `error_message` | string \| null — same values as `ImageMedia.error_message`. As with `ImageMedia`, `DELETED` is not a possible value: `DELETE /avatars/{id}` deletes the row (D8). |
 
 The processed avatar bucket is served via a separate CloudFront behavior (`/avatar/*`) that does NOT require signed cookies — avatars are not tenant-scoped, URLs use the UUIDv7 `avatar_id` (unguessable), and an avatar leak is acceptable. Cache-control: `public, max-age=86400, immutable` so changing avatars produces a new `avatar_id` and never collides with the old one in caches.
 
@@ -437,7 +432,7 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP8 | Get newsletter | GetItem | base |
 | AP9 | Cycles by status with next transition due | Query | GSI2 |
 | AP10 | List candidate questions for next cycle | Query | base |
-| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — unused by promotion as of 2026-10-07 (D4, §2.6); its tie order is newest-first, promotion needs oldest-first. No reader; the `list_top_candidates_by_votes` helper was removed 2026-10-11 |
+| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — not used by promotion (D4, §2.6); its tie order is newest-first, promotion needs oldest-first. No reader; the `list_top_candidates_by_votes` helper was removed |
 | AP12 | List my votes this cycle | Query | base |
 | AP13 | List locked questions for newsletter | Query | base |
 | AP14 | List answers to a question (post-publish) | Query | base |
@@ -449,7 +444,7 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
 
-**Note (fixed M11) — AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows. This was pre-existing: `my-responses`, the newsletter list/detail counts and M11's reminder "N of total" count all over-counted for multi-group users, and publishing in group B after group A in the same month skipped B's `editions_answered` bump (step 4 below).
+**AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: `my-responses`, the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
 
 ---
 
@@ -467,12 +462,12 @@ The following operations MUST use `TransactWriteItems`:
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items).
 4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky (`03-api-contract.md` §7.3). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. The transaction also increments `GroupMembership.editions_answered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 
-   **Fixed M13: the pre-read alone wasn't enough.** Two concurrent first publishes to different questions both saw zero published rows and both bumped (`editions_answered` = 2). The bump `Update` now also sets `last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
+   **The pre-read alone isn't enough:** two concurrent first publishes to different questions could both see zero published rows and both bump (`editions_answered` = 2). The bump `Update` also sets `last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
    - the bump's condition failed: retry without the bump, since the cycle is already counted
    - only `TransactionConflict`s: retry unchanged (3 attempts in total)
    - anything else: the cycle check lost, which surfaces as `CYCLE_NOT_OPEN`
 
-4a. **Auto-publish non-empty drafts at cycle close** (decided 2026-10-07; lands in M13.5, D2; `06` §5.3). When `lambda-cycle-tick`'s `publish(nl)` runs, it first auto-publishes every non-empty draft **before** flipping the Newsletter to `published`: for each locked question it queries its answers (AP14), and for each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it runs one `TransactWriteItems` — the response row conditioned on `status = draft`, setting `status = published`, `published_at = response_close_at`, plus the same `editions_answered`/`last_answered_cycle` bump as #4. **One transaction per draft, not one big one**: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. This is crash-safe because it runs before the status flip: a tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the remaining drafts; rows it already flipped fail their `status = draft` condition harmlessly and are skipped. The cancellation reasons are read as in #4: if only the bump's `last_answered_cycle` condition failed (the member already published another answer this cycle), the draft is retried **without** the bump; it must not be skipped. Empty drafts are left untouched and stay `draft` forever, same as today.
+4a. **Auto-publish non-empty drafts at cycle close** (D2; `06` §5.3). When `lambda-cycle-tick`'s `publish(nl)` runs, it first auto-publishes every non-empty draft **before** flipping the Newsletter to `published`: for each locked question it queries its answers (AP14), and for each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it runs one `TransactWriteItems` — the response row conditioned on `status = draft`, setting `status = published`, `published_at = response_close_at`, plus the same `editions_answered`/`last_answered_cycle` bump as #4. **One transaction per draft, not one big one**: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. This is crash-safe because it runs before the status flip: a tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the remaining drafts; rows it already flipped fail their `status = draft` condition harmlessly and are skipped. The cancellation reasons are read as in #4: if only the bump's `last_answered_cycle` condition failed (the member already published another answer this cycle), the draft is retried **without** the bump; it must not be skipped. Empty drafts are left untouched and stay `draft` forever, same as today.
 
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.member_count += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.member_count -= 1`.
@@ -481,7 +476,7 @@ The following operations MUST use `TransactWriteItems`:
    - **Why it holds:** transactions are serializable, so every committed removal leaves its witness an admin, and no interleaving of concurrent requests can reach zero admins. A pre-read of the admin count alone could (two admins demoting each other).
    - **Losing the race:** a failed witness check returns `LAST_ADMIN`.
 
-**No `ClientRequestToken`.** An earlier draft asked for one derived from `x-correlation-id`. It is deliberately not used: a single request can issue several transactions, and the vote retry re-sends with a different expected count. A reused token with different parameters fails with `IdempotentParameterMismatch`. Retry safety comes from the condition expressions and from handlers treating "already done" outcomes as success. (Reconciled 2026-09-27 against the code.)
+**No `ClientRequestToken`.** An earlier draft asked for one derived from `x-correlation-id`. It is deliberately not used: a single request can issue several transactions, and the vote retry re-sends with a different expected count. A reused token with different parameters fails with `IdempotentParameterMismatch`. Retry safety comes from the condition expressions and from handlers treating "already done" outcomes as success.
 
 ---
 
@@ -489,7 +484,7 @@ The following operations MUST use `TransactWriteItems`:
 
 Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs overwrite `body`, `image_media_ids`, `poll_option_id`, and `updated_at` with no condition on the response row itself. There is no `version` attribute and no `409 Conflict` reconciliation. The only condition is the Newsletter-row check from §4 #4, which requires the cycle to still be open. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
 
-**No race with auto-publish (decided 2026-10-07; lands in M13.5, D2).** Saves are already refused once `now >= response_close_at` (`03` §7.3's "open" clause), even while the Newsletter row still reads `status = open` in the ≤5-minute gap before the tick flips it. So by the time §4 #4a's auto-publish pass runs, the last successful save for each draft is final — whatever it left behind (empty or non-empty) is exactly what auto-publish sees.
+**No race with auto-publish (D2).** Saves are already refused once `now >= response_close_at` (`03` §7.3's "open" clause), even while the Newsletter row still reads `status = open` in the ≤5-minute gap before the tick flips it. So by the time §4 #4a's auto-publish pass runs, the last successful save for each draft is final — whatever it left behind (empty or non-empty) is exactly what auto-publish sees.
 
 ---
 
@@ -511,8 +506,8 @@ For admin-only operations: the cached membership must have `role=admin`.
 ## 7. Soft delete and archival hooks
 
 - Comments use soft-delete (`deleted_at` set, `body` blanked). Hard delete reserved for compliance/admin.
-- Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead (decided 2026-10-07; lands in M13.5, D2 — §4 #4a). Previously every unpublished draft, empty or not, stayed `draft` indefinitely.
-- Media is deleted for real now (decided 2026-10-07; lands in M13.5, D8): `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects, invalidate the CloudFront path, and delete the `ImageMedia`/`AvatarMedia` row — see `03` §9.4/§9.7. No bucket versioning (`01` §5.1), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker image cache (≤30 days) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted (D8, D9).
+- Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead (D2 — §4 #4a).
+- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects, invalidate the CloudFront path, and delete the `ImageMedia`/`AvatarMedia` row — see `03` §9.4/§9.7. No bucket versioning (`01` §5.1), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker image cache (≤30 days) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted (D8, D9).
 - When a Newsletter transitions to `archived` (manual or future job), see `10-archival.md` §3 for the export-and-prune procedure.
 
 ---
@@ -544,16 +539,10 @@ When a cycle changes status, the writer recomputes `gsi2pk` (new status) and `gs
 
 ## 10. Helper code structure (Rust)
 
-In `backend/crates/persistence/src/`:
+One file per entity family in `backend/crates/persistence/src/` (`groups.rs`, `invites.rs`, `newsletters.rs`, `questions.rs`, `responses.rs`, `engagement.rs`, `media.rs`, `push.rs`, `users.rs`), each with focused query/mutation functions named after the access pattern (e.g. `list_candidates`, `cast_vote_tx`, `save_response`). Entity structs live in `backend/crates/domain/src/entities.rs`; each persistence module calls `serde_dynamo::{to_item, from_item}` directly against them (no `rename_all` — the Rust field name *is* the DynamoDB attribute name) and manually inserts the key/`entity` attributes afterward.
 
-- `repo.rs` — `Repo` struct holding the `aws_sdk_dynamodb::Client` and table name
-- `keys.rs` — pure functions building all the `pk`/`sk`/`gsi1pk`/`gsi1sk`/`gsi2pk`/`gsi2sk` strings, plus the `attr`/`index` modules centralizing literal attribute and index names. Single source of truth for key formats. Unit-tested.
-- Entity structs live in `backend/crates/domain/src/entities.rs` (`serde::{Serialize, Deserialize}`, no `rename_all` on struct fields — Rust field name *is* the DynamoDB attribute name); `persistence`'s per-family modules call `serde_dynamo::{to_item, from_item}` directly rather than through a dedicated `model.rs`.
-- `users.rs`, `groups.rs`, `invites.rs`, `newsletters.rs`, `questions.rs`, `responses.rs`, `engagement.rs`, `media.rs`, `push.rs` — one file per entity family with focused query/mutation functions named after the access pattern (e.g. `list_candidates`, `cast_vote_tx`, `save_response`).
-- `auth.rs` — caller resolution and tenant-isolation gate (`require_user_id`, `require_membership`), with the per-cold-start membership cache described in §6.
-- `expr.rs` — shared `UpdateExpression` builder (`set_fields`) that aliases every patched attribute behind a numbered placeholder, so reserved words never need special-casing.
-- `tests/` — integration tests against a local DynamoDB container (see `11-testing-ci-cd.md`).
-
-> **Note (reconciled 2026-09-27):** this section previously named a `model.rs` with `from_item`/`to_item` helpers; no such file exists. Each entity-family module (`groups.rs`, `invites.rs`, etc.) calls `serde_dynamo::{to_item, from_item}` inline against the structs in `domain::entities`, and manually inserts the key/`entity` attributes afterward (see e.g. `persistence::groups::put_group`). `mod.rs` is also renamed above to `repo.rs`, its actual filename.
-
-The `keys.rs` functions are the contract. If you change a key shape, you change one file and the type system finds every dependent call.
+Rules that matter and are easy to violate by hand:
+- `keys.rs` is the single source of truth for every `pk`/`sk`/`gsi1pk`/`gsi1sk`/`gsi2pk`/`gsi2sk` string, via the `attr`/`index` modules centralizing literal attribute and index names. Change a key shape in one place and the type system finds every dependent call.
+- `persistence::keys::key_timestamp` is the only way a timestamp may enter a key — see the key-timestamp rule in §1.
+- `expr.rs` is the shared `UpdateExpression` builder (`set_fields`); it aliases every patched attribute behind a numbered placeholder so reserved words never need special-casing.
+- `auth.rs` holds caller resolution and the tenant-isolation gate (`require_user_id`, `require_membership`), with the per-cold-start membership cache described in §6.

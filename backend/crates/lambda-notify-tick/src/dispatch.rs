@@ -11,12 +11,13 @@
 //! Mirrors `lambda-cycle-tick/src/dispatch.rs`'s raw-`Value` dispatch for
 //! the same reason: `lambda_http::run` can't front both shapes.
 
+use domain::api::DevTickNotifyResponse;
 use domain::{ApiError, Role};
 use persistence::{auth, groups};
 use push::state::AppState;
 use serde_json::{json, Value};
 
-use crate::tick::{run_notify_tick, NotifyTickSummary};
+use crate::tick::run_notify_tick;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingEvent {
@@ -68,7 +69,10 @@ pub async fn handle_http(state: &AppState, event: &Value) -> Value {
     }
 }
 
-async fn handle_http_inner(state: &AppState, event: &Value) -> Result<NotifyTickSummary, ApiError> {
+async fn handle_http_inner(
+    state: &AppState,
+    event: &Value,
+) -> Result<DevTickNotifyResponse, ApiError> {
     if !state.is_dev() {
         return Err(ApiError::not_found(
             "dev routes are only available when ENV=dev",
@@ -152,14 +156,18 @@ fn problem_json(err: &ApiError, correlation_id: &str) -> Value {
     } else {
         format!("{}/errors/{}", base.trim_end_matches('/'), err.code.slug())
     };
-    json!({
+    let mut problem = json!({
         "type": type_uri,
         "title": err.code.title(),
         "status": err.http_status(),
         "detail": err.detail,
         "code": err.code.as_str(),
         "correlationId": correlation_id,
-    })
+    });
+    if !err.field_errors.is_empty() {
+        problem["fieldErrors"] = json!(err.field_errors);
+    }
+    problem
 }
 
 #[cfg(test)]

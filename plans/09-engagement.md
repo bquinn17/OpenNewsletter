@@ -8,31 +8,11 @@ Engagement features apply to **published** newsletters only. While a cycle is `v
 
 ### 1.1 Shape
 
-Flat (no threading). One author per comment. Stored in DynamoDB per `02-data-model-dynamodb.md` §2.11.
-
-```ts
-type Comment = {
-  commentId: string;
-  authorUserId: string;
-  displayName: string;   // author's account display name (wire name decided M10; matches the inline newsletter shape)
-  body: string;          // 0-2000 chars; markdown allowed (sanitized identical to response bodies)
-  image: {               // optional single attached image; null when none
-    imageId: string;
-    displayUrl: string;
-    thumbUrl: string;
-    width: number;
-    height: number;
-    caption: string | null;
-  } | null;
-  createdAt: string;
-  editedAt: string | null;
-  deletedAt: string | null; // set on soft-deleted placeholders (added M10)
-};
-```
+Flat (no threading). One author per comment. Stored in DynamoDB per `02-data-model-dynamodb.md` §2.11. Wire shape: `CommentResponse` in `shared/openapi.yaml` (`03-api-contract.md` §8); `displayName` matches the inline newsletter shape, and `body` is sanitized identical to response bodies (§5 below).
 
 Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
 
-Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null (decided M10). **Decided 2026-10-07; lands in M13.5:** if the comment had an attached image, that image is deleted for real (`08-media-uploads.md` §8.0) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null. If the comment had an attached image, that image is deleted for real (`08-media-uploads.md` §8.0) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
 
 ### 1.2 Permissions
 
@@ -56,30 +36,13 @@ A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected 
 
 ### 1.4 Endpoints
 
-Detailed in `03-api-contract.md` §8.1–8.4. Server-side handler highlights:
-
-- `POST` validates cycle status = `published`, validates response exists, inserts new row with `commentId = uuidv7()`, returns the created comment with `displayName` joined in.
-- `PATCH` checks the caller's resolved `userId == row.authorUserId` (JWT `sub` → `userId` via the lookup row, `05-auth-flow.md` §6 — never compare `sub` directly), updates `body` and `editedAt`. Admins cannot edit other users' comments.
-- `DELETE` soft-deletes: sets `deletedAt`, blanks `body`. Allowed when the caller's `userId` matches `row.authorUserId` OR caller is a group admin. Idempotent — `DELETE` of an already-soft-deleted row returns 204; `DELETE` of a missing row returns 404. If the comment held an image, the image is permanently deleted too (decided 2026-10-07; lands in M13.5 — §1.1 above).
+Detailed in `03-api-contract.md` §8.1–8.4 (routes, addressing, auth, image-claim transaction). One check not covered there: authorization resolves the caller's `userId` from the JWT `sub` via the lookup row (`05-auth-flow.md` §6) — never compared directly against `sub`.
 
 ### 1.5 Author display name resolution
 
-Comments embed the author's `displayName` in the response payload (denormalized read; the actual stored row only carries `authorUserId`). The handler does:
+Comments embed the author's `displayName` in the response payload (denormalized read; the stored row only carries `authorUserId`). The handler dedupes author IDs within the request and resolves them with one `BatchGetItem` (`backend/crates/persistence/src/batch.rs`), with no cross-request cache — add a TTL cache only if user reads show up as hot. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
 
-```rust
-// After querying comments
-let user_ids: HashSet<_> = comments.iter().map(|c| c.author_user_id.clone()).collect();
-let users = repo.batch_get_users(&user_ids).await?;
-let name_map: HashMap<String, String> = users.into_iter()
-    .map(|u| (u.user_id, u.display_name)).collect();
-// Inject into output
-```
-
-Cache the user batch per cold-start (60s TTL) to avoid repeating the read for hot cycles. **M10 decision:** v1 dedupes author IDs within a request and uses one `BatchGetItem`, with no cross-request cache. Add the TTL cache only if user reads show up as hot. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
-
-Routes are addressed by `questionId` + `responseId` (`03` §8, decided M10). The attached image is claimed through `ImageMedia.attached_comment_id`, written in the same transaction as the comment, so one image can't back two comments and `DELETE /uploads` can refuse a claimed image.
-
-Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read (decided M10, post-review). The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere. (Decided 2026-10-07; lands in M13.5: "release" now means permanently deleting the image, not just unclaiming it — §1.1 above.)
+Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read. The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere. ("Release" means permanently deleting the image, not just unclaiming it — §1.1 above.)
 
 ### 1.6 Notifications on comments
 
@@ -91,15 +54,7 @@ Every comment edit and soft delete is also conditioned on the comment still hold
 
 ### 2.1 Shape
 
-```ts
-type Reaction = {
-  reactorUserId: string;
-  emoji: string;
-  createdAt: string;
-};
-```
-
-The "key" of a reaction is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op (last-write-wins on `createdAt`).
+A reaction row carries `reactorUserId`, `emoji`, `createdAt` (`02-data-model-dynamodb.md` §2.12). Its "key" is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op (last-write-wins on `createdAt`).
 
 ### 2.2 Validation
 
@@ -109,36 +64,17 @@ Server normalizes the emoji to NFC and uses the normalized form as the storage k
 
 ### 2.3 Endpoints
 
-Detailed in `03-api-contract.md` §8.5–8.7.
-
-- `PUT /...reactions/{emoji}`: idempotent put of a URL-encoded emoji
-- `DELETE /...reactions/{emoji}`: idempotent delete
-- Both return the answer's reactions after the change, in the `GET` shape (decided M10).
-- `reactionGroups` order: count descending, then earliest reaction, then emoji. The inline newsletter view uses the same order.
-- `GET /...reactions` — returns:
-  ```json
-  {
-    "reactionGroups": [
-      { "emoji": "🔥", "count": 4, "reactedByMe": true },
-      { "emoji": "🤣", "count": 2, "reactedByMe": false }
-    ],
-    "myReactions": ["🔥"]
-  }
-  ```
-
-In practice the published-newsletter endpoint (`GET /groups/{g}/newsletters/{c}`) returns reactions inlined per answer; the dedicated reactions endpoints are mainly used for live updates after toggling.
+Routes, idempotency, response shape (`ReactionsResponse`) and group order are detailed in `03-api-contract.md` §8.5–8.7. In practice the published-newsletter endpoint (`GET /groups/{g}/newsletters/{c}`) returns reactions inlined per answer; the dedicated reactions endpoints are mainly used for live updates after toggling.
 
 ### 2.4 Live update strategy
 
-After PUT or DELETE, the SPA optimistically updates local state, then revalidates by invalidating the newsletter query (or just the affected answer's reactions, if we expose a lightweight per-answer reactions query — we'll do this for hot cycles).
-
-**M10 decision:** the SPA patches the answer's `reactionGroups` in the cached newsletter optimistically. On success it replaces them with the server's `ReactionsResponse`, and on error it rolls back. No newsletter refetch is needed. Comment mutations patch the cache and then invalidate the newsletter query.
+After PUT or DELETE, the SPA patches the answer's `reactionGroups` in the cached newsletter optimistically. On success it replaces them with the server's `ReactionsResponse`, and on error it rolls back — no newsletter refetch is needed. Comment mutations patch the cache and then invalidate the newsletter query.
 
 No WebSocket / live push for v1. Users see other reactions on next page load or pull-to-refresh.
 
 ### 2.5 Picker UI
 
-`EmojiPickerPopover`: a curated 64-emoji grid plus a native text input filtered to one emoji (on mobile the input brings up the keyboard's emoji panel). Decided M10; `emoji-picker-element` was dropped, cutting the lazy chunk from about 150 kB to 2.6 kB.
+`EmojiPickerPopover`: a curated 64-emoji grid plus a native text input filtered to one emoji (on mobile the input brings up the keyboard's emoji panel). Not `emoji-picker-element`, which was dropped: it cut the lazy chunk from about 150 kB to 2.6 kB.
 
 Frequently-used reactions render as one-tap pills next to the picker button: `🔥 🤣 ❤️ 😍 👍 🎉`.
 
@@ -190,7 +126,7 @@ This matches user expectation: "what did people vote for?" shows totals, not "Qu
 
 ### 3.6 Auto-publish at close
 
-**Decided 2026-10-07; lands in M13.5:** when the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` (`06-newsletter-lifecycle.md` §8). An empty draft stays `draft` and is excluded, same as today. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See `04-frontend-architecture.md` §7.3 for the RespondPage warning copy.
+When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` (`06-newsletter-lifecycle.md` §8). An empty draft stays `draft` and is excluded. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See `04-frontend-architecture.md` §7.3 for the RespondPage warning copy.
 
 ---
 
@@ -227,7 +163,7 @@ Alex — 1 hour ago (edited)
 [Reply textarea]
 ```
 
-Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). **Decided 2026-10-07; lands in M13.5:** Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0). As built (M13.5): for an edit that removes or replaces the image, the confirm fires at Save, when the image is actually released, since cancelling the edit keeps it. A fresh, never-posted upload in the composer is removed without a confirm.
+Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0). For an edit that removes or replaces the image, the confirm fires at Save, when the image is actually released, since cancelling the edit keeps it. A fresh, never-posted upload in the composer is removed without a confirm.
 
 ### 4.4 `PollWidget.tsx`
 
@@ -242,7 +178,7 @@ Two states:
 [Publish]
 ```
 
-**Decided 2026-10-07; lands in M13.5 (supersedes the M9 "a pick is local only before first publish" behaviour):** every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins (`04` §7.3).
+Every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins (`04` §7.3).
 
 **Tally (after publish):**
 ```
@@ -258,9 +194,9 @@ Bars are pure CSS (no chart library). Caller's pick gets the ring highlight.
 
 ## 5. Sanitization
 
-All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer:
+All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer; the renderer itself (image token handling, URL transform) is owned by `04-frontend-architecture.md` §9. The allowlist:
 
-- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img` (img only for `image:{id}` tokens, rendered as `CdnImage`; any other image URL renders as a link — decided M9, `04` §9). Comments render with `allowImages={false}`, so no inline images at all.
+- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img`. Comments render with `allowImages={false}`, so no inline images at all — engagement's single attached image (§1.3) renders separately from the markdown body.
 - Allowed attributes: `href` on `a` (https only, no `javascript:`/`data:`); `src/alt/width/height` on `img`; `class` is stripped.
 - Forbidden: `script, style, iframe, object, embed, form, input, button, svg, math` and any `on*` attributes.
 
@@ -272,13 +208,7 @@ The backend does NOT sanitize on write — sanitation is a render-time concern. 
 
 ## 6. Indexes & access patterns recap
 
-Already in `02-data-model-dynamodb.md`:
-
-- Comments — AP18, base index, sk prefix `C#{ts}#{id}` (oldest first)
-- Reactions — AP19, base index, sk prefix `R#{user}#{emoji}`
-- Poll vote — single item per user per question, GetItem on `A#{user}` (the `Response` row carries the vote)
-
-No new GSIs needed.
+Key shapes and access patterns for comments (AP18), reactions (AP19), and the poll vote (carried on the `Response` row, §3.1) are in `02-data-model-dynamodb.md` §2.9, §2.11, §2.12 and §3. No new GSIs needed.
 
 ---
 
@@ -297,7 +227,7 @@ No new GSIs needed.
 
 ## 8. Tests required
 
-Specified in `11-testing-ci-cd.md`. Engagement-specific tests:
+Engagement-specific tests (general strategy in `11-testing-ci-cd.md`):
 
 1. Comment create / edit / soft-delete round trips.
 2. Non-author cannot edit / delete (403).

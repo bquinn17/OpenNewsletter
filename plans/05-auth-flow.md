@@ -16,7 +16,7 @@ This document covers Cognito configuration, the OAuth round-trip, invite redempt
   - `PreSignUp` — pure pass-through; auto-confirm only, no invite logic (§3)
   - No `PostConfirmation` trigger (§5)
 - **App client**: Authorization Code with PKCE, public client (no secret), Cognito disabled-as-IdP for end users.
-- **Bootstrap admin client**: separate app client `admin-bootstrap` that allows USER_PASSWORD_AUTH. **Dev only** (decided 2026-10-07; lands in M13.5, D5) — in prod, `scripts/bootstrap_admin.py` no longer creates a Cognito user or uses password auth at all; see §9.
+- **Bootstrap admin client**: separate app client `admin-bootstrap` that allows USER_PASSWORD_AUTH. **Dev only** — prod has no password auth; `scripts/bootstrap_admin.py` doesn't create a Cognito user there at all; see §9.
 
 ---
 
@@ -94,7 +94,7 @@ fn handle(event: PreSignUp) -> PreSignUp {
 
 `auto_verify_email` is always false (changed 2026-10-08, review fix). It was once true for every federated signup, which set `email_verified=true` for Facebook users as well and defeated the Google-only rule for bound invites (§4.2). `email_verified` now comes only from the Google IdP's attribute mapping. Nothing had been deployed when this changed, so no user pool holds users created under the old behaviour.
 
-The SPA preserves the invite code across the OAuth round-trip by passing `{ invite, returnTo }` as `oidc-client-ts`'s `signinRedirect({ state })` data. The library keeps that data client-side, keyed by the opaque OIDC `state` nonce, so nothing user-controlled travels through Cognito (decided M7; `04` §6). A `sessionStorage` stash is the fallback. After token exchange, `/auth/callback` sends the user to `/join?code=…`, which posts the code to `/invites/redeem`.
+The SPA preserves the invite code across the OAuth round-trip by passing `{ invite, returnTo }` as `oidc-client-ts`'s `signinRedirect({ state })` data. The library keeps that data client-side, keyed by the opaque OIDC `state` nonce, so nothing user-controlled travels through Cognito (`04` §6). A `sessionStorage` stash is the fallback. After token exchange, `/auth/callback` sends the user to `/join?code=…`, which posts the code to `/invites/redeem`.
 
 ---
 
@@ -120,7 +120,7 @@ if invite.status == "consumed": return 409 INVITE_CONSUMED
 if invite.status == "revoked": return 400 INVITE_INVALID
 if now() > invite.expiresAt: return 410 INVITE_EXPIRED
 
-# 2. Bound-email check (decided 2026-10-07; lands in M13.5, D5)
+# 2. Bound-email check (D5)
 if invite.boundEmail is not None:
     if jwt.email is None or jwt.email.lower() != invite.boundEmail or not jwt.email_verified:
         return 403 INVITE_EMAIL_MISMATCH
@@ -167,7 +167,7 @@ write_transact(items_to_write)
 return 200 { groupId, groupName, role: invite.roleOnRedeem }
 ```
 
-**Bound-email check, step 2** (decided 2026-10-07; lands in M13.5, D5). `jwt.email_verified` comes from Cognito's `email_verified` attribute, which only Google populates via the IdP attribute mapping (`01` §4.2); Facebook doesn't supply it. So a `boundEmail` invite can only be redeemed by signing in with Google using that exact (lowercased) address — a Facebook sign-in, or a Google sign-in with a different or unverified email, gets `INVITE_EMAIL_MISMATCH`. This is the mechanism the prod bootstrap admin uses (§9). **As built (M13.5):** the check runs after step 5's "already a member" short-circuit rather than before it. An idempotent retry by an existing member still returns 200, and nothing is consumed on that path, so no access is granted. API Gateway's HTTP API JWT authorizer hands claims to the Lambda as strings, so the handler treats `email_verified` as true only for JSON `true` or the string `"true"` (case-insensitive); a missing claim is false (decided M13.5).
+**Bound-email check, step 2** (D5). `jwt.email_verified` comes from Cognito's `email_verified` attribute, which only Google populates via the IdP attribute mapping (`01` §4.2); Facebook doesn't supply it. So a `boundEmail` invite can only be redeemed by signing in with Google using that exact (lowercased) address — a Facebook sign-in, or a Google sign-in with a different or unverified email, gets `INVITE_EMAIL_MISMATCH`. This is the mechanism the prod bootstrap admin uses (§9). The check actually runs after step 5's "already a member" short-circuit rather than before it (an idempotent retry by an existing member still returns 200, and nothing is consumed on that path, so no access is granted). API Gateway's HTTP API JWT authorizer hands claims to the Lambda as strings, so the handler treats `email_verified` as true only for JSON `true` or the string `"true"` (case-insensitive); a missing claim is false.
 
 ### 4.3 First-signup vs additional-group
 
@@ -192,66 +192,17 @@ If the user reached `/join?code=...` while logged out: the SPA stashes the code 
 
 ## 5. PostConfirmation trigger
 
-Vestigial. Since the User row is created lazily by `/invites/redeem`, the only thing PostConfirmation needs to do is record `lastLoginAt` heuristics. We don't need it for v1.
-
-**Decision: do not implement a PostConfirmation trigger.** Less surface area, fewer Lambdas, simpler IAM.
+There is none: the `User` row is created lazily by `/invites/redeem` (§4), so no Cognito-side trigger is needed.
 
 ---
 
 ## 6. JWT verification on the backend
 
-API Gateway's HTTP API JWT authorizer does the heavy lifting:
-- Validates issuer = `https://cognito-idp.us-east-1.amazonaws.com/{userPoolId}`
-- Validates `aud` (or `client_id` for access tokens). In `dev`, the audience list is `[frontend_client_id, bootstrap_client_id]`. In `prod`, it's `[frontend_client_id]` only — `admin-bootstrap` doesn't exist there (decided 2026-10-07; lands in M13.5, D5; `01` §4.3/§6.1).
-- Validates signature against JWKS
-- Validates `exp` and `nbf`
+API Gateway's HTTP API JWT authorizer verifies the bearer token — issuer, `aud`/`client_id`, JWKS signature, `exp`/`nbf` — before a request ever reaches a Lambda. In `dev` the audience list is `[frontend_client_id, bootstrap_client_id]`; in `prod` it's `[frontend_client_id]` only, since `admin-bootstrap` doesn't exist there (`01` §4.3/§6.1). There is no in-Lambda JWT verifier and no local API Gateway proxy — handlers only ever run behind this authorizer (`11` §2.1).
 
-When the token is valid, the JWT claims are placed in `event.requestContext.authorizer.jwt.claims`. The Rust handlers parse this via:
+Validated claims land in `event.requestContext.authorizer.jwt.claims`; handlers read them (`sub`, `email`, `email_verified`, `name`, `cognito:username`) via `extract_claims` and trust them without re-verifying the signature. The bearer must be the **ID token** — `email`/`email_verified`/`name` aren't on the access token, and `/invites/redeem` (§4) needs them.
 
-```rust
-#[derive(Deserialize)]
-struct AuthClaims {
-    sub: String,                // user id
-    email: Option<String>,
-    email_verified: Option<bool>,   // read by POST /invites/redeem for bound invites (D5)
-    name: Option<String>,
-    #[serde(rename = "cognito:username")]
-    cognito_username: Option<String>,
-}
-
-fn extract_claims(req: &Request) -> Result<AuthClaims, ApiError> {
-    let claims_value = req.request_context()
-        .authorizer
-        .as_ref()
-        .and_then(|a| a.jwt.as_ref())
-        .map(|j| j.claims.clone())
-        .ok_or(ApiError::Unauthenticated)?;
-    serde_json::from_value(serde_json::Value::Object(claims_value.into_iter().collect()))
-        .map_err(|_| ApiError::Unauthenticated)
-}
-```
-
-The handler does NOT re-verify the signature — API Gateway already did. It trusts the claims.
-
-After extracting claims, every protected handler resolves `claims.sub` → our internal `userId` via the `CognitoSubLookup` row (`02-data-model-dynamodb.md` §2.1a). This lookup is cached per cold-start for ≤60s alongside the membership cache so the cost is amortized:
-
-```rust
-pub async fn resolve_user_id(repo: &Repo, sub: &str) -> Result<UserId, ApiError> {
-    if let Some(cached) = SUB_LOOKUP_CACHE.get(sub) {
-        if cached.cached_at.elapsed() < Duration::from_secs(60) {
-            return Ok(cached.user_id.clone());
-        }
-    }
-    let user_id = repo.lookup_user_id_by_sub(sub).await?
-        .ok_or(ApiError::Unauthenticated)?;   // happens on first request before invite redemption
-    SUB_LOOKUP_CACHE.insert(sub.to_string(), Cached { user_id: user_id.clone(), cached_at: Instant::now() });
-    Ok(user_id)
-}
-```
-
-A `None` from the lookup means the JWT is valid but the account has never redeemed an invite — `/config` handles this case specially (returns empty memberships); other handlers return `UNAUTHENTICATED`.
-
-There is no in-Lambda JWT verifier and no local API Gateway proxy (corrected M13, `11` §2.1). Handlers only ever run behind the API Gateway authorizer.
+Every protected handler then resolves `claims.sub` → our internal `userId` via the `CognitoSubLookup` row (`02-data-model-dynamodb.md` §2.1a, `resolve_user_id` in `backend/crates/persistence/src/auth.rs`), cached for ≤60s per warm container alongside the membership cache (§11) to amortize the lookup. A cache miss that also misses DynamoDB means the JWT is valid but the account has never redeemed an invite — `/config` renders that as empty memberships; every other handler returns `UNAUTHENTICATED`.
 
 ---
 
@@ -261,15 +212,15 @@ There is no in-Lambda JWT verifier and no local API Gateway proxy (corrected M13
 - ID token: 60 min
 - Refresh token: 30 days
 
-The frontend renews in `auth/renewSession.ts` (decided in M7), shortly before expiry (`accessTokenExpiring`), on a reload with an expired ID token, and after a 401. Cognito has no `prompt=none` iframe flow, so federated sessions use the **refresh-token grant** against `/oauth2/token`. Bootstrap-login sessions (§9.2) hold a refresh token for the `admin-bootstrap` client, so they renew with Cognito `InitiateAuth` `REFRESH_TOKEN_AUTH` against that client. If renewal fails (refresh token expired or revoked), the stored user is dropped and protected routes bounce to login.
+The frontend renews in `auth/renewSession.ts`, shortly before expiry (`accessTokenExpiring`), on a reload with an expired ID token, and after a 401. Cognito has no `prompt=none` iframe flow, so federated sessions use the **refresh-token grant** against `/oauth2/token`. Bootstrap-login sessions (§9.2) hold a refresh token for the `admin-bootstrap` client, so they renew with Cognito `InitiateAuth` `REFRESH_TOKEN_AUTH` against that client. If renewal fails (refresh token expired or revoked), the stored user is dropped and protected routes bounce to login.
 
-**Storage moves to `localStorage` (decided 2026-10-07; lands in M13.5, D1).** `oidc-client-ts`'s `userStore` — the ID/access/refresh tokens — now persists in `localStorage` instead of `sessionStorage`, so an installed PWA stays signed in across separate launches for the full 30-day refresh-token lifetime, instead of losing its session the moment the tab/app closes. `inviteStash` (§4.5, §13) is unaffected and stays in `sessionStorage`. See §8 (logout) and §12 (threat model) for the consequences.
+**Tokens live in `localStorage` (D1).** `oidc-client-ts`'s `userStore` — the ID/access/refresh tokens — persists in `localStorage` rather than `sessionStorage`, so an installed PWA stays signed in across separate launches for the full 30-day refresh-token lifetime instead of losing its session the moment the tab/app closes. `inviteStash` (§4.5, §2) is unaffected and stays in `sessionStorage`. See §8 (logout) and §12 (threat model) for the consequences.
 
 ---
 
 ## 8. Logout
 
-`logout()` in `auth/AuthProvider.tsx` (decided 2026-10-07; lands in M13.5, D1 — step order and step 4 are new):
+`logout()` in `auth/AuthProvider.tsx` (D1):
 1. Removes the stored user from `localStorage` (was `sessionStorage`; see §7).
 2. Clears React Query cache.
 3. Clears Zustand persisted stores.
@@ -282,9 +233,9 @@ Cognito invalidates the SSO session. The revoke call means a token captured befo
 
 ## 9. Bootstrap admin & first group
 
-There must be a way to create the very first group + first admin without an invite code (chicken-and-egg). This is solved with a one-shot script invoked by the operator. **Dev and prod now follow different flows** (decided 2026-10-07; lands in M13.5, D5): dev keeps the original password-bootstrap flow (§9.1); prod no longer creates a Cognito user at all and instead bootstraps via an email-bound admin invite (§9.1a).
+There must be a way to create the very first group + first admin without an invite code (chicken-and-egg). This is solved with a one-shot script invoked by the operator. Dev and prod follow different flows (D5): dev uses a password-bootstrap flow (§9.1); prod has no password auth at all — it bootstraps via an email-bound admin invite redeemed through Google (§9.1a).
 
-### 9.1 `scripts/bootstrap_admin.py` — dev (unchanged)
+### 9.1 `scripts/bootstrap_admin.py` — dev
 
 Inputs (CLI flags or env):
 - `--env dev`
@@ -304,12 +255,12 @@ Flow:
    - Put `User` (PROFILE)
    - Put `Group` (META) with the chosen settings + `memberCount=1`
    - Put `GroupMembership` (role=admin)
-   - Put the group's first `voting` Newsletter (`06` §4.2; added M5)
+   - Put the group's first `voting` Newsletter (`06` §4.2)
 
    IDs are UUID5-derived from the Cognito sub, so re-running the script is idempotent.
 7. Prints the group ID and a sign-in URL.
 
-### 9.1a `scripts/bootstrap_admin.py` — prod (decided 2026-10-07; lands in M13.5, D5)
+### 9.1a `scripts/bootstrap_admin.py` — prod (D5)
 
 Inputs: `--env prod`, `--group-name`, `--timezone`; the admin's email comes from `config.bootstrap_admin_email` (`BOOTSTRAP_ADMIN_EMAIL`, `01` §2), not a CLI flag, since it must match what the operator later signs in with.
 
@@ -341,49 +292,15 @@ Once the bootstrap admin exists (dev: the password account; prod: the Google-fed
 
 ## 10. Identity provider setup checklist (operator runbook)
 
-Outside of CDK, a human operator must:
+Outside of CDK, a human operator must register Google and Facebook as IdPs, generate VAPID keys, generate a CloudFront signing keypair (**RSA 2048** — `lambda-media` signs RSA-SHA1 only, so an EC key deploys cleanly and then fails every `GET /media-cookie`), and set `BOOTSTRAP_ADMIN_EMAIL` for prod (§9.1a). All of it lands as JSON keys inside **one** per-env Secrets Manager secret, `opennewsletter/{env}` (`app_secret_arn`, `01` §2/§7.1/§12), rather than one secret each (D7).
 
-All of the following now land as JSON keys inside **one** per-env Secrets Manager secret, `opennewsletter/{env}` (`app_secret_arn`, `01` §2/§7.1/§12), rather than one secret each (decided 2026-10-07; lands in M13.5, D7):
-
-- [ ] **Google**: Create OAuth 2.0 client in Google Cloud Console. Authorized redirect URI: `https://{cognito_domain_prefix}.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`. Authorized JS origin: `https://opennewsletter.example.com`. Save Client ID + Client Secret as `google_client_id`/`google_client_secret` in `opennewsletter/{env}`.
-- [ ] **Facebook**: Create app in Meta for Developers. Add Facebook Login. Valid OAuth redirect URI: same Cognito callback. Save App ID + Secret as `facebook_app_id`/`facebook_app_secret` in `opennewsletter/{env}`.
-- [ ] **VAPID keys**: `python scripts/generate_vapid_keys.py` → merge the JSON output's `publicKey`/`privateKey`/`subject` into `opennewsletter/{env}` as `vapid_public_key`/`vapid_private_key`/`vapid_subject`.
-- [ ] **CloudFront signing keypair**: generate **RSA 2048**, a separate pair per env. ECDSA is not supported: `lambda-media` signs RSA-SHA1 only (`cloudfront.rs`), so an EC key deploys cleanly and then fails every `GET /media-cookie`. CDK uploads the public half from `infra/keys/` (`cf-signing.pub.pem` for dev, `cf-signing-prod.pub.pem` for prod); store the private half as `cdn_signing_private_key` in `opennewsletter/{env}`. Never reuse the dev private key in prod. `infra/tests/test_cf_signing_keys.py` checks both files are distinct RSA-2048 keys.
-- [ ] **Bootstrap admin email (prod only)**: set `BOOTSTRAP_ADMIN_EMAIL` for `scripts/bootstrap_admin.py`'s prod mode (§9.1a).
-
-This checklist is reproduced in `12-build-order.md` Milestone 1.
+Exact commands, redirect URIs and the combined-secret `jq` recipe: `docs/milestone-1-operator-runbook.md` (also reproduced in `12-build-order.md` Milestone 1).
 
 ---
 
 ## 11. Tenant authorization helper
 
-A single Rust function used by every protected handler:
-
-```rust
-pub async fn require_membership(
-    repo: &Repo,
-    user_id: &str,
-    group_id: &str,
-    require_admin: bool,
-) -> Result<GroupMembership, ApiError> {
-    if let Some(cached) = MEMBERSHIP_CACHE.get(&(user_id.to_string(), group_id.to_string())) {
-        if cached.cached_at.elapsed() < Duration::from_secs(60) {
-            return enforce(cached.membership.clone(), require_admin);
-        }
-    }
-    let m = repo.get_membership(user_id, group_id).await?
-        .ok_or(ApiError::Forbidden)?;
-    MEMBERSHIP_CACHE.insert((user_id.into(), group_id.into()), Cached { membership: m.clone(), cached_at: Instant::now() });
-    enforce(m, require_admin)
-}
-
-fn enforce(m: GroupMembership, require_admin: bool) -> Result<GroupMembership, ApiError> {
-    if require_admin && m.role != Role::Admin { return Err(ApiError::Forbidden); }
-    Ok(m)
-}
-```
-
-`MEMBERSHIP_CACHE` is a `once_cell::sync::Lazy<DashMap<...>>` that lives for the duration of the Lambda's warm container.
+`require_membership(repo, user_id, group_id, require_admin)` in `backend/crates/persistence/src/auth.rs` is the tenant-isolation gate every protected handler calls before touching group data. It checks a `DashMap` (`MEMBERSHIP_CACHE`, `once_cell::sync::Lazy`, keyed `(UserId, GroupId)`) fresh for `MEMBERSHIP_CACHE_TTL_SECONDS` (60s, `shared::config`); on a miss it loads the membership from DynamoDB, caches it, and returns `ApiError::forbidden` if the caller isn't a member — or isn't an admin, when `require_admin` is set. The same module's `resolve_user_id`/`require_user_id` do the `sub` → `userId` lookup from §6 with the same cache pattern, and `invalidate_membership`/`cache_user_id` let a handler evict or seed an entry when membership or identity changes mid-request. Both caches live for the duration of the Lambda's warm container.
 
 ---
 
@@ -393,17 +310,11 @@ fn enforce(m: GroupMembership, require_admin: bool) -> Result<GroupMembership, A
 - **Reusing invites**: prevented by `TransactWriteItems` condition on `status=pending`.
 - **Privilege escalation**: only admins can call admin routes; admins are scoped to one group at a time. The auth helper enforces this on every handler.
 - **JWT confusion**: API Gateway validates audience and issuer. Backend trusts `sub` only.
-- **Token theft via XSS** (updated 2026-10-07; lands in M13.5, D1): tokens now live in `localStorage` rather than `sessionStorage` (§7), so an installed PWA stays signed in across launches. XSS could read tokens from either storage equally — that part of the exposure is unchanged. The difference is lifetime: a stolen refresh token out of `localStorage` stays valid for up to 30 days unless revoked, versus disappearing when the tab closed under the old `sessionStorage` scheme. CSP (restricting script/connect/img sources) remains the primary mitigation against the XSS that would be needed to read it in the first place — the full policy is specified in `04-frontend-architecture.md` §12.1, shipped as a `<meta>` tag in `index.html` (GitHub Pages can't set headers) and verified by a Playwright test in Milestone 13. Logout's refresh-token revocation (§8) is the secondary mitigation: it closes the window for a token stolen before logout. Shared-device exposure (a draft mirror or cached CDN images surviving logout on a shared device) is accepted as-is — a pre-existing risk this change doesn't materially worsen (owner decision D9).
+- **Token theft via XSS** (D1): tokens live in `localStorage` rather than `sessionStorage` (§7), so an installed PWA stays signed in across launches. XSS could read tokens from either storage equally, so that part of the exposure is unchanged; the difference is lifetime — a stolen refresh token out of `localStorage` stays valid for up to 30 days unless revoked, versus disappearing when the tab closed under a `sessionStorage` scheme. CSP (restricting script/connect/img sources, `04-frontend-architecture.md` §12.1) remains the primary mitigation against the XSS that would be needed to read it in the first place. Logout's refresh-token revocation (§8) is the secondary mitigation: it closes the window for a token stolen before logout. Shared-device exposure (a draft mirror or cached CDN images surviving logout) is accepted as-is — a pre-existing risk this doesn't materially worsen (`PROGRESS.md` D9).
 - **Replay of CDN cookies**: cookies expire in 1 hour and are scoped to `/img/{groupId}/*`. A leaked cookie grants read access to that group's images for ≤1 hour. Acceptable.
 
 ---
 
-## 13. Sequence summary (text version of §2 diagram)
+## 13. Sequence summary
 
-1. User clicks invite URL → SPA loads `/join?code=XYZ`
-2. SPA stashes code, redirects to Cognito hosted UI
-3. User completes OAuth at IdP, redirects to Cognito, then back to `/auth/callback`
-4. SPA exchanges code for tokens
-5. SPA pulls stashed invite code, calls `POST /invites/redeem`
-6. Backend atomically creates User (if needed) + GroupMembership + consumes invite
-7. SPA refreshes `/config`, sees the new group, navigates user in
+See the diagram in §2 — it's the full sequence; this section is intentionally left as a pointer rather than a second copy.

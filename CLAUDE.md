@@ -87,21 +87,20 @@ Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/A
 
 ## Picking up work
 
-**Start with [`plans/PROGRESS.md`](plans/PROGRESS.md).** It records:
-- which milestone is next
-- what each finished milestone landed
-- decisions made along the way
-- active blockers
+**Start with [`plans/PROGRESS.md`](plans/PROGRESS.md).** It's kept short and records:
+- which milestone is next, and the test baselines
+- active blockers and next steps
+- standing owner decisions (D1–D12 and later)
 - known gaps carried forward
 
-Update it at the end of every milestone; its last section says how.
+What each finished milestone landed, including the bugs found and per-milestone decisions, is in [`plans/archive/progress-log.md`](plans/archive/progress-log.md). Read it only when you need the history. Update both at the end of every milestone; PROGRESS.md's last section says how.
 
 Standing rules learned the hard way:
 - **API contract changes:** every new or changed route updates [`shared/openapi.yaml`](shared/openapi.yaml) and `ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs` in the same change. Then re-run `scripts/codegen_types.sh` to regenerate `frontend/src/types/api.ts`. Changes are **expand → contract**: the backend must keep serving the previous frontend release (installed PWAs run old code until their service worker updates), so a field or route is removed only in a later release, after the frontend that stops using it has shipped.
 - **Crate template:** new Lambda crates copy the layout of `lambda-questions` / `lambda-responses`: `lib.rs`, `router.rs`, `handlers.rs`, `state.rs`, `validation.rs`, and DynamoDB Local tests under `tests/`. The binary is named `<name>-api`. Wire it in `infra/opennewsletter/api_stack.py` and add a `FUNCTION_<binary>` entry to the `Makefile`.
 - **Key timestamps:** every timestamp in a key attribute goes through `persistence::keys::key_timestamp`.
 - **Test group IDs:** integration tests use unique group IDs, because the membership cache is process-wide.
-- **Spec gaps:** when you fill a gap in the spec, record the decision in the owning plan doc and in PROGRESS.md's "Decisions" list for that milestone.
+- **Spec gaps:** when you fill a gap in the spec, record the decision in the owning plan doc and in that milestone's entry in `plans/archive/progress-log.md` (standing owner decisions also go in PROGRESS.md).
 
 ## Delegating to parallel agents
 

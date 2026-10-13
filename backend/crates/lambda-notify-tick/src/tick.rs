@@ -5,36 +5,16 @@
 
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
+use domain::api::{DeadlineFanout, DeadlineFanoutKind, DevTickNotifyResponse};
 use domain::{Group, Newsletter, ResponseStatus};
 use persistence::{groups, newsletters, push as push_repo, responses};
 use push::metrics::FanoutMetrics;
 use push::state::AppState;
 use push::{delivery, payload};
-use serde::Serialize;
 use shared::config::{
     MAX_REMINDER_OFFSET_HOURS, NOTIFY_TICK_CYCLE_CUTOFF_SECS, NOTIFY_TICK_SEND_CUTOFF_SECS,
 };
 use std::time::Instant;
-
-/// One deadline-reminder fan-out this tick ran
-/// (`plans/03-api-contract.md` §11a.2). This route/tick only ever reports
-/// `deadline_reminder` — cycle-open and publication are fanned out from
-/// `lambda-cycle-tick` via `lambda-push` directly.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NotifyFanout {
-    pub group_id: String,
-    pub cycle_id: String,
-    pub kind: &'static str,
-    pub offset_hours: u32,
-    pub delivered: u32,
-    pub failed: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct NotifyTickSummary {
-    pub fanouts: Vec<NotifyFanout>,
-}
 
 /// Run one full tick: find every `open` cycle whose `responseCloseAt` falls
 /// within the configurable max offset, fan out at most one deadline
@@ -44,7 +24,7 @@ pub struct NotifyTickSummary {
 /// `NOTIFY_TICK_CYCLE_CUTOFF_SECS` (the rest stay unclaimed and the next
 /// tick picks them up), and no send starts after
 /// `NOTIFY_TICK_SEND_CUTOFF_SECS`.
-pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
+pub async fn run_notify_tick(state: &AppState) -> DevTickNotifyResponse {
     let now = Utc::now();
     let started = Instant::now();
     let cycle_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_CYCLE_CUTOFF_SECS);
@@ -83,7 +63,7 @@ pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
         tracing::error!(error = ?e, "failed to upsert the notify-tick sentinel row");
     }
 
-    NotifyTickSummary { fanouts }
+    DevTickNotifyResponse { fanouts }
 }
 
 /// Claims the `NOTIFIED#CLOSE#{offset}` marker for every due-or-moot offset
@@ -96,7 +76,7 @@ async fn process_cycle(
     nl: &Newsletter,
     now: DateTime<Utc>,
     send_cutoff: Instant,
-) -> Option<NotifyFanout> {
+) -> Option<DeadlineFanout> {
     let group = match groups::get_group(&state.repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -175,10 +155,10 @@ async fn process_cycle(
     )
     .await;
 
-    Some(NotifyFanout {
-        group_id: nl.group_id.to_string(),
-        cycle_id: nl.cycle_id.to_string(),
-        kind: "deadline_reminder",
+    Some(DeadlineFanout {
+        group_id: nl.group_id.clone(),
+        cycle_id: nl.cycle_id.clone(),
+        kind: DeadlineFanoutKind::DeadlineReminder,
         offset_hours: offset_to_send,
         delivered: fanout_metrics.delivered_count(),
         failed: fanout_metrics.failed_count(),

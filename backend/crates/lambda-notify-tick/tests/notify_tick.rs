@@ -58,7 +58,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
     let fanout = summary
         .fanouts
         .iter()
-        .find(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string())
+        .find(|f| f.group_id == group_id && f.cycle_id == cycle_id)
         .expect("one fanout for this cycle");
     assert_eq!(
         fanout.offset_hours, 24,
@@ -99,7 +99,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
         !second
             .fanouts
             .iter()
-            .any(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string()),
+            .any(|f| f.group_id == group_id && f.cycle_id == cycle_id),
         "a second tick reports nothing more for an already-handled cycle"
     );
     assert_eq!(sender.call_count(), 1, "and sends nothing more");
@@ -151,7 +151,7 @@ async fn moot_offsets_are_marked_but_never_sent() {
         !summary
             .fanouts
             .iter()
-            .any(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string()),
+            .any(|f| f.group_id == group_id && f.cycle_id == cycle_id),
         "nothing is sent when every offset is moot"
     );
     assert_eq!(sender.call_count(), 0);
@@ -349,7 +349,7 @@ async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smalle
     let fanout = summary
         .fanouts
         .iter()
-        .find(|f| f.cycle_id == "202610")
+        .find(|f| f.cycle_id.as_str() == "202610")
         .expect("fanout");
     assert_eq!(
         fanout.offset_hours, 48,

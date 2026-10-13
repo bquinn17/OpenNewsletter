@@ -123,7 +123,7 @@ These apply regardless of language.
 - Integration tests in `crate-name/tests/*.rs` (one file per scenario suite).
 - Test factory functions live in `persistence/src/test_factories.rs`, gated `#[cfg(any(test, feature = "test-utils"))]` so other crates' tests can pull them via the `test-utils` feature.
 - Run integration tests against DDB-local via `testcontainers`. Each test gets a unique table name; no shared state.
-- These need a reachable Docker daemon. On WSL2 the socket is rootless, so export it inline on every invocation: `export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1`. See [`13-dev-environments.md` §10.1](13-dev-environments.md).
+- These need a reachable Docker daemon; on WSL2 the socket is rootless, so export `DOCKER_HOST` inline on every invocation. Exact command per platform: [`13-dev-environments.md` §10.1](13-dev-environments.md).
 - Use `pretty_assertions::assert_eq` for non-trivial comparisons (better diff output).
 
 ### 2.8 Logging
@@ -154,7 +154,7 @@ These apply regardless of language.
 - Prettier — defaults except `printWidth: 100`, `singleQuote: false`, `trailingComma: "all"`.
 - ESLint flat config with `@typescript-eslint`, `react`, `react-hooks`, `import`, `jsx-a11y`. All `error`-level rules must be clean.
 - `tsc --noEmit` clean (the CI step).
-- No Stylelint (decided M13): the only stylesheet is `src/styles/tailwind.css`, and `prettier-plugin-tailwindcss` orders classes in TSX.
+- No Stylelint: the only stylesheet is `src/styles/tailwind.css`, and `prettier-plugin-tailwindcss` orders classes in TSX.
 
 ### 3.3 Types
 - Never `any`. Use `unknown` and narrow.
@@ -196,7 +196,7 @@ These apply regardless of language.
 ### 3.9 Tests
 - Vitest + Testing Library. Test files co-located: `Button.test.tsx` next to `Button.tsx`.
 - Test from the user's perspective: query by role, label, text. Avoid `getByTestId` unless there's no other accessible way.
-- Mock the API at the `api/client` boundary with `vi.mock`, and seed the TanStack Query cache where a test only needs data on screen (see `pages/JoinPage.test.tsx`, `components/responses/ImageUploader.test.tsx`). Type every fixture against `types/api.ts` so a contract change breaks the test at compile time. (Decided in M9; MSW was the original plan — `11-testing-ci-cd.md` §4.2.)
+- Mock the API at the `api/client` boundary with `vi.mock`, and seed the TanStack Query cache where a test only needs data on screen (see `pages/JoinPage.test.tsx`, `components/responses/ImageUploader.test.tsx`). Type every fixture against `types/api.ts` so a contract change breaks the test at compile time. (MSW was the original plan — `11-testing-ci-cd.md` §4.2.)
 - Don't assert on internal state, render output structure, or class names. Assert on what the user sees.
 
 ### 3.10 Accessibility
@@ -296,6 +296,6 @@ Before opening a PR:
 - [ ] No new dependencies added without justification in the PR description.
 - [ ] No secrets, env-specific values, or local paths in the diff.
 - [ ] OpenAPI YAML (`shared/openapi.yaml`) updated if any route or schema changed; codegen re-run (`scripts/codegen_types.sh`).
-- [ ] **(decided 2026-10-07; lands in M13.5, D6)** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first (`11-testing-ci-cd.md` §6), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
+- [ ] **(D6)** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first (`11-testing-ci-cd.md` §6), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
 - [ ] Plan documents updated if you discovered a gap or made a non-obvious decision.
 - [ ] PR description follows §6.3.

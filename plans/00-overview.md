@@ -1,8 +1,6 @@
 # 00 — Overview & System Map
 
-This is the entry point for the OpenNewsletter plan set. Every other plan document in this directory assumes the architecture, glossary, and repo layout described here. A subagent picking up any single plan should also read this file.
-
-> **Required reading before writing or editing any code:** [`coding-standards.md`](coding-standards.md). It defines the style, linting, testing, error-handling, and PR conventions every contributor — human or agent — is expected to follow. A milestone or task is not "done" until its work conforms to those standards.
+Entry point for the plan set: every other plan assumes the architecture, glossary and repo layout described here. Also required before writing code: [`coding-standards.md`](coding-standards.md).
 
 ---
 
@@ -11,9 +9,9 @@ This is the entry point for the OpenNewsletter plan set. Every other plan docume
 OpenNewsletter is a multi-tenant PWA where small groups of friends collaboratively produce a monthly newsletter:
 
 1. Continuously between cycles, members suggest and upvote questions for the next edition.
-2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 7-day response window opens (decided 2026-10-07; lands in M13.5 — was 4 days).
+2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 7-day response window opens.
 3. During the response window, members write long-form text answers (with up to 10 image/GIF attachments per answer) or vote in poll questions. Drafts autosave; only the author can see their draft.
-4. At the close of the response window, any non-empty draft answer (text with a body or images, or a poll pick) is auto-published, then the newsletter as a whole auto-publishes and comments/emoji reactions become available on every answer (decided 2026-10-07; lands in M13.5). Empty drafts stay drafts and are excluded, as before.
+4. At the close of the response window, any non-empty draft answer (text with a body or images, or a poll pick) is auto-published, then the newsletter as a whole auto-publishes and comments/emoji reactions become available on every published text answer. Empty drafts stay drafts and are excluded.
 
 All values above (cycle length, response window, questions-per-cycle, timezone) are configured per-group and editable.
 
@@ -35,16 +33,16 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 | Layer | Choice |
 |---|---|
 | Frontend | React 18 + TypeScript + Vite + Tailwind, deployed as static assets to GitHub Pages on a custom domain |
-| PWA | Workbox-generated service worker, Web Push (VAPID) for notifications |
+| PWA | `vite-plugin-pwa` (`injectManifest`) service worker, Web Push (VAPID) for notifications |
 | Auth | Amazon Cognito User Pool with Google / Facebook IdPs; JWT validated by API Gateway |
 | API | Amazon API Gateway HTTP API with Cognito JWT authorizer |
 | Compute | AWS Lambda, Rust (`provided.al2023` runtime via `cargo-lambda`) |
 | Data | Amazon DynamoDB single-table design, on-demand billing |
 | Media | Amazon S3 (originals + processed) behind CloudFront with signed cookies |
-| Notifications | Web Push directly from Lambda using the `web-push` crate; VAPID keys stored in Secrets Manager |
+| Notifications | Web Push sent directly from Lambda (own RFC 8291/8292 implementation, `07` §10); VAPID keys in the per-env Secrets Manager secret |
 | Scheduling | Amazon EventBridge scheduler rules (cycle tick + notification tick Lambdas) |
 | IaC | AWS CDK in Python |
-| CI/CD | GitHub Actions: separate workflows for frontend, backend, and infra |
+| CI/CD | GitHub Actions: a CI workflow per area, one `deploy.yml` (dev auto-deploy, gated prod promotion), nightly E2E (`11` §6) |
 
 ---
 
@@ -52,41 +50,26 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 
 ```
 OpenNewsletter/
-├── frontend/                       # React + TS + Tailwind PWA
-│   ├── src/
-│   │   ├── api/                    # generated client + thin wrappers
-│   │   ├── auth/                   # Cognito hosted-UI integration
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── pwa/                    # service worker registration, push
-│   │   ├── state/                  # Zustand stores
-│   │   ├── styles/
-│   │   ├── types/                  # generated from backend OpenAPI
-│   │   └── main.tsx
-│   ├── public/
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
-│   └── package.json
+├── frontend/                       # React + TS + Tailwind PWA — layout in 04 §2
 │
 ├── backend/                        # Rust workspace
 │   ├── Cargo.toml                  # workspace root
 │   ├── crates/
 │   │   ├── domain/                 # entities, errors, ports (no IO)
 │   │   ├── persistence/            # DynamoDB single-table adapter
-│   │   ├── shared/                 # config, JWT verify, telemetry, S3 helpers
-│   │   ├── lambda-invites/         # POST /invites, POST /invites/redeem
-│   │   ├── lambda-groups/          # GET /groups, GET /groups/{id}
-│   │   ├── lambda-newsletters/     # GET /groups/{g}/newsletters, GET /groups/{g}/newsletters/{id}
-│   │   ├── lambda-questions/       # candidate questions: suggest, vote, list
+│   │   ├── shared/                 # config constants, HTTP/claims helpers, telemetry, cycle time math
+│   │   ├── media-delete/           # S3 + CloudFront + row deletion shared by media callers
+│   │   ├── lambda-invites/         # invite create/list/revoke/redeem + PreSignUp trigger
+│   │   ├── lambda-groups/          # /config, /me, groups, members
+│   │   ├── lambda-newsletters/     # newsletter list + detail
+│   │   ├── lambda-questions/       # candidate questions: suggest, vote, list, admin delete
 │   │   ├── lambda-responses/       # drafts, publish, poll votes
 │   │   ├── lambda-engagement/      # comments + reactions
-│   │   ├── lambda-media/           # POST /uploads (presign), GET /media/{id}
-│   │   ├── lambda-push/            # subscribe/unsubscribe/test
+│   │   ├── lambda-media/           # uploads (presign), media cookie, avatars
+│   │   ├── lambda-push/            # push routes + cycle-open/publication fan-out
 │   │   ├── lambda-image-process/   # S3 ObjectCreated trigger
 │   │   ├── lambda-cycle-tick/      # EventBridge: open/close/publish cycles
-│   │   └── lambda-notify-tick/     # EventBridge: 4d/48h/24h reminders
+│   │   └── lambda-notify-tick/     # EventBridge: deadline reminders
 │   └── README.md
 │
 ├── infra/                          # CDK Python
@@ -102,9 +85,11 @@ OpenNewsletter/
 │   │   ├── media_pipeline_stack.py    # image-process Lambda + S3 events (volatile)
 │   │   ├── api_stack.py            # HTTP API, all request Lambdas, routes
 │   │   ├── lambda_assets.py        # locates cargo-lambda build output for CDK assets
-│   │   ├── notifications_stack.py  # EventBridge schedules + tick Lambdas + Secrets
+│   │   ├── notifications_stack.py  # EventBridge schedules + tick Lambdas
 │   │   ├── frontend_stack.py       # ACM cert + DNS records (Route53 if applicable)
-│   │   └── monitoring_stack.py     # CloudWatch dashboards + alarms + log groups
+│   │   ├── monitoring_stack.py     # CloudWatch dashboard + prod alarms
+│   │   ├── ci_stack.py             # account-wide GitHub OIDC roles + budget
+│   │   └── ssm_refs.py             # SSM parameter names shared between stacks
 │   └── tests/
 │
 ├── shared/
@@ -114,20 +99,23 @@ OpenNewsletter/
 │   ├── bootstrap_admin.py          # creates first group + admin (see 05-auth-flow.md)
 │   ├── generate_vapid_keys.py
 │   ├── seed_dev_data.py
-│   └── codegen_types.sh            # openapi-typescript + openapi-generator for Rust
+│   ├── write_frontend_env.py       # CDK outputs → frontend/.env.{env}
+│   ├── check_lambda_binaries.sh    # refuses to deploy shell-stub Lambdas
+│   └── codegen_types.sh            # openapi-typescript → frontend/src/types/api.ts
 │
-├── plans/                          # this directory
+├── plans/                          # this directory (history in plans/archive/)
+├── docs/                           # operator runbooks + smoke checklist
+├── Makefile                        # dev-stack shortcuts (13 §8)
 │
 ├── .github/workflows/
 │   ├── frontend-ci.yml             # typecheck, lint, test, build
 │   ├── backend-ci.yml              # fmt, clippy, cargo deny, cargo test, Lambda cross-build
 │   ├── infra-ci.yml                # ruff, mypy, pytest, cdk synth; cdk diff on PR
-│   ├── deploy.yml                  # main → dev; gated promote-prod → prod backend + gh-pages (M13.5)
+│   ├── deploy.yml                  # main → dev; gated promote-prod → prod backend + gh-pages
 │   └── e2e.yml                     # nightly Playwright
 │
 ├── CLAUDE.md                       # runtime guidance for AI assistants in-repo
 ├── OpenNewsletter_concept.md       # original concept (read-only reference)
-├── OpenNewsletter_spec.md          # original spec (read-only reference)
 └── README.md
 ```
 
@@ -154,7 +142,6 @@ OpenNewsletter/
 
 - **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see `02-data-model-dynamodb.md` §2.1.
 - **Timestamps.** All timestamps stored as ISO-8601 UTC strings. Group-local rendering happens client-side using the group's `timezone` field.
-- **Money.** Not applicable — this is a no-cost-to-user app.
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in `03-api-contract.md`.
 - **Logging.** Structured JSON logs via `tracing` + `tracing-subscriber` with a `correlation_id` taken from `x-correlation-id` request header (frontend generates ULIDs).
 - **Auth claims.** Lambdas read `sub` (Cognito user ID) and `email` from the validated JWT context injected by API Gateway. Group memberships are NOT in the JWT — they are resolved on every request via DynamoDB (cached in-memory per cold-start for ≤60s).
@@ -166,10 +153,10 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — single shared AWS account with stack suffix `-dev`. **No custom domains** — raw AWS endpoints (`*.execute-api.us-east-1.amazonaws.com`, `*.cloudfront.net`) per `13-dev-environments.md` §2. Seeded via `make seed` (bootstrap admin + one test group).
-- `prod` — same account, stack suffix `-prod`.
+- `dev` — stack suffix `-dev`. **No custom domains**: raw AWS endpoints (`*.execute-api…`, `*.cloudfront.net`), per `13` §2. Seeded via `make seed`.
+- `prod` — stack suffix `-prod`, custom domains, the only environment with a hosted frontend and alarms.
 
-Both environments live in one personal AWS account (the account may host unrelated personal projects later; IAM users will remain few). Stronger account-level isolation is out of scope for v1; revisit if the threat model changes.
+Both live in one personal AWS account; stronger account-level isolation is out of scope for v1.
 
 CDK reads `--context env=dev|prod` and merges from `infra/opennewsletter/config.py`.
 
@@ -177,22 +164,22 @@ CDK reads `--context env=dev|prod` and merges from `infra/opennewsletter/config.
 
 ## 8. How to use this plan set
 
-The remaining documents are designed to be read in order during initial implementation, but each is self-contained enough to be picked up independently:
+Each document is self-contained enough to pick up on its own; numbers are cited as e.g. "`06` §5.3".
 
-- `coding-standards.md` — **required reading for any code-writing task**; style, linting, testing, error handling, naming, comments, commits, PR hygiene
-- `01-infrastructure-cdk.md` — every AWS resource, IAM policy, and CDK stack in detail
-- `02-data-model-dynamodb.md` — the single-table schema, every entity, every access pattern
-- `03-api-contract.md` — every HTTP endpoint with request/response shapes and auth rules
+- `coding-standards.md` — **required for any code-writing task**
+- `01-infrastructure-cdk.md` — every AWS resource, IAM policy and CDK stack
+- `02-data-model-dynamodb.md` — single-table schema, entities, access patterns, transactions
+- `03-api-contract.md` — every HTTP route's semantics and auth (wire shapes: `shared/openapi.yaml`)
 - `04-frontend-architecture.md` — pages, routing, state, PWA, build
-- `05-auth-flow.md` — Cognito setup, OAuth, invite redemption, bootstrap script
-- `06-newsletter-lifecycle.md` — cycle state machine + EventBridge schedules
-- `07-notifications.md` — Web Push (VAPID), tick Lambda, subscription lifecycle
-- `08-media-uploads.md` — pre-signed uploads, validation, image processing pipeline
+- `05-auth-flow.md` — Cognito, OAuth, invite redemption, bootstrap admin
+- `06-newsletter-lifecycle.md` — cycle state machine and the tick
+- `07-notifications.md` — Web Push, reminders, subscriptions
+- `08-media-uploads.md` — uploads, image pipeline, CDN signing, deletion
 - `09-engagement.md` — comments, reactions, polls
-- `10-archival.md` — future cold-storage plan (deferred but designed)
-- `11-testing-ci-cd.md` — test strategy and GitHub Actions workflows
-- `12-build-order.md` — sequenced milestones a subagent can execute end-to-end
-- `13-dev-environments.md` — workstation setup, the dev stack, reset levels, local testing
-- `14-future-ideas.md` — ideas kept but not scheduled (threaded comments, poll engagement, per-PR CI stacks)
-
-`12-build-order.md` is the recommended starting point for an executor: it references all other documents in the right order.
+- `10-archival.md` — future cold-storage design (deferred)
+- `11-testing-ci-cd.md` — test strategy and GitHub Actions
+- `12-build-order.md` — milestones and their done-when gates
+- `13-dev-environments.md` — workstation setup, the dev stack, local testing
+- `14-future-ideas.md` — kept but unscheduled ideas
+- `PROGRESS.md` — current status, blockers, owner decisions; `archive/` holds the milestone history
+- `OpenNewsletter_spec.md` — the original spec (read-only reference; superseded where the plans differ)

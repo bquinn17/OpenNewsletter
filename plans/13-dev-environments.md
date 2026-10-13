@@ -8,7 +8,7 @@ This complements [`11-testing-ci-cd.md`](11-testing-ci-cd.md), which covers the 
 
 ## 0. Workstation setup
 
-This repo is developed across two machines: the original Windows box (WSL2, Ubuntu 20.04) and, since it was cloned fresh there, an Apple Silicon Mac (macOS). Toolchain provisioning, the Docker backend, and a couple of compiler quirks differ enough between them that they're documented separately below. Everything else in this document (the `make` targets, the dev-stack workflow) is identical on both once setup is done.
+This repo is developed on two machines: a Windows box (WSL2, Ubuntu 20.04) and an Apple Silicon Mac (macOS). Toolchain provisioning, the Docker backend, and a couple of compiler quirks differ enough between them to document separately below; everything else in this document (the `make` targets, the dev-stack workflow) is identical on both once setup is done.
 
 ### 0.1 macOS (Apple Silicon)
 
@@ -38,7 +38,7 @@ A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `py
    ```bash
    cd infra && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
    ```
-   The `typeguard~=2.13.3` pin (chosen for older Python compat, see `requirements.txt`) works fine on 3.12. The CDK CLI itself runs via `npx aws-cdk@2`, fetched on first use; the committed wrapper `infra/bin/cdk` does exactly that, and the symlink above puts it on `PATH` as `cdk` whenever the venv is active (the `Makefile` relies on this). **Don't install it globally** (Homebrew's `aws-cdk` was removed from the Mac on 2026-10-06 for this reason; see below). `cdk.json` runs `python3 app.py`, so **activate the venv first** (`source infra/.venv/bin/activate`); otherwise macOS's system `python3` is used and synth fails with `No module named 'aws_cdk'`.
+   The `typeguard~=2.13.3` pin (chosen for older Python compat, see `requirements.txt`) works fine on 3.12. The CDK CLI itself runs via `npx aws-cdk@2`, fetched on first use; the committed wrapper `infra/bin/cdk` does exactly that, and the symlink above puts it on `PATH` as `cdk` whenever the venv is active (the `Makefile` relies on this). **Don't install it globally** (see below for why). `cdk.json` runs `python3 app.py`, so **activate the venv first** (`source infra/.venv/bin/activate`); otherwise macOS's system `python3` is used and synth fails with `No module named 'aws_cdk'`.
 
    **Spell it `npx aws-cdk@2`, not `npx cdk`.** With a global `cdk` installed (e.g. Homebrew's `aws-cdk` at `/opt/homebrew/bin/cdk`), `npx cdk` resolves to that binary and runs it with `/opt/homebrew/bin` prepended to `PATH`, ahead of the activated venv. Homebrew's `python3` then runs `app.py` and fails with the same `No module named 'aws_cdk'`, even though the venv is fine.
 6. The Apple clang toolchain means the gcc-9/`aws-lc-sys` release-build failure that hits WSL2 (§0.2, blocker B6 in `plans/PROGRESS.md`) does not apply here — nothing to do for it.
@@ -52,7 +52,7 @@ node --version
 (cd backend && export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1)
 ```
 
-**Fresh-clone gotcha (fixed, but worth knowing about)**: `.gitignore`'s `*.pem` rule used to also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, so a first clone had no signing key and `cdk synth` plus the 9 `MediaPersistentStack` tests failed. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key fixed this — a fresh clone should synth cleanly now.
+**Fresh-clone gotcha**: `.gitignore`'s `*.pem` rule would otherwise also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, leaving a fresh clone with no signing key so `cdk synth` and the 9 `MediaPersistentStack` tests fail. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key prevents this — don't remove that exception.
 
 ### 0.2 Windows / WSL2 (Ubuntu 20.04)
 
@@ -172,7 +172,7 @@ The frontend's hidden `/admin/bootstrap-login` route (only enabled when `VITE_EN
 
 Federated sign-in gets exercised manually on `dev` before merging anything that touches auth. It can't be automated: Google blocks scripted sign-in, so the nightly E2E `dev` project signs in as a Cognito password user (`E2E_USERNAME`/`E2E_PASSWORD`, [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md)).
 
-**Decided 2026-10-07; lands in M13.5 (D5):** the `admin-bootstrap` Cognito app client, and this whole password-login path, is **dev-only**. In prod there is no password auth and no `admin-bootstrap` client — the JWT authorizer's audience is the frontend client only, and the prod bootstrap admin instead signs in via an email-bound invite redeemed with Google (`docs/RUNBOOK.md` M14, `docs/milestone-1-operator-runbook.md`). Dev is unchanged by this decision.
+The `admin-bootstrap` Cognito app client, and this whole password-login path, is **dev-only** (D5). In prod there is no password auth and no `admin-bootstrap` client — the JWT authorizer's audience is the frontend client only, and the prod bootstrap admin instead signs in via an email-bound invite redeemed with Google (`docs/RUNBOOK.md`, `docs/milestone-1-operator-runbook.md`).
 
 ---
 
@@ -247,11 +247,11 @@ The test pyramid in [`11-testing-ci-cd.md`](11-testing-ci-cd.md) stands; this se
 | Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Same as planned. |
 | Contract test (OpenAPI ↔ Rust struct round-trip) | ✅ default | ✅ | Pure; runs under `cargo test`. |
 | CDK assertions (`pytest infra/tests/`) | ✅ default | ✅ | Pure synth, no AWS calls. |
-| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag (decided M13, `11` §2.4). |
+| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag (`11` §2.4). |
 | Playwright E2E | ✅ `npm run e2e` (mock project, no backend) | ✅ nightly + on demand | `mock` project runs against a mock-mode production build; the `dev` project needs `E2E_BASE_URL` and a deployed stack (`11` §4.3). |
 | Manual smoke | Required against your `dev` stack before merging risky changes | — | The seed → click-through → tick → verify loop. |
 
-The original plan made integration tests CI-only behind a `--features integration` flag. That flag was never built: `cargo test --workspace` runs everything, so local runs need Docker (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
+`cargo test --workspace` runs everything, so local runs need Docker (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
 
 ### 10.1 Docker socket by platform (required for any Docker-backed test)
 
@@ -283,37 +283,19 @@ Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError
 
 ## 11. Ephemeral CI stacks
 
-**Not built, and not currently planned** (decided 2026-10-07, D12). The per-PR `ci-pr-{n}` stack design this section used to sketch moved to [`plans/14-future-ideas.md`](14-future-ideas.md). `e2e.yml` continues to target the long-lived `dev` stack via `E2E_BASE_URL`.
+Not built, not currently planned (D12). Design moved to [`14-future-ideas.md`](14-future-ideas.md) §3. `e2e.yml` targets the long-lived `dev` stack via `E2E_BASE_URL`.
 
 ---
 
 ## 12. Cost expectations
 
-**Decided 2026-10-07; lands in M13.5 (D7):** `dev` stack idle cost drops to **≈ $0.40–1/mo**: one Secrets Manager secret per env instead of four (~$0.40 total, down from ~$1.60), no per-env CloudWatch alarms (dev keeps its dashboard; alarms move to prod only), and DynamoDB uses the free AWS-owned encryption key instead of the AWS-managed `aws/dynamodb` KMS key. Active use adds well under $1 in Lambda + DynamoDB + image storage. See `PROGRESS.md` decision D7 for the full prod+dev cost table.
-
-As built through M13 (superseded): `dev` stack idle was ~$3/mo (Secrets Manager dominated: ~$0.40/secret × 4). Active use added $1–2 in Lambda + DynamoDB + image storage.
-
-Total dev-environment overhead: well under $10/mo either way.
+`dev` stack idle cost is ≈ $0.40–1/mo; active use adds well under $1 in Lambda + DynamoDB + image storage. See [`01-infrastructure-cdk.md` §12](01-infrastructure-cdk.md) for the full prod+dev cost table (D7).
 
 ---
 
 ## 13. What this replaces in the plan set
 
-This document replaces the assumption that developers run a local emulation stack (DynamoDB Local, LocalStack, a Cognito mock) for *application* use. DynamoDB Local remains in use, but only as the Rust integration-test backend, which runs locally and in CI as part of `cargo test --workspace` (§10).
-
-It also adds two CDK refinements that should be incorporated into [`01-infrastructure-cdk.md`](01-infrastructure-cdk.md):
-- Splitting `MediaStack` into `MediaPersistentStack` + `MediaPipelineStack`.
-- Per-resource removal-policy / retention overrides in dev (§5 above).
-
-[`12-build-order.md`](12-build-order.md) gains a Milestone 3.5 between "Infrastructure baseline" and "Auth + bootstrap":
-
-> **Milestone 3.5 — Dev environment online (½ day)**
->
-> Read: this document.
->
-> Deliverables: `make deploy-dev`, `make seed`, `make redeploy-volatile`, `make reset-all` working end-to-end. `frontend/.env.dev` auto-written. Bootstrap admin can sign in via the dev-only login route and hit a protected API endpoint.
->
-> Done when: `make seed && make fe`, sign in as the seeded admin, and see the seeded group's home page.
+No local emulation stack (DynamoDB Local, LocalStack, a Cognito mock) for *application* use — see §1. DynamoDB Local is still used, but only as the Rust integration-test backend (§10).
 
 Every milestone after 3.5 is testable end-to-end against a real AWS stack from the moment its code lands.
 
@@ -391,6 +373,5 @@ Manual testing fails. When it does, these are the inspection ladders.
 One mock layer exists, for UI iteration without an AWS account (the MSW/`mockData.ts` setup this section used to describe was never built):
 
 - **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each milestone that adds client endpoints adds matching mock routes here. `make fe` (`--mode dev`) talks to the real dev stack instead.
-- The legacy pre-M7 layer, `frontend/src/mocks/`, was deleted in M12 (`04-frontend-architecture.md` §16).
 
-Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`). M9 made this the standard (`coding-standards.md` §3.9, `11-testing-ci-cd.md` §4.2); MSW is not used.
+Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`); this is the standard (`coding-standards.md` §3.9, `11-testing-ci-cd.md` §4.2). MSW is not used.

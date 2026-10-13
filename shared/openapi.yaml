@@ -48,6 +48,10 @@ tags:
     description: Web Push subscription, test and preference routes (`03-api-contract.md` §10).
   - name: health
     description: Health check (`03-api-contract.md` §11).
+  - name: dev
+    description: >
+      Dev-only tick routes (`03-api-contract.md` §11a). Deployed only when
+      `ENV=dev`; every other environment answers 404.
 
 paths:
   /config:
@@ -1654,6 +1658,144 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthenticated"
 
+  /admin/dev/tick/cycle:
+    post:
+      operationId: devTickCycle
+      tags: [dev]
+      summary: >
+        Run the cycle tick now (`03-api-contract.md` §11a.1). This route exists
+        only when `ENV=dev`. Every other environment returns 404: the route
+        isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if
+        it's ever reached. With `advanceCycleClosesBy`, the group's active
+        cycle (its `open` cycle if it has one, else its `voting` cycle) has its
+        deadline rewound by that duration first, so its transition is due at
+        once. `groupId` is then required and the caller must be that group's
+        admin. Without it, the tick runs globally and the caller must be an
+        admin of at least one group. An absent or empty body is allowed.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevTickCycleRequest"
+            example:
+              groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+              advanceCycleClosesBy: "7d"
+      responses:
+        "200":
+          description: >
+            Every state change the tick made, across all groups. `from: null`
+            marks a newly created `voting` cycle (`06-newsletter-lifecycle.md`
+            §5.4) rather than a transition of an existing one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevTickCycleResponse"
+              example:
+                transitions:
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202610"
+                    from: "voting"
+                    to: "open"
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202611"
+                    from: null
+                    to: "voting"
+                  - groupId: "01HG2F3K4M5N6P7Q8R9S0T1V2W"
+                    cycleId: "202609"
+                    from: "open"
+                    to: "published"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >
+            Not `ENV=dev`. The example is the Lambda's own refusal, a backstop.
+            Outside dev the route isn't deployed, so API Gateway answers first
+            with its own body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/not-found"
+                title: "Not found"
+                status: 404
+                detail: "dev routes are only available when ENV=dev"
+                code: "NOT_FOUND"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+        "422":
+          description: >
+            `advanceCycleClosesBy` isn't an integer plus `m`/`h`/`d` between 0
+            and 366 days, or it was sent without `groupId`, or the body isn't
+            valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/validation-failed"
+                title: "Validation failed"
+                status: 422
+                detail: "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+                code: "VALIDATION_FAILED"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                fieldErrors:
+                  - field: "advanceCycleClosesBy"
+                    code: "INVALID"
+                    message: "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+
+  /admin/dev/tick/notify:
+    post:
+      operationId: devTickNotify
+      tags: [dev]
+      summary: >
+        Run the notify tick now, globally (`03-api-contract.md` §11a.2). No
+        request body. This route exists only when `ENV=dev`. Every other
+        environment returns 404: the route isn't deployed there, and the
+        Lambda also refuses with `NOT_FOUND` if it's ever reached. The caller
+        must be an admin of at least one group. Only deadline reminders run
+        here. Cycle-open and publication fan-outs come from the cycle tick via
+        `lambda-push` and aren't reported by either dev route.
+      responses:
+        "200":
+          description: >
+            One entry per deadline reminder sent this tick. `failed` counts
+            expired and failed sends together.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevTickNotifyResponse"
+              example:
+                fanouts:
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202610"
+                    kind: "deadline_reminder"
+                    offsetHours: 24
+                    delivered: 5
+                    failed: 1
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >
+            Not `ENV=dev`. The example is the Lambda's own refusal, a backstop.
+            Outside dev the route isn't deployed, so API Gateway answers first
+            with its own body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/not-found"
+                title: "Not found"
+                status: 404
+                detail: "dev routes are only available when ENV=dev"
+                code: "NOT_FOUND"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -3165,3 +3307,70 @@ components:
         buildAt:
           type: [string, "null"]
           format: date-time
+
+    # ---- §11a Dev-only tick routes ----
+
+    DevTickCycleRequest:
+      type: object
+      properties:
+        groupId:
+          type: string
+          description: Required when `advanceCycleClosesBy` is set.
+        advanceCycleClosesBy:
+          type: string
+          description: >
+            An integer plus `m`, `h` or `d` (`5m`, `2h`, `4d`), between 0 and
+            366 days.
+
+    CycleTransition:
+      type: object
+      required: [groupId, cycleId, from, to]
+      properties:
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        from:
+          description: "`null` when the tick created this cycle."
+          oneOf:
+            - $ref: "#/components/schemas/NewsletterStatus"
+            - type: "null"
+        to:
+          $ref: "#/components/schemas/NewsletterStatus"
+
+    DevTickCycleResponse:
+      type: object
+      required: [transitions]
+      properties:
+        transitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CycleTransition"
+
+    DeadlineFanout:
+      type: object
+      required: [groupId, cycleId, kind, offsetHours, delivered, failed]
+      properties:
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        kind:
+          type: string
+          enum: [deadline_reminder]
+        offsetHours:
+          type: integer
+        delivered:
+          type: integer
+        failed:
+          type: integer
+          description: Expired and failed sends together.
+
+    DevTickNotifyResponse:
+      type: object
+      required: [fanouts]
+      properties:
+        fanouts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeadlineFanout"

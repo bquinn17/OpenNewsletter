@@ -1,6 +1,6 @@
 # 14 — Future Ideas
 
-Ideas the owner wants kept but not built in v1. Nothing here is scheduled. Each entry says what it is, why it's deferred, and what it would touch, so a later milestone can pick it up without re-deriving the design. Decided in the 2026-10-07 plan review (`PROGRESS.md`).
+Ideas the owner wants kept but not built in v1. Nothing here is scheduled. Each entry says what it is, why it's deferred, and what it would touch, so a later milestone can pick it up without re-deriving the design. Owner decisions D11/D12 in `PROGRESS.md`.
 
 ---
 
