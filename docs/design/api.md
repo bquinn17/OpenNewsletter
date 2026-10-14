@@ -1,17 +1,15 @@
-# 03 — API Contract
+# API
 
-This is the source-of-truth list of every HTTP endpoint OpenNewsletter exposes. Each route names its handler Lambda (matching `01-infrastructure-cdk.md` §6.2), the auth/role requirement, request/response shapes, error codes, and the access-pattern numbers from `02-data-model-dynamodb.md`.
-
-**`shared/openapi.yaml` is the authoritative source for wire shapes** — it covers every route below, and is what gets codegen'd into TS types and Rust route stubs (§12). This document is the human-readable mirror: routes, validation rules, status-dependent behavior, and error handling. On any drift between the two, the YAML wins.
+This is the full list of every HTTP endpoint OpenNewsletter exposes: handler Lambda (matching [`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)), auth/role requirement, request/response shapes, status-dependent behavior, error codes, and the access-pattern numbers from [`data-model.md`](data-model.md). It's for anyone adding or changing a route, on either the backend or the frontend. **`shared/openapi.yaml` is the source of truth for wire shapes** — it covers every route below and is what gets codegen'd into TS types and Rust route stubs (§12); on any drift between the two, the YAML wins. This page is the source of truth for semantics, auth and error behavior: validation rules, status-dependent behavior, and what each error code means.
 
 ---
 
 ## 1. General conventions
 
-- Base URL: `https://api.opennewsletter.example.com` (prod). Dev has no custom domains — the raw `https://{apiId}.execute-api.us-east-1.amazonaws.com` endpoint is used (see `13-dev-environments.md` §2).
+- Base URL: `https://api.opennewsletter.example.com` (prod). Dev has no custom domains — the raw `https://{apiId}.execute-api.us-east-1.amazonaws.com` endpoint is used (see [`environments.md` §2](../development/environments.md#2-environments)).
 - Content type: `application/json` (UTF-8) for everything except media uploads (which go directly to S3).
-- Auth: All routes require a Cognito JWT in `Authorization: Bearer {idToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint. **The ID token, not the access token**: `POST /invites/redeem` creates the caller's `User` row from the `email` and `name` claims, which only the ID token carries (`05-auth-flow.md` §4.2). The JWT authorizer's audience is the frontend client ID, which matches the ID token's `aud`.
-- Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per `02-data-model-dynamodb.md` §6).
+- Auth: All routes require a Cognito JWT in `Authorization: Bearer {idToken}` UNLESS marked **Public**. There are no Public routes — the OAuth callback is a Cognito-managed redirect, not an app endpoint. **The ID token, not the access token**: `POST /invites/redeem` creates the caller's `User` row from the `email` and `name` claims, which only the ID token carries ([`auth.md` §4.2](auth.md#42-algorithm)). The JWT authorizer's audience is the frontend client ID, which matches the ID token's `aud`.
+- Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per [`data-model.md` §6](data-model.md#6-tenant-isolation-rule)).
 - Correlation: Clients SHOULD send `x-correlation-id: {ulid}`. If absent the API generates one. It is echoed in responses and logged.
 - Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`. A cursor that decodes but doesn't address a row in the listing's own partition and key range (e.g. one taken from another answer's comment list) is a 422 on `cursor`, the same as a malformed one (`persistence::cursor::decode_scoped`).
 - Timestamps: All ISO-8601 UTC.
@@ -39,14 +37,14 @@ Error code catalog (machine-readable codes for the top-level `code`):
 | `CYCLE_NOT_VOTING` | 409 | Action requires cycle in `voting` status |
 | `CYCLE_NOT_OPEN` | 409 | Action requires cycle in `open` status |
 | `CYCLE_NOT_PUBLISHED` | 409 | Action requires cycle in `published` status |
-| `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin, or a concurrent admin change won the race (reload and retry; `02` §4 #7) |
+| `LAST_ADMIN` | 409 | Can't remove or demote the group's only admin, or a concurrent admin change won the race (reload and retry; [`data-model.md` §4](data-model.md#4-transactional-invariants) #7) |
 | `CANDIDATE_PROMOTED` | 409 | Candidate already locked into a cycle; can no longer be deleted |
-| `NEWSLETTER_ARCHIVED` | 410 | Cycle has transitioned to `archived`; see `10-archival.md` (not reachable until archival ships) |
+| `NEWSLETTER_ARCHIVED` | 410 | Cycle has transitioned to `archived`; see [`archival.md`](archival.md) (not reachable until archival ships) |
 | `IMAGE_LIMIT_EXCEEDED` | 409 | More than 10 images attached |
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
 | `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references, or that a live comment has attached |
-| `INVITE_EMAIL_MISMATCH` | 403 | `POST /invites/redeem` on an invite with `boundEmail` set, where the ID token's `email` (lowercased) doesn't match it or `email_verified` is false (`02` §2.4) |
+| `INVITE_EMAIL_MISMATCH` | 403 | `POST /invites/redeem` on an invite with `boundEmail` set, where the ID token's `email` (lowercased) doesn't match it or `email_verified` is false ([`data-model.md` §2.4](data-model.md#24-invite)) |
 | `RATE_LIMITED` | 429 | Throttled |
 | `INTERNAL` | 500 | Generic server error |
 
@@ -60,7 +58,7 @@ Error code catalog (machine-readable codes for the top-level `code`):
 
 Response 200: `ConfigResponse` in `shared/openapi.yaml`.
 
-`memberships` is a denormalized join. Each entry includes `groupName`, `timezone`, and `gradient`, so the frontend can render the group switcher (gradient swatch) and label cycles in the group's timezone (`04` §14a) without a follow-up query per group. The handler reads all the group rows in one `BatchGetItem`.
+`memberships` is a denormalized join. Each entry includes `groupName`, `timezone`, and `gradient`, so the frontend can render the group switcher (gradient swatch) and label cycles in the group's timezone ([`frontend.md` §14a](frontend.md#14a-client-derived-display-data-not-api-fields)) without a follow-up query per group. The handler reads all the group rows in one `BatchGetItem`.
 
 ### 2.2 `GET /me`
 
@@ -76,7 +74,7 @@ Response 200: `UserResponse` in `shared/openapi.yaml`.
 
 Body: `PatchMeRequest` in `shared/openapi.yaml`.
 
-Validation: `displayName` 1–40 chars, non-whitespace. `avatarColor` one of the eight allowed slugs (canonical home: the `AvatarColorSlug` enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table — the contract test in `11-testing-ci-cd.md` §2.3 keeps the Rust mirror honest). `avatarMediaId` (when non-null) must reference an `AvatarMedia` row owned by the caller in `status=ready`; otherwise `VALIDATION_FAILED`. Setting `avatarMediaId: null` clears the photo and the deterministic `avatarColor` takes over for rendering. Clearing permanently deletes the old avatar, the same way replacing it does (§9.7) — otherwise a client that cleared without calling `DELETE /avatars` would leave the old objects behind.
+Validation: `displayName` 1–40 chars, non-whitespace. `avatarColor` one of the eight allowed slugs (canonical home: the `AvatarColorSlug` enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table — the contract test in [`testing-and-ci.md` §2.3](../development/testing-and-ci.md#23-contract-test) keeps the Rust mirror honest). `avatarMediaId` (when non-null) must reference an `AvatarMedia` row owned by the caller in `status=ready`; otherwise `VALIDATION_FAILED`. Setting `avatarMediaId: null` clears the photo and the deterministic `avatarColor` takes over for rendering. Clearing permanently deletes the old avatar, the same way replacing it does (§9.7) — otherwise a client that cleared without calling `DELETE /avatars` would leave the old objects behind.
 
 Response 200: `UserResponse`.
 
@@ -90,7 +88,7 @@ Response 200: `UserResponse`.
 
 Body: `CreateInviteRequest` in `shared/openapi.yaml`.
 
-`boundEmail` restricts redemption to a caller whose ID-token `email` matches it (case-insensitively) and whose `email_verified` is true — see `02` §2.4 and §3.4 below. It's an admin-side option in general; the UI need not expose it (it's used by `scripts/bootstrap_admin.py`'s prod path, `05` §9).
+`boundEmail` restricts redemption to a caller whose ID-token `email` matches it (case-insensitively) and whose `email_verified` is true — see [`data-model.md` §2.4](data-model.md#24-invite) and §3.4 below. It's an admin-side option in general; the UI need not expose it (it's used by `scripts/bootstrap_admin.py`'s prod path, [`auth.md` §9](auth.md#9-bootstrap-admin--first-group)).
 
 Response 201: `CreateInviteResponse`.
 
@@ -116,13 +114,13 @@ Response 204.
 
 **Lambda**: `lambda-invites`. **Auth**: required. **Role**: any authenticated user.
 
-The single, canonical place where invites are consumed. It covers **both** cases: first signup (the handler lazily creates the `CognitoSubLookup` + `User` rows when the caller's `sub` has no `userId` yet) and an existing user joining an additional group. The `PreSignUp` trigger is a pass-through and never touches invites — see `05-auth-flow.md` §3–§4 for the full algorithm.
+The single, canonical place where invites are consumed. It covers **both** cases: first signup (the handler lazily creates the `CognitoSubLookup` + `User` rows when the caller's `sub` has no `userId` yet) and an existing user joining an additional group. The `PreSignUp` trigger is a pass-through and never touches invites — see [`auth.md` §3](auth.md#3-presignup-lambda)–§4 for the full algorithm.
 
 Body: `RedeemRequest` in `shared/openapi.yaml`.
 
 Response 200: `RedeemResponse`.
 
-Errors: `INVITE_INVALID`, `INVITE_EXPIRED`, `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `INVITE_EMAIL_MISMATCH` (when the invite has `boundEmail` set and the caller's ID-token `email`/`email_verified` don't satisfy it; `05` §4.2).
+Errors: `INVITE_INVALID`, `INVITE_EXPIRED`, `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `INVITE_EMAIL_MISMATCH` (when the invite has `boundEmail` set and the caller's ID-token `email`/`email_verified` don't satisfy it; [`auth.md` §4.2](auth.md#42-algorithm)).
 
 ### 3.5 `DELETE /groups/{groupId}/members/{userId}` (leave or kick)
 
@@ -162,9 +160,9 @@ Body (all optional): `PatchGroupRequest` in `shared/openapi.yaml`.
 
 `gradient` must be one of the six preset palette slugs (canonical home: the `GradientSlug` enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table).
 
-Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see `07-notifications.md` §7.1).
+Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see [`notifications.md` §7.1](notifications.md#71-algorithm)).
 
-**`responseWindowDays` on a currently-`open` cycle**: the handler recomputes that cycle's `responseCloseAt = responseOpenAt + days` (and its GSI2 keys) only if the new close is still in the future. If the recomputed close would be in the past, the request is rejected with 422 `VALIDATION_FAILED` and a `fieldErrors` entry on `responseWindowDays` with code `CLOSES_IN_PAST`, rather than silently applying to a later cycle. Reminder markers already claimed for that cycle stay claimed — an extended window doesn't re-send a reminder already sent. The current `voting` cycle's `responseWindowDays` (and `questionsPerCycle`, `votesPerUserPerCycle`, `timezone`) also apply immediately, per `06` §6, which has the full per-field rules.
+**`responseWindowDays` on a currently-`open` cycle**: the handler recomputes that cycle's `responseCloseAt = responseOpenAt + days` (and its GSI2 keys) only if the new close is still in the future. If the recomputed close would be in the past, the request is rejected with 422 `VALIDATION_FAILED` and a `fieldErrors` entry on `responseWindowDays` with code `CLOSES_IN_PAST`, rather than silently applying to a later cycle. Reminder markers already claimed for that cycle stay claimed — an extended window doesn't re-send a reminder already sent. The current `voting` cycle's `responseWindowDays` (and `questionsPerCycle`, `votesPerUserPerCycle`, `timezone`) also apply immediately, per [`lifecycle.md` §6](lifecycle.md#6-settings-changes-mid-cycle), which has the full per-field rules.
 
 ---
 
@@ -193,12 +191,12 @@ Returns the full edition. Behavior depends on status:
 - `voting` → `{ status: "voting", candidates: [...] }` — see §6 candidate question shape (admin-only fields stripped).
 - `open` → questions list + the caller's own drafts (only). Other users' answers omitted.
 - `published` → questions list with all published answers, comments, and reactions hydrated; poll questions include vote tallies.
-- `archived` → 410 Gone with link header to archive blob (per `10-archival.md` §4).
+- `archived` → 410 Gone with link header to archive blob (per [`archival.md` §4](archival.md#4-read-path)).
 
-**Read plan for `published` (decided 2026-10-08, design review).** The handler reads in a fixed number of concurrent waves rather than per answer, so latency doesn't grow with group size. (It used to make about six sequential DynamoDB calls per answer; a 50-member group with image-heavy answers would have exceeded the 10 s Lambda timeout.) The waves are:
+**Read plan for `published`.** The handler reads in a fixed number of concurrent waves rather than per answer, so latency doesn't grow with group size. (An earlier version made about six sequential DynamoDB calls per answer; a 50-member group with image-heavy answers would have exceeded the 10 s Lambda timeout.) The waves are:
 1. AP13, the locked questions.
 2. AP14 for every question at once.
-3. One engagement-partition read per published text answer (`02` §3, AP18 + AP19 combined), 16 at a time (`EDITION_READ_CONCURRENCY`).
+3. One engagement-partition read per published text answer ([`data-model.md` §3](data-model.md#3-access-patterns--index-map), AP18 + AP19 combined), 16 at a time (`EDITION_READ_CONCURRENCY`).
 4. One `BatchGetItem` for every user profile and one for every image the edition references, run together.
 
 The output is unchanged: question, answer, image and comment order, the skip rules for images that aren't `ready`, `[deleted]` placeholders and poll tallies are all as before.
@@ -227,7 +225,7 @@ Response 200: `CandidateListResponse` in `shared/openapi.yaml`.
 
 `askedBy`, when populated, mirrors the member-listing avatar fields (`AskedBy` schema) so the UI can render a small avatar swatch next to the asker. It's populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
-`sort=top` orders by `voteCount` DESC, then `submittedAt` ASC (oldest first), then `questionId` ASC — the same tie-break promotion uses (`06` §5.2, `02` §2.6). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. Since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory rather than using AP11's GSI1 — whose tie order (newest-first on vote-count ties) doesn't match promotion's and would make the UI's "top" list disagree with which candidates actually get promoted.
+`sort=top` orders by `voteCount` DESC, then `submittedAt` ASC (oldest first), then `questionId` ASC — the same tie-break promotion uses ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl), [`data-model.md` §2.6](data-model.md#26-candidate-question-in-voting-pool)). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. Since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory rather than using AP11's GSI1 — whose tie order (newest-first on vote-count ties) doesn't match promotion's and would make the UI's "top" list disagree with which candidates actually get promoted.
 
 ### 6.2 `POST /groups/{groupId}/candidate-questions`
 
@@ -235,7 +233,7 @@ Response 200: `CandidateListResponse` in `shared/openapi.yaml`.
 
 Body: `CreateCandidateRequest` in `shared/openapi.yaml` (`pollOptions`, a `CreatePollOptionRequest[]`, is required only for `kind: poll`).
 
-Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars after trimming, no duplicate labels (compared case-insensitively, `09` §3.3). `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
+Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars after trimming, no duplicate labels (compared case-insensitively, [`engagement.md` §3.3](engagement.md#33-validation)). `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
 
 Response 201: `CandidateItemResponse`, with `askedBy` populated (the submitter is always allowed to see their own attribution, even when `isAnonymous=true`).
 
@@ -247,7 +245,7 @@ Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exi
 
 Casts an upvote. Idempotent (re-POSTing returns 200 with current state).
 
-Implementation: `TransactWriteItems` per `02-data-model-dynamodb.md` §4 transaction #1. The cap is enforced in the transaction by the voter's `VoterTally` counter (`02` §2.7a), so concurrent votes can't exceed `votesPerUserPerCycle`. A pre-read of the caller's votes supplies the error detail. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on. That list is carried in the problem body's free-text `detail` field (comma-separated question IDs), not a new structured field — §1.1's Problem Details shape only has `fieldErrors` for per-field validation issues, which doesn't fit a cap-conflict error.
+Implementation: `TransactWriteItems` per [`data-model.md` §4](data-model.md#4-transactional-invariants) transaction #1. The cap is enforced in the transaction by the voter's `VoterTally` counter ([`data-model.md` §2.7a](data-model.md#27a-voter-tally)), so concurrent votes can't exceed `votesPerUserPerCycle`. A pre-read of the caller's votes supplies the error detail. If the cap is exceeded, returns `VOTE_CAP_REACHED` and lists the questions the user has already voted on. That list is carried in the problem body's free-text `detail` field (comma-separated question IDs), not a new structured field — §1.1's Problem Details shape only has `fieldErrors` for per-field validation issues, which doesn't fit a cap-conflict error.
 
 Response 200: `CandidateVoteResponse` in `shared/openapi.yaml`.
 
@@ -259,11 +257,11 @@ Response 200: same shape as 6.3.
 
 ### 6.5 Admin moderation routes
 
-There is **no admin curate / promote / override** surface in v1. The cycle tick is the source of truth for which candidates promote, and locked questions are immutable. See `06-newsletter-lifecycle.md` §7. The only admin-side mutation on candidates:
+There is **no admin curate / promote / override** surface in v1. The cycle tick is the source of truth for which candidates promote, and locked questions are immutable. See [`lifecycle.md` §7](lifecycle.md#7-manual-admin-overrides). The only admin-side mutation on candidates:
 
 - `DELETE /admin/groups/{groupId}/candidate-questions/{questionId}` — delete a candidate while it's still in `voting` (e.g., abusive). Removes votes too via batch delete. Returns 409 `CANDIDATE_PROMOTED` if the candidate has already been locked into a cycle.
 
-**Vote cascade:** `02-data-model-dynamodb.md`'s access-pattern list has no "list voters of question X" pattern (`CandidateVote` is keyed by voter, not by question), so there is no efficient query for "every vote on this candidate." Scanning the whole table for one admin action would be worse. `lambda-questions` instead iterates the group's membership list (AP3, bounded by `memberSoftCap`) and issues one best-effort delete per member against that member's `(cycle, questionId)` vote key — deleting an absent item is a no-op, so no existence check is needed first. This is O(members) requests on a rare, admin-only action, not a hot path. **Order matters:** sweep the votes, delete the candidate, then sweep again. The first sweep runs while the candidate still exists, so a failure partway leaves a retryable DELETE; deleting the candidate first would make a retry 404 and strand the remaining votes. The second sweep catches a vote cast between the first sweep and the delete. After the delete, `cast_vote_tx`'s `vote_count` condition fails, so no vote can land later.
+**Vote cascade:** [`data-model.md`](data-model.md)'s access-pattern list has no "list voters of question X" pattern (`CandidateVote` is keyed by voter, not by question), so there is no efficient query for "every vote on this candidate." Scanning the whole table for one admin action would be worse. `lambda-questions` instead iterates the group's membership list (AP3, bounded by `memberSoftCap`) and issues one best-effort delete per member against that member's `(cycle, questionId)` vote key — deleting an absent item is a no-op, so no existence check is needed first. This is O(members) requests on a rare, admin-only action, not a hot path. **Order matters:** sweep the votes, delete the candidate, then sweep again. The first sweep runs while the candidate still exists, so a failure partway leaves a retryable DELETE; deleting the candidate first would make a retry 404 and strand the remaining votes. The second sweep catches a vote cast between the first sweep and the delete. After the delete, `cast_vote_tx`'s `vote_count` condition fails, so no vote can land later.
 
 ---
 
@@ -291,9 +289,9 @@ Behavior:
 - Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
 - "Open" means `status = open` **and** `now < responseCloseAt`. The second clause covers the ≤5-minute gap before the cycle tick flips the status, so a save that lands just past the deadline is refused even though the row still says `open`.
 - If `publish=true`, status moves to `published` and `publishedAt` is set. With `publish=false`, a new response is saved as `draft`.
-- **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it, and this keeps the `editionsAnswered` count from being bumped twice (`02` §4 #4). There is no unpublish in v1.
+- **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it, and this keeps the `editionsAnswered` count from being bumped twice ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). There is no unpublish in v1.
 - `responseId` is assigned on the first save and stays the same across later saves.
-- Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`), and the `editionsAnswered` bump on the first publish (`02` §4 #4). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
+- Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`), and the `editionsAnswered` bump on the first publish ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
 - The kind in the body must match the question's kind (else `VALIDATION_FAILED`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_FAILED` naming the image. The save does not modify `ImageMedia` rows; the image's question is fixed at `POST /uploads` time (§9.1).
 - **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
 - Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.
@@ -305,7 +303,7 @@ Response 200: `ResponseDto` in `shared/openapi.yaml`.
 
 After the cycle has closed (status `published`), responses are immutable. Attempts to `PUT` return 409 `CYCLE_NOT_OPEN`. The frontend hides edit affordances accordingly.
 
-**Auto-publish of non-empty drafts (`06` §5.3, `02` §4 #4a).** Before flipping the Newsletter to `published`, `lambda-cycle-tick` auto-publishes every non-empty draft answer: text with a non-whitespace `body` or a non-empty `imageMediaIds`, or a poll with `pollOptionId` set. So a caller who never clicked "Publish" can still see their draft show up as a published answer once the cycle closes, as long as it wasn't empty — only an empty draft (or no draft at all) is excluded. There is no race with the save endpoint: saves are already refused once `now >= responseCloseAt` (the "open" clause above), even while the row still reads `status = open` in the up-to-5-minute gap before the tick runs, so the last successful save is exactly what auto-publish sees. The explicit Publish affordance in the UI still exists — it signals "I'm done" (status pill, progress count) — but it no longer determines whether an answer appears in the published edition once the deadline passes.
+**Auto-publish of non-empty drafts ([`lifecycle.md` §5.3](lifecycle.md#53-publishnl), [`data-model.md` §4](data-model.md#4-transactional-invariants) #4a).** Before flipping the Newsletter to `published`, `lambda-cycle-tick` auto-publishes every non-empty draft answer: text with a non-whitespace `body` or a non-empty `imageMediaIds`, or a poll with `pollOptionId` set. So a caller who never clicked "Publish" can still see their draft show up as a published answer once the cycle closes, as long as it wasn't empty — only an empty draft (or no draft at all) is excluded. There is no race with the save endpoint: saves are already refused once `now >= responseCloseAt` (the "open" clause above), even while the row still reads `status = open` in the up-to-5-minute gap before the tick runs, so the last successful save is exactly what auto-publish sees. The explicit Publish affordance in the UI still exists — it signals "I'm done" (status pill, progress count) — but it no longer determines whether an answer appears in the published edition once the deadline passes.
 
 ---
 
@@ -313,7 +311,7 @@ After the cycle has closed (status `published`), responses are immutable. Attemp
 
 All require the cycle to be `published`. Pre-publish, this surface is hidden in the UI.
 
-**Addressing.** Every engagement route is nested under the answer's question: `/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/...`. Comment and reaction rows are keyed on `(questionId, answerUserId)` (`02` §2.11–§2.12), and a bare `responseId` has no index, so it couldn't be resolved without reading every question's answers. With `questionId` in the path, the handler queries that question's answers (`pk=GROUP#g#NL#c#Q#q`, `begins_with(sk, A#)`, at most one row per member) and takes the row whose `response_id` matches. That row must be a published **text** answer; otherwise the route returns 404. Poll answers are never engagement targets (`09` §3).
+**Addressing.** Every engagement route is nested under the answer's question: `/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/...`. Comment and reaction rows are keyed on `(questionId, answerUserId)` ([`data-model.md` §2.11](data-model.md#211-comment)–§2.12), and a bare `responseId` has no index, so it couldn't be resolved without reading every question's answers. With `questionId` in the path, the handler queries that question's answers (`pk=GROUP#g#NL#c#Q#q`, `begins_with(sk, A#)`, at most one row per member) and takes the row whose `response_id` matches. That row must be a published **text** answer; otherwise the route returns 404. Poll answers are never engagement targets ([`engagement.md` §3](engagement.md#3-polls)).
 
 **Check order on all seven routes (GETs included).** Each check runs only if the previous one passed:
 1. Membership: 403 if the caller isn't a member.
@@ -337,11 +335,11 @@ Body: `CreateCommentRequest` in `shared/openapi.yaml`. `body` 0–2000 chars. `i
 - uploaded for this group, cycle and question with `purpose: "comment"` (§9.1)
 - not attached to another comment
 
-A whitespace-only or missing `body` with no image is a 422. All failures are `VALIDATION_FAILED` with `fieldErrors` on `body` or `imageMediaId`. See `09-engagement.md` §1.3.
+A whitespace-only or missing `body` with no image is a 422. All failures are `VALIDATION_FAILED` with `fieldErrors` on `body` or `imageMediaId`. See [`engagement.md` §1.3](engagement.md#13-validation).
 
 Response 201: the created `CommentResponse`.
 
-**Image attachment.** `ImageMedia` gains `attached_comment_id` (`02` §2.10). Writing the comment and claiming the image happen in one `TransactWriteItems`, conditioned on the image being unclaimed (or already claimed by this comment). The same applies to changing or removing an image on PATCH and to soft delete, which also releases the old image. §9.4 uses the claim for its in-use check.
+**Image attachment.** `ImageMedia` gains `attached_comment_id` ([`data-model.md` §2.10](data-model.md#210-imagemedia)). Writing the comment and claiming the image happen in one `TransactWriteItems`, conditioned on the image being unclaimed (or already claimed by this comment). The same applies to changing or removing an image on PATCH and to soft delete, which also releases the old image. §9.4 uses the claim for its in-use check.
 
 ### 8.3 `PATCH .../comments/{commentId}`
 
@@ -357,7 +355,7 @@ Soft delete: sets `deletedAt`, blanks `body` and drops the image attachment, rel
 
 ### 8.6 `PUT .../reactions/{emoji}`
 
-Idempotent toggle-on with an empty body. `emoji` is URL-encoded. The server percent-decodes it if it still contains `%`, because API Gateway's decoding of path parameters isn't relied on. It then validates it against the canonical emoji predicate in `09-engagement.md` §2.2: NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
+Idempotent toggle-on with an empty body. `emoji` is URL-encoded. The server percent-decodes it if it still contains `%`, because API Gateway's decoding of path parameters isn't relied on. It then validates it against the canonical emoji predicate in [`engagement.md` §2.2](engagement.md#22-validation): NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
 
 ### 8.7 `DELETE .../reactions/{emoji}`
 
@@ -371,11 +369,11 @@ Removes the caller's reaction with that emoji. Idempotent, with the same validat
 
 **Lambda**: `lambda-media`. Returns a pre-signed S3 PUT URL the client uses to upload directly.
 
-Body: `CreateUploadRequest` in `shared/openapi.yaml` (`purpose` defaults to `response`; see `08-media-uploads.md` §3.1 for `comment`).
+Body: `CreateUploadRequest` in `shared/openapi.yaml` (`purpose` defaults to `response`; see [`media.md` §3.1](media.md#31-post-uploads-validation) for `comment`).
 
 `sha256`, when sent, is signed into the presign as `x-amz-checksum-sha256`, so S3 rejects a body whose digest doesn't match. It must be **standard base64**, not base64url: presigned PUTs can't use `x-amz-content-sha256` for payload integrity, and S3's flexible-checksum header needs standard base64.
 
-Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`} (else 415 `IMAGE_BAD_TYPE` — an unknown type such as SVG is a 415, not a 422), 1 ≤ `byteSize` ≤ 15728640 (over → 413 `IMAGE_TOO_LARGE`), caller is member of group, `questionId` is a locked question of the cycle (else 422). Cycle-status check depends on `purpose`: `"response"` requires the cycle to be `open`; `"comment"` requires it to be `published` (comments only exist post-publish — this is the upload path for comment attachments, `09-engagement.md` §1.3). The 10-image cap applies to `purpose=response` uploads only.
+Validation: `mimeType` ∈ {`image/jpeg`, `image/png`, `image/webp`, `image/gif`} (else 415 `IMAGE_BAD_TYPE` — an unknown type such as SVG is a 415, not a 422), 1 ≤ `byteSize` ≤ 15728640 (over → 413 `IMAGE_TOO_LARGE`), caller is member of group, `questionId` is a locked question of the cycle (else 422). Cycle-status check depends on `purpose`: `"response"` requires the cycle to be `open`; `"comment"` requires it to be `published` (comments only exist post-publish — this is the upload path for comment attachments, [`engagement.md` §1.3](engagement.md#13-validation)). The 10-image cap applies to `purpose=response` uploads only.
 
 Server creates an `ImageMedia` row with `status=pending` and an S3 key:
 ```
@@ -388,7 +386,7 @@ The frontend then `PUT`s the binary directly to `uploadUrl` with **every** liste
 
 ### 9.0 Addressing an existing upload
 
-An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` (`02` §2.10), so every `/uploads/{imageId}` route (§9.2–§9.4, §9.6) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
+An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` ([`data-model.md` §2.10](data-model.md#210-imagemedia)), so every `/uploads/{imageId}` route (§9.2–§9.4, §9.6) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
 
 Every one of these routes that returns a body returns `ImageMediaResponse` (`shared/openapi.yaml`): the row's fields in camelCase, minus the S3 keys, plus absolute `displayUrl`/`thumbUrl` (null until `ready`) and `errorMessage` (`IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` when `failed`). `DELETED` is not a possible value here — `DELETE /uploads/{imageId}` deletes the row instead of soft-marking it (§9.4).
 
@@ -404,7 +402,7 @@ Every one of these routes that returns a body returns `ImageMediaResponse` (`sha
 
 **Lambda**: `lambda-media`. **Real delete** — a soft-deleted row would leave the processed S3 variants still servable via CloudFront, so this removes the objects too. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE`.
 
-Otherwise: delete the original S3 object, both processed variants (display + thumb), create a CloudFront invalidation for the two processed paths, `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/display.webp` and `thumb.webp` (exact paths, not a `/*` wildcard: CloudFront allows only 15 wildcard invalidations in progress per distribution) (the first 1,000 invalidation paths/month are free), then delete the `ImageMedia` row — via the shared delete helper (`01` §6.2). S3 deletes happen first; if any fails, return 500 and leave the row in place so a retry can finish the job. Returns 204 on success. Idempotent: a repeat `DELETE` whose row is already gone also returns 204 (nothing left to leak). A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID from the draft (and saves) before calling this route — the response editor's "remove image" action does exactly that.
+Otherwise: delete the original S3 object, both processed variants (display + thumb), create a CloudFront invalidation for the two processed paths, `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/display.webp` and `thumb.webp` (exact paths, not a `/*` wildcard: CloudFront allows only 15 wildcard invalidations in progress per distribution) (the first 1,000 invalidation paths/month are free), then delete the `ImageMedia` row — via the shared delete helper ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)). S3 deletes happen first; if any fails, return 500 and leave the row in place so a retry can finish the job. Returns 204 on success. Idempotent: a repeat `DELETE` whose row is already gone also returns 204 (nothing left to leak). A draft that still lists a deleted image fails its next save's image validation, so the client drops the ID from the draft (and saves) before calling this route — the response editor's "remove image" action does exactly that.
 
 Comment images follow the same path: when a comment is soft-deleted, or its image is removed or replaced (§8.3, §8.4), the released image is deleted this way after the comment transaction commits (best effort; a failure is logged at ERROR, not surfaced to the caller). The UI confirms every one of these permanent deletes with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered."): removing an image in the response editor, removing or replacing a comment image, and deleting a comment that has an image.
 
@@ -416,7 +414,7 @@ Response 200 sets cookies via `Set-Cookie` headers (`CloudFront-Policy`, `CloudF
 
 `expiresAt` is an RFC 3339 timestamp like every other API timestamp (the epoch seconds live inside the policy). The `Set-Cookie` headers are emitted only when the Lambda has a cookie domain configured (`MEDIA_COOKIE_DOMAIN`, set in prod to `.{domain}`); dev returns the body alone. Cookies use `Path=/img/{groupId}/` and `Max-Age=3600`, so cookies for several groups coexist in the browser.
 
-For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan). In **dev** there is no shared registrable domain (raw AWS endpoints), so cookies cannot flow — the SPA instead appends the JSON-body values as CloudFront signed-URL query params to each image URL. See `08-media-uploads.md` §4.5.
+For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan). In **dev** there is no shared registrable domain (raw AWS endpoints), so cookies cannot flow — the SPA instead appends the JSON-body values as CloudFront signed-URL query params to each image URL. See [`media.md` §4.5](media.md#45-dev-environments-signed-query-params-instead-of-cookies).
 
 ### 9.6 `PATCH /uploads/{imageId}`
 
@@ -430,14 +428,14 @@ Response 200: `ImageMediaResponse`.
 
 ### 9.7 Avatar routes
 
-Avatars use a separate pipeline (see `08-media-uploads.md` §11) so they can cross group boundaries.
+Avatars use a separate pipeline (see [`media.md` §11](media.md#11-avatars-separate-pipeline)) so they can cross group boundaries.
 
 - `POST /avatars` — request a pre-signed PUT URL. Body: `CreateAvatarRequest` in `shared/openapi.yaml`. Validation: `byteSize` ≤ 5 MB (else 413), MIME as listed (GIF → 415). Server creates an `AvatarMedia` row (`status=pending`) and returns `CreateAvatarResponse`.
 - `GET /avatars/{avatarId}` — returns `AvatarMediaResponse` (status, `avatarUrl` once ready, `errorMessage`). Looked up under the caller's own user partition, so another user's avatar is a 404. Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
 - `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). **Real delete**: deletes the original + processed S3 objects, invalidates `/avatar/{avatarId}/display.webp`, then deletes the `AvatarMedia` row, via the same shared delete helper as §9.4. Idempotent — a repeat `DELETE` of an already-gone row returns 204. If the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering). Because the lookup is under the caller's own user partition, "404 if not owned" and "a repeat DELETE returns 204" can't be told apart: any missing row returns 204, and another user's avatar is never touched. The User row is cleared *before* the objects are deleted, so a failed delete never leaves the profile pointing at half-deleted objects.
 - **Avatar replacement and clearing:** when `PATCH /me` (§2.3) sets a new `avatarMediaId` over an existing one, or sets it to `null`, the handler deletes the old avatar's original + processed objects and invalidates `/avatar/{oldAvatarId}/display.webp` the same way, then deletes the old `AvatarMedia` row, after the `User` row update commits. The frontend confirms both this replace-over-existing case and an explicit `DELETE /avatars/{id}` with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered.").
 
-Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see `02-data-model-dynamodb.md` §2.16.
+Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see [`data-model.md` §2.16](data-model.md#216-avatarmedia).
 
 ---
 
@@ -489,7 +487,7 @@ Response 200: `HealthResponse` in `shared/openapi.yaml`. `version` and `buildAt`
 
 ## 11a. Dev-only endpoints
 
-These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT_FOUND` in any other environment. They exist so manual testing and Playwright E2E can fast-forward state without waiting for EventBridge. See `13-dev-environments.md` §9.
+These routes are wired into the API only when `ENV=dev` and refuse with `404 NOT_FOUND` in any other environment. They exist so manual testing and Playwright E2E can fast-forward state without waiting for EventBridge. See [`environments.md` §9](../development/environments.md#9-eventbridge-ticks-in-dev).
 
 ### 11a.1 `POST /admin/dev/tick/cycle`
 
@@ -499,7 +497,7 @@ Synchronously invokes the cycle-tick handler. Optional body: `DevTickCycleReques
 
 "The group's active cycle" means: the `open` cycle if one exists (its `responseCloseAt` is rewound, fast-forwarding toward publication — the common E2E case), else the `voting` cycle (its `responseOpenAt`/`voteWindowCloseAt` is rewound, fast-forwarding toward promotion). A group always has at most one of each, so this is unambiguous.
 
-Response 200: `DevTickCycleResponse` in `shared/openapi.yaml`, one `CycleTransition` per state change; `from`/`to` are `NewsletterStatus` values. A freshly created next-cycle row (`06` §5.4) appears in the same array with `from: null, to: voting` rather than in a separate list — one array covers every state change a tick made, created-from-nothing included. The scheduled tick logs the same shape.
+Response 200: `DevTickCycleResponse` in `shared/openapi.yaml`, one `CycleTransition` per state change; `from`/`to` are `NewsletterStatus` values. A freshly created next-cycle row ([`lifecycle.md` §5.4](lifecycle.md#54-create_next_voting_cyclegroup-after)) appears in the same array with `from: null, to: voting` rather than in a separate list — one array covers every state change a tick made, created-from-nothing included. The scheduled tick logs the same shape.
 
 ### 11a.2 `POST /admin/dev/tick/notify`
 
@@ -507,7 +505,7 @@ Response 200: `DevTickCycleResponse` in `shared/openapi.yaml`, one `CycleTransit
 
 Synchronously invokes the notify-tick handler (globally; no body). Response 200: `DevTickNotifyResponse` in `shared/openapi.yaml`, one `DeadlineFanout` per reminder sent. Only deadline reminders run in notify-tick, so `kind` is always `deadline_reminder`; `failed` counts expired and failed sends together. Cycle-open and publication fan-outs triggered by `POST /admin/dev/tick/cycle` run asynchronously in `lambda-push` and are not reported by either route.
 
-Both routes sit under the `dev` tag in `shared/openapi.yaml`, with their wire types in `domain::api` and rows in the contract test's `ROUTE_TABLE` like every other route. Both are also called by Playwright E2E (`11-testing-ci-cd.md` §4.3) — implement once, two consumers.
+Both routes sit under the `dev` tag in `shared/openapi.yaml`, with their wire types in `domain::api` and rows in the contract test's `ROUTE_TABLE` like every other route. Both are also called by Playwright E2E ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) — implement once, two consumers.
 
 ---
 
@@ -515,13 +513,13 @@ Both routes sit under the `dev` tag in `shared/openapi.yaml`, with their wire ty
 
 `shared/openapi.yaml` is hand-maintained as the canonical contract. Codegen targets: TypeScript types → `frontend/src/types/api.ts` via `openapi-typescript` (driven by `scripts/codegen_types.sh`), and Rust request/response types → `backend/crates/domain/src/api.rs`, hand-written serde structs that mirror the YAML (chosen over `progenitor`-generated Rust, which would fight the newtype IDs in `domain/ids.rs`).
 
-The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs`) is detailed in `11-testing-ci-cd.md` §2.3. Any new or changed route needs a YAML example and a `ROUTE_TABLE` row in the same PR, per `coding-standards.md` §8.
+The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in `backend/crates/domain/tests/openapi_contract.rs`) is detailed in [`testing-and-ci.md` §2.3](../development/testing-and-ci.md#23-contract-test). Any new or changed route needs a YAML example and a `ROUTE_TABLE` row in the same PR, per [`coding-standards.md` §8](../development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task).
 
 ---
 
 ## 13. Per-route auth/role summary table
 
-(Keep this synced with code; `infra/tests/` asserts every synthesized route has the JWT authorizer, and the contract test in `11-testing-ci-cd.md` §2.3 keeps routes and the YAML in step.)
+(Keep this synced with code; `infra/tests/` asserts every synthesized route has the JWT authorizer, and the contract test in [`testing-and-ci.md` §2.3](../development/testing-and-ci.md#23-contract-test) keeps routes and the YAML in step.)
 
 | Method + Path | Role |
 |---|---|

@@ -1,8 +1,8 @@
-# 02 — Data Model (DynamoDB Single-Table)
+# Data model
 
-This document defines every entity stored in the `OpenNewsletter-{env}` table. Read this in conjunction with `03-api-contract.md` (which references the access patterns by name) and `06-newsletter-lifecycle.md` (which references the cycle state transitions).
+This document defines every entity stored in the `OpenNewsletter-{env}` DynamoDB table: key shapes, attributes, access patterns, and the transactions that keep them consistent. It's for anyone writing or reviewing a persistence-layer change. Read it alongside [`api.md`](api.md) (which references the access patterns by name) and [`lifecycle.md`](lifecycle.md) (which references the cycle state transitions). The Rust entity structs in `backend/crates/domain/src/entities.rs` and the key builders in `backend/crates/persistence/src/keys.rs` are the source of truth for exact shapes; this page documents the design behind them.
 
-**Naming convention.** Every attribute name in this document — table headers, key formulas, transaction descriptions — is the literal DynamoDB item attribute name, and those are **snake_case** (`member_count`, `response_close_at`, `editions_answered`, …), matching the Rust entity structs in `backend/crates/domain/src/entities.rs`, which `persistence` serializes via `serde_dynamo::{to_item, from_item}` with no `rename_all` on struct fields. The HTTP/JSON API contract (`03-api-contract.md`, `shared/openapi.yaml`) is **camelCase**, as specified there. Lambda handlers map entities to DTOs explicitly at the boundary — there is no automatic camelCase ⇄ snake_case conversion, so a field renamed on one side does not silently follow on the other.
+**Naming convention.** Every attribute name in this document — table headers, key formulas, transaction descriptions — is the literal DynamoDB item attribute name, and those are **snake_case** (`member_count`, `response_close_at`, `editions_answered`, …), matching the Rust entity structs in `backend/crates/domain/src/entities.rs`, which `persistence` serializes via `serde_dynamo::{to_item, from_item}` with no `rename_all` on struct fields. The HTTP/JSON API contract ([`api.md`](api.md), `shared/openapi.yaml`) is **camelCase**, as specified there. Lambda handlers map entities to DTOs explicitly at the boundary — there is no automatic camelCase ⇄ snake_case conversion, so a field renamed on one side does not silently follow on the other.
 
 ---
 
@@ -11,7 +11,7 @@ This document defines every entity stored in the `OpenNewsletter-{env}` table. R
 - Hash key: `pk` (S)
 - Range key: `sk` (S)
 - TTL attribute: `ttl` (N, epoch seconds; only set on items that should auto-expire)
-- Stream: **disabled in v1.** The only planned consumer is the archival Lambda (`10-archival.md`), which is deferred. Streams add cost with no v1 reader. Re-enable (`NEW_AND_OLD_IMAGES`) when archival lands; the table reconfigure is non-disruptive.
+- Stream: **disabled in v1.** The only planned consumer is the archival Lambda ([`archival.md`](archival.md)), which is deferred. Streams add cost with no v1 reader. Re-enable (`NEW_AND_OLD_IMAGES`) when archival lands; the table reconfigure is non-disruptive.
 
 Two GSIs:
 
@@ -121,7 +121,7 @@ The tenant.
 | `consumed_by` | user_id \| null |
 | `consumed_at` | ISO-8601 \| null |
 | `role_on_redeem` | `admin` \| `member` (defaults to `member`; admins can issue admin invites) |
-| `bound_email` | string (lowercased) \| null — when set, `POST /invites/redeem` requires the caller's ID-token `email` (lowercased) to equal it AND `email_verified` to be true, else 403 `INVITE_EMAIL_MISMATCH` (`03` §1.1, §3.4). Set by `POST /admin/invites`'s optional `boundEmail`, and always set on the invite `scripts/bootstrap_admin.py` creates for the prod bootstrap admin (`05` §9). |
+| `bound_email` | string (lowercased) \| null — when set, `POST /invites/redeem` requires the caller's ID-token `email` (lowercased) to equal it AND `email_verified` to be true, else 403 `INVITE_EMAIL_MISMATCH` ([`api.md` §1.1](api.md#11-error-format), §3.4). Set by `POST /admin/invites`'s optional `boundEmail`, and always set on the invite `scripts/bootstrap_admin.py` creates for the prod bootstrap admin ([`auth.md` §9](auth.md#9-bootstrap-admin--first-group)). |
 
 Access patterns:
 - "Validate invite by code" → `GetItem pk=INVITE#{code} sk=META`
@@ -151,7 +151,7 @@ The unit of an edition for one group.
 | `notified_offsets_hours` | array<number> (records which reminder fan-outs have completed) |
 | `notified_on_open` | bool |
 
-State machine fully specified in `06-newsletter-lifecycle.md`.
+State machine fully specified in [`lifecycle.md`](lifecycle.md).
 
 Access patterns:
 - "List newsletters for a group" → `Query pk=GROUP#{group_id} AND begins_with(sk, NL#)` (DESC by sk = most recent first)
@@ -186,7 +186,7 @@ Access patterns:
 - "List candidates for a cycle" → `Query pk=GROUP#{g}#CYCLE#{c} AND begins_with(sk, QC#)`
 - "Top N candidates by votes" → `Query GSI1 gsi1pk=GROUP#{g}#CYCLE#{c}#VOTES` ScanIndexForward=false Limit=N
 
-**AP11 is not used for promotion** (D4). `gsi1sk`'s `ScanIndexForward=false` order breaks ties newest-first, but promotion must break ties oldest-first (`06` §5.2). `lambda-cycle-tick` reads the full candidate pool via AP10 (bounded by group membership) and sorts in memory by `vote_count` DESC, then `submitted_at` ASC, then `question_id` ASC. `GET …/candidate-questions?sort=top` (`03` §6.1) does the same in-memory sort for the same reason. GSI1 `#VOTES` keys are still written on every vote (§4 #1/#2) — nothing currently reads them — kept in case a future leaderboard view wants the cheap top-N query and doesn't need tie-order to match promotion.
+**AP11 is not used for promotion** ([D4](../decisions.md#d4)). `gsi1sk`'s `ScanIndexForward=false` order breaks ties newest-first, but promotion must break ties oldest-first ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)). `lambda-cycle-tick` reads the full candidate pool via AP10 (bounded by group membership) and sorts in memory by `vote_count` DESC, then `submitted_at` ASC, then `question_id` ASC. `GET …/candidate-questions?sort=top` ([`api.md` §6.1](api.md#61-get-groupsgroupidcandidate-questions)) does the same in-memory sort for the same reason. GSI1 `#VOTES` keys are still written on every vote (§4 #1/#2) — nothing currently reads them — kept in case a future leaderboard view wants the cheap top-N query and doesn't need tie-order to match promotion.
 
 ### 2.7 Candidate vote
 
@@ -290,7 +290,7 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `group_id` | UUIDv7 |
 | `cycle_id` | string |
 | `question_id` | string \| null (set when attached to a response; null on initial upload) |
-| `purpose` | `response` \| `comment` — what the image is destined to attach to. Set at `POST /uploads` time (`03-api-contract.md` §9.1). The 10-images-per-answer cap counts `purpose=response` rows only; comment images are capped at one per comment at comment-create time. |
+| `purpose` | `response` \| `comment` — what the image is destined to attach to. Set at `POST /uploads` time ([`api.md` §9.1](api.md#91-post-uploads)). The 10-images-per-answer cap counts `purpose=response` rows only; comment images are capped at one per comment at comment-create time. |
 | `mime_type` | `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` |
 | `original_key` | S3 key in originals bucket |
 | `display_key` | S3 key in processed bucket (1200px WebP) — null until processed |
@@ -301,8 +301,8 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `caption` | string \| null (author-supplied, ≤140 chars; rendered beneath the image in the published view) |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
-| `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` (`08` §3.2). `DELETED` is not written: `DELETE /uploads/{imageId}` deletes the row outright instead of soft-marking it `failed` (D8; `03` §9.4). |
-| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` image is attached to. Set and cleared in the same transaction as the comment write, and checked by `DELETE /uploads` (`03` §8.2, §9.4). Absent (reads as null) on rows written before this attribute was introduced. |
+| `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` ([`media.md` §3.2](media.md#32-presign)). `DELETED` is not written: `DELETE /uploads/{imageId}` deletes the row outright instead of soft-marking it `failed` ([D8](../decisions.md#d8); [`api.md` §9.4](api.md#94-delete-uploadsimageid)). |
+| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` image is attached to. Set and cleared in the same transaction as the comment write, and checked by `DELETE /uploads` ([`api.md` §8.2](api.md#82-post-questionsquestionidresponsesresponseidcomments), §9.4). Absent (reads as null) on rows written before this attribute was introduced. |
 
 `question_id` is set at `POST /uploads` time (the route requires `questionId`), so in practice it is never null for rows created with it.
 
@@ -390,13 +390,13 @@ A few small entities for atomic bookkeeping:
 - `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#CLOSE#{offset_hours}` — claimed by `lambda-notify-tick` before a deadline-reminder fan-out, one per offset.
 - `pk=GROUP#{g}#NL#{c}` `sk=NOTIFIED#PUBLISH` — claimed by `lambda-push` before the publication fan-out runs.
 
-Each is claimed with `attribute_not_exists(pk)` before its fan-out runs (at-most-once: a crash mid-fan-out drops the remaining recipients rather than risk duplicates). They carry `entity=NotifiedMarker` and `created_at`. Fan-out algorithms and payloads: `07-notifications.md` §6–8. These markers make the `Newsletter.notified_offsets_hours` / `notified_on_open` attributes (§2.5) vestigial — still written with their defaults but nothing reads them.
+Each is claimed with `attribute_not_exists(pk)` before its fan-out runs (at-most-once: a crash mid-fan-out drops the remaining recipients rather than risk duplicates). They carry `entity=NotifiedMarker` and `created_at`. Fan-out algorithms and payloads: [`notifications.md` §6](notifications.md#6-cycle-open-fan-out)–8. These markers make the `Newsletter.notified_offsets_hours` / `notified_on_open` attributes (§2.5) vestigial — still written with their defaults but nothing reads them.
 - `pk=TICK` `sk=CYCLE` — single record updated on each `lambda-cycle-tick` run with `last_ran_at`.
 - `pk=TICK` `sk=NOTIFY` — likewise for `lambda-notify-tick`, which also writes it after claiming the `NOTIFIED#CLOSE#{offset_hours}` markers above (`persistence::push`).
 
 ### 2.16 AvatarMedia
 
-User avatars are uploaded via a dedicated pipeline (separate from the per-question image pipeline) so they can cross group boundaries. See `08-media-uploads.md` §11.
+User avatars are uploaded via a dedicated pipeline (separate from the per-question image pipeline) so they can cross group boundaries. See [`media.md` §11](media.md#11-avatars-separate-pipeline).
 
 | Attr | Value |
 |---|---|
@@ -412,7 +412,7 @@ User avatars are uploaded via a dedicated pipeline (separate from the per-questi
 | `bytes` | number |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
-| `error_message` | string \| null — same values as `ImageMedia.error_message`. As with `ImageMedia`, `DELETED` is not a possible value: `DELETE /avatars/{id}` deletes the row (D8). |
+| `error_message` | string \| null — same values as `ImageMedia.error_message`. As with `ImageMedia`, `DELETED` is not a possible value: `DELETE /avatars/{id}` deletes the row ([D8](../decisions.md#d8)). |
 
 The processed avatar bucket is served via a separate CloudFront behavior (`/avatar/*`) that does NOT require signed cookies — avatars are not tenant-scoped, URLs use the UUIDv7 `avatar_id` (unguessable), and an avatar leak is acceptable. Cache-control: `public, max-age=86400, immutable` so changing avatars produces a new `avatar_id` and never collides with the old one in caches.
 
@@ -432,7 +432,7 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP8 | Get newsletter | GetItem | base |
 | AP9 | Cycles by status with next transition due | Query | GSI2 |
 | AP10 | List candidate questions for next cycle | Query | base |
-| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — not used by promotion (D4, §2.6); its tie order is newest-first, promotion needs oldest-first. No reader; the `list_top_candidates_by_votes` helper was removed |
+| AP11 | Top-N candidates by votes | Query | GSI1 (Limit, ScanIndexForward=false) — not used by promotion ([D4](../decisions.md#d4), §2.6); its tie order is newest-first, promotion needs oldest-first. No reader; the `list_top_candidates_by_votes` helper was removed |
 | AP12 | List my votes this cycle | Query | base |
 | AP13 | List locked questions for newsletter | Query | base |
 | AP14 | List answers to a question (post-publish) | Query | base |
@@ -444,11 +444,11 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
 
-**Every "list everything" Query paginates (decided 2026-10-08, design review).** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
+**Every "list everything" Query paginates.** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
 
-**The current-cycle lookup reads 3 rows (decided 2026-10-08).** `find_voting_cycle`/`find_open_cycle` (`06` §10) run AP7 newest-first with `Limit=3` instead of reading the group's whole history. That's safe because cycle ids are `yyyymm` and a group gains a cycle only when the tick creates the month after the one it just opened (`06` §5.4). So the `voting` cycle, if any, is always the newest `NL#` row and the `open` cycle, if any, is the one before it; every published or archived cycle is older.
+**The current-cycle lookup reads 3 rows.** `find_voting_cycle`/`find_open_cycle` ([`lifecycle.md` §10](lifecycle.md#10-read-side-helpers)) run AP7 newest-first with `Limit=3` instead of reading the group's whole history. That's safe because cycle ids are `yyyymm` and a group gains a cycle only when the tick creates the month after the one it just opened ([`lifecycle.md` §5.4](lifecycle.md#54-create_next_voting_cyclegroup-after)). So the `voting` cycle, if any, is always the newest `NL#` row and the `open` cycle, if any, is the one before it; every published or archived cycle is older.
 
-**AP18 + AP19 can be one read.** Comments (`C#`) and reactions (`R#`) share the engagement partition, so `engagement::list_engagement` reads both with one paginated Query of the partition; the published-edition read (`03` §5.2) uses it.
+**AP18 + AP19 can be one read.** Comments (`C#`) and reactions (`R#`) share the engagement partition, so `engagement::list_engagement` reads both with one paginated Query of the partition; the published-edition read ([`api.md` §5.2](api.md#52-get-groupsgroupidnewsletterscycleid)) uses it.
 
 **AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: `my-responses`, the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
 
@@ -466,14 +466,14 @@ The following operations MUST use `TransactWriteItems`:
    The cancellation reason says which condition failed. A vote row means a concurrent duplicate request (idempotent success); a candidate count means a lost race (retry once); the tally means `VOTE_CAP_REACHED`.
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `vote_count -= 1` AND new `gsi1sk` AND `ADD votes_cast -1` on the tally (`votes_cast > 0`). The admin candidate delete removes each voter's vote together with the same tally decrement.
 3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items).
-4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky (`03-api-contract.md` §7.3). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. The transaction also increments `GroupMembership.editions_answered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
+4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky ([`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. The transaction also increments `GroupMembership.editions_answered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 
    **The pre-read alone isn't enough:** two concurrent first publishes to different questions could both see zero published rows and both bump (`editions_answered` = 2). The bump `Update` also sets `last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
    - the bump's condition failed: retry without the bump, since the cycle is already counted
    - only `TransactionConflict`s: retry unchanged (3 attempts in total)
    - anything else: the cycle check lost, which surfaces as `CYCLE_NOT_OPEN`
 
-4a. **Auto-publish non-empty drafts at cycle close** (D2; `06` §5.3). When `lambda-cycle-tick`'s `publish(nl)` runs, it first auto-publishes every non-empty draft **before** flipping the Newsletter to `published`: for each locked question it queries its answers (AP14), and for each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it runs one `TransactWriteItems` — the response row conditioned on `status = draft`, setting `status = published`, `published_at = response_close_at`, plus the same `editions_answered`/`last_answered_cycle` bump as #4. **One transaction per draft, not one big one**: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. This is crash-safe because it runs before the status flip: a tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the remaining drafts; rows it already flipped fail their `status = draft` condition harmlessly and are skipped. The cancellation reasons are read as in #4: if only the bump's `last_answered_cycle` condition failed (the member already published another answer this cycle), the draft is retried **without** the bump; it must not be skipped. Empty drafts are left untouched and stay `draft` forever, same as today.
+4a. **Auto-publish non-empty drafts at cycle close** ([D2](../decisions.md#d2); [`lifecycle.md` §5.3](lifecycle.md#53-publishnl)). When `lambda-cycle-tick`'s `publish(nl)` runs, it first auto-publishes every non-empty draft **before** flipping the Newsletter to `published`: for each locked question it queries its answers (AP14), and for each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it runs one `TransactWriteItems` — the response row conditioned on `status = draft`, setting `status = published`, `published_at = response_close_at`, plus the same `editions_answered`/`last_answered_cycle` bump as #4. **One transaction per draft, not one big one**: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. This is crash-safe because it runs before the status flip: a tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the remaining drafts; rows it already flipped fail their `status = draft` condition harmlessly and are skipped. The cancellation reasons are read as in #4: if only the bump's `last_answered_cycle` condition failed (the member already published another answer this cycle), the draft is retried **without** the bump; it must not be skipped. Empty drafts are left untouched and stay `draft` forever, same as today.
 
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.member_count += 1` (with member-cap check).
 6. **Leave group** — Delete `GroupMembership` AND Update `Group.member_count -= 1`.
@@ -488,15 +488,15 @@ The following operations MUST use `TransactWriteItems`:
 
 ## 5. Concurrency for drafts
 
-Last-write-wins (see `03-api-contract.md` §7.3). Autosave PUTs overwrite `body`, `image_media_ids`, `poll_option_id`, and `updated_at` with no condition on the response row itself. There is no `version` attribute and no `409 Conflict` reconciliation. The only condition is the Newsletter-row check from §4 #4, which requires the cycle to still be open. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
+Last-write-wins (see [`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)). Autosave PUTs overwrite `body`, `image_media_ids`, `poll_option_id`, and `updated_at` with no condition on the response row itself. There is no `version` attribute and no `409 Conflict` reconciliation. The only condition is the Newsletter-row check from §4 #4, which requires the cycle to still be open. The debounced autosave (≥1500 ms) makes interleaved writes from the same user rare enough that the simplicity is worth the trade. Revisit if telemetry shows actual clobbering.
 
-**No race with auto-publish (D2).** Saves are already refused once `now >= response_close_at` (`03` §7.3's "open" clause), even while the Newsletter row still reads `status = open` in the ≤5-minute gap before the tick flips it. So by the time §4 #4a's auto-publish pass runs, the last successful save for each draft is final — whatever it left behind (empty or non-empty) is exactly what auto-publish sees.
+**No race with auto-publish ([D2](../decisions.md#d2)).** Saves are already refused once `now >= response_close_at` ([`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)'s "open" clause), even while the Newsletter row still reads `status = open` in the ≤5-minute gap before the tick flips it. So by the time §4 #4a's auto-publish pass runs, the last successful save for each draft is final — whatever it left behind (empty or non-empty) is exactly what auto-publish sees.
 
 ---
 
 ## 6. Tenant isolation rule
 
-Every Lambda handler that operates on a `group_id`-scoped entity MUST first verify the caller has a `GroupMembership` for that `group_id`. The check is (note: memberships are keyed by our internal `user_id`, NOT the Cognito `sub` — the handler first resolves `sub → user_id` via the `CognitoSubLookup` row, `05-auth-flow.md` §6):
+Every Lambda handler that operates on a `group_id`-scoped entity MUST first verify the caller has a `GroupMembership` for that `group_id`. The check is (note: memberships are keyed by our internal `user_id`, NOT the Cognito `sub` — the handler first resolves `sub → user_id` via the `CognitoSubLookup` row, [`auth.md` §6](auth.md#6-jwt-verification-on-the-backend)):
 
 ```
 user_id = GetItem pk=COGNITO_SUB#{jwt.sub} sk=USER_ID   (cached per cold-start ≤60s)
@@ -512,9 +512,9 @@ For admin-only operations: the cached membership must have `role=admin`.
 ## 7. Soft delete and archival hooks
 
 - Comments use soft-delete (`deleted_at` set, `body` blanked). Hard delete reserved for compliance/admin.
-- Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead (D2 — §4 #4a).
-- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects, invalidate the CloudFront path, and delete the `ImageMedia`/`AvatarMedia` row — see `03` §9.4/§9.7. No bucket versioning (`01` §5.1), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker image cache (≤30 days) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted (D8, D9).
-- When a Newsletter transitions to `archived` (manual or future job), see `10-archival.md` §3 for the export-and-prune procedure.
+- Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead ([D2](../decisions.md#d2) — §4 #4a).
+- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects, invalidate the CloudFront path, and delete the `ImageMedia`/`AvatarMedia` row — see [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7. No bucket versioning ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker image cache (≤30 days) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted ([D8](../decisions.md#d8), [D9](../decisions.md#d9)).
+- When a Newsletter transitions to `archived` (manual or future job), see [`archival.md` §3](archival.md#3-per-cycle-archive-procedure) for the export-and-prune procedure.
 
 ---
 

@@ -1,9 +1,6 @@
-# Coding Standards
+# Coding standards
 
-**Required reading for any agent that will write, edit, or review code in this repo.**
-Pair this with [`00-overview.md`](00-overview.md) and the plan documents relevant to your task.
-
-The goal of this document is to keep the codebase legible and uniform across the four languages it touches (Rust, TypeScript, Python, YAML/CDK config) without imposing rules that don't earn their keep. If a rule below feels wrong for a specific situation, the right move is to surface it (and propose an edit to this file), not to silently break it.
+Required reading for anyone writing, editing, or reviewing code in this repo — pair it with [`overview.md`](../overview.md) and the `docs/design/` page for the subsystem you're touching. It keeps the codebase legible and uniform across the four languages the repo touches (Rust, TypeScript, Python, YAML/CDK config), without rules that don't earn their keep. The code is the final source of truth: when a rule below and the code disagree, or this page contradicts another doc, see §7 rather than guessing or silently breaking the rule.
 
 ---
 
@@ -31,6 +28,7 @@ These apply regardless of language.
 - Never explain **what** the code does. If the code isn't self-evident, rename or refactor instead.
 - Never reference the current task, ticket, or commit ("added for the X flow", "fixes issue 123"). That belongs in the PR/commit, not the source.
 - Public APIs (Rust pub fns/types, exported TS functions, CDK construct constructors) get a single-line doc when the name alone isn't enough. Multi-paragraph docstrings are reserved for genuinely tricky semantics.
+- A comment that cites a design-doc section (e.g. `// docs/design/api.md §6.1`) must use that exact path and number. Section numbers under `docs/design/` and `docs/development/` are stable identifiers that code cites directly — editing one of those pages, you may reword a heading's title freely but never renumber or remove a numbered section; new sections go at the end.
 
 ### 1.5 Naming
 - Names communicate intent. Variables, functions, and types should read like a sentence describing the thing they represent.
@@ -41,7 +39,7 @@ These apply regardless of language.
 ### 1.6 Errors
 - Errors should describe the failure with enough context to debug from logs alone. Include identifiers (groupId, cycleId, userId) where relevant.
 - Don't swallow errors with a generic catch-all and a generic message. If you can't handle it specifically, propagate.
-- The API error catalog in [`03-api-contract.md`](03-api-contract.md) §1.1 is the single source of truth for error codes. Don't invent new ones without adding them there.
+- The API error catalog in [`api.md` §1.1](../design/api.md#11-error-format) is the single source of truth for error codes. Don't invent new ones without adding them there.
 
 ### 1.7 Logging
 - Logs are structured (JSON). Always include `correlation_id` taken from the request context.
@@ -63,23 +61,23 @@ These apply regardless of language.
 
 ### 1.9 Performance
 - Don't optimize speculatively. Write the obvious code; measure if it matters.
-- For the few cases where performance is part of the spec (cold-start budget on Lambdas, autosave debounce, image pipeline duration): the spec lives in the relevant plan doc; honor it.
+- For the few cases where performance is part of the spec (cold-start budget on Lambdas, autosave debounce, image pipeline duration): the spec lives in the relevant `docs/design/` page; honor it.
 
 ### 1.10 Security
 - No secrets in source, env files committed to git, comments, logs, error messages, or test fixtures.
-- Validate user input at the API boundary using the schemas in [`03-api-contract.md`](03-api-contract.md).
+- Validate user input at the API boundary using the schemas in [`api.md`](../design/api.md).
 - Use parameterized DynamoDB expression placeholders (`#name`, `:value`). Never interpolate user input into expression strings.
 - Tenant isolation is non-negotiable: every group-scoped handler MUST call `require_membership` (or admin variant) before touching DynamoDB. There is no exception.
-- When in doubt, refer to [`05-auth-flow.md`](05-auth-flow.md) §12 (threat model).
+- When in doubt, refer to [`auth.md` §12](../design/auth.md#12-threat-model-considerations) (threat model).
 
 ### 1.11 Files and folders
 - File path is part of the API. Don't move files casually; if you do, update every reference and grep for stale ones.
-- Match the layout in [`00-overview.md`](00-overview.md) §4. New files go where their kind goes; if no obvious home exists, propose adding the home.
+- Match the layout in [`overview.md` §4](../overview.md#4-repo-layout). New files go where their kind goes; if no obvious home exists, propose adding the home.
 - One concept per file. A file > 400 lines is a smell; consider splitting.
 
 ### 1.12 Don't write what you can generate
 - TypeScript API types come from `shared/openapi.yaml` via `openapi-typescript` (run `scripts/codegen_types.sh`). Don't hand-edit `frontend/src/types/api.ts`.
-- Rust API types: hand-written but contract-tested against the YAML (see [`11-testing-ci-cd.md`](11-testing-ci-cd.md) §2.3). Keep them in sync; a failing contract test means the YAML is the truth.
+- Rust API types: hand-written but contract-tested against the YAML (see [`testing-and-ci.md` §2.3](testing-and-ci.md#23-contract-test)). Keep them in sync; a failing contract test means the YAML is the truth.
 - Don't duplicate the OpenAPI spec into prose elsewhere. Reference it.
 
 ---
@@ -98,7 +96,7 @@ These apply regardless of language.
 
 ### 2.3 Error handling
 - **Library crates** (`domain`, `persistence`, `shared`): use [`thiserror`]. Each crate's errors are a focused enum (`DomainError`, `RepoError`, `ApiError`).
-- **Binary crates** (each `lambda-*`): use the focused errors from libraries; map them at the handler boundary into `ApiError` (which is the wire-shape per [`03-api-contract.md`](03-api-contract.md) §1.1). `anyhow` is acceptable only in `main.rs` glue code that wires the runtime.
+- **Binary crates** (each `lambda-*`): use the focused errors from libraries; map them at the handler boundary into `ApiError` (which is the wire-shape per [`api.md` §1.1](../design/api.md#11-error-format)). `anyhow` is acceptable only in `main.rs` glue code that wires the runtime.
 - Never `.unwrap()` or `.expect()` outside `#[cfg(test)]` and the lambda runtime entry point. The compiler's `?` and `match` cover everything else.
 - Use `From` impls to bubble errors up — manual `.map_err(|e| ...)` only when you genuinely want to add context.
 - Add context via `tracing::error!(error = ?e, group_id = %g, "...")` rather than wrapping every error in a new variant.
@@ -123,7 +121,7 @@ These apply regardless of language.
 - Integration tests in `crate-name/tests/*.rs` (one file per scenario suite).
 - Test factory functions live in `persistence/src/test_factories.rs`, gated `#[cfg(any(test, feature = "test-utils"))]` so other crates' tests can pull them via the `test-utils` feature.
 - Run integration tests against DDB-local via `testcontainers`. Each test gets a unique table name; no shared state.
-- These need a reachable Docker daemon; on WSL2 the socket is rootless, so export `DOCKER_HOST` inline on every invocation. Exact command per platform: [`13-dev-environments.md` §10.1](13-dev-environments.md).
+- These need a reachable Docker daemon; on WSL2 the socket is rootless, so export `DOCKER_HOST` inline on every invocation. Exact command per platform: [`environments.md` §10.1](environments.md#101-docker-socket-by-platform-required-for-any-docker-backed-test).
 - Use `pretty_assertions::assert_eq` for non-trivial comparisons (better diff output).
 
 ### 2.8 Logging
@@ -196,7 +194,7 @@ These apply regardless of language.
 ### 3.9 Tests
 - Vitest + Testing Library. Test files co-located: `Button.test.tsx` next to `Button.tsx`.
 - Test from the user's perspective: query by role, label, text. Avoid `getByTestId` unless there's no other accessible way.
-- Mock the API at the `api/client` boundary with `vi.mock`, and seed the TanStack Query cache where a test only needs data on screen (see `pages/JoinPage.test.tsx`, `components/responses/ImageUploader.test.tsx`). Type every fixture against `types/api.ts` so a contract change breaks the test at compile time. (MSW was the original plan — `11-testing-ci-cd.md` §4.2.)
+- Mock the API at the `api/client` boundary with `vi.mock`, and seed the TanStack Query cache where a test only needs data on screen (see `pages/JoinPage.test.tsx`, `components/responses/ImageUploader.test.tsx`). Type every fixture against `types/api.ts` so a contract change breaks the test at compile time. (Not MSW — see [`testing-and-ci.md` §4.2](testing-and-ci.md#42-api-mocking-for-component-tests).)
 - Don't assert on internal state, render output structure, or class names. Assert on what the user sees.
 
 ### 3.10 Accessibility
@@ -224,7 +222,7 @@ These apply regardless of language.
 - Never use `cdk.aws_*` aliases inconsistently. Pick one import style per file.
 
 ### 4.3 Stack composition
-- One stack per concern (matches [`01-infrastructure-cdk.md`](01-infrastructure-cdk.md) §1).
+- One stack per concern (matches [`infrastructure.md` §1](../design/infrastructure.md#1-stack-inventory)).
 - Cross-stack references via constructor parameters, never via global lookup.
 - IAM policies use explicit `iam.PolicyStatement` with `actions` and `resources` lists. Never `actions=["*"]` outside CloudWatch Logs (and even there, scope to the function's log group ARN).
 
@@ -239,7 +237,7 @@ These apply regardless of language.
 - 2-space indent, no tabs.
 - Comments at the top of every workflow file explaining its trigger and purpose.
 - `scripts/` files: shebang line, `set -euo pipefail` for bash; `if __name__ == "__main__":` guard for Python. Single-purpose.
-- Never check in `.env` files that hold real values. The frontend's `.env.development` and `.env.e2e` are the exceptions: they hold only mock-mode flags and placeholder origins (`04` §13). Generated files such as `.env.dev` and `infra/.env.local` stay gitignored.
+- Never check in `.env` files that hold real values. The frontend's `.env.development` and `.env.e2e` are the exceptions: they hold only mock-mode flags and placeholder origins ([`frontend.md` §13](../design/frontend.md#13-environment-variables)). Generated files such as `.env.dev` and `infra/.env.local` stay gitignored.
 
 ---
 
@@ -248,7 +246,7 @@ These apply regardless of language.
 ### 6.1 Commit messages
 - Format: `<type>(<scope>): <subject>` where `type` ∈ {feat, fix, refactor, test, docs, chore, perf, build, ci}. Scope is optional but encouraged: `feat(media): generate webp thumbnails`.
 - Subject in imperative mood, no trailing period, ≤ 72 chars.
-- Body (optional) explains **why**. Wrap at 80 cols. Reference the milestone or plan doc when relevant: "per `06-newsletter-lifecycle.md` §5".
+- Body (optional) explains **why**. Wrap at 80 cols. Reference the relevant design-doc page when it helps: "per [`lifecycle.md` §5](../design/lifecycle.md#5-lambda-cycle-tick)".
 - Co-author footer when AI-generated.
 
 ### 6.2 Commit hygiene
@@ -260,14 +258,14 @@ These apply regardless of language.
 - Title matches commit subject convention.
 - Description sections (use as a template):
   - **What** — one or two sentences
-  - **Why** — link the plan doc / milestone
+  - **Why** — link the relevant `docs/design/` page, or the milestone it belongs to ([`plans/build-order.md`](../../plans/build-order.md)) if it's operationally live
   - **How tested** — local commands run, screenshots if UI
   - **Risks / follow-ups**
 - Keep PRs small. A PR > 600 lines of diff is a smell; consider splitting.
 - The PR author runs the test commands locally before requesting review. CI is the safety net, not the first signal.
 
 ### 6.4 What CI gates merging
-Per [`11-testing-ci-cd.md`](11-testing-ci-cd.md):
+Per [`testing-and-ci.md`](testing-and-ci.md):
 - Lint, format, type-check
 - All unit + integration tests
 - `cdk synth` for infra changes
@@ -278,9 +276,9 @@ A red CI is never merged on the basis of "the failure is unrelated." Investigate
 
 ## 7. When something here is wrong
 
-This document is wrong sometimes. The right reaction is:
+This page is wrong sometimes, and it can end up contradicting the code or another page under `docs/`. The right reaction is:
 1. Note it (in the PR description, or as a `// FIXME(coding-standards):` comment with explanation).
-2. Propose an edit to this file in the same PR.
+2. Propose an edit to this file in the same PR — but if the contradiction is between two docs and it's not obvious which one is stale, don't guess: surface it instead, per CLAUDE.md's ["When something is ambiguous"](../../CLAUDE.md#when-something-is-ambiguous).
 3. Implement to the proposed standard, not the current one.
 
 Letting the standards drift silently from practice is worse than imperfect standards.
@@ -290,12 +288,12 @@ Letting the standards drift silently from practice is worse than imperfect stand
 ## 8. Pre-flight checklist for any code-writing task
 
 Before opening a PR:
-- [ ] `00-overview.md` and the relevant plan doc(s) re-read for the section you're touching.
+- [ ] [`overview.md`](../overview.md) and the relevant `docs/design/` page(s) re-read for the section you're touching.
 - [ ] Linters / formatters / type-checkers all clean locally.
 - [ ] Tests added for new behavior; existing tests still green.
 - [ ] No new dependencies added without justification in the PR description.
 - [ ] No secrets, env-specific values, or local paths in the diff.
 - [ ] OpenAPI YAML (`shared/openapi.yaml`) updated if any route or schema changed; codegen re-run (`scripts/codegen_types.sh`).
-- [ ] **(D6)** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first (`11-testing-ci-cd.md` §6), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
-- [ ] Plan documents updated if you discovered a gap or made a non-obvious decision.
+- [ ] **([D6](../decisions.md#d6))** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first ([`testing-and-ci.md` §6](testing-and-ci.md#6-github-actions-workflows)), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
+- [ ] The relevant `docs/design/` page updated — and [`decisions.md`](../decisions.md) too, if you made a new standing decision — if you discovered a gap or made a non-obvious call.
 - [ ] PR description follows §6.3.

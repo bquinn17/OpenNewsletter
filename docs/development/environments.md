@@ -1,8 +1,8 @@
-# 13 — Dev Environments & Local Testing
+# Dev environments & local testing
 
-This document defines how engineers work day-to-day: where code runs, where state lives, and how to reset it. The guiding principle is **high-fidelity AWS over local emulation** — instead of maintaining a parallel local stack of mocks for DynamoDB, S3, Cognito, EventBridge, and CloudFront, we commit to a real-but-disposable AWS development environment. Local execution is reserved for fast unit tests.
+For a contributor setting up a machine, running the suites locally, or resetting the shared `dev` AWS stack. It defines where code runs, where state lives, and how to reset it. The guiding principle is **high-fidelity AWS over local emulation** — instead of maintaining a parallel local stack of mocks for DynamoDB, S3, Cognito, EventBridge, and CloudFront, the project commits to a real-but-disposable AWS development environment. Local execution is reserved for fast unit tests.
 
-This complements [`11-testing-ci-cd.md`](11-testing-ci-cd.md), which covers the test pyramid and CI workflows. Where the two overlap, this document is the source of truth for the **developer experience**; `11` is the source of truth for **what gets tested**.
+This page and [`testing-and-ci.md`](testing-and-ci.md) split the same territory two ways: this one is the **developer experience** (how you work day to day, and how to stand up or reset the `dev` stack); that one is **what gets tested and how CI runs it**. Where a command or detail could live in either, it lives here and that page links to it, or vice versa — follow the links rather than expecting duplication. When this page and the infra code disagree, the code (`infra/opennewsletter/*.py`, `backend/crates/shared/src/config.rs`) wins; file an issue against this page.
 
 ---
 
@@ -52,7 +52,7 @@ node --version
 (cd backend && export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1)
 ```
 
-**Fresh-clone gotcha**: `.gitignore`'s `*.pem` rule would otherwise also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, leaving a fresh clone with no signing key so `cdk synth` and the 9 `MediaPersistentStack` tests fail. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key prevents this — don't remove that exception.
+**Fresh-clone gotcha**: `.gitignore`'s `*.pem` rule would otherwise also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, leaving a fresh clone with no signing key, so `cdk synth` and every `infra/tests/test_stacks.py` test that builds `MediaPersistentStack` (directly or via `ApiStack`) fail with `FileNotFoundError`, along with `test_cf_signing_keys.py`. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key prevents this — don't remove that exception.
 
 ### 0.2 Windows / WSL2 (Ubuntu 20.04)
 
@@ -115,18 +115,14 @@ node --version
 
 ## 3. Stack lifetime tiers
 
-The stacks in [`01-infrastructure-cdk.md`](01-infrastructure-cdk.md) are regrouped by *cost-of-recreation* for the `dev` env. Volatile stacks are wiped freely; persistent stacks are stood up once and left alone.
+The stacks in [`infrastructure.md`](../design/infrastructure.md) are grouped here by *cost-of-recreation* for the `dev` env. Volatile stacks are wiped freely; persistent stacks are stood up once and left alone.
 
 | Tier | Stacks | Why |
 |---|---|---|
-| **Persistent** | `AuthStack`, the S3 buckets and CloudFront distribution from `MediaStack`, `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. CloudFront distributions take 15–30 min to delete. ACM/Route53 churn is just noise. |
-| **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `lambda-image-process` (split out of MediaStack into its own construct) | Pure code/config — fast to recreate, no out-of-band registration. |
+| **Persistent** | `AuthStack`, `MediaPersistentStack` (S3 originals/processed buckets + CloudFront distribution + KeyGroup), `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. CloudFront distributions take 15–30 min to delete. ACM/Route53 churn is just noise. |
+| **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `MediaPipelineStack` (`lambda-image-process` and its S3 event subscription) | Pure code/config — fast to recreate, no out-of-band registration. |
 
-Concretely, `MediaStack` is split into:
-- `MediaPersistentStack` — S3 buckets (originals + processed) + CloudFront distribution + KeyGroup
-- `MediaPipelineStack` — `lambda-image-process` and its S3 event subscription
-
-`MediaPipelineStack` is volatile; `MediaPersistentStack` is persistent.
+Media's resources are split across those two stacks along exactly this line: everything slow or manual to recreate (buckets, the distribution, the key group) lives in `MediaPersistentStack`; the processing Lambda and its event wiring, which are pure code/config, live in `MediaPipelineStack`.
 
 ---
 
@@ -148,17 +144,15 @@ The seed deliberately does **not** touch the Cognito user pool. Federated users 
 
 ---
 
-## 5. CDK changes required for dev wipeability
+## 5. Dev wipeability: CDK settings
 
-The plan as written must be adjusted so that `cdk destroy --context env=dev` actually works on volatile stacks without manual intervention:
+`cdk destroy --context env=dev` works cleanly on the volatile stacks (§3) because every resource that would otherwise block or orphan on destroy carries a one-line conditional on `config.env == "dev"`:
 
-- **DynamoDB table** — `removal_policy=DESTROY` and `point_in_time_recovery=False` in dev (already in [`01-infrastructure-cdk.md` §3.1](01-infrastructure-cdk.md)). Confirm.
-- **S3 buckets** — `auto_delete_objects=True` and `removal_policy=DESTROY` in dev only. Without this, destroy fails on non-empty buckets.
-- **Secrets Manager** — `removal_policy=DESTROY` and `recovery_window=Duration.days(0)`. The default 7-day soft-delete window blocks redeploy-within-a-week with "secret already scheduled for deletion."
-- **CloudWatch log groups** — `removal_policy=DESTROY` in dev. Otherwise destroy succeeds but leaves orphans, and the next deploy errors on "log group already exists."
+- **DynamoDB table** — `removal_policy=DESTROY` and `point_in_time_recovery=False` in dev ([`data-model.md`](../design/data-model.md), `infra/opennewsletter/data_stack.py`).
+- **S3 buckets** — `auto_delete_objects=True` and `removal_policy=DESTROY` in dev only (`infra/opennewsletter/media_persistent_stack.py`). Without this, destroy fails on non-empty buckets.
+- **CloudWatch log groups** — `removal_policy=DESTROY` in dev (`infra/opennewsletter/api_stack.py`, `notifications_stack.py`, `media_pipeline_stack.py`, `auth_stack.py`). Otherwise destroy succeeds but leaves orphans, and the next deploy errors on "log group already exists."
 - **Cognito** — persistent; not affected.
-
-Each is a one-line conditional on `config.env == "dev"`.
+- **Secrets Manager** — not a CDK resource at all. The per-env app secret (`opennewsletter/{env}`) is created and deleted by hand with the AWS CLI ([`operator-setup.md` §7](../operations/operator-setup.md#7-combine-credentials-into-one-secrets-manager-secret-per-env)); CDK only resolves its ARN at deploy time via `{{resolve:secretsmanager:...}}` ([`infrastructure.md`](../design/infrastructure.md)). Deleting and recreating a secret of the same name inside AWS's 7-day soft-delete window fails with "already scheduled for deletion" — pass `--force-delete-without-recovery` to `aws secretsmanager delete-secret` if you need to recreate one sooner.
 
 ---
 
@@ -166,13 +160,13 @@ Each is a one-line conditional on `config.env == "dev"`.
 
 The federated IdP flow (Google/Facebook) works in `dev` and is exercised periodically — but not on every iteration, because OAuth bounces through external services and pollutes the iteration loop.
 
-For inner-loop work, sign in via the `admin-bootstrap` app client described in [`05-auth-flow.md` §9](05-auth-flow.md). It supports `ALLOW_USER_PASSWORD_AUTH`, so `aws cognito-idp admin-initiate-auth` returns a real JWT in one round-trip, no browser involved. `seed_dev_data.py` prints the credentials after seeding.
+For inner-loop work, sign in via the `admin-bootstrap` app client described in [`auth.md` §9](../design/auth.md#9-bootstrap-admin--first-group). It supports `ALLOW_USER_PASSWORD_AUTH`, so `aws cognito-idp admin-initiate-auth` returns a real JWT in one round-trip, no browser involved. `seed_dev_data.py` prints the credentials after seeding.
 
 The frontend's hidden `/admin/bootstrap-login` route (only enabled when `VITE_ENV=dev`) accepts username + password and stores tokens. The resulting JWT goes through the same API Gateway authorizer as a federated user's would — so the auth path is high-fidelity, just without the OAuth dance.
 
-Federated sign-in gets exercised manually on `dev` before merging anything that touches auth. It can't be automated: Google blocks scripted sign-in, so the nightly E2E `dev` project signs in as a Cognito password user (`E2E_USERNAME`/`E2E_PASSWORD`, [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md)).
+Federated sign-in gets exercised manually on `dev` before merging anything that touches auth. It can't be automated: Google blocks scripted sign-in, so the nightly E2E `dev` project signs in as a Cognito password user (`E2E_USERNAME`/`E2E_PASSWORD`, [`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e)).
 
-The `admin-bootstrap` Cognito app client, and this whole password-login path, is **dev-only** (D5). In prod there is no password auth and no `admin-bootstrap` client — the JWT authorizer's audience is the frontend client only, and the prod bootstrap admin instead signs in via an email-bound invite redeemed with Google (`docs/RUNBOOK.md`, `docs/milestone-1-operator-runbook.md`).
+The `admin-bootstrap` Cognito app client, and this whole password-login path, is **dev-only** ([D5](../decisions.md#d5)). In prod there is no password auth and no `admin-bootstrap` client — the JWT authorizer's audience is the frontend client only, and the prod bootstrap admin instead signs in via an email-bound invite redeemed with Google ([`runbook.md`](../operations/runbook.md), [`operator-setup.md`](../operations/operator-setup.md)).
 
 ---
 
@@ -189,9 +183,9 @@ VITE_COGNITO_BOOTSTRAP_CLIENT_ID=yyyyy
 VITE_ENV=dev
 ```
 
-A small post-deploy script (`scripts/write_frontend_env.py`) reads `cdk.out/dev-outputs.json` and writes `frontend/.env.dev`. CORS in [`01-infrastructure-cdk.md` §6.1](01-infrastructure-cdk.md) already allows `http://localhost:5173`.
+A small post-deploy script (`scripts/write_frontend_env.py`) reads `cdk.out/dev-outputs.json` and writes `frontend/.env.dev`. CORS in [`infrastructure.md` §6.1](../design/infrastructure.md#61-http-api-apigatewayv2) already allows `http://localhost:5173`.
 
-**Images in dev**: with no shared registrable domain, CloudFront signed *cookies* can't flow — the SPA appends the equivalent signed-URL query params (from the `GET /media-cookie` JSON body) to each image URL instead. See [`08-media-uploads.md` §4.5](08-media-uploads.md). Same signing key group, same tenant isolation; only the transport differs.
+**Images in dev**: with no shared registrable domain, CloudFront signed *cookies* can't flow — the SPA appends the equivalent signed-URL query params (from the `GET /media-cookie` JSON body) to each image URL instead. See [`media.md` §4.5](../design/media.md#45-dev-environments-signed-query-params-instead-of-cookies). Same signing key group, same tenant isolation; only the transport differs.
 
 Daily commands:
 
@@ -218,7 +212,7 @@ deploy-lambda:
 
 `LAMBDA` is the **cargo binary** name, which is not the deployed function name: `lambda-invites` ships two entry points (`invites-api`, `invites-presignup`), so neither can be called `bootstrap`, and the Makefile keeps a `FUNCTION_<binary>` map to the CloudFormation names. Add a line to that map whenever a new handler lands.
 
-~5s per deploy. Use `cdk deploy` only when CDK config, IAM, or env vars change. Document this distinction in `README.md` so the slow path isn't reached for by reflex.
+~5s per deploy. Use `cdk deploy` only when CDK config, IAM, or env vars change — it's easy to reach for it by reflex and pay 60–90s for a change `make deploy-lambda` would have shipped in ~5s.
 
 **`make deploy-dev` builds the binaries first.** `ApiStack` falls back to a shell stub for any binary missing from `backend/target/lambda/`, so a deploy that skips the build silently ships stubs that answer every request with nothing.
 
@@ -231,7 +225,7 @@ Don't wait for the 5-minute / 15-minute schedule. Two paths:
 1. **Manual invoke** — `aws lambda invoke --function-name OpenNewsletter-CycleTick-dev /tmp/out.json` (names per the Makefile's `FUNCTION_<binary>` map)
 2. **Admin dev route** — `POST /admin/dev/tick/{cycle|notify}`, gated on `ENV=dev`, that calls the same handler logic synchronously and returns the result.
 
-Path 2 is also what Playwright uses to fast-forward time in E2E tests — see [`11-testing-ci-cd.md` §4.3](11-testing-ci-cd.md). Implement once, two consumers.
+Path 2 is also what Playwright uses to fast-forward time in E2E tests — see [`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e). The manual invoke and the admin route run the same handler logic, so there's one implementation behind both.
 
 For tests that need to advance wall-clock time (a cycle's deadline is in the future), the seed script accepts `--cycle-close-in 5m` to write deadlines relative to now. Combined with `/admin/dev/tick`, you can walk a cycle from `voting` to `published` in a few seconds.
 
@@ -239,16 +233,16 @@ For tests that need to advance wall-clock time (a cycle's deadline is in the fut
 
 ## 10. Local testing — what runs where
 
-The test pyramid in [`11-testing-ci-cd.md`](11-testing-ci-cd.md) stands; this section pins down *where* each layer runs.
+The test pyramid in [`testing-and-ci.md`](testing-and-ci.md) stands; this section pins down *where* each layer runs.
 
 | Test layer | Local | CI | Notes |
 |---|---|---|---|
 | Rust unit (`domain/`, `persistence/keys.rs`, `shared/`, pure validators) | ✅ default | ✅ | Sub-second. No IO, no Docker, no AWS. Run on every save with `cargo watch -x test`. |
-| Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Same as planned. |
+| Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Co-located `*.test.ts(x)` files; see [`testing-and-ci.md` §4.1](testing-and-ci.md#41-vitest). |
 | Contract test (OpenAPI ↔ Rust struct round-trip) | ✅ default | ✅ | Pure; runs under `cargo test`. |
 | CDK assertions (`pytest infra/tests/`) | ✅ default | ✅ | Pure synth, no AWS calls. |
-| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag (`11` §2.4). |
-| Playwright E2E | ✅ `npm run e2e` (mock project, no backend) | ✅ nightly + on demand | `mock` project runs against a mock-mode production build; the `dev` project needs `E2E_BASE_URL` and a deployed stack (`11` §4.3). |
+| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag ([`testing-and-ci.md` §2.4](testing-and-ci.md#24-running-locally)). |
+| Playwright E2E | ✅ `npm run e2e` (mock project, no backend) | ✅ nightly + on demand | `mock` project runs against a mock-mode production build; the `dev` project needs `E2E_BASE_URL` and a deployed stack ([`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e)). |
 | Manual smoke | Required against your `dev` stack before merging risky changes | — | The seed → click-through → tick → verify loop. |
 
 `cargo test --workspace` runs everything, so local runs need Docker (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
@@ -283,21 +277,21 @@ Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError
 
 ## 11. Ephemeral CI stacks
 
-Not built, not currently planned (D12). Design moved to [`14-future-ideas.md`](14-future-ideas.md) §3. `e2e.yml` targets the long-lived `dev` stack via `E2E_BASE_URL`.
+Not built ([D12](../decisions.md#d12)). Design moved to [`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks). `e2e.yml` targets the long-lived `dev` stack via `E2E_BASE_URL`.
 
 ---
 
 ## 12. Cost expectations
 
-`dev` stack idle cost is ≈ $0.40–1/mo; active use adds well under $1 in Lambda + DynamoDB + image storage. See [`01-infrastructure-cdk.md` §12](01-infrastructure-cdk.md) for the full prod+dev cost table (D7).
+`dev` stack idle cost is ≈ $0.40–1/mo; active use adds well under $1 in Lambda + DynamoDB + image storage. See [`infrastructure.md` §12](../design/infrastructure.md#12-cost-expectations) for the full prod+dev cost table ([D7](../decisions.md#d7)).
 
 ---
 
-## 13. What this replaces in the plan set
+## 13. No local emulation stack
 
-No local emulation stack (DynamoDB Local, LocalStack, a Cognito mock) for *application* use — see §1. DynamoDB Local is still used, but only as the Rust integration-test backend (§10).
+There is no DynamoDB Local, LocalStack, or Cognito mock for *application* use — see §1. DynamoDB Local is still used, but only as the Rust integration-test backend (§10).
 
-Every milestone after 3.5 is testable end-to-end against a real AWS stack from the moment its code lands.
+Every change is testable end-to-end against a real AWS stack from the moment its code lands — there's no gap between "code written" and "code runnable against production-shaped infrastructure."
 
 ---
 
@@ -351,7 +345,7 @@ Manual testing fails. When it does, these are the inspection ladders.
   | filter correlation_id = "01H..."
   | sort @timestamp asc
   ```
-- The frontend generates `x-correlation-id` per request ([`00-overview.md` §6](00-overview.md)) and surfaces it in the dev-mode error toast — copy it from there into the Insights query.
+- The frontend generates `x-correlation-id` per request ([`overview.md` §6](../overview.md#6-cross-cutting-conventions)) and surfaces it in the dev-mode error toast — copy it from there into the Insights query.
 
 **Image pipeline**
 - An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-ImageProcess-dev --follow`.
@@ -370,8 +364,8 @@ Manual testing fails. When it does, these are the inspection ladders.
 
 ## 16. Frontend mocking
 
-One mock layer exists, for UI iteration without an AWS account (the MSW/`mockData.ts` setup this section used to describe was never built):
+One mock layer exists, for UI iteration without an AWS account. There is no MSW setup and no separate `mockData.ts` fixture module:
 
-- **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each milestone that adds client endpoints adds matching mock routes here. `make fe` (`--mode dev`) talks to the real dev stack instead.
+- **`frontend/src/api/mockTransport.ts`** is permanent. With `VITE_USE_MOCKS=true` (the checked-in `.env.development`, so plain `npm run dev`), `apiFetch` is served from in-memory, OpenAPI-typed fixtures and `AuthProvider` reports a fake signed-in user. Each new client endpoint needs matching mock routes added here. `make fe` (`--mode dev`) talks to the real dev stack instead.
 
-Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`); this is the standard (`coding-standards.md` §3.9, `11-testing-ci-cd.md` §4.2). MSW is not used.
+Vitest component tests mock `api/client` with `vi.mock` and seed the TanStack Query cache directly (see `pages/JoinPage.test.tsx`); this is the standard ([`coding-standards.md` §3.9](coding-standards.md#39-tests), [`testing-and-ci.md` §4.2](testing-and-ci.md#42-api-mocking-for-component-tests)). MSW is not used.

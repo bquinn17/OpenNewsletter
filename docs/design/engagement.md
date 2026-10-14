@@ -1,6 +1,6 @@
-# 09 — Engagement (Comments, Reactions, Polls)
+# Engagement (comments, reactions, polls)
 
-Engagement features apply to **published** newsletters only. While a cycle is `voting` or `open`, comments and reactions are not exposed in the API or UI. Polls behave differently: poll *votes* are first-class responses (cast during the response window), but the *tally* renders as a feature of the published edition.
+How members interact with a published edition — comments, emoji reactions, and poll tallies — and how poll questions differ from text questions through the rest of the newsletter lifecycle. Read this alongside [`api.md` §8](api.md#8-engagement-routes-comments--reactions) for the wire shapes and [`frontend.md`](frontend.md) for the components that render them; `shared/openapi.yaml` is the source of truth for wire shapes where this page and the code disagree. Engagement features apply to **published** newsletters only: while a cycle is `voting` or `open`, comments and reactions are not exposed in the API or UI. Polls behave differently — poll *votes* are first-class responses (cast during the response window), but the *tally* renders as a feature of the published edition.
 
 ---
 
@@ -8,11 +8,11 @@ Engagement features apply to **published** newsletters only. While a cycle is `v
 
 ### 1.1 Shape
 
-Flat (no threading). One author per comment. Stored in DynamoDB per `02-data-model-dynamodb.md` §2.11. Wire shape: `CommentResponse` in `shared/openapi.yaml` (`03-api-contract.md` §8); `displayName` matches the inline newsletter shape, and `body` is sanitized identical to response bodies (§5 below).
+Flat (no threading). One author per comment. Stored in DynamoDB per [`data-model.md` §2.11](data-model.md#211-comment). Wire shape: `CommentResponse` in `shared/openapi.yaml` ([`api.md` §8](api.md#8-engagement-routes-comments--reactions)); `displayName` matches the inline newsletter shape, and `body` is sanitized identical to response bodies (§5 below).
 
 Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
 
-Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null. If the comment had an attached image, that image is deleted for real (`08-media-uploads.md` §8.0) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null. If the comment had an attached image, that image is deleted for real ([`media.md` §8.0](media.md#80-explicit-deletion)) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
 
 ### 1.2 Permissions
 
@@ -30,13 +30,13 @@ Editing reopens the markdown body and sets `editedAt`. The UI marks edited comme
 
 `body`: 0–2000 chars, allowed markdown subset (paragraphs, emphasis, code, links to https only — no `![]()` images embedded in the markdown body; instead, comments support a single optional **attached** image via `imageMediaId`).
 
-`imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`, with `purpose: "comment"`. The image is uploaded through the same pipeline as response images — `POST /uploads` with `purpose: "comment"`, which is valid while the cycle is `published` (matching when comments are writable; see `03-api-contract.md` §9.1 and `08-media-uploads.md` §3.1) — and rendered beneath the comment text. One image per comment.
+`imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`, with `purpose: "comment"`. The image is uploaded through the same pipeline as response images — `POST /uploads` with `purpose: "comment"`, which is valid while the cycle is `published` (matching when comments are writable; see [`api.md` §9.1](api.md#91-post-uploads) and [`media.md` §3.1](media.md#31-post-uploads-validation)) — and rendered beneath the comment text. One image per comment.
 
 A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected with `VALIDATION_FAILED`.
 
 ### 1.4 Endpoints
 
-Detailed in `03-api-contract.md` §8.1–8.4 (routes, addressing, auth, image-claim transaction). One check not covered there: authorization resolves the caller's `userId` from the JWT `sub` via the lookup row (`05-auth-flow.md` §6) — never compared directly against `sub`.
+Detailed in [`api.md` §8.1](api.md#81-get-questionsquestionidresponsesresponseidcomments)–8.4 (routes, addressing, auth, image-claim transaction). One check not covered there: authorization resolves the caller's `userId` from the JWT `sub` via the lookup row ([`auth.md` §6](auth.md#6-jwt-verification-on-the-backend)) — never compared directly against `sub`.
 
 ### 1.5 Author display name resolution
 
@@ -54,7 +54,7 @@ Every comment edit and soft delete is also conditioned on the comment still hold
 
 ### 2.1 Shape
 
-A reaction row carries `reactorUserId`, `emoji`, `createdAt` (`02-data-model-dynamodb.md` §2.12). Its "key" is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op (last-write-wins on `createdAt`).
+A reaction row carries `reactorUserId`, `emoji`, `createdAt` ([`data-model.md` §2.12](data-model.md#212-reaction)). Its "key" is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op (last-write-wins on `createdAt`).
 
 ### 2.2 Validation
 
@@ -64,7 +64,7 @@ Server normalizes the emoji to NFC and uses the normalized form as the storage k
 
 ### 2.3 Endpoints
 
-Routes, idempotency, response shape (`ReactionsResponse`) and group order are detailed in `03-api-contract.md` §8.5–8.7. In practice the published-newsletter endpoint (`GET /groups/{g}/newsletters/{c}`) returns reactions inlined per answer; the dedicated reactions endpoints are mainly used for live updates after toggling.
+Routes, idempotency, response shape (`ReactionsResponse`) and group order are detailed in [`api.md` §8.5](api.md#85-get-questionsquestionidresponsesresponseidreactions)–8.7. In practice the published-newsletter endpoint (`GET /groups/{g}/newsletters/{c}`) returns reactions inlined per answer; the dedicated reactions endpoints are mainly used for live updates after toggling.
 
 ### 2.4 Live update strategy
 
@@ -126,13 +126,13 @@ This matches user expectation: "what did people vote for?" shows totals, not "Qu
 
 ### 3.6 Auto-publish at close
 
-When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` (`06-newsletter-lifecycle.md` §8). An empty draft stays `draft` and is excluded. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See `04-frontend-architecture.md` §7.3 for the RespondPage warning copy.
+When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency)). An empty draft stays `draft` and is excluded. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See [`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq) for the RespondPage warning copy.
 
 ---
 
 ## 4. Per-feature pages and components
 
-(Cross-references `04-frontend-architecture.md`.)
+(Cross-references [`frontend.md`](frontend.md).)
 
 ### 4.1 `AnswerCard.tsx`
 
@@ -163,7 +163,7 @@ Alex — 1 hour ago (edited)
 [Reply textarea]
 ```
 
-Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." (`08-media-uploads.md` §8.0). For an edit that removes or replaces the image, the confirm fires at Save, when the image is actually released, since cancelling the edit keeps it. A fresh, never-posted upload in the composer is removed without a confirm.
+Edit and Delete are inline (`...` menu on author's own comments; admin sees Delete on all). Delete goes through a `ConfirmDialog`; when the comment has an attached image the copy adds "This also permanently deletes the attached image. It can't be recovered." ([`media.md` §8.0](media.md#80-explicit-deletion)). For an edit that removes or replaces the image, the confirm fires at Save, when the image is actually released, since cancelling the edit keeps it. A fresh, never-posted upload in the composer is removed without a confirm.
 
 ### 4.4 `PollWidget.tsx`
 
@@ -178,7 +178,7 @@ Two states:
 [Publish]
 ```
 
-Every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins (`04` §7.3).
+Every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)).
 
 **Tally (after publish):**
 ```
@@ -194,7 +194,7 @@ Bars are pure CSS (no chart library). Caller's pick gets the ring highlight.
 
 ## 5. Sanitization
 
-All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer; the renderer itself (image token handling, URL transform) is owned by `04-frontend-architecture.md` §9. The allowlist:
+All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer; the renderer itself (image token handling, URL transform) is owned by [`frontend.md` §9](frontend.md#9-renderers). The allowlist:
 
 - Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img`. Comments render with `allowImages={false}`, so no inline images at all — engagement's single attached image (§1.3) renders separately from the markdown body.
 - Allowed attributes: `href` on `a` (https only, no `javascript:`/`data:`); `src/alt/width/height` on `img`; `class` is stripped.
@@ -208,7 +208,7 @@ The backend does NOT sanitize on write — sanitation is a render-time concern. 
 
 ## 6. Indexes & access patterns recap
 
-Key shapes and access patterns for comments (AP18), reactions (AP19), and the poll vote (carried on the `Response` row, §3.1) are in `02-data-model-dynamodb.md` §2.9, §2.11, §2.12 and §3. No new GSIs needed.
+Key shapes and access patterns for comments (AP18), reactions (AP19), and the poll vote (carried on the `Response` row, §3.1) are in [`data-model.md` §2.9](data-model.md#29-response-answer), §2.11, §2.12 and §3. No new GSIs needed.
 
 ---
 
@@ -225,16 +225,16 @@ Key shapes and access patterns for comments (AP18), reactions (AP19), and the po
 
 ---
 
-## 8. Tests required
+## 8. Tests
 
-Engagement-specific tests (general strategy in `11-testing-ci-cd.md`):
+General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). Engagement-specific tests:
 
-1. Comment create / edit / soft-delete round trips.
-2. Non-author cannot edit / delete (403).
-3. Admin can delete any comment.
-4. Reaction PUT/DELETE idempotent.
-5. Last-write-wins on poll vote (overwrite).
-6. Poll vote visibility: caller sees own pre-publish; tally hidden until publish.
-7. Markdown sanitizer rejects `<script>` and `javascript:` URLs in comments.
-8. Reaction emoji with ZWJ sequence stores and retrieves correctly.
-9. Comment list ordering oldest-first across pagination boundaries.
+1. Comment create / edit / soft-delete round trips: `backend/crates/lambda-engagement/tests/comments.rs::it_creates_lists_and_soft_deletes_a_comment_with_an_image`.
+2. Non-author cannot edit / delete (403): `backend/crates/lambda-engagement/tests/comments.rs::only_the_author_can_edit_a_comment`, `::admin_can_delete_any_comment_but_a_member_cannot`.
+3. Admin can delete any comment: `backend/crates/lambda-engagement/tests/comments.rs::admin_can_delete_any_comment_but_a_member_cannot`.
+4. Reaction PUT/DELETE idempotent: `backend/crates/lambda-engagement/tests/reactions.rs::put_is_idempotent_and_toggles_on`, `::delete_is_idempotent`.
+5. Last-write-wins on poll vote (overwrite). Not covered by a dedicated automated test — `backend/crates/lambda-responses/tests/responses.rs::poll_kind_saves_correctly_when_option_is_valid` only exercises a single save. The underlying last-write-wins mechanism (§3.4, [`data-model.md` §5](data-model.md#5-concurrency-for-drafts)) is exercised for text responses by `backend/crates/persistence/tests/responses.rs::save_response_creates_a_draft_and_keeps_the_response_id_stable_across_saves` and `backend/crates/lambda-responses/tests/responses.rs::interleaved_saves_last_write_wins_with_stable_response_id`, but no test overwrites one poll vote with a different option.
+6. Poll vote visibility: caller sees own pre-publish; tally hidden until publish. Partially covered: the `open`-cycle detail response type (`OpenQuestionResponse` in `backend/crates/domain/src/api.rs`) carries no tally field at all, so there is nothing for any caller to see pre-publish by construction, and `backend/crates/lambda-newsletters/tests/newsletters.rs::published_detail_hydrates_images_and_deleted_comments_across_answers` confirms the tally and the caller's own vote are both present once published. There is no test that exercises a poll question specifically in the `open` state (the existing open-detail test, `::open_detail_shows_only_the_callers_own_draft`, uses a text question).
+7. Markdown sanitizer rejects `<script>` and `javascript:` URLs in comments: `frontend/src/utils/markdown.test.tsx` — `"MarkdownBody with allowImages=false (comments, docs/design/engagement.md §5)" > "still strips script tags"` / `"still neutralizes a javascript: link"`.
+8. Reaction emoji with ZWJ sequence stores and retrieves correctly: `backend/crates/lambda-engagement/tests/reactions.rs::a_zwj_family_emoji_round_trips_through_put_and_get`.
+9. Comment list ordering oldest-first across pagination boundaries: `backend/crates/lambda-engagement/tests/comments.rs::comment_list_orders_oldest_first_across_a_pagination_boundary`.
