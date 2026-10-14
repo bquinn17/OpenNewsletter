@@ -12,7 +12,8 @@ mod common;
 use ::media::handlers;
 use domain::api::{CreateUploadRequest, PatchUploadRequest};
 use domain::{
-    ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, QuestionId, Role, UserId,
+    ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, QuestionId, ResponseStatus,
+    Role, UserId,
 };
 use pretty_assertions::assert_eq;
 
@@ -584,6 +585,86 @@ async fn delete_of_an_image_in_a_published_answer_is_refused() {
     .await
     .expect_err("an in-use image can't be deleted");
     assert_eq!(err.code, ApiErrorCode::ImageInUse);
+}
+
+#[tokio::test]
+async fn delete_of_an_image_in_a_draft_drops_it_from_the_draft() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdeldraft", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image = common::seed_ready_image(&repo, "gdeldraft", "202606", "q1", "img-1", "u1").await;
+    common::seed_ready_image(&repo, "gdeldraft", "202606", "q1", "img-2", "u1").await;
+    // A stale tab that never saved the draft without the image.
+    common::put_response(
+        &repo,
+        "gdeldraft",
+        "202606",
+        "q1",
+        "u1",
+        &["img-1", "img-2"],
+        ResponseStatus::Draft,
+    )
+    .await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    let group_id = GroupId::new("gdeldraft");
+    let cycle_id = CycleId::new("202606");
+    let caller = UserId::new("u1");
+
+    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect("a draft's image can be deleted");
+
+    let draft = persistence::responses::get_my_response(
+        &state.repo,
+        &group_id,
+        &cycle_id,
+        &QuestionId::new("q1"),
+        &caller,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(draft.status, ResponseStatus::Draft);
+    assert_eq!(draft.image_media_ids, vec![ImageId::new("img-2")]);
+    assert_eq!(draft.body.as_deref(), Some("Lake 22, hands down."));
+    assert_eq!(fakes.store.deleted().await.len(), 3);
+}
+
+#[tokio::test]
+async fn stripping_a_draft_fails_once_the_draft_has_changed() {
+    let (_c, repo) = common::make_repo().await;
+    common::put_response(
+        &repo,
+        "gdelstale",
+        "202606",
+        "q1",
+        "u1",
+        &["img-1"],
+        ResponseStatus::Draft,
+    )
+    .await;
+    let (group_id, cycle_id) = (GroupId::new("gdelstale"), CycleId::new("202606"));
+    let (question_id, caller) = (QuestionId::new("q1"), UserId::new("u1"));
+    let read =
+        persistence::responses::get_my_response(&repo, &group_id, &cycle_id, &question_id, &caller)
+            .await
+            .unwrap()
+            .unwrap();
+    // Published between the read and the strip.
+    common::put_published_response(&repo, "gdelstale", "202606", "q1", "u1", &["img-1"]).await;
+
+    let err = persistence::responses::remove_image_from_draft(
+        &repo,
+        &read,
+        &ImageId::new("img-1"),
+        chrono::Utc::now(),
+    )
+    .await
+    .expect_err("the draft is no longer what was read");
+    assert!(
+        matches!(err, persistence::RepoError::ConditionalCheckFailed),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]

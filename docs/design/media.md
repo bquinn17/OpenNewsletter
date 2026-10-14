@@ -252,7 +252,7 @@ This indirection means we can change the CDN host (or rotate signed cookies) wit
 
 ### 8.0 Explicit deletion
 
-`DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards per [`api.md` §9.4](api.md#94-delete-uploadsimageid)) deletes for real, via one shared helper: the `media-delete` library crate (`backend/crates/media-delete` — not `shared`, because `shared` can't depend on `persistence` and the helper deletes the row). The sequence, run in this order, with each step idempotent so a retry after a failure redoes it safely:
+`DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards per [`api.md` §9.4](api.md#94-delete-uploadsimageid)) deletes for real, via one shared helper: the `media-delete` library crate (`backend/crates/media-delete` — not `shared`, because `shared` can't depend on `persistence` and the helper deletes the row). Before the sequence, `DELETE /uploads` drops the image's ID from the caller's draft if the draft still lists it (conditional single-item write; [`api.md` §9.4](api.md#94-delete-uploadsimageid)), so a draft never keeps pointing at a deleted image. The sequence, run in this order, with each step idempotent so a retry after a failure redoes it safely:
 
 1. Delete the original S3 object, then each processed variant (display, thumb) the row has a key for. A row with no processed key (still `pending`/`failed`) was never served, so there's nothing to delete or invalidate there.
 2. CloudFront invalidation for the exact processed paths the row had — never a `/*` wildcard, which CloudFront caps at 15 in progress per distribution against 3,000 exact paths (the first 1,000 paths/month are free).

@@ -16,7 +16,7 @@ Snapshot as of 2026-10-12: M0–M13.5 code-complete plus the design-review fixes
 | — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-12):** backend 505 (`cargo test --workspace`, last full green run), CDK 158 (`pytest infra/tests`), Vitest 334, Playwright 8 (mock project). fmt, clippy `-D warnings`, `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` (dev + prod) are clean.
+**Test baselines (2026-10-13):** backend 507 (`cargo test --workspace`, last full green run), CDK 159 (`pytest infra/tests`), Vitest 334, Playwright 8 (mock project). fmt, clippy `-D warnings`, `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` (dev + prod) are clean.
 
 ---
 

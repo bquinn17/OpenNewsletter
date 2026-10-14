@@ -239,12 +239,7 @@ async fn save_response_once(
         Some(p) => AttributeValue::S(p.to_string()),
         None => AttributeValue::Null(true),
     };
-    let images_av = AttributeValue::L(
-        save.image_media_ids
-            .iter()
-            .map(|i| AttributeValue::S(i.to_string()))
-            .collect(),
-    );
+    let images_av = image_ids_av(save.image_media_ids.iter());
 
     let mut set_clauses = vec![
         "response_id = if_not_exists(response_id, :new_response_id)".to_owned(),
@@ -552,10 +547,58 @@ fn is_conflict_only(codes: &[Option<String>]) -> bool {
         })
 }
 
+/// `DELETE /uploads/{imageId}` (`docs/design/api.md` §9.4) — drop `image_id`
+/// from the caller's draft before the image itself is deleted, so the draft
+/// never lists an image that no longer exists.
+///
+/// One conditional write on the response row, so it's atomic on its own:
+/// conditioned on the row still being a draft and its `image_media_ids` still
+/// being exactly what `draft` read. A concurrent save, publish or auto-publish
+/// in between fails it with `RepoError::ConditionalCheckFailed`; the caller
+/// rereads and decides again (a now-published response refuses the delete).
+pub async fn remove_image_from_draft(
+    repo: &Repo,
+    draft: &Response,
+    image_id: &ImageId,
+    now: DateTime<Utc>,
+) -> Result<(), RepoError> {
+    let expected = image_ids_av(draft.image_media_ids.iter());
+    let remaining = image_ids_av(draft.image_media_ids.iter().filter(|i| *i != image_id));
+    repo.client
+        .update_item()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(
+                &draft.group_id,
+                &draft.cycle_id,
+                &draft.question_id,
+            )),
+        )
+        .key(attr::SK, AttributeValue::S(response_sk(&draft.user_id)))
+        .update_expression("SET image_media_ids = :remaining, updated_at = :now")
+        .condition_expression("#status = :draft AND image_media_ids = :expected")
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
+        .expression_attribute_values(":expected", expected)
+        .expression_attribute_values(":remaining", remaining)
+        .expression_attribute_values(":now", AttributeValue::S(now.to_rfc3339()))
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
+}
+
+/// `image_media_ids` as stored: a list of image id strings, in order.
+fn image_ids_av<'a>(ids: impl Iterator<Item = &'a ImageId>) -> AttributeValue {
+    AttributeValue::L(ids.map(|i| AttributeValue::S(i.to_string())).collect())
+}
+
 /// [`Response::is_non_empty`], checked against the images the response
 /// lists. `is_non_empty` trusts `image_media_ids`, but a draft can still list
-/// an image deleted since its last save: a stale tab, a failed autosave or an
-/// older PWA. So a text response with no body counts only if at least one of
+/// a deleted image: `DELETE /uploads` drops the id from the caller's draft
+/// ([`remove_image_from_draft`]), but a save that validated the image just
+/// before the delete can re-list it. So a text response with no body counts only if at least one of
 /// its images still exists and hasn't failed processing. The close-time
 /// auto-publish sweep and the deadline reminder's answered count both use
 /// this, so a draft that won't publish never counts as answered

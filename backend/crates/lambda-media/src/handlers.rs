@@ -10,7 +10,7 @@ use domain::api::{
 };
 use domain::{
     ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
-    ImagePurpose, MediaStatus, NewsletterStatus, UserId,
+    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, ResponseStatus, UserId,
 };
 use persistence::{auth, media, newsletters, questions, responses, users, RepoError};
 use shared::config::{MAX_AVATAR_BYTES, MAX_IMAGES_PER_RESPONSE, MAX_IMAGE_BYTES};
@@ -212,9 +212,12 @@ pub async fn patch_upload(
 /// with `IMAGE_IN_USE` when the caller's own *published* response for the
 /// image's question still references it, or (`purpose=comment`, added M10)
 /// a live comment still has it claimed via `attachedCommentId`
-/// (`docs/design/engagement.md` §1.5, `docs/design/api.md` §8.2). Otherwise deletes
-/// the S3 objects, the CDN copies and the row (`docs/design/media.md` §8.0).
-/// Idempotent: an already-deleted image is a no-op success.
+/// (`docs/design/engagement.md` §1.5, `docs/design/api.md` §8.2). If the
+/// caller's *draft* still lists it, the id is dropped from the draft first
+/// (a stale tab or older PWA that didn't save the draft without it). Then
+/// deletes the S3 objects, the CDN copies and the row
+/// (`docs/design/media.md` §8.0). Idempotent: an already-deleted image is a
+/// no-op success.
 pub async fn delete_upload(
     state: &AppState,
     caller: &UserId,
@@ -236,22 +239,7 @@ pub async fn delete_upload(
     }
 
     if let Some(question_id) = &image.question_id {
-        let response = responses::get_my_response(&state.repo, group_id, cycle_id, question_id, caller)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "response lookup failed");
-                ApiError::internal("failed to check image usage")
-            })?;
-        if let Some(response) = response {
-            let in_use =
-                response.published_at.is_some() && response.image_media_ids.contains(image_id);
-            if in_use {
-                return Err(ApiError::new(
-                    ApiErrorCode::ImageInUse,
-                    "image is attached to your published response",
-                ));
-            }
-        }
+        release_from_my_response(state, caller, group_id, cycle_id, question_id, image_id).await?;
     }
 
     media_delete::delete_image_media(&state.repo, &state.image_deleter, &image)
@@ -260,6 +248,56 @@ pub async fn delete_upload(
             tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "image delete failed");
             ApiError::internal("failed to delete image")
         })
+}
+
+/// Rounds of read-then-strip before [`release_from_my_response`] gives up on
+/// a response that keeps changing under it.
+const RELEASE_ATTEMPTS: usize = 3;
+
+/// The response half of [`delete_upload`]: refuse if the caller's published
+/// response lists the image, and drop it from their draft if that does.
+/// Runs before any S3 delete, so a draft published mid-delete is refused
+/// with nothing yet removed. The strip is conditioned on the draft being
+/// unchanged; a concurrent save or publish fails it, and this rereads.
+async fn release_from_my_response(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    image_id: &ImageId,
+) -> Result<(), ApiError> {
+    for _ in 0..RELEASE_ATTEMPTS {
+        let response =
+            responses::get_my_response(&state.repo, group_id, cycle_id, question_id, caller)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "response lookup failed");
+                    ApiError::internal("failed to check image usage")
+                })?;
+        let Some(response) = response.filter(|r| r.image_media_ids.contains(image_id)) else {
+            return Ok(());
+        };
+        if response.status == ResponseStatus::Published {
+            return Err(ApiError::new(
+                ApiErrorCode::ImageInUse,
+                "image is attached to your published response",
+            ));
+        }
+        match responses::remove_image_from_draft(&state.repo, &response, image_id, Utc::now()).await
+        {
+            Ok(()) => return Ok(()),
+            Err(RepoError::ConditionalCheckFailed) => continue,
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "removing the image from the draft failed");
+                return Err(ApiError::internal(
+                    "failed to remove the image from your draft",
+                ));
+            }
+        }
+    }
+    tracing::warn!(group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "draft kept changing while releasing an image");
+    Err(ApiError::internal("your draft kept changing; try again"))
 }
 
 /// The caller's signed CloudFront cookie values, plus the `Set-Cookie`

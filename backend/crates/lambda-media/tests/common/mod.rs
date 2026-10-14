@@ -343,6 +343,29 @@ pub async fn put_published_response(
     user_id: &str,
     image_media_ids: &[&str],
 ) {
+    put_response(
+        repo,
+        group_id,
+        cycle_id,
+        question_id,
+        user_id,
+        image_media_ids,
+        ResponseStatus::Published,
+    )
+    .await;
+}
+
+/// Writes a text `Response` row directly in `status`, bypassing the save and
+/// publish transactions.
+pub async fn put_response(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    user_id: &str,
+    image_media_ids: &[&str],
+    status: ResponseStatus,
+) {
     use aws_sdk_dynamodb::types::AttributeValue;
     use persistence::keys::{attr, response_gsi1pk, response_gsi1sk, response_pk, response_sk};
 
@@ -353,12 +376,12 @@ pub async fn put_published_response(
         group_id: GroupId::new(group_id),
         cycle_id: CycleId::new(cycle_id),
         kind: QuestionKind::Text,
-        status: ResponseStatus::Published,
+        status,
         body: Some("Lake 22, hands down.".into()),
         poll_option_id: None,
         image_media_ids: image_media_ids.iter().map(|i| ImageId::new(*i)).collect(),
         updated_at: Utc::now(),
-        published_at: Some(Utc::now()),
+        published_at: (status == ResponseStatus::Published).then(Utc::now),
     };
 
     let mut item: std::collections::HashMap<String, AttributeValue> =
