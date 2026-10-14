@@ -411,6 +411,87 @@ async fn a_second_publish_in_the_same_cycle_does_not_bump_editions_answered_agai
     assert_eq!(updated_membership.editions_answered, 1);
 }
 
+/// Two concurrent first-time publishes to different questions both pass the
+/// handler's AP15 pre-read, so both ask for the bump. The `lastAnsweredCycle`
+/// marker in the transaction must still count the cycle exactly once
+/// (regression for the M13 double-count).
+#[tokio::test]
+async fn concurrent_first_publishes_to_different_questions_count_the_cycle_once() {
+    let (_c, repo) = common::make_repo().await;
+    newsletters::write_status_transition(&repo, &open_newsletter("gconcpub", "202606"))
+        .await
+        .unwrap();
+    let m = common::membership("u1", "gconcpub", domain::Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    let group_id = GroupId::new("gconcpub");
+    let cycle_id = CycleId::new("202606");
+    let user_id = UserId::new("u1");
+    let q1 = QuestionId::new("q1");
+    let q2 = QuestionId::new("q2");
+    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let save1 = text_save(&group_id, &cycle_id, &q1, &user_id, "answer one", &[], true);
+    let save2 = text_save(&group_id, &cycle_id, &q2, &user_id, "answer two", &[], true);
+
+    let (r1, r2) = tokio::join!(
+        responses::save_response(&repo, &save1, now, true),
+        responses::save_response(&repo, &save2, now, true),
+    );
+    r1.unwrap();
+    r2.unwrap();
+
+    let updated_membership = groups::get_membership(&repo, &user_id, &group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated_membership.editions_answered, 1);
+    for q in [&q1, &q2] {
+        let saved = responses::get_my_response(&repo, &group_id, &cycle_id, q, &user_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.status, ResponseStatus::Published);
+    }
+}
+
+#[tokio::test]
+async fn a_repeated_bump_request_in_the_same_cycle_still_saves_and_counts_once() {
+    let (_c, repo) = common::make_repo().await;
+    newsletters::write_status_transition(&repo, &open_newsletter("grebump", "202606"))
+        .await
+        .unwrap();
+    let m = common::membership("u1", "grebump", domain::Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    let group_id = GroupId::new("grebump");
+    let cycle_id = CycleId::new("202606");
+    let user_id = UserId::new("u1");
+    let q1 = QuestionId::new("q1");
+    let q2 = QuestionId::new("q2");
+    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+
+    let first = text_save(&group_id, &cycle_id, &q1, &user_id, "one", &[], true);
+    responses::save_response(&repo, &first, now, true)
+        .await
+        .unwrap();
+    // A stale pre-read asks for the bump again: the save must still land.
+    let second = text_save(&group_id, &cycle_id, &q2, &user_id, "two", &[], true);
+    responses::save_response(&repo, &second, now, true)
+        .await
+        .unwrap();
+
+    let membership = groups::get_membership(&repo, &user_id, &group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(membership.editions_answered, 1);
+    let saved = responses::get_my_response(&repo, &group_id, &cycle_id, &q2, &user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.body.as_deref(), Some("two"));
+}
+
 #[tokio::test]
 async fn save_response_is_a_lost_race_when_the_cycle_is_not_open() {
     let (_c, repo) = common::make_repo().await;
@@ -515,4 +596,28 @@ async fn save_response_stores_a_poll_vote() {
     assert_eq!(saved.poll_option_id, Some(option_id));
     assert_eq!(saved.body, None);
     assert_eq!(saved.status, ResponseStatus::Published);
+}
+
+/// A Query page stops at 1 MB; 60 answers at the 20,000-char body cap are
+/// ~1.2 MB, so this only passes if `list_answers` follows `LastEvaluatedKey`.
+#[tokio::test]
+async fn list_answers_reads_past_the_one_megabyte_query_page() {
+    let (_c, repo) = common::make_repo().await;
+    let body = "x".repeat(shared::config::MAX_RESPONSE_BODY_CHARS);
+    for n in 0..60 {
+        let mut r = common::draft_response("g-page", "202606", "q1", &format!("u{n:02}"));
+        r.response_id = domain::ResponseId::new(format!("resp-{n:02}"));
+        r.body = Some(body.clone());
+        common::put_response(&repo, &r).await;
+    }
+
+    let answers = responses::list_answers(
+        &repo,
+        &GroupId::new("g-page"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answers.len(), 60);
 }

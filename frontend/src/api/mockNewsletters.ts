@@ -226,7 +226,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         body: "Can't beat the **ridge walk at sunset** — golden light the whole way down.",
         images: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 1000).toISOString(),
-        // Seeded for M10 (`09-engagement.md` §1) — one edited, one soft-deleted,
+        // Seeded for M10 (`docs/design/engagement.md` §1) — one edited, one soft-deleted,
         // so VITE_USE_MOCKS=true demonstrates both without any manual steps.
         comments: [
           {

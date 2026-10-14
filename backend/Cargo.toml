@@ -4,6 +4,7 @@ members = [
     "crates/domain",
     "crates/persistence",
     "crates/shared",
+    "crates/media-delete",
     "crates/lambda-invites",
     "crates/lambda-groups",
     "crates/lambda-newsletters",
@@ -25,6 +26,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 aws-sdk-dynamodb = "1"
 aws-sdk-s3 = "1"
+aws-sdk-cloudfront = "1"
 aws-sdk-lambda = "1"
 aws-config = "1"
 serde = { version = "1", features = ["derive"] }

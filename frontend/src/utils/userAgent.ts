@@ -1,6 +1,6 @@
 /**
  * Turns a stored `userAgent` string into a short "Browser · OS" label for the
- * Settings "My devices" list (`07-notifications.md` §11.1). Best-effort —
+ * Settings "My devices" list (`docs/design/notifications.md` §11.1). Best-effort —
  * an unrecognized UA just falls back to a truncated raw string.
  */
 export function summarizeUserAgent(userAgent: string): string {

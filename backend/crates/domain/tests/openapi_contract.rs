@@ -1,4 +1,4 @@
-//! Contract test per `plans/11-testing-ci-cd.md` §2.3: loads `shared/openapi.yaml`
+//! Contract test per `docs/development/testing-and-ci.md` §2.3: loads `shared/openapi.yaml`
 //! and round-trips every request/response example against the matching
 //! `domain::api` type via the `ROUTE_TABLE` below.
 //!
@@ -14,11 +14,12 @@ use domain::api::{
     AvatarMediaResponse, CandidateItemResponse, CandidateListResponse, CandidateVoteResponse,
     CommentListResponse, CommentResponse, ConfigResponse, CreateAvatarRequest,
     CreateAvatarResponse, CreateCandidateRequest, CreateCommentRequest, CreateInviteRequest,
-    CreateInviteResponse, CreateUploadRequest, CreateUploadResponse, GroupResponse, HealthResponse,
-    ImageMediaResponse, InviteListResponse, MediaCookieResponse, MemberResponse,
-    MembershipListResponse, MyResponsesList, NewsletterDetailResponse, NewsletterListResponse,
-    PatchCommentRequest, PatchGroupRequest, PatchMeRequest, PatchMemberRequest, PatchUploadRequest,
-    ProblemDetails, PushPreferenceListResponse, PushPreferenceResponse, PushSubscribeRequest,
+    CreateInviteResponse, CreateUploadRequest, CreateUploadResponse, DevTickCycleRequest,
+    DevTickCycleResponse, DevTickNotifyResponse, GroupResponse, HealthResponse, ImageMediaResponse,
+    InviteListResponse, MediaCookieResponse, MemberResponse, MembershipListResponse,
+    MyResponsesList, NewsletterDetailResponse, NewsletterListResponse, PatchCommentRequest,
+    PatchGroupRequest, PatchMeRequest, PatchMemberRequest, PatchUploadRequest, ProblemDetails,
+    PushPreferenceListResponse, PushPreferenceResponse, PushSubscribeRequest,
     PushSubscribeResponse, PushSubscriptionListResponse, PushTestResponse, PushUnsubscribeRequest,
     PutPushPreferenceRequest, ReactionsResponse, RedeemRequest, RedeemResponse, ResponseDto,
     SaveResponseRequest, UserResponse,
@@ -100,6 +101,12 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         round_trip::<RedeemResponse>,
     ),
     (
+        "POST",
+        "/invites/redeem",
+        "403",
+        round_trip::<ProblemDetails>,
+    ),
+    (
         "GET",
         "/groups",
         "200",
@@ -160,6 +167,42 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         round_trip::<ProblemDetails>,
     ),
     ("GET", "/healthz", "200", round_trip::<HealthResponse>),
+    (
+        "POST",
+        "/admin/dev/tick/cycle",
+        "request",
+        round_trip::<DevTickCycleRequest>,
+    ),
+    (
+        "POST",
+        "/admin/dev/tick/cycle",
+        "200",
+        round_trip::<DevTickCycleResponse>,
+    ),
+    (
+        "POST",
+        "/admin/dev/tick/cycle",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "POST",
+        "/admin/dev/tick/cycle",
+        "422",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "POST",
+        "/admin/dev/tick/notify",
+        "200",
+        round_trip::<DevTickNotifyResponse>,
+    ),
+    (
+        "POST",
+        "/admin/dev/tick/notify",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
     (
         "GET",
         "/groups/{groupId}/newsletters",
@@ -280,7 +323,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "422",
         round_trip::<ProblemDetails>,
     ),
-    // ---- `03-api-contract.md` §8 — Engagement routes (comments + reactions) ----
+    // ---- `docs/design/api.md` §8 — Engagement routes (comments + reactions) ----
     (
         "GET",
         "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
@@ -401,7 +444,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "422",
         round_trip::<ProblemDetails>,
     ),
-    // ---- `03-api-contract.md` §9 — Media routes ----
+    // ---- `docs/design/api.md` §9 — Media routes ----
     (
         "POST",
         "/uploads",
@@ -452,12 +495,6 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         round_trip::<ProblemDetails>,
     ),
     (
-        "DELETE",
-        "/uploads/{imageId}",
-        "404",
-        round_trip::<ProblemDetails>,
-    ),
-    (
         "POST",
         "/uploads/{imageId}/complete",
         "200",
@@ -501,13 +538,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "404",
         round_trip::<ProblemDetails>,
     ),
-    (
-        "DELETE",
-        "/avatars/{avatarId}",
-        "404",
-        round_trip::<ProblemDetails>,
-    ),
-    // ---- `03-api-contract.md` §10 — Push routes ----
+    // ---- `docs/design/api.md` §10 — Push routes ----
     (
         "POST",
         "/push/subscribe",
@@ -703,6 +734,20 @@ fn gradient_and_avatar_color_enums_match_shared_config() {
         enum_values(&spec, "AvatarColorSlug"),
         shared::config::AVATAR_COLOR_SLUGS.to_vec(),
         "shared/openapi.yaml's AvatarColorSlug enum has drifted from shared::config::AVATAR_COLOR_SLUGS"
+    );
+}
+
+#[test]
+fn field_error_codes_match_the_domain_enum() {
+    let spec = load_spec();
+    let domain_codes: Vec<&str> = domain::FieldErrorCode::ALL
+        .iter()
+        .map(|c| c.as_str())
+        .collect();
+    assert_eq!(
+        enum_values(&spec, "FieldErrorCode"),
+        domain_codes,
+        "shared/openapi.yaml's FieldErrorCode enum has drifted from domain::FieldErrorCode"
     );
 }
 

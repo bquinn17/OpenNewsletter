@@ -13,5 +13,11 @@ dist-ssr
 *.sw?
 .env*
 !.env.development
+!.env.e2e
 public/sample/**
 tsconfig.tsbuildinfo
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+coverage/

@@ -25,7 +25,7 @@ import argparse
 import json
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -79,7 +79,7 @@ def iso(dt: datetime) -> str:
 
 def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
     """cycleId = yyyymm of responseOpenAt in the group's local time zone
-    (`06-newsletter-lifecycle.md` §4.1; mirrors
+    (`docs/design/lifecycle.md` §4.1; mirrors
     `backend/crates/shared/src/cycle_time.rs::cycle_id_for`).
     """
     local = response_open_at.astimezone(tz)
@@ -242,7 +242,7 @@ def write_fixture(
             "cycle_settings": {
                 "questions_per_cycle": 5,
                 "votes_per_user_per_cycle": 3,
-                "response_window_days": 4,
+                "response_window_days": 7,
                 "auto_publish": True,
             },
             "notification_settings": {
@@ -371,7 +371,7 @@ def main() -> None:
         )
 
     print("[5/5] Writing fixture data…")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     vote_close = now + timedelta(days=27)  # ~1-month voting window
     response_close = vote_close + parse_duration(args.cycle_close_in)
 

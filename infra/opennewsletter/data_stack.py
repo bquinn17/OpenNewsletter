@@ -33,7 +33,9 @@ class DataStack(cdk.Stack):
             time_to_live_attribute="ttl",
             point_in_time_recovery=config.env == "prod",
             removal_policy=removal_policy,
-            encryption=dynamodb.TableEncryption.AWS_MANAGED,
+            # AWS-owned key: free, unlike the AWS-managed `aws/dynamodb` KMS key,
+            # which bills per request (`docs/design/infrastructure.md` §3.1, §12).
+            encryption=dynamodb.TableEncryption.DEFAULT,
         )
 
         self.table.add_global_secondary_index(

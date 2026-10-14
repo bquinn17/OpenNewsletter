@@ -1,6 +1,6 @@
 const STORAGE_KEY = "on:pendingInvite";
 
-/** Fallback storage for an invite code across the OAuth round-trip (see `05-auth-flow.md` §3–§4). */
+/** Fallback storage for an invite code across the OAuth round-trip (see `docs/design/auth.md` §3–§4). */
 export function stashInvite(code: string): void {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, code);

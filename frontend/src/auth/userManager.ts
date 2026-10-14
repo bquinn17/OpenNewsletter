@@ -13,7 +13,12 @@ export const userManager: UserManager | null = env.useMocks
       redirect_uri: env.redirectUri || `${window.location.origin}/auth/callback`,
       scope: "openid email profile",
       response_type: "code",
-      userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+      // `localStorage` so an installed PWA stays signed in across launches
+      // (`docs/design/auth.md` §7, D1). Logout removes it and revokes the refresh
+      // token (`AuthProvider`). The sign-in state store (PKCE verifier +
+      // invite data) keeps the library default; the invite stash itself stays
+      // in `sessionStorage` (`inviteStash.ts`).
+      userStore: new WebStorageStateStore({ store: window.localStorage }),
       // Off: AuthProvider renews on `accessTokenExpiring` via `renewSession`,
       // which also handles bootstrap-login sessions (a different client).
       automaticSilentRenew: false,

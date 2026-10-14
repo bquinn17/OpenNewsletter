@@ -1,11 +1,12 @@
 //! PushSubscription, NotificationPref, and notification idempotency markers
-//! (AP20, AP21; `plans/02-data-model-dynamodb.md` §2.13-§2.15).
+//! (AP20, AP21; `docs/design/data-model.md` §2.13-§2.15).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, notified_close_sk, notified_open_pk, npref_sk, push_sk, user_pk, NOTIFIED_OPEN_SK,
     NOTIFIED_PUBLISH_SK, TICK_NOTIFY_SK, TICK_PK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use chrono::{DateTime, Utc};
@@ -18,7 +19,7 @@ pub async fn list_subs_for_user(
     repo: &Repo,
     user_id: &UserId,
 ) -> Result<Vec<PushSubscription>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -26,17 +27,15 @@ pub async fn list_subs_for_user(
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(user_pk(user_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("PUSH#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S("PUSH#".into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, PushSubscription>(i).map_err(RepoError::from))
         .collect()
 }
 
-/// `POST /push/subscribe` (`03-api-contract.md` §10.1, M11 decision D8).
+/// `POST /push/subscribe` (`docs/design/api.md` §10.1, M11 decision D8).
 /// Upserts by `(userId, endpointHash)`: `failureCount` always resets to 0,
 /// `createdAt` is set once via `if_not_exists`, and `lastSuccessAt` is left
 /// untouched (absent on a brand-new row, preserved on a re-subscribe).
@@ -126,7 +125,7 @@ pub async fn delete_subscription(
     Ok(())
 }
 
-/// Delivery bookkeeping (`07-notifications.md` §3.2, M11 decision D7):
+/// Delivery bookkeeping (`docs/design/notifications.md` §3.2, M11 decision D7):
 /// 200/201/202 resets `failureCount` to 0 and bumps `lastSuccessAt`,
 /// conditioned on the row still existing. A lost condition — the row was
 /// deleted concurrently, e.g. by its own failure path crossing the cap — is
@@ -269,7 +268,7 @@ pub async fn put_pref(repo: &Repo, p: &NotificationPref) -> Result<(), RepoError
     Ok(())
 }
 
-// ---------- Idempotency markers (`02-data-model-dynamodb.md` §2.15, M11 decision D3) ----------
+// ---------- Idempotency markers (`docs/design/data-model.md` §2.15, M11 decision D3) ----------
 
 /// Claim the `NOTIFIED#OPEN` marker for one cycle, at-most-once. `Ok(true)`
 /// means this call won the race and the caller should fan out; `Ok(false)`

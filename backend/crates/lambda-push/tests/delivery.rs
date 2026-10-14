@@ -1,6 +1,6 @@
 //! `delivery::send_all` — concurrent sends and the send cutoff that keeps
 //! a fan-out inside its Lambda / API Gateway time limit
-//! (`plans/07-notifications.md` §6.2).
+//! (`docs/design/notifications.md` §6.2).
 
 mod common;
 

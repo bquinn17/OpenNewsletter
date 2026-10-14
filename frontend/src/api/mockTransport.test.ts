@@ -82,7 +82,7 @@ describe("mockFetch", () => {
       expect(secondPoll.displayUrl).toBeTruthy();
     });
 
-    it("sets a caption via PATCH and soft-deletes via DELETE", async () => {
+    it("sets a caption via PATCH and really deletes via DELETE (D8)", async () => {
       const created = (await mockFetch("POST", "/uploads", {
         groupId: "g1",
         cycleId: "202606",
@@ -99,12 +99,13 @@ describe("mockFetch", () => {
       expect(patched.caption).toBe("Mile two.");
 
       await mockFetch("DELETE", `/uploads/${created.imageId}?groupId=g1&cycleId=202606`);
-      const afterDelete = (await mockFetch(
-        "GET",
-        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
-      )) as components["schemas"]["ImageMediaResponse"];
-      expect(afterDelete.status).toBe("failed");
-      expect(afterDelete.errorMessage).toBe("DELETED");
+      await expect(
+        mockFetch("GET", `/uploads/${created.imageId}?groupId=g1&cycleId=202606`),
+      ).rejects.toMatchObject({ status: 404 });
+      // A repeat DELETE is idempotent.
+      await expect(
+        mockFetch("DELETE", `/uploads/${created.imageId}?groupId=g1&cycleId=202606`),
+      ).resolves.toBeUndefined();
     });
 
     it("returns dummy signed-cookie values for the caller's group", async () => {
@@ -117,7 +118,7 @@ describe("mockFetch", () => {
       expect(cookie.keyPairId).toBeTruthy();
     });
 
-    it("creates a pending avatar and flips to ready after a couple of polls, then deletes it", async () => {
+    it("creates a pending avatar and flips to ready after a couple of polls, then really deletes it", async () => {
       const created = (await mockFetch("POST", "/avatars", {
         mimeType: "image/png",
         byteSize: 500,
@@ -133,12 +134,45 @@ describe("mockFetch", () => {
       expect(ready.avatarUrl).toBeTruthy();
 
       await mockFetch("DELETE", `/avatars/${created.avatarId}`);
-      const afterDelete = (await mockFetch(
-        "GET",
-        `/avatars/${created.avatarId}`,
-      )) as components["schemas"]["AvatarMediaResponse"];
-      expect(afterDelete.status).toBe("failed");
-      expect(afterDelete.errorMessage).toBe("DELETED");
+      await expect(mockFetch("GET", `/avatars/${created.avatarId}`)).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+
+    it("deleting the current avatar clears it from /me, and replacing or clearing one deletes the old (D8)", async () => {
+      async function readyAvatar(): Promise<string> {
+        const { avatarId } = (await mockFetch("POST", "/avatars", {
+          mimeType: "image/png",
+          byteSize: 500,
+        })) as components["schemas"]["CreateAvatarResponse"];
+        await mockFetch("GET", `/avatars/${avatarId}`);
+        await mockFetch("GET", `/avatars/${avatarId}`);
+        return avatarId;
+      }
+
+      const first = await readyAvatar();
+      const set = (await mockFetch("PATCH", "/me", {
+        avatarMediaId: first,
+      })) as components["schemas"]["UserResponse"];
+      expect(set.avatarUrl).toBeTruthy();
+
+      const second = await readyAvatar();
+      await mockFetch("PATCH", "/me", { avatarMediaId: second });
+      await expect(mockFetch("GET", `/avatars/${first}`)).rejects.toMatchObject({ status: 404 });
+
+      await mockFetch("DELETE", `/avatars/${second}`);
+      const me = (await mockFetch("GET", "/me")) as components["schemas"]["UserResponse"];
+      expect(me.avatarMediaId).toBeNull();
+      expect(me.avatarUrl).toBeNull();
+
+      // Clearing the photo deletes it too (`docs/design/api.md` §2.3).
+      const third = await readyAvatar();
+      await mockFetch("PATCH", "/me", { avatarMediaId: third });
+      const cleared = (await mockFetch("PATCH", "/me", {
+        avatarMediaId: null,
+      })) as components["schemas"]["UserResponse"];
+      expect(cleared.avatarMediaId).toBeNull();
+      await expect(mockFetch("GET", `/avatars/${third}`)).rejects.toMatchObject({ status: 404 });
     });
   });
 });

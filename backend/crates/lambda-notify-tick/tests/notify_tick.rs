@@ -1,6 +1,6 @@
 //! `run_notify_tick` due/moot/smallest-only/marker logic (M11 decision D5,
-//! `plans/07-notifications.md` §7), the "done" member rules, and the dev
-//! `POST /admin/dev/tick/notify` route (`plans/03-api-contract.md` §11a.2).
+//! `docs/design/notifications.md` §7), the "done" member rules, and the dev
+//! `POST /admin/dev/tick/notify` route (`docs/design/api.md` §11a.2).
 
 mod common;
 
@@ -58,7 +58,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
     let fanout = summary
         .fanouts
         .iter()
-        .find(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string())
+        .find(|f| f.group_id == group_id && f.cycle_id == cycle_id)
         .expect("one fanout for this cycle");
     assert_eq!(
         fanout.offset_hours, 24,
@@ -99,7 +99,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
         !second
             .fanouts
             .iter()
-            .any(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string()),
+            .any(|f| f.group_id == group_id && f.cycle_id == cycle_id),
         "a second tick reports nothing more for an already-handled cycle"
     );
     assert_eq!(sender.call_count(), 1, "and sends nothing more");
@@ -151,7 +151,7 @@ async fn moot_offsets_are_marked_but_never_sent() {
         !summary
             .fanouts
             .iter()
-            .any(|f| f.group_id == group_id.to_string() && f.cycle_id == cycle_id.to_string()),
+            .any(|f| f.group_id == group_id && f.cycle_id == cycle_id),
         "nothing is sent when every offset is moot"
     );
     assert_eq!(sender.call_count(), 0);
@@ -238,6 +238,74 @@ async fn a_done_member_is_skipped_when_the_sent_offset_is_the_smallest() {
 }
 
 #[tokio::test]
+async fn a_non_empty_draft_counts_as_answered_but_an_empty_one_does_not() {
+    let (_c, repo) = common::make_repo().await;
+    let sender = Arc::new(common::FakePushSender::new());
+    let state = common::test_state(repo, sender.clone(), "dev");
+
+    let mut group = common::group("gnt-drafts", "u1");
+    group.notification_settings.offsets_hours_before_close = vec![24];
+    common::seed_group_and_membership(&state.repo, &group, "u1", Role::Member).await;
+    common::seed_group_and_membership(&state.repo, &group, "u2", Role::Member).await;
+    common::put_user(&state.repo, "u1").await;
+    common::put_user(&state.repo, "u2").await;
+
+    let now = Utc::now();
+    common::put_newsletter(
+        &state.repo,
+        &common::open_newsletter(
+            "gnt-drafts",
+            "202610",
+            now - Duration::days(1),
+            now + Duration::hours(10),
+            vec![QuestionId::new("q1")],
+        ),
+    )
+    .await;
+
+    // u1's unpublished draft has words, so it will auto-publish at close:
+    // u1 is done. u2's draft is only whitespace: not done.
+    common::put_text_draft(
+        &state.repo,
+        "gnt-drafts",
+        "202610",
+        "q1",
+        "u1",
+        "r1",
+        "Lake 22.",
+    )
+    .await;
+    common::put_text_draft(&state.repo, "gnt-drafts", "202610", "q1", "u2", "r2", "  ").await;
+
+    for (user, hash) in [("u1", "h1"), ("u2", "h2")] {
+        let (p256dh, auth) = common::make_subscriber_keys();
+        common::put_subscription(
+            &state.repo,
+            user,
+            hash,
+            &format!("https://example.com/{user}"),
+            &p256dh,
+            &auth,
+            "UA",
+            Utc::now(),
+        )
+        .await;
+    }
+
+    tick::run_notify_tick(&state).await;
+
+    let calls = sender.calls();
+    assert!(
+        !calls.contains(&"https://example.com/u1".to_owned()),
+        "a non-empty draft makes u1 done, so the smallest offset skips them"
+    );
+    assert!(
+        calls.contains(&"https://example.com/u2".to_owned()),
+        "an empty draft doesn't count"
+    );
+}
+
+#[tokio::test]
 async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smallest() {
     let (_c, repo) = common::make_repo().await;
     let sender = Arc::new(common::FakePushSender::new());
@@ -281,7 +349,7 @@ async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smalle
     let fanout = summary
         .fanouts
         .iter()
-        .find(|f| f.cycle_id == "202610")
+        .find(|f| f.cycle_id.as_str() == "202610")
         .expect("fanout");
     assert_eq!(
         fanout.offset_hours, 48,

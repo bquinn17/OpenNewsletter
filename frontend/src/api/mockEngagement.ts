@@ -4,6 +4,7 @@ import { ApiError } from "./client";
 import { findPublishedAnswer } from "./mockNewsletters";
 import {
   CALLER_ID,
+  deleteMockImage,
   MOCK_IMAGE_DATA_URL,
   fail,
   newsletters,
@@ -16,7 +17,7 @@ type PublishedAnswer = S["PublishedAnswerResponse"];
 
 /**
  * Mock routes for `/groups/{g}/newsletters/{c}/questions/{q}/responses/{r}/{comments,reactions}*`
- * (`03-api-contract.md` §8, `09-engagement.md`). Mutates the same
+ * (`docs/design/api.md` §8, `docs/design/engagement.md`). Mutates the same
  * `PublishedAnswerResponse` objects `mockNewsletters.ts` serves on
  * `GET .../newsletters/{c}` — there's no separate engagement data store.
  */
@@ -123,9 +124,13 @@ function patchComment(
     validationFailed("body", "a comment needs either text or an image");
   }
 
+  // Removing or replacing the image releases it, which deletes it for real (D8).
+  const released =
+    comment.image && comment.image.imageId !== nextImage?.imageId ? comment.image.imageId : null;
   comment.body = nextBody;
   comment.image = nextImage;
   comment.editedAt = new Date().toISOString();
+  if (released) deleteMockImage(released);
   return { ...comment };
 }
 
@@ -137,7 +142,7 @@ function listReactions(answer: PublishedAnswer): S["ReactionsResponse"] {
 }
 
 /**
- * Server ordering (`03-api-contract.md` §8.5): count desc, then earliest
+ * Server ordering (`docs/design/api.md` §8.5): count desc, then earliest
  * reaction, then emoji. This mock doesn't track per-reaction timestamps, so
  * it ties on emoji instead — good enough for a stable, deterministic demo.
  */
@@ -210,6 +215,8 @@ export function mockEngagementRoute(request: MockRequest): unknown {
           }
           comment.deletedAt = new Date().toISOString();
           comment.body = "";
+          // A deleted comment's image is deleted for real too (`docs/design/engagement.md` §1, D8).
+          if (comment.image) deleteMockImage(comment.image.imageId);
           comment.image = null;
         }
         return undefined;

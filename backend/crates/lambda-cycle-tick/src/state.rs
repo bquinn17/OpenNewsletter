@@ -6,7 +6,7 @@ use persistence::Repo;
 pub struct AppState {
     pub repo: Repo,
     /// `dev` | `staging` | `prod` — the dev-only HTTP route refuses with
-    /// `404 NOT_FOUND` unless this is exactly `dev` (`plans/03-api-contract.md` §11a).
+    /// `404 NOT_FOUND` unless this is exactly `dev` (`docs/design/api.md` §11a).
     pub env: String,
     /// Where cycle-open / publication fan-outs go (`notify::LambdaNotifier`
     /// in a deployed stack).

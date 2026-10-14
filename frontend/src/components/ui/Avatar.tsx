@@ -22,8 +22,10 @@ const sizes: Record<NonNullable<Props["size"]>, string> = {
 export function Avatar({ name, colorClassName, url, size = "md", className, ringed }: Props) {
   if (url) {
     return (
+      // CORS mode, matching `CdnImage`: avatar URLs are CDN `/avatar/*` paths.
       <img
         src={url}
+        crossOrigin="use-credentials"
         alt={name}
         className={clsx(
           "select-none rounded-full object-cover",

@@ -1,5 +1,5 @@
 //! Invite routes and the Cognito `PreSignUp` trigger. Both binaries in this crate
-//! share the handler and persistence code here (`plans/05-auth-flow.md` §3).
+//! share the handler and persistence code here (`docs/design/auth.md` §3).
 
 pub mod code;
 pub mod handlers;

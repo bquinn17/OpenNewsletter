@@ -87,7 +87,7 @@ pub fn open_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
 
 /// An `open` newsletter whose `responseCloseAt` has already passed — the
 /// ≤5-minute window before `lambda-cycle-tick` next runs and flips it to
-/// `published` (`03-api-contract.md` §7.3).
+/// `published` (`docs/design/api.md` §7.3).
 pub fn open_newsletter_past_deadline(group_id: &str, cycle_id: &str) -> Newsletter {
     let now = Utc::now();
     let mut nl = voting_newsletter(group_id, cycle_id);

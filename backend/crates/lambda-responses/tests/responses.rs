@@ -1,8 +1,8 @@
-//! Handler-level tests for `lambda-responses` (`plans/03-api-contract.md` §7).
+//! Handler-level tests for `lambda-responses` (`docs/design/api.md` §7).
 //!
 //! Each test uses its own group id (never a shared "g1"): `persistence::auth`
 //! keeps a process-wide membership cache keyed by `(userId, groupId)` with a
-//! 60s TTL (`plans/02-data-model-dynamodb.md` §6), and `cargo test` runs many
+//! 60s TTL (`docs/design/data-model.md` §6), and `cargo test` runs many
 //! of these tests concurrently in the same process. Reusing a group id across
 //! tests let one test's cached role leak into another's assertions.
 
@@ -244,7 +244,7 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
 async fn first_publish_in_a_second_group_same_month_still_bumps_editions_answered() {
     // Cycle ids are calendar months shared by every group, and GSI1's
     // `USER#{u}#NL#{cycleId}` key has no group: group A's published answer
-    // must not count as "already published" for group B (`02` AP15 note).
+    // must not count as "already published" for group B (`docs/design/data-model.md` AP15 note).
     let (_c, repo) = common::make_repo().await;
     for g in ["gx-a", "gx-b"] {
         let group = common::group(g, "u1");

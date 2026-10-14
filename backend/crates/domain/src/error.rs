@@ -1,4 +1,4 @@
-//! API error catalog mirroring `plans/03-api-contract.md` §1.1.
+//! API error catalog mirroring `docs/design/api.md` §1.1.
 
 use crate::api::FieldError;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ pub enum ApiErrorCode {
     ImageTooLarge,
     ImageBadType,
     ImageInUse,
+    InviteEmailMismatch,
     CandidatePromoted,
     NewsletterArchived,
     RateLimited,
@@ -31,7 +32,7 @@ pub enum ApiErrorCode {
 }
 
 impl ApiErrorCode {
-    /// The machine-readable code as it appears on the wire (`03-api-contract.md` §1.1).
+    /// The machine-readable code as it appears on the wire (`docs/design/api.md` §1.1).
     pub fn as_str(self) -> &'static str {
         use ApiErrorCode::*;
         match self {
@@ -52,6 +53,7 @@ impl ApiErrorCode {
             ImageTooLarge => "IMAGE_TOO_LARGE",
             ImageBadType => "IMAGE_BAD_TYPE",
             ImageInUse => "IMAGE_IN_USE",
+            InviteEmailMismatch => "INVITE_EMAIL_MISMATCH",
             CandidatePromoted => "CANDIDATE_PROMOTED",
             NewsletterArchived => "NEWSLETTER_ARCHIVED",
             RateLimited => "RATE_LIMITED",
@@ -85,6 +87,7 @@ impl ApiErrorCode {
             ImageTooLarge => "Image is too large",
             ImageBadType => "Unsupported image type",
             ImageInUse => "Image is in use",
+            InviteEmailMismatch => "Invite is bound to a different email",
             CandidatePromoted => "Candidate question is already locked into a cycle",
             NewsletterArchived => "Newsletter is archived",
             RateLimited => "Too many requests",
@@ -96,7 +99,7 @@ impl ApiErrorCode {
         use ApiErrorCode::*;
         match self {
             Unauthenticated => 401,
-            Forbidden => 403,
+            Forbidden | InviteEmailMismatch => 403,
             NotFound => 404,
             ValidationFailed => 422,
             InviteInvalid => 400,
@@ -118,9 +121,34 @@ impl ApiErrorCode {
 pub struct ApiError {
     pub code: ApiErrorCode,
     pub detail: String,
-    /// Per-field details for `VALIDATION_FAILED` (`03` §1.1 `fieldErrors`). Empty
+    /// Per-field details for `VALIDATION_FAILED` (`docs/design/api.md` §1.1 `fieldErrors`). Empty
     /// for every other error, and for validation errors not tied to one field.
     pub field_errors: Vec<FieldError>,
+}
+
+/// Why one field failed: `fieldErrors[].code` (`docs/design/api.md` §1.1).
+/// Almost every failure is `Invalid`, and its `message` says what's wrong. A
+/// more specific code exists only where a client must react to the reason
+/// itself rather than just show the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldErrorCode {
+    Invalid,
+    /// A `responseWindowDays` change would close the group's `open` cycle in
+    /// the past (`docs/design/lifecycle.md` §6, D10).
+    ClosesInPast,
+}
+
+impl FieldErrorCode {
+    /// Every code. The OpenAPI contract test checks these against
+    /// `shared/openapi.yaml`'s `FieldErrorCode` enum.
+    pub const ALL: [FieldErrorCode; 2] = [FieldErrorCode::Invalid, FieldErrorCode::ClosesInPast];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FieldErrorCode::Invalid => "INVALID",
+            FieldErrorCode::ClosesInPast => "CLOSES_IN_PAST",
+        }
+    }
 }
 
 impl ApiError {
@@ -135,12 +163,21 @@ impl ApiError {
     /// `VALIDATION_FAILED` for one named request field (camelCase, as on the
     /// wire). The detail doubles as the field error's message.
     pub fn invalid_field(field: &str, detail: impl Into<String>) -> Self {
+        Self::invalid_field_because(field, FieldErrorCode::Invalid, detail)
+    }
+
+    /// [`ApiError::invalid_field`] with a specific [`FieldErrorCode`].
+    pub fn invalid_field_because(
+        field: &str,
+        reason: FieldErrorCode,
+        detail: impl Into<String>,
+    ) -> Self {
         let detail = detail.into();
         Self {
             code: ApiErrorCode::ValidationFailed,
             field_errors: vec![FieldError {
                 field: field.to_owned(),
-                code: "INVALID".to_owned(),
+                code: reason.as_str().to_owned(),
                 message: detail.clone(),
             }],
             detail,

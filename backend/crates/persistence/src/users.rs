@@ -5,7 +5,7 @@ use crate::error::{self, RepoError};
 use crate::expr::set_fields;
 use crate::keys::{attr, cognito_sub_pk, user_pk, COGNITO_SUB_SK, USER_PROFILE_SK};
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use domain::{AvatarId, CognitoSub, CognitoSubLookup, User, UserId};
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
@@ -100,13 +100,20 @@ pub async fn get_users_batch(
 
 /// Apply a `PATCH /me` patch. Absent fields are left untouched; `avatar_media_id`
 /// distinguishes "not supplied" (outer `None`) from "clear the photo" (inner `None`).
+///
+/// Returns the `avatar_media_id` this write replaced, read atomically from the
+/// write itself (`UPDATED_OLD`), so a caller deleting the replaced avatar acts
+/// on what was really there rather than on an earlier read that a concurrent
+/// `PATCH /me` may have made stale. `None` when the patch didn't touch the
+/// avatar or there was none before. A missing user row is
+/// `RepoError::ConditionalCheckFailed`.
 pub async fn update_profile(
     repo: &Repo,
     user_id: &UserId,
     display_name: Option<&str>,
     avatar_color: Option<&str>,
     avatar_media_id: Option<Option<&AvatarId>>,
-) -> Result<(), RepoError> {
+) -> Result<Option<AvatarId>, RepoError> {
     let mut fields: Vec<(&str, AttributeValue)> = Vec::new();
     if let Some(name) = display_name {
         fields.push(("display_name", AttributeValue::S(name.to_owned())));
@@ -123,7 +130,7 @@ pub async fn update_profile(
     }
 
     if fields.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let update = repo
@@ -133,19 +140,28 @@ pub async fn update_profile(
         .key(attr::PK, AttributeValue::S(user_pk(user_id)))
         .key(attr::SK, AttributeValue::S(USER_PROFILE_SK.into()))
         .condition_expression("attribute_exists(#pk)")
-        .expression_attribute_names("#pk", attr::PK);
+        .expression_attribute_names("#pk", attr::PK)
+        .return_values(ReturnValue::UpdatedOld);
 
     let (update, assignments) = set_fields(update, fields);
-    update
+    let resp = update
         .update_expression(format!("SET {}", assignments.join(", ")))
         .send()
-        .await?;
-    Ok(())
+        .await
+        .map_err(error::from_update_item_error)?;
+    let previous_avatar = resp
+        .attributes
+        .and_then(|mut old| old.remove("avatar_media_id"))
+        .and_then(|value| match value {
+            AttributeValue::S(id) => Some(AvatarId::new(id)),
+            _ => None,
+        });
+    Ok(previous_avatar)
 }
 
 /// Clears `avatar_media_id` back to `null`, but only if it still points at
 /// `avatar_id` — a conditional update so `DELETE /avatars/{avatarId}`
-/// (`03-api-contract.md` §9.7) can't clobber a concurrent `PATCH /me` that
+/// (`docs/design/api.md` §9.7) can't clobber a concurrent `PATCH /me` that
 /// set a *different* avatar in between. A lost race (the field already
 /// points elsewhere, or the user row is otherwise gone) is not an error:
 /// the delete is still idempotent from the caller's point of view.

@@ -238,6 +238,7 @@ describe("CommentList", () => {
   });
 
   it("replaces a comment's image when the author removes it and uploads another", async () => {
+    vi.mocked(api.engagement.patchComment).mockClear();
     const user = userEvent.setup();
     vi.mocked(api.engagement.patchComment).mockResolvedValue(
       comment({ commentId: "mine", authorUserId: "u_quinn", displayName: "Quinn", body: "" }),
@@ -264,6 +265,12 @@ describe("CommentList", () => {
     await user.click(screen.getAllByRole("button", { name: "Attach test image" })[0]!);
     await user.click(screen.getByRole("button", { name: "Save" }));
 
+    // D8: replacing deletes the old image for real, so it's confirmed first.
+    const dialog = await screen.findByRole("dialog", { name: "Delete the attached image?" });
+    expect(dialog).toHaveTextContent("This permanently deletes the image. It can't be recovered.");
+    expect(api.engagement.patchComment).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete image and save" }));
+
     await waitFor(() =>
       expect(api.engagement.patchComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine", {
         body: "",
@@ -273,6 +280,7 @@ describe("CommentList", () => {
   });
 
   it("sends an explicit null when the author removes the image without replacing it", async () => {
+    vi.mocked(api.engagement.patchComment).mockClear();
     const user = userEvent.setup();
     vi.mocked(api.engagement.patchComment).mockResolvedValue(
       comment({ commentId: "mine", authorUserId: "u_quinn", displayName: "Quinn", body: "Text" }),
@@ -297,11 +305,112 @@ describe("CommentList", () => {
     await user.click(screen.getByRole("button", { name: "Remove image" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
+    const dialog = await screen.findByRole("dialog", { name: "Delete the attached image?" });
+    expect(api.engagement.patchComment).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete image and save" }));
+
     await waitFor(() =>
       expect(api.engagement.patchComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine", {
         body: "Text",
         imageMediaId: null,
       }),
+    );
+  });
+
+  it("doesn't save an image removal when its permanent-delete confirm is cancelled", async () => {
+    vi.mocked(api.engagement.patchComment).mockClear();
+    const user = userEvent.setup();
+    const mine = comment({
+      commentId: "mine",
+      authorUserId: "u_quinn",
+      displayName: "Quinn",
+      body: "Text",
+      image: {
+        imageId: "img-old",
+        thumbUrl: "https://cdn.example.com/thumb.webp",
+        displayUrl: "https://cdn.example.com/display.webp",
+        width: 800,
+        height: 600,
+        caption: null,
+      },
+    });
+    renderList([mine]);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Remove image" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete the attached image?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.engagement.patchComment).not.toHaveBeenCalled();
+  });
+
+  it("saves a text-only edit without the image confirm", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.patchComment).mockResolvedValue(
+      comment({ commentId: "mine", authorUserId: "u_quinn", displayName: "Quinn", body: "New" }),
+    );
+    const mine = comment({
+      commentId: "mine",
+      authorUserId: "u_quinn",
+      displayName: "Quinn",
+      body: "Old",
+      image: {
+        imageId: "img-old",
+        thumbUrl: "https://cdn.example.com/thumb.webp",
+        displayUrl: "https://cdn.example.com/display.webp",
+        width: 800,
+        height: 600,
+        caption: null,
+      },
+    });
+    renderList([mine]);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const box = screen.getByLabelText("Edit comment");
+    await user.clear(box);
+    await user.type(box, "New");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.engagement.patchComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine", {
+        body: "New",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("warns that deleting a comment with an image deletes the image too", async () => {
+    vi.mocked(api.engagement.deleteComment).mockClear();
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.deleteComment).mockResolvedValue(undefined);
+    const mine = comment({
+      commentId: "mine",
+      authorUserId: "u_quinn",
+      displayName: "Quinn",
+      body: "With a photo",
+      image: {
+        imageId: "img-old",
+        thumbUrl: "https://cdn.example.com/thumb.webp",
+        displayUrl: "https://cdn.example.com/display.webp",
+        width: 800,
+        height: 600,
+        caption: null,
+      },
+    });
+    renderList([mine]);
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete this comment?" });
+    expect(dialog).toHaveTextContent(
+      "This also permanently deletes the attached image. It can't be recovered.",
+    );
+    expect(api.engagement.deleteComment).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(api.engagement.deleteComment).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "mine"),
     );
   });
 

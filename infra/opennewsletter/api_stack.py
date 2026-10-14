@@ -1,7 +1,7 @@
 """ApiStack — HTTP API, request-handler Lambdas, and their routes.
 
-Per `plans/01-infrastructure-cdk.md` §6. The route table is driven from
-`plans/03-api-contract.md` §13, which is authoritative when the two disagree.
+Per `docs/design/infrastructure.md` §6. The route table is driven from
+`docs/design/api.md` §13, which is authoritative when the two disagree.
 
 M4 wires `lambda-invites` and `lambda-groups`. M5 adds `lambda-newsletters` and
 `lambda-questions`, M6 `lambda-responses`, M8 `lambda-media`, M10
@@ -35,28 +35,15 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
-from .config import EnvConfig
+from .config import APP_SECRET_VAPID_PUBLIC_KEY, EnvConfig, secret_ref
 from .lambda_assets import lambda_code
-
-# Defaults for newly-created groups, baked into every handler's env
-# (`plans/01-infrastructure-cdk.md` §6.4).
-_GROUP_DEFAULTS: dict[str, Any] = {
-    "questionsPerCycle": 5,
-    "votesPerUserPerCycle": 3,
-    "responseWindowDays": 4,
-    "timezone": "America/New_York",
-    "memberSoftCap": 50,
-    "imagesPerAnswerMax": 10,
-    "imageMaxBytes": 15728640,
-    "inviteTtlDays": 7,
-    "autosaveDebounceMs": 1500,
-    "notificationOffsetsHoursBeforeClose": [96, 48, 24],
-}
+from .ssm_refs import http_api_id_parameter_name
 
 # (handler key, method, path). Every route carries the JWT authorizer — there are
-# no public routes (`plans/01-infrastructure-cdk.md` §6.5).
+# no public routes (`docs/design/infrastructure.md` §6.5).
 _ROUTES: list[tuple[str, str, str]] = [
     ("groups", "GET", "/healthz"),
     ("groups", "GET", "/config"),
@@ -142,11 +129,6 @@ _ROUTES: list[tuple[str, str, str]] = [
 ]
 
 
-def _sm_ref(secret_arn: str, json_field: str) -> str:
-    """CloudFormation dynamic reference; resolves at deploy time, never logged."""
-    return f"{{{{resolve:secretsmanager:{secret_arn}:SecretString:{json_field}}}}}"
-
-
 class ApiStack(cdk.Stack):
     def __init__(
         self,
@@ -157,14 +139,17 @@ class ApiStack(cdk.Stack):
         table: dynamodb.Table,
         user_pool: cognito.IUserPool,
         user_pool_client: cognito.IUserPoolClient,
-        bootstrap_client: cognito.IUserPoolClient,
+        bootstrap_client: cognito.IUserPoolClient | None,
         certificate: acm.ICertificate,
         cycle_tick_fn: aws_lambda.IFunction,
         notify_tick_fn: aws_lambda.IFunction,
         media_originals_bucket: s3.Bucket,
+        media_processed_bucket: s3.Bucket,
         avatars_originals_bucket: s3.Bucket,
+        avatars_processed_bucket: s3.Bucket,
         cdn_domain: str,
         cdn_key_pair_id: str,
+        cdn_distribution_id: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -184,12 +169,55 @@ class ApiStack(cdk.Stack):
             else cdk.RemovalPolicy.RETAIN
         )
 
-        # Dev has no custom domains (`plans/13-dev-environments.md` §2), so media
+        # Dev has no custom domains (`docs/development/environments.md` §2), so media
         # URLs use the distribution's own `*.cloudfront.net` domain there.
         if config.env == "dev":
             cdn_base_url = f"https://{cdn_domain}"
         else:
             cdn_base_url = f"https://cdn.{config.domain}"
+
+        # Real media deletion (`docs/design/infrastructure.md` §6.2, D8): the
+        # Lambdas that delete media get `s3:DeleteObject` on exactly the key
+        # prefixes they delete from, plus `cloudfront:CreateInvalidation` on this
+        # one distribution. The id is a construct reference onto
+        # MediaPersistentStack, like the buckets, so it adds no new stack edge.
+        distribution_arn = self.format_arn(
+            service="cloudfront",
+            region="",
+            resource="distribution",
+            resource_name=cdn_distribution_id,
+        )
+        invalidate_cdn = iam.PolicyStatement(
+            actions=["cloudfront:CreateInvalidation"],
+            resources=[distribution_arn],
+        )
+        media_delete_env = {
+            "MEDIA_ORIGINALS_BUCKET": media_originals_bucket.bucket_name,
+            "PROCESSED_BUCKET": media_processed_bucket.bucket_name,
+        }
+        avatar_delete_env = {
+            "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
+            "AVATARS_PROCESSED_BUCKET": avatars_processed_bucket.bucket_name,
+        }
+
+        # Plain `s3:DeleteObject` rather than `grant_delete`, whose
+        # `s3:DeleteObject*` also covers version and tagging deletes.
+        delete_media = iam.PolicyStatement(
+            actions=["s3:DeleteObject"],
+            resources=[
+                # `docs/design/media.md` §2 key layout.
+                media_originals_bucket.arn_for_objects("uploads/*"),
+                media_processed_bucket.arn_for_objects("img/*"),
+            ],
+        )
+        delete_avatars = iam.PolicyStatement(
+            actions=["s3:DeleteObject"],
+            resources=[
+                # `docs/design/media.md` §11 key layout.
+                avatars_originals_bucket.arn_for_objects("uploads/*"),
+                avatars_processed_bucket.arn_for_objects("avatar/*"),
+            ],
+        )
 
         self.invites_fn = self._handler_lambda(
             "Invites",
@@ -202,9 +230,16 @@ class ApiStack(cdk.Stack):
             description="Config, profile, group and member routes",
             extra_environment={
                 "CDN_BASE_URL": cdn_base_url,
-                "VAPID_PUBLIC_KEY": _sm_ref(config.vapid_secret_arn, "publicKey"),
+                "VAPID_PUBLIC_KEY": secret_ref(
+                    config.app_secret_arn, APP_SECRET_VAPID_PUBLIC_KEY
+                ),
+                # Old-avatar cleanup on `PATCH /me`.
+                **avatar_delete_env,
+                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
             },
         )
+        self.groups_fn.add_to_role_policy(delete_avatars)
+        self.groups_fn.add_to_role_policy(invalidate_cdn)
         self.newsletters_fn = self._handler_lambda(
             "Newsletters",
             binary_name="newsletters-api",
@@ -233,19 +268,26 @@ class ApiStack(cdk.Stack):
             description="Comments + reactions",
             extra_environment={
                 "CDN_BASE_URL": cdn_base_url,
+                # Comment-image release on soft-delete/replace.
+                **media_delete_env,
+                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
             },
         )
+        self.engagement_fn.add_to_role_policy(delete_media)
+        self.engagement_fn.add_to_role_policy(invalidate_cdn)
         self.media_fn = self._handler_lambda(
             "Media",
             binary_name="media-api",
             description="Uploads, avatars, media cookie",
             memory_size=512,
             extra_environment={
-                "MEDIA_ORIGINALS_BUCKET": media_originals_bucket.bucket_name,
-                "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
+                **media_delete_env,
+                **avatar_delete_env,
                 "CDN_BASE_URL": cdn_base_url,
                 "CDN_KEY_PAIR_ID": cdn_key_pair_id,
-                "CDN_SIGNING_SECRET_ARN": config.cdn_signing_secret_arn,
+                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
+                # The signing key is its `cdn_signing_private_key` JSON key.
+                "APP_SECRET_ARN": config.app_secret_arn,
                 "MEDIA_COOKIE_DOMAIN": (
                     f".{config.domain}" if config.env != "dev" else ""
                 ),
@@ -254,12 +296,11 @@ class ApiStack(cdk.Stack):
         # Presigning a PUT needs s3:PutObject on the signer's role.
         media_originals_bucket.grant_put(self.media_fn)
         avatars_originals_bucket.grant_put(self.media_fn)
-        self.media_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["secretsmanager:GetSecretValue"],
-                resources=[config.cdn_signing_secret_arn],
-            )
-        )
+        # `DELETE /uploads/{id}` and `DELETE /avatars/{id}`.
+        self.media_fn.add_to_role_policy(delete_media)
+        self.media_fn.add_to_role_policy(delete_avatars)
+        self.media_fn.add_to_role_policy(invalidate_cdn)
+        self.media_fn.add_to_role_policy(_read_app_secret(config))
 
         self.push_fn = self._handler_lambda(
             "Push",
@@ -267,15 +308,11 @@ class ApiStack(cdk.Stack):
             description="Web Push subscriptions and test messages",
             timeout_secs=60,
             extra_environment={
-                "VAPID_SECRET_ARN": config.vapid_secret_arn,
+                # VAPID keys are its `vapid_*` JSON keys.
+                "APP_SECRET_ARN": config.app_secret_arn,
             },
         )
-        self.push_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["secretsmanager:GetSecretValue"],
-                resources=[config.vapid_secret_arn],
-            )
-        )
+        self.push_fn.add_to_role_policy(_read_app_secret(config))
 
         # --- HTTP API ---
 
@@ -283,16 +320,17 @@ class ApiStack(cdk.Stack):
         if config.env == "dev":
             allowed_origins.append("http://localhost:5173")
 
+        # The dev-only bootstrap client is included so password-auth tokens from
+        # /admin/bootstrap-login pass the same authorizer (docs/development/environments.md §6). Prod has no
+        # such client, so its audience is the frontend client alone (docs/design/infrastructure.md §6.1).
+        jwt_audience = [user_pool_client.user_pool_client_id]
+        if bootstrap_client is not None:
+            jwt_audience.append(bootstrap_client.user_pool_client_id)
         authorizer = apigw_authorizers.HttpJwtAuthorizer(
             "CognitoJwtAuthorizer",
             f"https://cognito-idp.{self.region}.amazonaws.com/{user_pool.user_pool_id}",
             identity_source=["$request.header.Authorization"],
-            # The bootstrap client is included so password-auth tokens from
-            # /admin/bootstrap-login pass the same authorizer (13 §6).
-            jwt_audience=[
-                user_pool_client.user_pool_client_id,
-                bootstrap_client.user_pool_client_id,
-            ],
+            jwt_audience=jwt_audience,
         )
 
         self.api = apigw.HttpApi(
@@ -338,7 +376,7 @@ class ApiStack(cdk.Stack):
                 ),
             )
 
-        # Dev-only fast-forward routes (`plans/03-api-contract.md` §11a.1, §11a.2);
+        # Dev-only fast-forward routes (`docs/design/api.md` §11a.1, §11a.2);
         # refuse with 404 in prod simply by not existing there.
         if config.env == "dev":
             self.api.add_routes(
@@ -360,7 +398,7 @@ class ApiStack(cdk.Stack):
         self._add_throttling()
 
         # Dev has no custom domains — the raw execute-api endpoint is used
-        # (`plans/13-dev-environments.md` §2).
+        # (`docs/development/environments.md` §2).
         self.domain_name: apigw.DomainName | None = None
         if config.env != "dev":
             self.domain_name = apigw.DomainName(
@@ -379,6 +417,16 @@ class ApiStack(cdk.Stack):
 
         cdk.CfnOutput(self, "ApiId", value=self.api.api_id)
         cdk.CfnOutput(self, "ApiEndpoint", value=self.api_endpoint)
+
+        # Published for MonitoringStack to read via a CloudFormation dynamic
+        # reference (`ssm_refs.py`) rather than a cross-stack construct ref —
+        # the api id isn't known until deploy, and MonitoringStack is volatile.
+        ssm.StringParameter(
+            self,
+            "HttpApiIdParam",
+            parameter_name=http_api_id_parameter_name(config.env),
+            string_value=self.api.api_id,
+        )
 
     @property
     def api_endpoint(self) -> str:
@@ -410,7 +458,6 @@ class ApiStack(cdk.Stack):
             "TABLE_NAME": self._table.table_name,
             "RUST_LOG": "info",
             "ENV": self._config.env,
-            "CONFIG_JSON": json.dumps(_GROUP_DEFAULTS, separators=(",", ":")),
             "API_BASE_URL": f"https://{self._config.api_domain}",
             **(extra_environment or {}),
         }
@@ -476,6 +523,16 @@ class ApiStack(cdk.Stack):
             throttling_burst_limit=50,
             throttling_rate_limit=25,
         )
+
+
+def _read_app_secret(config: EnvConfig) -> iam.PolicyStatement:
+    """Read access to the one per-env app secret (`docs/design/infrastructure.md` §7.1). Granted only to
+    the Lambdas that read a private key from it at runtime: media, push and
+    notify-tick (NotificationsStack builds its own copy)."""
+    return iam.PolicyStatement(
+        actions=["secretsmanager:GetSecretValue"],
+        resources=[config.app_secret_arn],
+    )
 
 
 def _route_id(path: str) -> str:

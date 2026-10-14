@@ -1,4 +1,4 @@
-//! The S3-trigger handler (`plans/08-media-uploads.md` §5.2).
+//! The S3-trigger handler (`docs/design/media.md` §5.2).
 //!
 //! Records are processed independently: a terminal content problem (too
 //! large, undecodable, malformed key, missing/already-finished row) on one
@@ -24,7 +24,9 @@ use crate::state::AppState;
 
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
 const IMAGE_DECODE_FAILED: &str = "IMAGE_DECODE_FAILED";
-const IMAGE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+/// 60 days. Kept at two months or less so a browser or CDN copy can't outlive
+/// a fix for long, such as a header or CORS change (`docs/design/media.md` §5.1).
+const IMAGE_CACHE_CONTROL: &str = "public, max-age=5184000, immutable";
 const AVATAR_CACHE_CONTROL: &str = "public, max-age=86400, immutable";
 
 /// Processes every record in the event, continuing past a terminal failure
@@ -103,6 +105,9 @@ async fn handle_image_record(
         Err(ProcessError::DecodeFailed) => {
             return fail_image(state, &parsed, None, IMAGE_DECODE_FAILED).await;
         }
+        Err(ProcessError::TooLarge) => {
+            return fail_image(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        }
     };
 
     let display_key = format!(
@@ -160,7 +165,30 @@ async fn handle_image_record(
     )
     .await?;
     if outcome == UpdateOutcome::AlreadyFinal {
-        info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+        // The conditional update also fails when the row is gone: the image was
+        // deleted while this invocation processed it. The deleter saw no
+        // processed keys on the pending row, so the objects just written are
+        // ours to remove.
+        let row = media::get_image(
+            &state.repo,
+            &parsed.group_id,
+            &parsed.cycle_id,
+            &parsed.image_id,
+        )
+        .await?;
+        if row.is_none() {
+            info!(image_id = %parsed.image_id, "image deleted during processing; removing its processed objects");
+            state
+                .store
+                .delete(&state.buckets.processed, &display_key)
+                .await?;
+            state
+                .store
+                .delete(&state.buckets.processed, &thumb_key)
+                .await?;
+        } else {
+            info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+        }
     }
     Ok(())
 }
@@ -220,6 +248,9 @@ async fn handle_avatar_record(
         Err(ProcessError::DecodeFailed) => {
             return fail_avatar(state, &parsed, None, IMAGE_DECODE_FAILED).await;
         }
+        Err(ProcessError::TooLarge) => {
+            return fail_avatar(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        }
     };
 
     let display_key = format!(
@@ -247,7 +278,17 @@ async fn handle_avatar_record(
     )
     .await?;
     if outcome == UpdateOutcome::AlreadyFinal {
-        info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+        // As for images: a missing row means the avatar was deleted mid-processing.
+        let row = media::get_avatar(&state.repo, &parsed.user_id, &parsed.avatar_id).await?;
+        if row.is_none() {
+            info!(avatar_id = %parsed.avatar_id, "avatar deleted during processing; removing its processed object");
+            state
+                .store
+                .delete(&state.buckets.avatars_processed, &display_key)
+                .await?;
+        } else {
+            info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+        }
     }
     Ok(())
 }

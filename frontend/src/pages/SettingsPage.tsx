@@ -18,6 +18,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Spinner } from "../components/ui/Spinner";
 import { AVATAR_COLOR_SLUGS, avatarColorClass } from "../utils/avatarColor";
 import { pollMediaStatus, sha256Base64 } from "../utils/media";
+import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../utils/permanentDelete";
 import { uploadToS3 } from "../utils/uploadToS3";
 import type { components } from "../types/api";
 
@@ -43,7 +44,7 @@ function friendlyAvatarError(code: string | null | undefined): string {
   }
 }
 
-// Bounds per `03-api-contract.md` §5.2 / `shared/openapi.yaml` (`PatchMeRequest.displayName`).
+// Bounds per `docs/design/api.md` §5.2 / `shared/openapi.yaml` (`PatchMeRequest.displayName`).
 const profileSchema = z.object({
   displayName: z.string().trim().min(1, "Name can't be empty.").max(40, "40 characters max."),
   avatarColor: z.enum(AVATAR_COLOR_SLUGS),
@@ -65,6 +66,8 @@ export function SettingsPage() {
     null,
   );
   const [avatarUpload, setAvatarUpload] = useState<AvatarUploadState>({ phase: "idle" });
+  // D8: removing or replacing an avatar deletes the old image for real.
+  const [avatarConfirm, setAvatarConfirm] = useState<"remove" | "replace" | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const avatarPollCancelRef = useRef<(() => void) | null>(null);
 
@@ -204,6 +207,19 @@ export function SettingsPage() {
     });
   }
 
+  function chooseAvatarFile() {
+    // Replacing an existing photo deletes it (`docs/design/api.md` §9.7), so confirm first.
+    if (me?.avatarMediaId) setAvatarConfirm("replace");
+    else avatarInputRef.current?.click();
+  }
+
+  function confirmAvatarChange() {
+    const action = avatarConfirm;
+    setAvatarConfirm(null);
+    if (action === "remove") void handleRemovePhoto();
+    else if (action === "replace") avatarInputRef.current?.click();
+  }
+
   async function handleRemovePhoto() {
     const oldAvatarId = me?.avatarMediaId ?? null;
     try {
@@ -211,6 +227,8 @@ export function SettingsPage() {
     } catch {
       return;
     }
+    // The server deletes a cleared avatar itself (`docs/design/api.md` §2.3). This DELETE
+    // covers a backend from before that change; otherwise it's a 204 no-op.
     if (oldAvatarId) {
       api.media.deleteAvatar(oldAvatarId).catch(() => undefined);
     }
@@ -263,7 +281,7 @@ export function SettingsPage() {
                   </label>
                   <button
                     type="button"
-                    onClick={() => avatarInputRef.current?.click()}
+                    onClick={chooseAvatarFile}
                     disabled={
                       avatarUpload.phase === "uploading" || avatarUpload.phase === "processing"
                     }
@@ -278,7 +296,7 @@ export function SettingsPage() {
                   {me.avatarMediaId && (
                     <button
                       type="button"
-                      onClick={() => void handleRemovePhoto()}
+                      onClick={() => setAvatarConfirm("remove")}
                       className="text-sm font-semibold text-coral"
                     >
                       Remove photo
@@ -458,6 +476,16 @@ export function SettingsPage() {
         busy={leaveGroup.isPending}
         onConfirm={handleLeave}
         onCancel={() => setLeaveTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={avatarConfirm !== null}
+        title={avatarConfirm === "replace" ? "Replace your photo?" : "Remove your photo?"}
+        message={PERMANENT_IMAGE_DELETE_MESSAGE}
+        confirmLabel={avatarConfirm === "replace" ? "Choose a new photo" : "Remove photo"}
+        tone="danger"
+        onConfirm={confirmAvatarChange}
+        onCancel={() => setAvatarConfirm(null)}
       />
     </div>
   );

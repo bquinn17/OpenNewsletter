@@ -204,7 +204,7 @@ async fn it_sets_and_clears_an_image_caption() {
 }
 
 #[tokio::test]
-async fn it_marks_an_image_deleted_idempotently() {
+async fn it_deletes_an_image_row_idempotently() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("gdel");
     let cycle_id = CycleId::new("202606");
@@ -212,42 +212,77 @@ async fn it_marks_an_image_deleted_idempotently() {
     let img = common::image_media("gdel", "202606", "img-01", "u1");
     media::put_image(&repo, &img).await.unwrap();
 
-    media::mark_image_deleted(&repo, &group_id, &cycle_id, &image_id)
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
         .await
         .unwrap();
     let got = media::get_image(&repo, &group_id, &cycle_id, &image_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(got.status, MediaStatus::Failed);
-    assert_eq!(got.error_message, Some("DELETED".to_owned()));
+    assert_eq!(got, None);
 
-    // Idempotent: deleting an already-failed row succeeds and leaves it failed.
-    media::mark_image_deleted(&repo, &group_id, &cycle_id, &image_id)
+    // Idempotent: deleting an already-gone row succeeds.
+    media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
         .await
         .unwrap();
-    let got_again = media::get_image(&repo, &group_id, &cycle_id, &image_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(got_again.status, MediaStatus::Failed);
 }
 
 #[tokio::test]
-async fn it_marks_an_avatar_deleted() {
+async fn an_image_row_delete_refuses_a_row_whose_status_changed() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("gdel-race");
+    let cycle_id = CycleId::new("202606");
+    let image_id = ImageId::new("img-01");
+    let mut img = common::image_media("gdel-race", "202606", "img-01", "u1");
+    img.status = MediaStatus::Ready;
+    media::put_image(&repo, &img).await.unwrap();
+
+    let err = media::delete_image_row(&repo, &group_id, &cycle_id, &image_id, MediaStatus::Pending)
+        .await
+        .expect_err("the row finished processing since the caller read it");
+
+    assert!(err.is_lost_race());
+    let got = media::get_image(&repo, &group_id, &cycle_id, &image_id)
+        .await
+        .unwrap();
+    assert_eq!(got, Some(img));
+}
+
+#[tokio::test]
+async fn it_deletes_an_avatar_row() {
     let (_c, repo) = common::make_repo().await;
     let user_id = UserId::new("u1");
     let avatar_id = AvatarId::new("av-01");
     let av = common::avatar_media("u1", "av-01");
     media::put_avatar(&repo, &av).await.unwrap();
 
-    media::mark_avatar_deleted(&repo, &user_id, &avatar_id)
+    media::delete_avatar_row(&repo, &user_id, &avatar_id, MediaStatus::Pending)
         .await
         .unwrap();
     let got = media::get_avatar(&repo, &user_id, &avatar_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(got.status, MediaStatus::Failed);
-    assert_eq!(got.error_message, Some("DELETED".to_owned()));
+    assert_eq!(got, None);
+}
+
+#[tokio::test]
+async fn get_images_batch_tolerates_duplicates_and_skips_missing_ids() {
+    let (_c, repo) = common::make_repo().await;
+    let a = common::image_media("g1", "202606", "img-a", "u1");
+    let b = common::image_media("g1", "202606", "img-b", "u1");
+    media::put_image(&repo, &a).await.unwrap();
+    media::put_image(&repo, &b).await.unwrap();
+
+    let ids = [
+        ImageId::new("img-a"),
+        ImageId::new("img-a"),
+        ImageId::new("img-b"),
+        ImageId::new("img-missing"),
+    ];
+    let got = media::get_images_batch(&repo, &GroupId::new("g1"), &CycleId::new("202606"), &ids)
+        .await
+        .unwrap();
+
+    assert_eq!(got.len(), 2);
+    assert_eq!(got.get(&ImageId::new("img-a")), Some(&a));
+    assert_eq!(got.get(&ImageId::new("img-b")), Some(&b));
 }

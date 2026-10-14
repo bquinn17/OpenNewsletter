@@ -1,9 +1,9 @@
 //! Status-transition updates for `ImageMedia`/`AvatarMedia` rows
-//! (`plans/02-data-model-dynamodb.md` §2.10, §2.16), written by
+//! (`docs/design/data-model.md` §2.10, §2.16), written by
 //! `lambda-image-process` once a variant has been generated or processing has
 //! failed terminally. Every transition is conditioned on `status = pending`
 //! so a retried S3 event — this Lambda's idempotency story
-//! (`plans/08-media-uploads.md` §5.2) — never clobbers a row another
+//! (`docs/design/media.md` §5.2) — never clobbers a row another
 //! invocation already finished.
 
 use crate::error::{self, RepoError};

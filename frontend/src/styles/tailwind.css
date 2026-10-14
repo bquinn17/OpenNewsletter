@@ -32,7 +32,7 @@
     .canvas-bg {
       padding: 5rem 0;
     }
-    /* 04 §4.1 / coding-standards §3.7: max-w-3xl at md, max-w-2xl at lg. */
+    /* docs/design/frontend.md §4.1 / docs/development/coding-standards.md §3.7: max-w-3xl at md, max-w-2xl at lg. */
     .app-container {
       max-width: 48rem;
       min-height: calc(100vh - 10rem);

@@ -1,4 +1,4 @@
-//! Lifecycle-engine scenarios from `plans/06-newsletter-lifecycle.md` §11.
+//! Lifecycle-engine scenarios from `docs/design/lifecycle.md` §11.
 //!
 //! Item 6 (membership-cap enforcement) is already covered by
 //! `tests/invites.rs::redemption_is_refused_once_the_group_is_at_its_member_cap`
@@ -15,7 +15,7 @@ mod common;
 
 use chrono::{Duration, TimeZone, Utc};
 use chrono_tz::America;
-use domain::{CycleId, GroupId, NewsletterStatus, UserId};
+use domain::{CandidateQuestion, CycleId, GroupId, NewsletterStatus, UserId};
 use persistence::{newsletters, questions};
 use pretty_assertions::assert_eq;
 
@@ -36,10 +36,11 @@ async fn tick_promotes_only_the_top_n_candidates_by_vote() {
     }
 
     // questionsPerCycle = 2: only the top 2 by vote count get promoted.
-    let top2 = questions::list_top_candidates_by_votes(&repo, &group_id, &cycle_id, 2)
+    let mut top2 = questions::list_candidates(&repo, &group_id, &cycle_id)
         .await
         .unwrap();
-    assert_eq!(top2.len(), 2);
+    top2.sort_by(CandidateQuestion::promotion_order);
+    top2.truncate(2);
 
     let locked: Vec<_> = top2
         .into_iter()
@@ -137,7 +138,7 @@ async fn promotion_is_idempotent_across_rapid_reruns() {
 
     // A second, concurrent tick run replaying the same promotion must lose —
     // distinguishably, so the caller can log it at INFO instead of treating
-    // it as a failure (`06-newsletter-lifecycle.md` §8).
+    // it as a failure (`docs/design/lifecycle.md` §8).
     let second = questions::promote_candidates_tx(&repo, std::slice::from_ref(&lq), &nl).await;
     let err = second.expect_err("second promotion attempt must lose the race");
     assert!(err.is_lost_race());
@@ -311,37 +312,6 @@ async fn settings_change_leaves_a_voting_cycle_with_candidates_untouched() {
 }
 
 #[tokio::test]
-async fn settings_change_does_not_move_the_row_when_the_cycle_id_would_change() {
-    let (_c, repo) = common::make_repo().await;
-    let group_id = GroupId::new("g1");
-
-    // Created while interpreted as being in June (New York); recomputing the
-    // same creation instant in a timezone far enough ahead pushes the local
-    // "next month" calculation from July to August.
-    let created_at = Utc.with_ymd_and_hms(2026, 6, 30, 23, 0, 0).unwrap();
-    let mut nl = common::voting_newsletter("g1", "202607");
-    nl.vote_window_open_at = created_at;
-    newsletters::write_status_transition(&repo, &nl)
-        .await
-        .unwrap();
-
-    let schedule =
-        shared::cycle_time::next_cycle_schedule(created_at, chrono_tz::Pacific::Auckland, 4);
-    assert_ne!(
-        schedule.cycle_id, nl.cycle_id,
-        "the scenario requires the recompute to land on a different cycle id"
-    );
-
-    // The handler's decision: recomputed id differs from the row's key, so it
-    // must NOT write anything. The row must be exactly as it was.
-    let untouched = newsletters::get_newsletter(&repo, &group_id, &nl.cycle_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(untouched, nl);
-}
-
-#[tokio::test]
 async fn concurrent_vote_and_admin_delete_leave_the_store_consistent() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("g1");
@@ -354,16 +324,26 @@ async fn concurrent_vote_and_admin_delete_leave_the_store_consistent() {
     let vote = common::vote("u2", "g1", "202606", "q1");
     let (vote_result, delete_result) = tokio::join!(
         questions::cast_vote_tx(&repo, &vote, 1, 3),
-        questions::delete_candidate(&repo, &group_id, &cycle_id, &q.question_id),
+        questions::delete_candidate(&repo, &group_id, &cycle_id, &q.question_id, 0),
     );
 
-    // delete_candidate has no precondition, so it always succeeds regardless
-    // of interleaving; the candidate row is gone either way.
-    assert!(delete_result.is_ok());
+    // delete_candidate is conditioned on the vote count it was given, so at
+    // most one side wins: a vote that lands first moves the count and fails
+    // the delete; a delete that lands first fails the vote.
     let remaining = questions::list_candidates(&repo, &group_id, &cycle_id)
         .await
         .unwrap();
-    assert!(remaining.is_empty());
+    match &delete_result {
+        Ok(()) => assert!(remaining.is_empty()),
+        Err(e) => {
+            assert!(
+                matches!(e, persistence::RepoError::ConditionalCheckFailed),
+                "{e:?}"
+            );
+            assert_eq!(remaining.len(), 1);
+            assert!(vote_result.is_ok());
+        }
+    }
 
     // Whichever way the race went, the vote row's existence is consistent
     // with whether cast_vote_tx reported success — no orphaned partial state.
@@ -381,7 +361,7 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("g1");
 
-    // 06-newsletter-lifecycle.md §11 #8: a New York cycle whose responseOpenAt
+    // docs/design/lifecycle.md §11 #8: a New York cycle whose responseOpenAt
     // is 2026-03-01 must land at the right UTC instant. 2026 US DST starts
     // March 8, so March 1 is still EST (UTC-5).
     let after = Utc.with_ymd_and_hms(2026, 2, 10, 0, 0, 0).unwrap();
@@ -401,4 +381,41 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
         .unwrap()
         .unwrap();
     assert_eq!(persisted, created);
+}
+
+/// `find_voting_cycle`/`find_open_cycle` read only a group's newest `NL#` rows
+/// (`docs/design/data-model.md` §3); a long published history must not hide the live cycles.
+#[tokio::test]
+async fn current_cycles_resolve_behind_a_long_published_history() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-history");
+
+    for month in 1..=9 {
+        let mut nl = common::voting_newsletter("g-history", &format!("20260{month}"));
+        nl.status = NewsletterStatus::Published;
+        nl.next_transition_at = None;
+        newsletters::write_status_transition(&repo, &nl)
+            .await
+            .unwrap();
+    }
+    let mut open = common::voting_newsletter("g-history", "202610");
+    open.status = NewsletterStatus::Open;
+    newsletters::write_status_transition(&repo, &open)
+        .await
+        .unwrap();
+    let voting = common::voting_newsletter("g-history", "202611");
+    newsletters::write_status_transition(&repo, &voting)
+        .await
+        .unwrap();
+
+    let found_voting = newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("voting cycle found");
+    let found_open = newsletters::find_open_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("open cycle found");
+    assert_eq!(found_voting.cycle_id, CycleId::new("202611"));
+    assert_eq!(found_open.cycle_id, CycleId::new("202610"));
 }

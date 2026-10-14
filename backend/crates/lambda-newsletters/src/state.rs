@@ -23,7 +23,7 @@ impl AppState {
     }
 
     /// Absolute CloudFront URL for a processed image's S3 key
-    /// (`plans/03-api-contract.md` §5.2 — "Image URLs are absolute CloudFront URLs").
+    /// (`docs/design/api.md` §5.2 — "Image URLs are absolute CloudFront URLs").
     pub fn image_url(&self, key: &str) -> Option<String> {
         if self.cdn_base_url.is_empty() {
             return None;

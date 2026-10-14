@@ -6,6 +6,7 @@ use crate::keys::{
     membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk, COGNITO_SUB_SK, GROUP_META_SK,
     INVITE_SK, USER_PROFILE_SK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
 use domain::{CognitoSubLookup, GroupId, GroupMembership, Invite, InviteCode, InviteStatus, User};
@@ -32,7 +33,7 @@ pub async fn list_invites_for_group(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Vec<Invite>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -41,12 +42,10 @@ pub async fn list_invites_for_group(
         .expression_attribute_names("#pk", attr::GSI1PK)
         .expression_attribute_names("#sk", attr::GSI1SK)
         .expression_attribute_values(":pk", AttributeValue::S(invite_gsi1pk(group_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("INVITE#".into()))
-        .send()
-        .await?;
+        .expression_attribute_values(":prefix", AttributeValue::S("INVITE#".into()));
 
-    let items = resp.items.unwrap_or_default();
-    items
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Invite>(i).map_err(RepoError::from))
         .collect()
@@ -122,7 +121,7 @@ where
 ///
 /// Atomically:
 /// - create the `CognitoSubLookup` + `User` rows when `new_user` is set (first-ever
-///   redemption for this Cognito account — `plans/05-auth-flow.md` §4.2)
+///   redemption for this Cognito account — `docs/design/auth.md` §4.2)
 /// - flip Invite `pending → consumed`
 /// - Put GroupMembership
 /// - Update Group.memberCount += 1 with member-cap check

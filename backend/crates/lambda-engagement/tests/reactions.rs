@@ -1,5 +1,5 @@
 //! `GET .../reactions`, `PUT`/`DELETE .../reactions/{emoji}`
-//! (`plans/03-api-contract.md` §8.5-§8.7).
+//! (`docs/design/api.md` §8.5-§8.7).
 //!
 //! Each test uses its own group id (never a shared one): `persistence::auth`
 //! keeps a process-wide membership cache keyed by `(userId, groupId)` with a

@@ -2,14 +2,14 @@
 //! flow (which needs real AWS): bootstrap a group, suggest and vote on
 //! candidates through `lambda-questions`' own handlers, then drive the cycle
 //! through `voting -> open -> published` via `lambda-cycle-tick`'s `run_tick`,
-//! exactly as the real EventBridge schedule would (`06-newsletter-lifecycle.md` §5).
+//! exactly as the real EventBridge schedule would (`docs/design/lifecycle.md` §5).
 
 mod common;
 
 use chrono::{Duration, Utc};
 use cycle_tick::notify::{FanoutKind, Notifier};
 use cycle_tick::tick::run_tick_with;
-use domain::api::CreateCandidateRequest;
+use domain::api::{CreateCandidateRequest, CycleTransition};
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus, QuestionKind, Role, UserId};
 use persistence::newsletters;
 use pretty_assertions::assert_eq;
@@ -52,10 +52,16 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     // a fixed-past-date fixture (fine for `persistence`'s own tests, which pass
     // an explicit `now` to `list_cycles_due`) would already be "due" for every
     // transition at once and collapse both ticks below into a single call.
+    //
+    // The cycle id must agree with those dates, as a real cycle's always does:
+    // the tick seeds the next cycle from it (`docs/design/lifecycle.md` §5.4), and a stale id would
+    // make that next cycle already due, so the second tick would open it too.
     let now = Utc::now();
+    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let cycle_id = shared::cycle_time::cycle_id_for(now + Duration::days(10), tz);
     let voting = Newsletter {
         group_id: GroupId::new("g1"),
-        cycle_id: CycleId::new("202606"),
+        cycle_id: cycle_id.clone(),
         status: NewsletterStatus::Voting,
         vote_window_open_at: now,
         vote_window_close_at: now + Duration::days(10),
@@ -123,16 +129,14 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     let notifier = RecordingNotifier::default();
     let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
-        summary
-            .transitions
-            .iter()
-            .any(|t| t.cycle_id == "202606" && t.from == Some("voting") && t.to == "open"),
+        summary.transitions.iter().any(|t| t.cycle_id == cycle_id
+            && t.from == Some(NewsletterStatus::Voting)
+            && t.to == NewsletterStatus::Open),
         "tick must promote the voting cycle to open: {:?}",
         summary.transitions
     );
 
     // 5. The cycle is now `open` with the top 2 (by vote count) locked in order.
-    let cycle_id = CycleId::new("202606");
     let opened = newsletters::get_newsletter(&state.repo, &group_id, &cycle_id)
         .await
         .unwrap()
@@ -147,7 +151,12 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .await
         .unwrap()
         .expect("tick creates the next voting cycle alongside promotion");
-    assert_ne!(next_voting.cycle_id, cycle_id);
+    // ...for the month right after this one (`docs/design/lifecycle.md` §5.4).
+    let following = shared::cycle_time::first_day_of_next_month_local(now + Duration::days(10), tz);
+    assert_eq!(
+        next_voting.cycle_id,
+        shared::cycle_time::cycle_id_for(following, tz)
+    );
 
     // 6. Rewind the (now open) cycle's response deadline and tick again.
     newsletters::rewind_active_cycle_deadline(&state.repo, &group_id, Duration::days(15))
@@ -156,10 +165,9 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .expect("group has an active (open) cycle to rewind");
     let summary = run_tick_with(&state.repo, &notifier).await;
     assert!(
-        summary
-            .transitions
-            .iter()
-            .any(|t| t.cycle_id == "202606" && t.from == Some("open") && t.to == "published"),
+        summary.transitions.iter().any(|t| t.cycle_id == cycle_id
+            && t.from == Some(NewsletterStatus::Open)
+            && t.to == NewsletterStatus::Published),
         "tick must publish the open cycle: {:?}",
         summary.transitions
     );
@@ -179,12 +187,12 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
             (
                 FanoutKind::CycleOpen,
                 group_id.to_string(),
-                "202606".to_string()
+                cycle_id.to_string()
             ),
             (
                 FanoutKind::Publication,
                 group_id.to_string(),
-                "202606".to_string()
+                cycle_id.to_string()
             ),
         ]
     );
@@ -195,4 +203,68 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .unwrap()
         .expect("the next voting cycle still exists");
     assert_eq!(still_voting.cycle_id, next_voting.cycle_id);
+}
+
+/// `docs/design/lifecycle.md` §5.4 repair: promotion creates the next voting cycle best-effort, after
+/// its own transaction. If that create failed, the group sits with an `open`
+/// cycle and no `voting` one; nothing else would ever create it, so its
+/// lifecycle would stop after this edition. Every tick re-checks.
+#[tokio::test]
+async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("g-repair", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    let group_id = group.group_id.clone();
+
+    // An open cycle closing well in the future, so this tick neither publishes it
+    // nor has a voting cycle to promote — the state a failed create leaves.
+    let now = Utc::now();
+    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let cycle_id = shared::cycle_time::cycle_id_for(now, tz);
+    let open = Newsletter {
+        group_id: group_id.clone(),
+        cycle_id: cycle_id.clone(),
+        status: NewsletterStatus::Open,
+        vote_window_open_at: now - Duration::days(30),
+        vote_window_close_at: now - Duration::days(1),
+        response_open_at: now - Duration::days(1),
+        response_close_at: now + Duration::days(5),
+        published_at: None,
+        next_transition_at: Some(now + Duration::days(5)),
+        locked_question_ids: Vec::new(),
+        notified_offsets_hours: Vec::new(),
+        notified_on_open: false,
+    };
+    newsletters::write_status_transition(&repo, &open)
+        .await
+        .unwrap();
+    assert!(newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .is_none());
+
+    let notifier = RecordingNotifier::default();
+    let summary = run_tick_with(&repo, &notifier).await;
+
+    let following = shared::cycle_time::first_day_of_next_month_local(now, tz);
+    let next_id = shared::cycle_time::cycle_id_for(following, tz);
+    assert_eq!(
+        summary.transitions,
+        vec![CycleTransition {
+            group_id: group_id.clone(),
+            cycle_id: next_id.clone(),
+            from: None,
+            to: NewsletterStatus::Voting,
+        }]
+    );
+    let voting = newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("the tick recreates the missing voting cycle");
+    assert_eq!(voting.cycle_id, next_id);
+
+    // Once the successor exists, the repair is a no-op.
+    let summary = run_tick_with(&repo, &notifier).await;
+    assert_eq!(summary.transitions, Vec::new());
+    assert!(notifier.0.lock().unwrap().is_empty());
 }

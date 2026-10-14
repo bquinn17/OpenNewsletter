@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { firstGrapheme, isValidEmoji, normalizeEmoji } from "../../utils/emoji";
 
 // A curated grid (~64) covering the common reaction categories, plus a
-// native text input for anything else (`09-engagement.md` §2.5). No external
+// native text input for anything else (`docs/design/engagement.md` §2.5). No external
 // emoji-picker dependency — this is all plain Unicode text.
 const CURATED_EMOJI = [
   "😀",

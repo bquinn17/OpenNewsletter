@@ -7,6 +7,8 @@ import { uploadToS3 } from "../../utils/uploadToS3";
 import { useToasts } from "../../state/toast";
 import { Spinner } from "../ui/Spinner";
 import { CdnImage } from "../ui/CdnImage";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
+import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
 
 type S = components["schemas"];
 
@@ -42,6 +44,19 @@ type Props = {
   maxImages?: number;
   initialImages?: S["ImageMediaResponse"][];
   onChange?: (images: UploaderImage[]) => void;
+  /**
+   * Ask before removing an uploaded image, because removal deletes it for
+   * real (`docs/design/media.md` §8.0, D8). A purely local, never-presigned
+   * entry is dropped without asking.
+   */
+  confirmRemove?: boolean;
+  /**
+   * Replaces the uploader's own `DELETE /uploads/{id}`. By the time it's
+   * called the image is already hidden from `onChange`, so the parent has
+   * dropped it from its own state; it must persist that, then delete the
+   * upload. Resolving drops the image from the list; rejecting restores it.
+   */
+  onRemove?: (imageId: string) => Promise<void>;
 };
 
 function tempId(): string {
@@ -94,6 +109,8 @@ export function ImageUploader({
   maxImages = 10,
   initialImages,
   onChange,
+  confirmRemove = false,
+  onRemove,
 }: Props) {
   const [images, setImages] = useState<PendingImage[]>(() =>
     (initialImages ?? []).map((row) => ({
@@ -109,6 +126,9 @@ export function ImageUploader({
   );
   const [fileErrors, setFileErrors] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState<PendingImage | null>(null);
+  // Images mid-removal: still listed here, but hidden from `onChange`.
+  const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const inputRef = useRef<HTMLInputElement>(null);
   const pollCancelRef = useRef(new Map<string, () => void>());
@@ -116,8 +136,10 @@ export function ImageUploader({
   onChangeRef.current = onChange;
 
   useEffect(() => {
-    onChangeRef.current?.(images.map(toUploaderImage));
-  }, [images]);
+    onChangeRef.current?.(
+      images.filter((img) => !removingIds.has(img.imageId)).map(toUploaderImage),
+    );
+  }, [images, removingIds]);
 
   useEffect(() => {
     const cancels = pollCancelRef.current;
@@ -277,20 +299,41 @@ export function ImageUploader({
     for (const file of accepted) void startUpload(file);
   }
 
-  async function handleRemove(image: PendingImage) {
-    const cancel = pollCancelRef.current.get(image.imageId);
-    if (cancel) {
-      cancel();
-      pollCancelRef.current.delete(image.imageId);
-    }
+  function setRemoving(imageId: string, removing: boolean) {
+    setRemovingIds((prev) => {
+      const next = new Set(prev);
+      if (removing) next.add(imageId);
+      else next.delete(imageId);
+      return next;
+    });
+  }
 
+  function requestRemove(image: PendingImage) {
+    if (confirmRemove && !image.imageId.startsWith("local:")) {
+      setConfirmTarget(image);
+    } else {
+      void handleRemove(image);
+    }
+  }
+
+  async function handleRemove(image: PendingImage) {
     if (image.imageId.startsWith("local:")) {
       setImages((prev) => prev.filter((img) => img.imageId !== image.imageId));
       return;
     }
 
+    setRemoving(image.imageId, true);
     try {
-      await api.media.deleteUpload(image.imageId, groupId, cycleId);
+      if (onRemove) {
+        await onRemove(image.imageId);
+      } else {
+        await api.media.deleteUpload(image.imageId, groupId, cycleId);
+      }
+      const cancel = pollCancelRef.current.get(image.imageId);
+      if (cancel) {
+        cancel();
+        pollCancelRef.current.delete(image.imageId);
+      }
       setImages((prev) => prev.filter((img) => img.imageId !== image.imageId));
     } catch (err) {
       const message =
@@ -298,6 +341,8 @@ export function ImageUploader({
           ? "This image is used in a published response and can't be removed."
           : "Couldn't remove that image — try again.";
       pushToast(message, "error");
+    } finally {
+      setRemoving(image.imageId, false);
     }
   }
 
@@ -373,7 +418,14 @@ export function ImageUploader({
       {images.length > 0 && (
         <ul aria-label="Attached images" className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {images.map((image) => (
-            <li key={image.imageId} className="rounded-2xl border border-line bg-white p-2">
+            <li
+              key={image.imageId}
+              aria-busy={removingIds.has(image.imageId) || undefined}
+              className={clsx(
+                "rounded-2xl border border-line bg-white p-2",
+                removingIds.has(image.imageId) && "opacity-50",
+              )}
+            >
               <div className="relative">
                 {image.status === "ready" && image.thumbUrl ? (
                   <CdnImage
@@ -414,9 +466,10 @@ export function ImageUploader({
                 )}
                 <button
                   type="button"
-                  onClick={() => void handleRemove(image)}
+                  onClick={() => requestRemove(image)}
+                  disabled={removingIds.has(image.imageId)}
                   aria-label={`Remove image ${image.file?.name ?? image.imageId}`}
-                  className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-ink text-xs font-bold text-cream"
+                  className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-ink text-xs font-bold text-cream disabled:opacity-50"
                 >
                   ×
                 </button>
@@ -440,6 +493,20 @@ export function ImageUploader({
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={confirmTarget !== null}
+        title="Delete this image?"
+        message={PERMANENT_IMAGE_DELETE_MESSAGE}
+        confirmLabel="Delete image"
+        tone="danger"
+        onConfirm={() => {
+          const target = confirmTarget;
+          setConfirmTarget(null);
+          if (target) void handleRemove(target);
+        }}
+        onCancel={() => setConfirmTarget(null)}
+      />
     </div>
   );
 }

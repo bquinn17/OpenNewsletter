@@ -1,11 +1,11 @@
-//! Request validation for the engagement routes (`plans/03-api-contract.md` §8).
+//! Request validation for the engagement routes (`docs/design/api.md` §8).
 
 use domain::{ApiError, ImageId};
 use shared::config::{DEFAULT_COMMENT_LIST_LIMIT, MAX_COMMENT_BODY_CHARS, MAX_LIST_LIMIT};
 
 /// `body` 0-2000 chars, counted in chars the same way
 /// `lambda-responses::validation::body` counts its own limit
-/// (`09-engagement.md` §1.3).
+/// (`docs/design/engagement.md` §1.3).
 pub fn body(raw: &str) -> Result<String, ApiError> {
     if raw.chars().count() > MAX_COMMENT_BODY_CHARS {
         return Err(ApiError::invalid_field(
@@ -17,7 +17,7 @@ pub fn body(raw: &str) -> Result<String, ApiError> {
 }
 
 /// A comment needs a non-whitespace body or an attached image
-/// (`09-engagement.md` §1.3). Checked both at create and after a patch is
+/// (`docs/design/engagement.md` §1.3). Checked both at create and after a patch is
 /// applied, since a patch can clear either side.
 pub fn require_body_or_image(
     body: Option<&str>,
@@ -35,7 +35,7 @@ pub fn require_body_or_image(
 }
 
 /// `?limit=` for `GET .../comments` — default 50, 1..100
-/// (`09-engagement.md` §8 #9).
+/// (`docs/design/engagement.md` §8 #9).
 pub fn list_limit(raw: Option<&str>) -> Result<i32, ApiError> {
     let n = match raw {
         None => return Ok(DEFAULT_COMMENT_LIST_LIMIT as i32),
@@ -59,7 +59,7 @@ pub fn list_limit(raw: Option<&str>) -> Result<i32, ApiError> {
 /// Percent-decodes (if the raw path segment still contains `%` — API Gateway
 /// HTTP APIs don't reliably decode path params), NFC-normalizes, and
 /// validates an emoji path param against the canonical predicate
-/// (`09-engagement.md` §2.2). Returns the normalized, storage-ready form.
+/// (`docs/design/engagement.md` §2.2). Returns the normalized, storage-ready form.
 pub fn emoji(raw: &str) -> Result<String, ApiError> {
     let decoded = if raw.contains('%') {
         percent_decode(raw)?

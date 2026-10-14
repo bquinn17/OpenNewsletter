@@ -1,6 +1,6 @@
 //! HTTP boundary helpers shared by every request-handling Lambda:
 //! claim extraction, correlation IDs, and the RFC-7807 error shape from
-//! `plans/03-api-contract.md` §1.1.
+//! `docs/design/api.md` §1.1.
 
 use domain::{ApiError, ApiErrorCode, CognitoSub};
 use lambda_http::request::RequestContext;
@@ -14,11 +14,14 @@ pub const CORRELATION_ID_HEADER: &str = "x-correlation-id";
 /// Claims lifted from the API Gateway JWT authorizer.
 ///
 /// API Gateway has already validated issuer, audience, signature and expiry, so
-/// handlers trust these values without re-verifying (`plans/05-auth-flow.md` §6).
+/// handlers trust these values without re-verifying (`docs/design/auth.md` §6).
 #[derive(Debug, Clone)]
 pub struct AuthClaims {
     pub sub: CognitoSub,
     pub email: Option<String>,
+    /// Cognito's `email_verified`, which only the Google IdP populates
+    /// (`docs/design/auth.md` §4.2). False when the claim is missing.
+    pub email_verified: bool,
     pub name: Option<String>,
 }
 
@@ -51,8 +54,16 @@ pub fn auth_claims(req: &Request) -> Result<AuthClaims, ApiError> {
     Ok(AuthClaims {
         sub: CognitoSub::new(sub.as_str()),
         email: claims.get("email").filter(|s| !s.is_empty()).cloned(),
+        email_verified: is_true_claim(claims.get("email_verified").map(String::as_str)),
         name: claims.get("name").filter(|s| !s.is_empty()).cloned(),
     })
+}
+
+/// A boolean JWT claim as the HTTP API JWT authorizer passes it: every claim
+/// arrives as a string, so JSON `true` shows up as `"true"`. Anything else,
+/// including a missing claim, is false.
+pub fn is_true_claim(raw: Option<&str>) -> bool {
+    raw.is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
 }
 
 /// The caller's correlation ID, or a freshly minted one when absent.
@@ -102,8 +113,21 @@ pub fn no_content(correlation_id: &str) -> Response<Body> {
     build(204, "application/json", String::new(), correlation_id)
 }
 
-/// RFC-7807 Problem Details body (`plans/03-api-contract.md` §1.1).
+/// RFC-7807 Problem Details response (`docs/design/api.md` §1.1).
 pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> {
+    let payload = serde_json::to_string(&problem_body(err, correlation_id))
+        .unwrap_or_else(|_| "{}".to_owned());
+    build(
+        err.http_status(),
+        "application/problem+json",
+        payload,
+        correlation_id,
+    )
+}
+
+/// The RFC-7807 Problem Details body alone, for the tick Lambdas' dev routes,
+/// which answer raw JSON events rather than `lambda_http` requests.
+pub fn problem_body(err: &ApiError, correlation_id: &str) -> serde_json::Value {
     let mut problem = serde_json::json!({
         "type": error_type_uri(err.code),
         "title": err.code.title(),
@@ -115,18 +139,19 @@ pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> 
     if !err.field_errors.is_empty() {
         problem["fieldErrors"] = serde_json::json!(err.field_errors);
     }
-    let payload = serde_json::to_string(&problem).unwrap_or_else(|_| "{}".to_owned());
-    build(
-        err.http_status(),
-        "application/problem+json",
-        payload,
-        correlation_id,
-    )
+    problem
 }
 
 fn error_type_uri(code: ApiErrorCode) -> String {
-    match std::env::var("API_BASE_URL") {
-        Ok(base) if !base.is_empty() => {
+    error_type_uri_from(std::env::var("API_BASE_URL").ok().as_deref(), code)
+}
+
+/// Pure core of [`error_type_uri`], taking the env var's value directly so
+/// both branches are unit-testable without mutating process-wide env state
+/// (`cargo test` runs unit tests in parallel within one process).
+fn error_type_uri_from(base: Option<&str>, code: ApiErrorCode) -> String {
+    match base {
+        Some(base) if !base.is_empty() => {
             format!("{}/errors/{}", base.trim_end_matches('/'), code.slug())
         }
         _ => format!("/errors/{}", code.slug()),
@@ -180,6 +205,21 @@ mod tests {
     }
 
     #[test]
+    fn a_true_claim_is_true_in_any_case() {
+        assert!(is_true_claim(Some("true")));
+        assert!(is_true_claim(Some("True")));
+        assert!(is_true_claim(Some("TRUE")));
+    }
+
+    #[test]
+    fn a_false_odd_or_missing_claim_is_false() {
+        assert!(!is_true_claim(Some("false")));
+        assert!(!is_true_claim(Some("1")));
+        assert!(!is_true_claim(Some("")));
+        assert!(!is_true_claim(None));
+    }
+
+    #[test]
     fn query_param_reads_a_matching_key() {
         let req = HttpRequest::builder()
             .uri("/groups/g1/newsletters?status=open&limit=10")
@@ -214,6 +254,34 @@ mod tests {
         assert_eq!(parsed["correlationId"], "01HXCORRELATION");
         assert_eq!(parsed["detail"], "not a member of group 01HG2");
         assert!(parsed.get("fieldErrors").is_none());
+    }
+
+    #[test]
+    fn error_type_uri_falls_back_to_a_relative_path_when_api_base_url_is_unset() {
+        assert_eq!(
+            error_type_uri_from(None, ApiErrorCode::Forbidden),
+            "/errors/forbidden"
+        );
+        assert_eq!(
+            error_type_uri_from(Some(""), ApiErrorCode::Forbidden),
+            "/errors/forbidden"
+        );
+    }
+
+    #[test]
+    fn error_type_uri_prefixes_the_configured_api_base_url() {
+        assert_eq!(
+            error_type_uri_from(Some("https://api.example.com"), ApiErrorCode::Forbidden),
+            "https://api.example.com/errors/forbidden"
+        );
+    }
+
+    #[test]
+    fn error_type_uri_trims_a_trailing_slash_on_the_base_url() {
+        assert_eq!(
+            error_type_uri_from(Some("https://api.example.com/"), ApiErrorCode::Forbidden),
+            "https://api.example.com/errors/forbidden"
+        );
     }
 
     #[test]

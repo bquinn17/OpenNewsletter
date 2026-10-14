@@ -6,9 +6,9 @@ API contract; TypeScript types are generated from it via
 `frontend/src/types/api.ts`, and Rust types in
 [`../backend/crates/domain/src/api.rs`](../backend/crates/domain/src/api.rs) are
 hand-written but contract-tested against it
-([`../plans/11-testing-ci-cd.md`](../plans/11-testing-ci-cd.md) §2.3).
+([`docs/development/testing-and-ci.md` §2.3](../docs/development/testing-and-ci.md#23-contract-test)).
 
 It currently covers every route through Milestone 4
-([`../plans/03-api-contract.md`](../plans/03-api-contract.md) §2-§4, §13). A route
+([`docs/design/api.md` §2](../docs/design/api.md#2-bootstrap--metadata-routes)-§4, §13). A route
 added in a later milestone updates this file in the same PR
-([`../plans/coding-standards.md`](../plans/coding-standards.md) §8).
+([`docs/development/coding-standards.md` §8](../docs/development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task)).

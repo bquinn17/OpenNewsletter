@@ -1,5 +1,5 @@
 //! `POST /avatars`, `GET /avatars/{avatarId}`, `DELETE /avatars/{avatarId}`
-//! (`plans/03-api-contract.md` §9.7).
+//! (`docs/design/api.md` §9.7).
 
 mod common;
 
@@ -108,11 +108,24 @@ async fn another_user_s_avatar_is_not_found() {
         .await
         .expect_err("another user's avatar must 404");
     assert_eq!(err.code, ApiErrorCode::NotFound);
+}
 
-    let delete_err = handlers::delete_avatar(&state, &UserId::new("u2"), &avatar_id)
+#[tokio::test]
+async fn deleting_another_user_s_avatar_touches_nothing_of_theirs() {
+    let (_c, repo) = common::make_repo().await;
+    let avatar_id = common::seed_avatar(&repo, "u1", "av-02b", MediaStatus::Ready).await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+
+    // The lookup is under the caller's own partition, so this is the same
+    // no-op as deleting an already-deleted avatar of their own.
+    handlers::delete_avatar(&state, &UserId::new("u2"), &avatar_id)
         .await
-        .expect_err("another user can't delete it either");
-    assert_eq!(delete_err.code, ApiErrorCode::NotFound);
+        .expect("a missing avatar is a no-op success");
+
+    assert!(fakes.store.deleted().await.is_empty());
+    handlers::get_avatar(&state, &UserId::new("u1"), &avatar_id)
+        .await
+        .expect("the owner's avatar is untouched");
 }
 
 #[tokio::test]
@@ -134,17 +147,61 @@ async fn delete_avatar_clears_the_user_s_avatar_media_id() {
         .unwrap()
         .unwrap();
     assert_eq!(got.avatar_media_id, None);
+}
 
-    let after = handlers::get_avatar(&state, &UserId::new("u1"), &avatar_id)
-        .await
-        .expect("avatar row is still readable, just marked failed");
-    assert_eq!(after.status, MediaStatus::Failed);
-    assert_eq!(after.error_message, Some("DELETED".into()));
+#[tokio::test]
+async fn delete_avatar_removes_the_objects_invalidates_the_cdn_and_deletes_the_row() {
+    let (_c, repo) = common::make_repo().await;
+    let avatar_id = common::seed_avatar(&repo, "u1", "av-04", MediaStatus::Ready).await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
 
-    // Idempotent.
     handlers::delete_avatar(&state, &UserId::new("u1"), &avatar_id)
         .await
-        .expect("delete is idempotent");
+        .expect("owner can delete their avatar");
+
+    assert_eq!(
+        fakes.store.deleted().await,
+        vec![
+            (
+                common::AVATARS_ORIGINALS.to_owned(),
+                "uploads/u1/av-04.jpg".to_owned()
+            ),
+            (
+                common::AVATARS_PROCESSED.to_owned(),
+                "avatar/av-04/display.webp".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        fakes.cdn.invalidations().await,
+        vec![vec!["/avatar/av-04/display.webp".to_owned()]]
+    );
+    let err = handlers::get_avatar(&state, &UserId::new("u1"), &avatar_id)
+        .await
+        .expect_err("the row is gone");
+    assert_eq!(err.code, ApiErrorCode::NotFound);
+
+    handlers::delete_avatar(&state, &UserId::new("u1"), &avatar_id)
+        .await
+        .expect("a repeat delete is a no-op success");
+    assert_eq!(fakes.store.deleted().await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_failed_avatar_delete_is_a_500_and_keeps_the_row() {
+    let (_c, repo) = common::make_repo().await;
+    let avatar_id = common::seed_avatar(&repo, "u1", "av-05", MediaStatus::Ready).await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    fakes.store.set_failing(true);
+
+    let err = handlers::delete_avatar(&state, &UserId::new("u1"), &avatar_id)
+        .await
+        .expect_err("an S3 failure fails the delete");
+
+    assert_eq!(err.code, ApiErrorCode::Internal);
+    handlers::get_avatar(&state, &UserId::new("u1"), &avatar_id)
+        .await
+        .expect("the row is kept for a retry");
 }
 
 #[tokio::test]

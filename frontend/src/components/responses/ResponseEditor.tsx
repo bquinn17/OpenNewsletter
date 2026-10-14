@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { api } from "../../api/client";
 import type { components } from "../../types/api";
 import { MarkdownBody } from "../../utils/markdown";
 import { ImageUploader, type UploaderImage } from "./ImageUploader";
@@ -16,6 +17,12 @@ type Props = {
   onUploadingChange?: (uploading: boolean) => void;
   initialImages?: S["ImageMediaResponse"][];
   readOnly: boolean;
+  /**
+   * Drops an image (its ID, and its tokens via `transformBody`) from the
+   * draft and resolves once that draft has saved — `useResponseEditor`'s
+   * `detachImage`.
+   */
+  onDetachImage: (imageId: string, transformBody: (body: string) => string) => Promise<void>;
 };
 
 function escapeForRegExp(value: string): string {
@@ -39,7 +46,7 @@ function insertImageToken(
   return `${before}${leading}![](image:${imageId})\n${after}`;
 }
 
-/** The markdown textarea + image uploader for a text response (`04-frontend-architecture.md` §7.3, §8.4). */
+/** The markdown textarea + image uploader for a text response (`docs/design/frontend.md` §7.3, §8.4). */
 export function ResponseEditor({
   groupId,
   cycleId,
@@ -51,6 +58,7 @@ export function ResponseEditor({
   onUploadingChange,
   initialImages,
   readOnly,
+  onDetachImage,
 }: Props) {
   const [preview, setPreview] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -103,6 +111,17 @@ export function ResponseEditor({
     onUploadingChange?.(images.some((i) => i.status === "uploading" || i.status === "processing"));
   }
 
+  /**
+   * "Remove image", after the uploader's permanent-delete confirm (D8). In
+   * order (`docs/design/api.md` §9.4): strip its tokens and drop its ID, save
+   * the draft without it, then `DELETE /uploads/{id}` — a draft still listing
+   * a deleted image would fail its next save.
+   */
+  async function handleRemoveImage(imageId: string): Promise<void> {
+    await onDetachImage(imageId, (current) => removeImageToken(current, imageId));
+    await api.media.deleteUpload(imageId, groupId, cycleId);
+  }
+
   return (
     <div className="mt-4 px-5">
       <div className="overflow-hidden rounded-3xl border border-line bg-white shadow-soft">
@@ -144,6 +163,8 @@ export function ResponseEditor({
             purpose="response"
             initialImages={initialImages}
             onChange={handleUploaderChange}
+            confirmRemove
+            onRemove={handleRemoveImage}
           />
         </div>
       </div>

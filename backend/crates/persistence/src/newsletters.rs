@@ -1,27 +1,28 @@
 //! Newsletter (cycle) access (AP7, AP8, AP9), status-transition writer, and the
-//! read/write helpers from `plans/06-newsletter-lifecycle.md` §5, §10.
+//! read/write helpers from `docs/design/lifecycle.md` §5, §10.
 
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, group_pk, index, key_timestamp, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, TICK_CYCLE_SK, TICK_PK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
 use serde_dynamo::{from_item, to_item};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// AP7 — list newsletters in a group, newest first.
 pub async fn list_newsletters_for_group(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Vec<Newsletter>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -30,11 +31,9 @@ pub async fn list_newsletters_for_group(
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(group_pk(group_id)))
         .expression_attribute_values(":prefix", AttributeValue::S("NL#".into()))
-        .scan_index_forward(false)
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .scan_index_forward(false);
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
@@ -69,7 +68,7 @@ pub async fn list_cycles_due(
     now: DateTime<Utc>,
 ) -> Result<Vec<Newsletter>, RepoError> {
     let upper = format!("{}#~~~", key_timestamp(now));
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -78,17 +77,15 @@ pub async fn list_cycles_due(
         .expression_attribute_names("#pk", attr::GSI2PK)
         .expression_attribute_names("#sk", attr::GSI2SK)
         .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)))
-        .expression_attribute_values(":upper", AttributeValue::S(upper))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":upper", AttributeValue::S(upper));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
 }
 
-/// `lambda-notify-tick`'s candidate query (`07-notifications.md` §7.1, M11
+/// `lambda-notify-tick`'s candidate query (`docs/design/notifications.md` §7.1, M11
 /// decision D5): every `open` cycle whose `responseCloseAt` falls within
 /// `[now, now + max_offset]`. The lower bound is a plain `key_timestamp`
 /// (shorter than, and therefore sorting before, any `gsi2sk` at the same
@@ -101,7 +98,7 @@ pub async fn list_open_cycles_closing_within(
 ) -> Result<Vec<Newsletter>, RepoError> {
     let lower = key_timestamp(now);
     let upper = format!("{}#~~~", key_timestamp(now + max_offset));
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -114,20 +111,122 @@ pub async fn list_open_cycles_closing_within(
             AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Open)),
         )
         .expression_attribute_values(":lower", AttributeValue::S(lower))
-        .expression_attribute_values(":upper", AttributeValue::S(upper))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":upper", AttributeValue::S(upper));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
         .collect()
 }
 
+/// A newsletter row that wouldn't deserialize, identified by its keys.
+#[derive(Debug)]
+pub struct UnreadableNewsletter {
+    pub pk: String,
+    pub sk: String,
+    pub error: String,
+}
+
+/// Every cycle currently in `status`, across all groups, regardless of its
+/// transition time. `lambda-cycle-tick`'s successor repair pass uses it with
+/// `Open` (`docs/design/lifecycle.md` §5.4). Follows
+/// `LastEvaluatedKey`, so it never silently truncates at one 1 MB page.
+///
+/// Lenient, like [`crate::questions::list_candidates_lenient`]: a row that
+/// doesn't deserialize comes back in the second list instead of failing the
+/// whole listing, so one bad row can't block every other group's repair.
+pub async fn list_cycles_in_status_lenient(
+    repo: &Repo,
+    status: NewsletterStatus,
+) -> Result<(Vec<Newsletter>, Vec<UnreadableNewsletter>), RepoError> {
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)));
+    let mut cycles = Vec::new();
+    let mut unreadable = Vec::new();
+    for item in query_all(request).await? {
+        let key = |name: &str| match item.get(name) {
+            Some(AttributeValue::S(v)) => v.clone(),
+            _ => String::new(),
+        };
+        let (pk, sk) = (key(attr::PK), key(attr::SK));
+        match from_item::<_, Newsletter>(item) {
+            Ok(nl) => cycles.push(nl),
+            Err(e) => unreadable.push(UnreadableNewsletter {
+                pk,
+                sk,
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok((cycles, unreadable))
+}
+
+/// The groups with a cycle currently in `status`, from the same GSI2 query as
+/// [`list_cycles_in_status_lenient`] but projecting only `group_id`, for callers that
+/// only need to know which groups have one.
+pub async fn list_group_ids_in_status(
+    repo: &Repo,
+    status: NewsletterStatus,
+) -> Result<HashSet<GroupId>, RepoError> {
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .projection_expression("#g")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_names("#g", "group_id")
+        .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)));
+    query_all(request)
+        .await?
+        .into_iter()
+        .map(|item| match item.get("group_id") {
+            Some(AttributeValue::S(id)) => Ok(GroupId::new(id)),
+            _ => Err(RepoError::Serde("a cycle row has no group_id".into())),
+        })
+        .collect()
+}
+
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
-/// for state transitions referenced in §9 of `02-data-model-dynamodb.md`.
+/// for state transitions referenced in §9 of `docs/design/data-model.md`.
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
-    let mut item: std::collections::HashMap<String, AttributeValue> = to_item(nl)?;
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(newsletter_item(nl)?))
+        .send()
+        .await?;
+    Ok(())
+}
+
+/// Rewrite a `voting` cycle's schedule (`docs/design/lifecycle.md` §6, a settings change), as
+/// [`write_status_transition`] does but conditioned on the row still being
+/// `voting`. A tick that promoted it in the meantime would otherwise be
+/// undone by this copy read before the promotion; that lost race is
+/// `RepoError::ConditionalCheckFailed`.
+pub async fn reschedule_voting_cycle(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(newsletter_item(nl)?))
+        .condition_expression("#s = :voting")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":voting", AttributeValue::S("voting".into()))
+        .send()
+        .await
+        .map_err(error::from_put_item_error)?;
+    Ok(())
+}
+
+fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, RepoError> {
+    let mut item: HashMap<String, AttributeValue> = to_item(nl)?;
     item.insert(attr::PK.into(), AttributeValue::S(group_pk(&nl.group_id)));
     item.insert(
         attr::SK.into(),
@@ -143,14 +242,113 @@ pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(),
     };
     item.insert(attr::GSI2SK.into(), AttributeValue::S(gsi2sk));
     item.insert(attr::ENTITY.into(), AttributeValue::S("Newsletter".into()));
+    Ok(item)
+}
 
+/// Move an `open` cycle's close (`docs/design/lifecycle.md` §6, `responseWindowDays` applied to the
+/// current cycle): `response_close_at`, `next_transition_at` (which equals it
+/// while open) and the GSI2 sort key change together. Conditioned on the row
+/// still being `open` and its current close still in the future, so neither a
+/// tick that published it in the meantime is undone nor a window that has
+/// already closed reopens; either lost race is
+/// `RepoError::ConditionalCheckFailed`.
+pub async fn reschedule_open_cycle_close(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    new_close: DateTime<Utc>,
+) -> Result<(), RepoError> {
+    let close_av = serde_dynamo::to_attribute_value(new_close)?;
+    let now = Utc::now();
     repo.client
-        .put_item()
+        .update_item()
         .table_name(&repo.table)
-        .set_item(Some(item))
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(newsletter_sk(cycle_id)))
+        .update_expression(
+            "SET response_close_at = :close, next_transition_at = :close, #g2sk = :g2sk",
+        )
+        // Same comparison as `save_response`'s cycle check.
+        .condition_expression("#s = :open AND response_close_at > :now")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_names("#g2sk", attr::GSI2SK)
+        .expression_attribute_values(":close", close_av)
+        .expression_attribute_values(":now", AttributeValue::S(key_timestamp(now)))
+        .expression_attribute_values(
+            ":g2sk",
+            AttributeValue::S(newsletter_gsi2sk(new_close, group_id, cycle_id)),
+        )
+        .expression_attribute_values(":open", AttributeValue::S("open".into()))
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
+}
+
+/// §5.3 — record one auto-publish sweep that left drafts unpublished, and
+/// return how many such sweeps the cycle has now had. Conditioned on the row
+/// still being `open`; a cycle published meanwhile is
+/// `RepoError::ConditionalCheckFailed`. The counter lives only on the row (it
+/// isn't a `Newsletter` field) and stops mattering once the cycle publishes.
+pub async fn record_failed_sweep(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+) -> Result<u32, RepoError> {
+    let resp = repo
+        .client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(newsletter_sk(cycle_id)))
+        .update_expression("ADD auto_publish_failed_sweeps :one")
+        .condition_expression("#s = :open")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":one", AttributeValue::N("1".into()))
+        .expression_attribute_values(":open", AttributeValue::S("open".into()))
+        .return_values(ReturnValue::UpdatedNew)
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    resp.attributes
+        .and_then(|mut new| new.remove("auto_publish_failed_sweeps"))
+        .and_then(|value| match value {
+            AttributeValue::N(n) => n.parse().ok(),
+            _ => None,
+        })
+        .ok_or_else(|| RepoError::Dynamo("ADD returned no auto_publish_failed_sweeps".into()))
+}
+
+/// The group's 3 most-recent `NL#` rows, newest first.
+///
+/// Invariant this relies on (`docs/design/data-model.md` §3, decided
+/// 2026-10-08): cycle ids are `yyyymm` and a group gains a new cycle only
+/// when the tick creates the month after the one it just opened (§5.4 of
+/// `docs/design/lifecycle.md`). So a group's non-terminal cycles are always its newest rows: the
+/// `voting` cycle (if any) is the newest, the `open` cycle (if any) is the
+/// month before it, and every `published`/`archived` cycle is older still.
+/// Three rows leave one row of slack. [`find_voting_cycle`] and
+/// [`find_open_cycle`] read this fixed-size window instead of the group's
+/// entire history.
+async fn recent_newsletters(repo: &Repo, group_id: &GroupId) -> Result<Vec<Newsletter>, RepoError> {
+    let resp = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_values(":pk", AttributeValue::S(group_pk(group_id)))
+        .expression_attribute_values(":prefix", AttributeValue::S("NL#".into()))
+        .scan_index_forward(false)
+        .limit(3)
         .send()
         .await?;
-    Ok(())
+    let items = resp.items.unwrap_or_default();
+    items
+        .into_iter()
+        .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
+        .collect()
 }
 
 /// §10 — the current `voting` cycle for a group, if any. Candidate-question
@@ -159,7 +357,7 @@ pub async fn find_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Option<Newsletter>, RepoError> {
-    let cycles = list_newsletters_for_group(repo, group_id).await?;
+    let cycles = recent_newsletters(repo, group_id).await?;
     Ok(cycles
         .into_iter()
         .find(|nl| nl.status == NewsletterStatus::Voting))
@@ -170,7 +368,7 @@ pub async fn find_open_cycle(
     repo: &Repo,
     group_id: &GroupId,
 ) -> Result<Option<Newsletter>, RepoError> {
-    let cycles = list_newsletters_for_group(repo, group_id).await?;
+    let cycles = recent_newsletters(repo, group_id).await?;
     Ok(cycles
         .into_iter()
         .find(|nl| nl.status == NewsletterStatus::Open))
@@ -362,7 +560,7 @@ pub async fn upsert_tick_sentinel(repo: &Repo, ran_at: DateTime<Utc>) -> Result<
 }
 
 /// Dev-only helper backing `POST /admin/dev/tick/cycle`'s `advanceCycleClosesBy`
-/// (`plans/03-api-contract.md` §11a.1). Rewinds whichever of the group's
+/// (`docs/design/api.md` §11a.1). Rewinds whichever of the group's
 /// non-terminal cycles is due to transition next — the `open` cycle if one
 /// exists (its `responseCloseAt`), else the `voting` cycle (its
 /// `responseOpenAt`/`voteWindowCloseAt`) — so the next tick treats the

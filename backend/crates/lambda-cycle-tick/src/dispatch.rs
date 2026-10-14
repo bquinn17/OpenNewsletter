@@ -1,7 +1,7 @@
 //! Event-type dispatch and the dev-only HTTP route.
 //!
-//! This Lambda is invoked two ways (`plans/06-newsletter-lifecycle.md` §5,
-//! `plans/03-api-contract.md` §11a.1):
+//! This Lambda is invoked two ways (`docs/design/lifecycle.md` §5,
+//! `docs/design/api.md` §11a.1):
 //!
 //! - An EventBridge Scheduler rule, firing every 5 minutes with a plain
 //!   scheduled-event payload (no `requestContext`).
@@ -15,14 +15,14 @@
 //! construction rather than by guessing at a library's tolerance for unknown
 //! shapes.
 
-use domain::{ApiError, GroupId};
+use domain::api::{DevTickCycleRequest, DevTickCycleResponse};
+use domain::ApiError;
 use persistence::{auth, groups, newsletters};
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::duration::parse_duration;
 use crate::state::AppState;
-use crate::tick::{run_tick_with, TickSummary};
+use crate::tick::run_tick_with;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingEvent {
@@ -58,14 +58,7 @@ pub async fn handle_scheduled(state: &AppState) -> Value {
     serde_json::to_value(&summary).unwrap_or_else(|_| json!({ "transitions": [] }))
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct DevTickBody {
-    group_id: Option<String>,
-    advance_cycle_closes_by: Option<String>,
-}
-
-/// Handle `POST /admin/dev/tick/cycle` (`plans/03-api-contract.md` §11a.1).
+/// Handle `POST /admin/dev/tick/cycle` (`docs/design/api.md` §11a.1).
 /// `event` is the raw API Gateway HTTP API v2 payload; the return value is
 /// already shaped as the proxy-integration response API Gateway expects.
 pub async fn handle_http(state: &AppState, event: &Value) -> Value {
@@ -81,7 +74,7 @@ pub async fn handle_http(state: &AppState, event: &Value) -> Value {
             }
             http_response(
                 err.http_status(),
-                problem_json(&err, &correlation_id),
+                shared::http::problem_body(&err, &correlation_id),
                 &correlation_id,
             )
         }
@@ -92,7 +85,7 @@ async fn handle_http_inner(
     state: &AppState,
     event: &Value,
     correlation_id: &str,
-) -> Result<TickSummary, ApiError> {
+) -> Result<DevTickCycleResponse, ApiError> {
     if !state.is_dev() {
         return Err(ApiError::not_found(
             "dev routes are only available when ENV=dev",
@@ -113,15 +106,15 @@ async fn handle_http_inner(
 
     let user_id = auth::require_user_id(&state.repo, &jwt_sub(event)?).await?;
 
-    let body: DevTickBody = match event.get("body").and_then(Value::as_str) {
+    let body: DevTickCycleRequest = match event.get("body").and_then(Value::as_str) {
         Some(raw) if !raw.is_empty() => serde_json::from_str(raw)
             .map_err(|e| ApiError::validation(format!("request body is not valid JSON: {e}")))?,
-        _ => DevTickBody::default(),
+        _ => DevTickCycleRequest::default(),
     };
 
     match &body.advance_cycle_closes_by {
         Some(duration_raw) => {
-            let group_id = body.group_id.as_deref().map(GroupId::new).ok_or_else(|| {
+            let group_id = body.group_id.ok_or_else(|| {
                 ApiError::invalid_field(
                     "groupId",
                     "groupId is required when advanceCycleClosesBy is set",
@@ -194,26 +187,6 @@ fn http_response(status: u16, body: Value, correlation_id: &str) -> Value {
         },
         "body": body.to_string(),
         "isBase64Encoded": false,
-    })
-}
-
-/// Mirrors `shared::http::problem_response`'s RFC-7807 body
-/// (`plans/03-api-contract.md` §1.1), rebuilt here because this crate works
-/// with raw JSON events/responses rather than `lambda_http::Request`/`Response`.
-fn problem_json(err: &ApiError, correlation_id: &str) -> Value {
-    let base = std::env::var("API_BASE_URL").unwrap_or_default();
-    let type_uri = if base.is_empty() {
-        format!("/errors/{}", err.code.slug())
-    } else {
-        format!("{}/errors/{}", base.trim_end_matches('/'), err.code.slug())
-    };
-    json!({
-        "type": type_uri,
-        "title": err.code.title(),
-        "status": err.http_status(),
-        "detail": err.detail,
-        "code": err.code.as_str(),
-        "correlationId": correlation_id,
     })
 }
 

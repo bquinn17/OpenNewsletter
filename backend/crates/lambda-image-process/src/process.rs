@@ -1,6 +1,6 @@
 //! Pure image processing — no AWS, no I/O. `handler.rs` wires this to S3 and
 //! the DynamoDB row updates; this module is what the unit tests in
-//! `plans/08-media-uploads.md` §10 exercise directly.
+//! `docs/design/media.md` §10 exercise directly.
 
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::codecs::jpeg::JpegDecoder;
@@ -13,6 +13,8 @@ use std::io::Cursor;
 pub enum ProcessError {
     #[error("could not decode image data")]
     DecodeFailed,
+    #[error("image exceeds the decode budget")]
+    TooLarge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +95,7 @@ pub struct AvatarVariant {
 /// Center-crops to a square, resizes to 256x256, and encodes lossy WebP q82.
 /// Only `jpeg`/`png`/`webp` are accepted; a GIF (or anything else) is a
 /// decode failure — animated avatars aren't supported
-/// (`plans/08-media-uploads.md` §11.1).
+/// (`docs/design/media.md` §11.1).
 pub fn process_avatar(bytes: &[u8]) -> Result<AvatarVariant, ProcessError> {
     let format = image::guess_format(bytes).map_err(|_| ProcessError::DecodeFailed)?;
     if format == ImageFormat::Gif {
@@ -122,6 +124,7 @@ fn decode_oriented(
         ImageFormat::Jpeg => {
             let mut decoder =
                 JpegDecoder::new(Cursor::new(bytes)).map_err(|_| ProcessError::DecodeFailed)?;
+            check_decode_budget(&decoder)?;
             let orientation = decoder
                 .orientation()
                 .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -132,6 +135,7 @@ fn decode_oriented(
         ImageFormat::Png => {
             let mut decoder =
                 PngDecoder::new(Cursor::new(bytes)).map_err(|_| ProcessError::DecodeFailed)?;
+            check_decode_budget(&decoder)?;
             let orientation = decoder
                 .orientation()
                 .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -142,6 +146,7 @@ fn decode_oriented(
         ImageFormat::WebP => {
             let mut decoder =
                 WebPDecoder::new(Cursor::new(bytes)).map_err(|_| ProcessError::DecodeFailed)?;
+            check_decode_budget(&decoder)?;
             let orientation = decoder
                 .orientation()
                 .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -153,9 +158,23 @@ fn decode_oriented(
     }
 }
 
+/// Refuses an image whose header declares more than the decode budget
+/// (`shared::config::MAX_IMAGE_EDGE_PX`, `MAX_DECODED_IMAGE_BYTES`), before
+/// the decoder allocates its pixel buffer.
+fn check_decode_budget(decoder: &impl ImageDecoder) -> Result<(), ProcessError> {
+    let (width, height) = decoder.dimensions();
+    if width > shared::config::MAX_IMAGE_EDGE_PX
+        || height > shared::config::MAX_IMAGE_EDGE_PX
+        || decoder.total_bytes() > shared::config::MAX_DECODED_IMAGE_BYTES
+    {
+        return Err(ProcessError::TooLarge);
+    }
+    Ok(())
+}
+
 /// Resizes so the long edge is at most `max_long_edge`, preserving aspect
 /// ratio. Never upscales — an image already at or under the target keeps its
-/// size (`plans/08-media-uploads.md` §1).
+/// size (`docs/design/media.md` §1).
 fn resize_long_edge(img: &DynamicImage, max_long_edge: u32) -> DynamicImage {
     let (width, height) = (img.width(), img.height());
     let long_edge = width.max(height);
@@ -207,10 +226,9 @@ fn gif_dimensions(bytes: &[u8]) -> Result<(u32, u32), ProcessError> {
 
 fn resize_gif(bytes: &[u8], max_long_edge: u32) -> Result<EncodedVariant, ProcessError> {
     let decoder = GifDecoder::new(Cursor::new(bytes)).map_err(|_| ProcessError::DecodeFailed)?;
-    let frames: Vec<Frame> = decoder
-        .into_frames()
-        .collect_frames()
-        .map_err(|_| ProcessError::DecodeFailed)?;
+    check_decode_budget(&decoder)?;
+    let (width, height) = decoder.dimensions();
+    let frame_pixels = u64::from(width) * u64::from(height);
 
     let mut out = Vec::new();
     {
@@ -218,10 +236,18 @@ fn resize_gif(bytes: &[u8], max_long_edge: u32) -> Result<EncodedVariant, Proces
         encoder
             .set_repeat(Repeat::Infinite)
             .map_err(|_| ProcessError::DecodeFailed)?;
-        for frame in &frames {
+        // Streamed, so only one full-canvas frame is decoded at a time.
+        for (index, frame) in decoder.into_frames().enumerate() {
+            let decoded_pixels = (index as u64 + 1) * frame_pixels;
+            if index >= shared::config::MAX_GIF_FRAMES
+                || decoded_pixels > shared::config::MAX_GIF_TOTAL_PIXELS
+            {
+                return Err(ProcessError::TooLarge);
+            }
+            let frame = frame.map_err(|_| ProcessError::DecodeFailed)?;
             let delay = frame.delay();
             let resized = resize_long_edge(
-                &DynamicImage::ImageRgba8(frame.buffer().clone()),
+                &DynamicImage::ImageRgba8(frame.into_buffer()),
                 max_long_edge,
             )
             .to_rgba8();

@@ -199,3 +199,43 @@ async fn redemption_is_refused_once_the_group_is_at_its_member_cap() {
         Err(persistence::RepoError::ConditionalCheckFailed)
     ));
 }
+
+#[tokio::test]
+async fn two_concurrent_redemptions_at_the_cap_boundary_leave_exactly_one_winner() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("gconcredeem", "u1");
+    g.member_count = 19;
+    g.member_soft_cap = 20;
+    persistence::groups::put_group(&repo, &g).await.unwrap();
+
+    // Two distinct invites, so the thing under contention is the group's
+    // member_count condition, not the invite's own single-use condition.
+    let inv1 = common::invite("CONC0001", "gconcredeem", "u1");
+    let inv2 = common::invite("CONC0002", "gconcredeem", "u1");
+    invites::put_invite(&repo, &inv1, 9999999999).await.unwrap();
+    invites::put_invite(&repo, &inv2, 9999999999).await.unwrap();
+
+    let membership2 = common::membership("u2", "gconcredeem", Role::Member);
+    let membership3 = common::membership("u3", "gconcredeem", Role::Member);
+
+    let (r1, r2) = tokio::join!(
+        invites::join_via_invite_tx(&repo, &inv1, &membership2, None, "2026-06-10T00:00:00Z", 20),
+        invites::join_via_invite_tx(&repo, &inv2, &membership3, None, "2026-06-10T00:00:00Z", 20),
+    );
+
+    assert_eq!(r1.is_ok() as u8 + r2.is_ok() as u8, 1, "{r1:?} / {r2:?}");
+    let loser = r1.err().or(r2.err()).unwrap();
+    assert!(
+        matches!(loser, persistence::RepoError::ConditionalCheckFailed),
+        "{loser:?}"
+    );
+
+    let group_after = persistence::groups::get_group(&repo, &g.group_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        group_after.member_count, 20,
+        "the cap condition lets exactly one concurrent redemption through"
+    );
+}

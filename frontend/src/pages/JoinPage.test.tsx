@@ -89,6 +89,17 @@ describe("JoinPage", () => {
     expect(await screen.findByText(/That invite has expired/)).toBeInTheDocument();
   });
 
+  it("explains an invite bound to a different email (D5)", async () => {
+    vi.mocked(api.redeemInvite).mockRejectedValue(new ApiError(403, "INVITE_EMAIL_MISMATCH", null));
+    renderJoin(signedIn);
+
+    expect(
+      await screen.findByText(
+        "This invite is for a different email address. Sign in with Google using the invited email.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("sends a signed-out visitor to login with the invite attached", () => {
     const login = vi.fn().mockResolvedValue(undefined);
 

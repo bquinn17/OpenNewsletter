@@ -1,20 +1,22 @@
 //! Business logic for the newsletter list + detail routes
-//! (`plans/03-api-contract.md` §5).
+//! (`docs/design/api.md` §5).
 
 use crate::state::AppState;
 use domain::api::{
     AskedBy, CandidateItemResponse, CommentImageResponse, CommentResponse, MyResponseSummary,
     NewsletterDetailResponse, NewsletterListResponse, NewsletterSummary, OpenQuestionResponse,
     PollOptionResponse, PublishedAnswerResponse, PublishedImageResponse,
-    PublishedPollOptionResponse, PublishedQuestionResponse, ReactionGroupResponse,
+    PublishedPollOptionResponse, PublishedQuestionResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, CandidateQuestion, CycleId, GroupId, GroupMembership, ImageId,
-    LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, PollOptionId, QuestionId,
-    QuestionKind, ResponseStatus, Role, User, UserId,
+    ApiError, ApiErrorCode, CandidateQuestion, Comment, CycleId, GroupId, GroupMembership, ImageId,
+    ImageMedia, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, PollOptionId,
+    QuestionId, QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
 };
+use futures::future::try_join_all;
+use futures::{stream, StreamExt, TryStreamExt};
 use persistence::{auth, engagement, media, newsletters, questions, responses, users};
-use shared::config::MAX_NEWSLETTER_LIST_LIMIT;
+use shared::config::{EDITION_READ_CONCURRENCY, MAX_NEWSLETTER_LIST_LIMIT};
 use std::collections::{HashMap, HashSet};
 
 /// `GET /groups/{groupId}/newsletters` (§5.1).
@@ -45,8 +47,8 @@ pub async fn list_newsletters(
         None => page,
     };
 
-    let mut items = Vec::with_capacity(filtered.len());
-    for nl in filtered {
+    // One AP15 read per cycle on the page; independent, so run together.
+    let counts = try_join_all(filtered.iter().map(|nl| async move {
         let my_responses =
             responses::list_my_responses_in_cycle(&state.repo, caller, group_id, &nl.cycle_id)
                 .await
@@ -54,26 +56,30 @@ pub async fn list_newsletters(
                     tracing::error!(error = ?e, group_id = %group_id, cycle_id = %nl.cycle_id, "my-response listing failed");
                     ApiError::internal("failed to load your responses")
                 })?;
-        let my_draft_count = my_responses
-            .iter()
-            .filter(|r| r.status == ResponseStatus::Draft)
-            .count() as u32;
-        let my_published_count = my_responses
-            .iter()
-            .filter(|r| r.status == ResponseStatus::Published)
-            .count() as u32;
+        let count = |status| my_responses.iter().filter(|r| r.status == status).count() as u32;
+        Ok::<_, ApiError>((
+            count(ResponseStatus::Draft),
+            count(ResponseStatus::Published),
+        ))
+    }))
+    .await?;
 
-        items.push(NewsletterSummary {
-            question_count: nl.locked_question_ids.len() as u32,
-            cycle_id: nl.cycle_id,
-            status: nl.status,
-            response_open_at: nl.response_open_at,
-            response_close_at: nl.response_close_at,
-            published_at: nl.published_at,
-            my_draft_count,
-            my_published_count,
-        });
-    }
+    let items = filtered
+        .into_iter()
+        .zip(counts)
+        .map(
+            |(nl, (my_draft_count, my_published_count))| NewsletterSummary {
+                question_count: nl.locked_question_ids.len() as u32,
+                cycle_id: nl.cycle_id,
+                status: nl.status,
+                response_open_at: nl.response_open_at,
+                response_close_at: nl.response_close_at,
+                published_at: nl.published_at,
+                my_draft_count,
+                my_published_count,
+            },
+        )
+        .collect();
 
     Ok(NewsletterListResponse { items, next_cursor })
 }
@@ -226,6 +232,10 @@ async fn open_detail(
     })
 }
 
+/// The published edition is read in a fixed number of concurrent waves, not
+/// per answer (`docs/design/api.md` §5.2): locked questions, then every
+/// question's answers, then every text answer's engagement partition, then one
+/// batch each for the user profiles and images the whole edition references.
 async fn published_detail(
     state: &AppState,
     caller: &UserId,
@@ -233,29 +243,63 @@ async fn published_detail(
     group_id: &GroupId,
     nl: &Newsletter,
 ) -> Result<NewsletterDetailResponse, ApiError> {
-    let locked = load_locked_questions(state, group_id, &nl.cycle_id).await?;
-    let is_admin = membership.role == Role::Admin;
-    let profiles = load_profiles(
-        state,
-        &locked
+    let cycle_id = &nl.cycle_id;
+    let locked = load_locked_questions(state, group_id, cycle_id).await?;
+
+    let answers_per_question = try_join_all(
+        locked
             .iter()
-            .map(|l| l.submitted_by.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>(),
+            .map(|lq| load_published_answers(state, group_id, cycle_id, &lq.question_id)),
     )
     .await?;
 
+    // One pass over the text questions' answers collects everything they
+    // hydrate: engagement keys, answer authors and answer images.
+    let mut user_ids: HashSet<UserId> = locked.iter().map(|l| l.submitted_by.clone()).collect();
+    let mut image_ids: HashSet<ImageId> = HashSet::new();
+    let mut text_answers: Vec<(QuestionId, UserId)> = Vec::new();
+    for (lq, answers) in locked.iter().zip(&answers_per_question) {
+        if lq.kind != QuestionKind::Text {
+            continue;
+        }
+        for r in answers {
+            text_answers.push((lq.question_id.clone(), r.user_id.clone()));
+            user_ids.insert(r.user_id.clone());
+            image_ids.extend(r.image_media_ids.iter().cloned());
+        }
+    }
+    let engagement = load_engagement(state, group_id, cycle_id, text_answers).await?;
+    for (comments, _) in engagement.values() {
+        for c in comments {
+            user_ids.insert(c.author_user_id.clone());
+            if c.deleted_at.is_none() {
+                image_ids.extend(c.image_media_id.iter().cloned());
+            }
+        }
+    }
+    let user_ids: Vec<UserId> = user_ids.into_iter().collect();
+    let image_ids: Vec<ImageId> = image_ids.into_iter().collect();
+    let (profiles, images) = futures::try_join!(
+        load_profiles(state, &user_ids),
+        load_images(state, group_id, cycle_id, &image_ids),
+    )?;
+
+    let is_admin = membership.role == Role::Admin;
     let mut questions_out = Vec::with_capacity(locked.len());
-    for lq in locked {
+    for (lq, answers) in locked.into_iter().zip(answers_per_question) {
         let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles);
         let question = match lq.kind {
-            QuestionKind::Text => {
-                published_text_question(state, group_id, &nl.cycle_id, caller, lq, asked_by).await?
-            }
-            QuestionKind::Poll => {
-                published_poll_question(state, group_id, &nl.cycle_id, caller, lq, asked_by).await?
-            }
+            QuestionKind::Text => published_text_question(
+                state,
+                caller,
+                lq,
+                asked_by,
+                answers,
+                &engagement,
+                &profiles,
+                &images,
+            )?,
+            QuestionKind::Poll => published_poll_question(caller, lq, asked_by, answers),
         };
         questions_out.push(question);
     }
@@ -268,48 +312,45 @@ async fn published_detail(
     })
 }
 
-async fn published_text_question(
+#[allow(clippy::too_many_arguments)]
+fn published_text_question(
     state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
     caller: &UserId,
     lq: LockedQuestion,
     asked_by: Option<AskedBy>,
+    answers: Vec<domain::Response>,
+    engagement: &EngagementByAnswer,
+    profiles: &HashMap<UserId, User>,
+    images: &HashMap<ImageId, ImageMedia>,
 ) -> Result<PublishedQuestionResponse, ApiError> {
-    let raw = responses::list_answers(&state.repo, group_id, cycle_id, &lq.question_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "answer listing failed");
-            ApiError::internal("failed to load answers")
-        })?;
+    let mut answers_out = Vec::with_capacity(answers.len());
+    for r in answers {
+        let author = profiles
+            .get(&r.user_id)
+            .ok_or_else(|| ApiError::internal("answer references a missing user profile"))?;
+        let (comments, reactions) = engagement
+            .get(&(lq.question_id.clone(), r.user_id.clone()))
+            .map(|(c, r)| (c.as_slice(), r.as_slice()))
+            .unwrap_or_default();
+        let comments = comments
+            .iter()
+            .map(|c| comment_response(state, profiles, images, c))
+            .collect::<Result<Vec<_>, _>>()?;
 
-    let mut answers = Vec::new();
-    for r in raw
-        .into_iter()
-        .filter(|r| r.status == ResponseStatus::Published)
-    {
-        let author = load_user(state, &r.user_id).await?;
-        let images = hydrate_images(state, group_id, cycle_id, &r.image_media_ids).await?;
-        let comments =
-            load_comments(state, group_id, cycle_id, &lq.question_id, &r.user_id).await?;
-        let reaction_groups = load_reaction_groups(
-            state,
-            group_id,
-            cycle_id,
-            &lq.question_id,
-            &r.user_id,
-            caller,
-        )
-        .await?;
-        answers.push(PublishedAnswerResponse {
+        answers_out.push(PublishedAnswerResponse {
             response_id: r.response_id,
             user_id: r.user_id,
-            display_name: author.display_name,
+            display_name: author.display_name.clone(),
             body: r.body,
-            images,
+            images: r
+                .image_media_ids
+                .iter()
+                .filter_map(|id| images.get(id))
+                .filter_map(|img| published_image(state, img))
+                .collect(),
             published_at: r.published_at.unwrap_or(r.updated_at),
             comments,
-            reaction_groups,
+            reaction_groups: domain::engagement::group_reactions(reactions, caller),
         });
     }
 
@@ -320,33 +361,21 @@ async fn published_text_question(
         display_order: lq.display_order,
         asked_by,
         is_anonymous: lq.is_anonymous,
-        answers: Some(answers),
+        answers: Some(answers_out),
         options: None,
         my_vote_option_id: None,
     })
 }
 
-async fn published_poll_question(
-    state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
+fn published_poll_question(
     caller: &UserId,
     lq: LockedQuestion,
     asked_by: Option<AskedBy>,
-) -> Result<PublishedQuestionResponse, ApiError> {
-    let raw = responses::list_answers(&state.repo, group_id, cycle_id, &lq.question_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "answer listing failed");
-            ApiError::internal("failed to load poll answers")
-        })?;
-
+    answers: Vec<domain::Response>,
+) -> PublishedQuestionResponse {
     let mut tallies: HashMap<PollOptionId, u32> = HashMap::new();
     let mut my_vote_option_id = None;
-    for r in raw
-        .into_iter()
-        .filter(|r| r.status == ResponseStatus::Published)
-    {
+    for r in answers {
         let Some(option_id) = r.poll_option_id else {
             continue;
         };
@@ -370,7 +399,7 @@ async fn published_poll_question(
         })
         .collect();
 
-    Ok(PublishedQuestionResponse {
+    PublishedQuestionResponse {
         question_id: lq.question_id,
         kind: lq.kind,
         prompt: lq.prompt,
@@ -380,7 +409,7 @@ async fn published_poll_question(
         answers: None,
         options: Some(options),
         my_vote_option_id,
-    })
+    }
 }
 
 // ---------- shared helpers ----------
@@ -400,14 +429,55 @@ async fn load_locked_questions(
     Ok(locked)
 }
 
-async fn load_user(state: &AppState, user_id: &UserId) -> Result<User, ApiError> {
-    users::get_user(&state.repo, user_id)
+/// A question's published answers, in AP14 order.
+async fn load_published_answers(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+) -> Result<Vec<domain::Response>, ApiError> {
+    let answers = responses::list_answers(&state.repo, group_id, cycle_id, question_id)
         .await
         .map_err(|e| {
-            tracing::error!(error = ?e, user_id = %user_id, "user lookup failed");
-            ApiError::internal("failed to load user profile")
-        })?
-        .ok_or_else(|| ApiError::internal("answer references a missing user profile"))
+            tracing::error!(error = ?e, group_id = %group_id, "answer listing failed");
+            ApiError::internal("failed to load answers")
+        })?;
+    Ok(answers
+        .into_iter()
+        .filter(|r| r.status == ResponseStatus::Published)
+        .collect())
+}
+
+/// Comments (oldest first) and reactions per `(question, answer author)`.
+type EngagementByAnswer = HashMap<(QuestionId, UserId), (Vec<Comment>, Vec<Reaction>)>;
+
+/// One engagement-partition read per text answer, [`EDITION_READ_CONCURRENCY`]
+/// at a time.
+async fn load_engagement(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    answers: Vec<(QuestionId, UserId)>,
+) -> Result<EngagementByAnswer, ApiError> {
+    stream::iter(answers)
+        .map(|(question_id, answer_user)| async move {
+            let rows = engagement::list_engagement(
+                &state.repo,
+                group_id,
+                cycle_id,
+                &question_id,
+                &answer_user,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, group_id = %group_id, "engagement listing failed");
+                ApiError::internal("failed to load comments and reactions")
+            })?;
+            Ok::<_, ApiError>(((question_id, answer_user), rows))
+        })
+        .buffer_unordered(EDITION_READ_CONCURRENCY)
+        .try_collect()
+        .await
 }
 
 async fn load_profiles(
@@ -420,172 +490,95 @@ async fn load_profiles(
     })
 }
 
-async fn hydrate_images(
+async fn load_images(
     state: &AppState,
     group_id: &GroupId,
     cycle_id: &CycleId,
-    image_ids: &[ImageId],
-) -> Result<Vec<PublishedImageResponse>, ApiError> {
-    let mut images = Vec::with_capacity(image_ids.len());
-    for image_id in image_ids {
-        let Some(img) = media::get_image(&state.repo, group_id, cycle_id, image_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %group_id, "image lookup failed");
-                ApiError::internal("failed to load image")
-            })?
-        else {
-            continue;
-        };
-        if img.status != MediaStatus::Ready {
-            continue;
-        }
-        let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
-            (img.display_key, img.thumb_key, img.width, img.height)
-        else {
-            continue;
-        };
-        let (Some(display_url), Some(thumb_url)) =
-            (state.image_url(&display_key), state.image_url(&thumb_key))
-        else {
-            continue;
-        };
-        images.push(PublishedImageResponse {
-            image_id: img.image_id,
-            display_url,
-            thumb_url,
-            width,
-            height,
-        });
+    ids: &[ImageId],
+) -> Result<HashMap<ImageId, ImageMedia>, ApiError> {
+    media::get_images_batch(&state.repo, group_id, cycle_id, ids)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "image batch lookup failed");
+            ApiError::internal("failed to load images")
+        })
+}
+
+/// The display/thumb pair for an image, or `None` until it's `ready` with
+/// both variants and dimensions recorded.
+fn ready_variants(state: &AppState, img: &ImageMedia) -> Option<(String, String, u32, u32)> {
+    if img.status != MediaStatus::Ready {
+        return None;
     }
-    Ok(images)
+    let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
+        (&img.display_key, &img.thumb_key, img.width, img.height)
+    else {
+        return None;
+    };
+    Some((
+        state.image_url(display_key)?,
+        state.image_url(thumb_key)?,
+        width,
+        height,
+    ))
+}
+
+fn published_image(state: &AppState, img: &ImageMedia) -> Option<PublishedImageResponse> {
+    let (display_url, thumb_url, width, height) = ready_variants(state, img)?;
+    Some(PublishedImageResponse {
+        image_id: img.image_id.clone(),
+        display_url,
+        thumb_url,
+        width,
+        height,
+    })
 }
 
 /// Builds the wire `CommentResponse` for one comment row, including a
-/// soft-deleted one as a `[deleted]` placeholder (`09-engagement.md` §1.1,
+/// soft-deleted one as a `[deleted]` placeholder (`docs/design/engagement.md` §1.1,
 /// decided M10 — soft-deleted comments are returned here too, not filtered).
-async fn hydrate_comment(
+/// The attached image is hydrated only while it's `ready`.
+fn comment_response(
     state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    authors: &HashMap<UserId, User>,
-    comment: domain::Comment,
+    profiles: &HashMap<UserId, User>,
+    images: &HashMap<ImageId, ImageMedia>,
+    comment: &Comment,
 ) -> Result<CommentResponse, ApiError> {
-    let author = authors
+    let author = profiles
         .get(&comment.author_user_id)
         .ok_or_else(|| ApiError::internal("comment references a missing user profile"))?;
     let is_deleted = comment.deleted_at.is_some();
-    let image = if is_deleted {
-        None
-    } else {
-        match &comment.image_media_id {
-            Some(image_id) => hydrate_comment_image(state, group_id, cycle_id, image_id).await?,
-            None => None,
-        }
-    };
+    let image = comment
+        .image_media_id
+        .as_ref()
+        .filter(|_| !is_deleted)
+        .and_then(|id| images.get(id))
+        .and_then(|img| {
+            let (display_url, thumb_url, width, height) = ready_variants(state, img)?;
+            Some(CommentImageResponse {
+                image_id: img.image_id.clone(),
+                display_url,
+                thumb_url,
+                width,
+                height,
+                caption: img.caption.clone(),
+            })
+        });
 
     Ok(CommentResponse {
-        comment_id: comment.comment_id,
-        author_user_id: comment.author_user_id,
+        comment_id: comment.comment_id.clone(),
+        author_user_id: comment.author_user_id.clone(),
         display_name: author.display_name.clone(),
         body: if is_deleted {
             String::new()
         } else {
-            comment.body
+            comment.body.clone()
         },
         image,
         created_at: comment.created_at,
         edited_at: comment.edited_at,
         deleted_at: comment.deleted_at,
     })
-}
-
-/// The comment's attached image, hydrated only while it's `ready`
-/// (`09-engagement.md` §1.1).
-async fn hydrate_comment_image(
-    state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    image_id: &ImageId,
-) -> Result<Option<CommentImageResponse>, ApiError> {
-    let Some(img) = media::get_image(&state.repo, group_id, cycle_id, image_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "comment image lookup failed");
-            ApiError::internal("failed to load comment image")
-        })?
-    else {
-        return Ok(None);
-    };
-    if img.status != MediaStatus::Ready {
-        return Ok(None);
-    }
-    let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
-        (img.display_key, img.thumb_key, img.width, img.height)
-    else {
-        return Ok(None);
-    };
-    let (Some(display_url), Some(thumb_url)) =
-        (state.image_url(&display_key), state.image_url(&thumb_key))
-    else {
-        return Ok(None);
-    };
-    Ok(Some(CommentImageResponse {
-        image_id: img.image_id,
-        display_url,
-        thumb_url,
-        width,
-        height,
-        caption: img.caption,
-    }))
-}
-
-async fn load_comments(
-    state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    question_id: &QuestionId,
-    answer_user_id: &UserId,
-) -> Result<Vec<CommentResponse>, ApiError> {
-    let comments =
-        engagement::list_comments(&state.repo, group_id, cycle_id, question_id, answer_user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %group_id, "comment listing failed");
-                ApiError::internal("failed to load comments")
-            })?;
-
-    let author_ids: Vec<UserId> = comments
-        .iter()
-        .map(|c| c.author_user_id.clone())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    let authors = load_profiles(state, &author_ids).await?;
-
-    let mut out = Vec::with_capacity(comments.len());
-    for c in comments {
-        out.push(hydrate_comment(state, group_id, cycle_id, &authors, c).await?);
-    }
-    Ok(out)
-}
-
-async fn load_reaction_groups(
-    state: &AppState,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    question_id: &QuestionId,
-    answer_user_id: &UserId,
-    caller: &UserId,
-) -> Result<Vec<ReactionGroupResponse>, ApiError> {
-    let reactions =
-        engagement::list_reactions(&state.repo, group_id, cycle_id, question_id, answer_user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %group_id, "reaction listing failed");
-                ApiError::internal("failed to load reactions")
-            })?;
-    Ok(domain::engagement::group_reactions(&reactions, caller))
 }
 
 fn poll_option_responses(

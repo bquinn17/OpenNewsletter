@@ -1,6 +1,6 @@
-//! Push subscription routes (`plans/03-api-contract.md` §10) and the
+//! Push subscription routes (`docs/design/api.md` §10) and the
 //! cycle-open / publication notification fan-outs
-//! (`plans/07-notifications.md` §6, §8). Split into a library so
+//! (`docs/design/notifications.md` §6, §8). Split into a library so
 //! integration tests and `lambda-notify-tick` can call into it directly.
 
 pub mod delivery;

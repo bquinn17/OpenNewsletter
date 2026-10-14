@@ -4,7 +4,7 @@
 //! ever writes is constructed here. If a key format changes, change it here
 //! and the type system finds every dependent call site.
 //!
-//! Layouts mirror `plans/02-data-model-dynamodb.md` §2.
+//! Layouts mirror `docs/design/data-model.md` §2.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{
@@ -251,8 +251,12 @@ pub fn comment_sk(created_at: DateTime<Utc>, comment_id: &domain::CommentId) -> 
     )
 }
 
+/// Every `Reaction` sk starts with this; mirrors [`COMMENT_SK_PREFIX`] for
+/// callers that split a whole engagement partition by row type.
+pub const REACTION_SK_PREFIX: &str = "R#";
+
 pub fn reaction_sk(reactor_user_id: &UserId, emoji: &str) -> String {
-    format!("R#{}#{}", reactor_user_id, emoji)
+    format!("{REACTION_SK_PREFIX}{}#{}", reactor_user_id, emoji)
 }
 
 // ---------- Push subscription (§2.13) ----------

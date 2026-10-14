@@ -109,3 +109,47 @@ async fn write_status_transition_updates_gsi2_keys_on_status_change() {
     assert_eq!(open_due.len(), 1);
     assert_eq!(open_due[0].status, NewsletterStatus::Open);
 }
+
+#[tokio::test]
+async fn reschedule_voting_cycle_rewrites_a_voting_row() {
+    let (_c, repo) = common::make_repo().await;
+    let nl = common::voting_newsletter("g-resched-ok", "202606");
+    newsletters::write_status_transition(&repo, &nl)
+        .await
+        .unwrap();
+
+    let mut moved = nl.clone();
+    moved.response_close_at = nl.response_close_at + chrono::Duration::days(3);
+    newsletters::reschedule_voting_cycle(&repo, &moved)
+        .await
+        .unwrap();
+
+    let got = newsletters::get_newsletter(&repo, &nl.group_id, &nl.cycle_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.response_close_at, moved.response_close_at);
+}
+
+#[tokio::test]
+async fn reschedule_voting_cycle_does_not_undo_a_promotion() {
+    let (_c, repo) = common::make_repo().await;
+    let nl = common::voting_newsletter("g-resched-race", "202606");
+    // The tick promoted the cycle after the settings PATCH read it.
+    let mut opened = nl.clone();
+    opened.status = NewsletterStatus::Open;
+    newsletters::write_status_transition(&repo, &opened)
+        .await
+        .unwrap();
+
+    let err = newsletters::reschedule_voting_cycle(&repo, &nl)
+        .await
+        .expect_err("the stale voting copy must not overwrite the open row");
+
+    assert!(err.is_lost_race(), "{err:?}");
+    let got = newsletters::get_newsletter(&repo, &nl.group_id, &nl.cycle_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, NewsletterStatus::Open);
+}

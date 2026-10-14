@@ -263,7 +263,29 @@ pub async fn put_published_text_answer(
     user_id: &str,
     response_id: &str,
 ) {
+    let ids = [group_id, cycle_id, question_id, user_id, response_id];
+    put_text_answer(repo, ids, domain::ResponseStatus::Published, "An answer").await;
+}
+
+/// Writes a draft text `Response` row with `body` directly.
+pub async fn put_text_draft(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    user_id: &str,
+    response_id: &str,
+    body: &str,
+) {
+    let ids = [group_id, cycle_id, question_id, user_id, response_id];
+    put_text_answer(repo, ids, domain::ResponseStatus::Draft, body).await;
+}
+
+/// `ids` is `[group, cycle, question, user, response]`.
+async fn put_text_answer(repo: &Repo, ids: [&str; 5], status: domain::ResponseStatus, body: &str) {
     use chrono::TimeZone;
+    let [group_id, cycle_id, question_id, user_id, response_id] = ids;
+    let is_published = status == domain::ResponseStatus::Published;
     use persistence::keys::{response_gsi1pk, response_gsi1sk, response_pk, response_sk};
 
     let response = domain::Response {
@@ -273,12 +295,12 @@ pub async fn put_published_text_answer(
         group_id: GroupId::new(group_id),
         cycle_id: domain::CycleId::new(cycle_id),
         kind: domain::QuestionKind::Text,
-        status: domain::ResponseStatus::Published,
-        body: Some("An answer".to_owned()),
+        status,
+        body: Some(body.to_owned()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        published_at: is_published.then(|| Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
     };
     let mut item: HashMap<String, AttributeValue> =
         serde_dynamo::to_item(&response).expect("response serializes");

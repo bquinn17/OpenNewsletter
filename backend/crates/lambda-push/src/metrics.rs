@@ -1,5 +1,5 @@
 //! EMF metric emission for push fan-outs and the test-push route
-//! (`plans/07-notifications.md` §13, M11 decision D9). One EMF log line per
+//! (`docs/design/notifications.md` §13, M11 decision D9). One EMF log line per
 //! fan-out/test call; CloudWatch Logs extracts the metrics directly from
 //! the structured log, no separate `PutMetricData` call needed.
 
@@ -34,7 +34,7 @@ impl FanoutMetrics {
     }
 
     /// Failed + expired sends so far — the dev notify-tick route's `failed`
-    /// field counts both (`plans/03-api-contract.md` §11a.2).
+    /// field counts both (`docs/design/api.md` §11a.2).
     pub fn failed_count(&self) -> u32 {
         (self.failed + self.expired) as u32
     }

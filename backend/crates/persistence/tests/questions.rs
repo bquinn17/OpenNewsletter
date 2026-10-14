@@ -23,29 +23,6 @@ async fn it_puts_and_lists_candidates() {
 }
 
 #[tokio::test]
-async fn it_lists_top_candidates_by_votes_descending() {
-    let (_c, repo) = common::make_repo().await;
-    let low = common::candidate("g1", "202606", "q-low", "u1", 1);
-    let mid = common::candidate("g1", "202606", "q-mid", "u1", 5);
-    let top = common::candidate("g1", "202606", "q-top", "u1", 10);
-    questions::put_candidate(&repo, &low).await.unwrap();
-    questions::put_candidate(&repo, &mid).await.unwrap();
-    questions::put_candidate(&repo, &top).await.unwrap();
-
-    let top2 = questions::list_top_candidates_by_votes(
-        &repo,
-        &GroupId::new("g1"),
-        &CycleId::new("202606"),
-        2,
-    )
-    .await
-    .unwrap();
-    assert_eq!(top2.len(), 2);
-    assert_eq!(top2[0].question_id, top.question_id);
-    assert_eq!(top2[1].question_id, mid.question_id);
-}
-
-#[tokio::test]
 async fn it_lists_my_votes_for_a_cycle() {
     let (_c, repo) = common::make_repo().await;
     let q1 = common::candidate("g1", "202606", "q1", "u1", 0);
@@ -247,6 +224,69 @@ async fn cast_vote_tx_reports_a_stale_vote_count_as_a_count_race() {
     let result =
         questions::cast_vote_tx(&repo, &common::vote("u3", "grace", "202606", "q1"), 1, 3).await;
     assert!(matches!(result, Err(VoteTxError::CountRace)), "{result:?}");
+}
+
+#[tokio::test]
+async fn two_concurrent_votes_on_the_same_question_leave_exactly_one_winner() {
+    let (_c, repo) = common::make_repo().await;
+    questions::put_candidate(&repo, &common::candidate("gconc", "202606", "q1", "u1", 0))
+        .await
+        .unwrap();
+
+    // Both voters read vote_count = 0 before either write landed, so both
+    // compute the same next count.
+    let vote2 = common::vote("u2", "gconc", "202606", "q1");
+    let vote3 = common::vote("u3", "gconc", "202606", "q1");
+    let (r1, r2) = tokio::join!(
+        questions::cast_vote_tx(&repo, &vote2, 1, 3),
+        questions::cast_vote_tx(&repo, &vote3, 1, 3),
+    );
+
+    assert_eq!(r1.is_ok() as u8 + r2.is_ok() as u8, 1, "{r1:?} / {r2:?}");
+    let loser = r1.err().or(r2.err()).unwrap();
+    assert!(matches!(loser, VoteTxError::CountRace), "{loser:?}");
+
+    let candidate =
+        questions::list_candidates(&repo, &GroupId::new("gconc"), &CycleId::new("202606"))
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.question_id == QuestionId::new("q1"))
+            .unwrap();
+    assert_eq!(candidate.vote_count, 1, "only the winning vote landed");
+}
+
+#[tokio::test]
+async fn two_concurrent_votes_by_the_same_voter_leave_exactly_one_under_the_cap() {
+    let (_c, repo) = common::make_repo().await;
+    for q in ["q1", "q2"] {
+        questions::put_candidate(&repo, &common::candidate("gvcap", "202606", q, "u1", 0))
+            .await
+            .unwrap();
+    }
+
+    // votes_cap = 1: the voter's tally row is the transactional guard, so a
+    // real race between two casts must leave exactly one standing, never two.
+    let vote_q1 = common::vote("u2", "gvcap", "202606", "q1");
+    let vote_q2 = common::vote("u2", "gvcap", "202606", "q2");
+    let (r1, r2) = tokio::join!(
+        questions::cast_vote_tx(&repo, &vote_q1, 1, 1),
+        questions::cast_vote_tx(&repo, &vote_q2, 1, 1),
+    );
+
+    assert_eq!(r1.is_ok() as u8 + r2.is_ok() as u8, 1, "{r1:?} / {r2:?}");
+    let loser = r1.err().or(r2.err()).unwrap();
+    assert!(matches!(loser, VoteTxError::Tally), "{loser:?}");
+
+    let mine = questions::list_my_votes(
+        &repo,
+        &GroupId::new("gvcap"),
+        &CycleId::new("202606"),
+        &UserId::new("u2"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(mine.len(), 1, "only one vote under the cap");
 }
 
 #[tokio::test]

@@ -17,6 +17,18 @@ export const CALLER_ID = "u_quinn";
 export const MOCK_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";
 
+/**
+ * Uploaded `ImageMediaResponse` rows by `imageId`. Shared so a comment edit or
+ * delete in `mockEngagement.ts` can release (really delete) the image it
+ * held, like the backend (`docs/design/api.md` §9.4, D8).
+ */
+export const imageRows = new Map<string, S["ImageMediaResponse"]>();
+
+/** A real delete (D8): the row is gone and a later `GET /uploads/{id}` 404s. Idempotent. */
+export function deleteMockImage(imageId: string): void {
+  imageRows.delete(imageId);
+}
+
 /** Returned by a per-feature mock route that doesn't handle the request. */
 export const NO_MOCK_ROUTE = Symbol("NO_MOCK_ROUTE");
 
@@ -65,7 +77,7 @@ function monthCycleId(offsetMonths: number): string {
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-/** The cycle currently in its 4-day response window across every fixture group. */
+/** The cycle currently in its 7-day response window (the default, D3) across every fixture group. */
 export const OPEN_CYCLE_ID = monthCycleId(0);
 /** The next cycle, still in its pre-open voting period. */
 export const VOTING_CYCLE_ID = monthCycleId(1);
@@ -86,7 +98,7 @@ export const groups: Record<string, S["GroupResponse"]> = {
     name: "Trail Crew",
     timezone: "America/New_York",
     gradient: "grape-sky",
-    cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+    cycleSettings: { questionsPerCycle: 5, votesPerUserPerCycle: 3, responseWindowDays: 7 },
     notificationSettings: { offsetsHoursBeforeClose: [96, 48, 24], onCycleOpen: true },
     memberCount: 2,
     memberSoftCap: 50,
@@ -117,7 +129,7 @@ export const groups: Record<string, S["GroupResponse"]> = {
     name: "Game Night Gang",
     timezone: "America/New_York",
     gradient: "ocean-dusk",
-    cycleSettings: { questionsPerCycle: 4, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+    cycleSettings: { questionsPerCycle: 4, votesPerUserPerCycle: 3, responseWindowDays: 7 },
     notificationSettings: { offsetsHoursBeforeClose: [48, 24], onCycleOpen: true },
     memberCount: 1,
     memberSoftCap: 50,
@@ -193,7 +205,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       cycleId: OPEN_CYCLE_ID,
       status: "open",
       responseOpenAt: iso(-2 * DAY_MS),
-      responseCloseAt: iso(2 * DAY_MS),
+      responseCloseAt: iso(5 * DAY_MS),
       publishedAt: null,
       questionCount: 5,
       myDraftCount: 1,
@@ -202,7 +214,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
     {
       cycleId: PUBLISHED_CYCLE_ID,
       status: "published",
-      responseOpenAt: iso(-32 * DAY_MS),
+      responseOpenAt: iso(-35 * DAY_MS),
       responseCloseAt: iso(-28 * DAY_MS),
       publishedAt: iso(-28 * DAY_MS + 1000),
       questionCount: 5,
@@ -212,7 +224,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
     {
       cycleId: PUBLISHED_CYCLE_ID_2,
       status: "published",
-      responseOpenAt: iso(-62 * DAY_MS),
+      responseOpenAt: iso(-65 * DAY_MS),
       responseCloseAt: iso(-58 * DAY_MS),
       publishedAt: iso(-58 * DAY_MS + 1000),
       questionCount: 2,
@@ -234,7 +246,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
     {
       cycleId: PUBLISHED_CYCLE_ID,
       status: "published",
-      responseOpenAt: iso(-32 * DAY_MS),
+      responseOpenAt: iso(-35 * DAY_MS),
       responseCloseAt: iso(-28 * DAY_MS),
       publishedAt: iso(-28 * DAY_MS + 1000),
       questionCount: 2,
@@ -247,7 +259,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       cycleId: OPEN_CYCLE_ID,
       status: "open",
       responseOpenAt: iso(-2 * DAY_MS),
-      responseCloseAt: iso(2 * DAY_MS),
+      responseCloseAt: iso(5 * DAY_MS),
       publishedAt: null,
       questionCount: 4,
       myDraftCount: 2,
@@ -256,7 +268,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
     {
       cycleId: PUBLISHED_CYCLE_ID,
       status: "published",
-      responseOpenAt: iso(-33 * DAY_MS),
+      responseOpenAt: iso(-36 * DAY_MS),
       responseCloseAt: iso(-29 * DAY_MS),
       publishedAt: iso(-29 * DAY_MS + 1000),
       questionCount: 2,

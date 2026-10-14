@@ -49,6 +49,23 @@ export default tseslint.config(
     },
   },
   {
+    // `src/pwa/sw.ts` activates a new deploy at once and drops the old
+    // build's precache, so an open tab can't load a lazy chunk of the build
+    // it's running. Tests are exempt: they aren't bundled.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression",
+          message:
+            "No lazy chunks: an open tab can't fetch one after a new deploy activates (src/pwa/sw.ts).",
+        },
+      ],
+    },
+  },
+  {
     files: ["*.config.{js,ts}"],
     languageOptions: {
       globals: { ...globals.node },
@@ -62,6 +79,15 @@ export default tseslint.config(
     // One-off Node scripts (e.g. `scripts/generate-icons.mjs`) — not part of
     // the browser app bundle.
     files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+  {
+    // Playwright tests and config run under Node, not the browser bundle
+    // (`page.evaluate` callbacks run in the browser, but the test files
+    // themselves don't).
+    files: ["e2e/**/*.{ts,tsx}", "playwright.config.ts"],
     languageOptions: {
       globals: { ...globals.node },
     },

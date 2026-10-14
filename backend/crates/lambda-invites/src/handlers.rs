@@ -1,5 +1,5 @@
 //! Invite creation, listing, revocation, and redemption
-//! (`plans/03-api-contract.md` §3, `plans/05-auth-flow.md` §4).
+//! (`docs/design/api.md` §3, `docs/design/auth.md` §4).
 
 use crate::code;
 use crate::state::AppState;
@@ -15,6 +15,7 @@ use domain::{
 use persistence::{auth, groups, invites, RepoError};
 use shared::config::{
     derive_avatar_color, INVITE_AUDIT_RETENTION_DAYS, INVITE_DEFAULT_TTL_DAYS, INVITE_MAX_TTL_DAYS,
+    MAX_BOUND_EMAIL_CHARS,
 };
 use shared::http::AuthClaims;
 
@@ -33,6 +34,12 @@ pub async fn create_invite(
         ));
     }
 
+    let bound_email = request
+        .bound_email
+        .as_deref()
+        .map(normalize_bound_email)
+        .transpose()?;
+
     let now = Utc::now();
     let expires_at = now + Duration::days(i64::from(ttl_days));
     let invite = Invite {
@@ -45,6 +52,7 @@ pub async fn create_invite(
         consumed_by: None,
         consumed_at: None,
         role_on_redeem: request.role_on_redeem,
+        bound_email,
     };
 
     // The row outlives the invite itself so admins can audit who joined with what.
@@ -62,7 +70,43 @@ pub async fn create_invite(
         group_id: invite.group_id,
         expires_at: invite.expires_at,
         role_on_redeem: invite.role_on_redeem,
+        bound_email: invite.bound_email,
     })
+}
+
+/// `boundEmail`, trimmed and lowercased for storage. Deliberately loose: the
+/// redeem check compares it to Cognito's own `email` claim, so it only needs
+/// to look like an address.
+fn normalize_bound_email(raw: &str) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if !trimmed.contains('@') || trimmed.chars().count() > MAX_BOUND_EMAIL_CHARS {
+        return Err(ApiError::invalid_field(
+            "boundEmail",
+            format!(
+                "boundEmail must be an email address of at most {MAX_BOUND_EMAIL_CHARS} characters"
+            ),
+        ));
+    }
+    Ok(trimmed.to_lowercase())
+}
+
+/// `POST /invites/redeem` step 2 (`docs/design/auth.md` §4.2): a bound
+/// invite needs the caller's ID-token `email` to match it and be verified.
+fn check_bound_email(invite: &Invite, claims: &AuthClaims) -> Result<(), ApiError> {
+    let Some(bound) = &invite.bound_email else {
+        return Ok(());
+    };
+    let matches = claims
+        .email
+        .as_deref()
+        .is_some_and(|email| email.trim().to_lowercase() == *bound);
+    if matches && claims.email_verified {
+        return Ok(());
+    }
+    Err(ApiError::new(
+        ApiErrorCode::InviteEmailMismatch,
+        "this invite is for a different email address; sign in with Google using the invited address",
+    ))
 }
 
 pub async fn list_invites(
@@ -123,7 +167,7 @@ pub async fn revoke_invite(
 
 /// `POST /invites/redeem` — the single point where invites are consumed, covering
 /// both first signup and an existing user joining another group
-/// (`plans/05-auth-flow.md` §4.2).
+/// (`docs/design/auth.md` §4.2).
 pub async fn redeem(
     state: &AppState,
     claims: &AuthClaims,
@@ -158,6 +202,7 @@ pub async fn redeem(
     }
 
     check_redeemable(&invite)?;
+    check_bound_email(&invite, claims)?;
     if group.member_count >= group.member_soft_cap {
         return Err(ApiError::new(
             ApiErrorCode::MemberCapReached,
@@ -294,6 +339,7 @@ mod tests {
             consumed_by: None,
             consumed_at: None,
             role_on_redeem: domain::Role::Member,
+            bound_email: None,
         }
     }
 

@@ -1,5 +1,5 @@
-//! `GET /media-cookie` (`plans/03-api-contract.md` §9.5,
-//! `plans/08-media-uploads.md` §4).
+//! `GET /media-cookie` (`docs/design/api.md` §9.5,
+//! `docs/design/media.md` §4).
 
 mod common;
 

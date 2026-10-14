@@ -1,5 +1,5 @@
 //! The HTTP client that delivers an encrypted push message to a push
-//! service (`plans/07-notifications.md` §10, M11 decision D1). Behind a
+//! service (`docs/design/notifications.md` §10, M11 decision D1). Behind a
 //! trait so integration tests script delivery outcomes without a real
 //! network call.
 

@@ -229,7 +229,7 @@ function MemberRow({
       </div>
 
       {/* The caller's own row has no menu — leaving a group lives in Settings
-          → Your groups, and self-demotion is out of scope (`04` §7.7). */}
+          → Your groups, and self-demotion is out of scope (`docs/design/frontend.md` §7.7). */}
       {!isMe && (
         <div ref={ref} className="relative">
           <button

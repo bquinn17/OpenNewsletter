@@ -115,10 +115,11 @@ async fn it_clears_the_avatar_photo() {
     u.avatar_media_id = Some(AvatarId::new("01HA7"));
     users::put_user(&repo, &u).await.unwrap();
 
-    users::update_profile(&repo, &u.user_id, None, None, Some(None))
+    let previous = users::update_profile(&repo, &u.user_id, None, None, Some(None))
         .await
         .unwrap();
 
+    assert_eq!(previous, Some(AvatarId::new("01HA7")));
     let got = users::get_user(&repo, &u.user_id).await.unwrap().unwrap();
     assert_eq!(got.avatar_media_id, None);
 }

@@ -31,7 +31,7 @@ async-trait.workspace = true
 aws_lambda_events = { version = "0.15", default-features = false, features = ["s3"] }
 # `image`'s own WebP encoder is lossless-only; `webp` wraps libwebp (via
 # libwebp-sys, which vendors libwebp's C source) for quality-controlled lossy
-# encoding (`plans/08-media-uploads.md` §5.3, decided semantics: lossy WebP).
+# encoding (`docs/design/media.md` §5.3, decided semantics: lossy WebP).
 image = "0.25"
 webp = "0.3"
 

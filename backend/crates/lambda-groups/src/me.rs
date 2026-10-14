@@ -1,10 +1,10 @@
-//! `GET /config`, `GET /me`, `PATCH /me` (`plans/03-api-contract.md` §2).
+//! `GET /config`, `GET /me`, `PATCH /me` (`docs/design/api.md` §2).
 
 use crate::state::AppState;
 use crate::validation;
 use domain::api::{ConfigResponse, MembershipSummary, PatchMeRequest, UserResponse};
-use domain::{ApiError, GroupMembership, MediaStatus, User, UserId};
-use persistence::{auth, groups, media, users};
+use domain::{ApiError, AvatarId, GroupMembership, MediaStatus, User, UserId};
+use persistence::{auth, groups, media, users, RepoError};
 use shared::http::AuthClaims;
 
 pub async fn get_config(state: &AppState, claims: &AuthClaims) -> Result<ConfigResponse, ApiError> {
@@ -86,7 +86,7 @@ pub async fn patch_me(
         }
     }
 
-    users::update_profile(
+    let previous_avatar_id = users::update_profile(
         &state.repo,
         user_id,
         display_name.as_deref(),
@@ -94,12 +94,43 @@ pub async fn patch_me(
         request.avatar_media_id.as_ref().map(|inner| inner.as_ref()),
     )
     .await
-    .map_err(|e| {
-        tracing::error!(error = ?e, user_id = %user_id, "profile update failed");
-        ApiError::internal("failed to update profile")
+    .map_err(|e| match e {
+        RepoError::ConditionalCheckFailed => ApiError::not_found("user profile not found"),
+        e => {
+            tracing::error!(error = ?e, user_id = %user_id, "profile update failed");
+            ApiError::internal("failed to update profile")
+        }
     })?;
 
+    // Replacing or clearing the photo deletes the one it displaced
+    // (`docs/design/api.md` §2.3, §9.7). `previous_avatar_id` comes from the
+    // write itself, so two concurrent PATCHes each delete the avatar they
+    // really displaced.
+    if let (Some(new_id), Some(old_id)) = (&request.avatar_media_id, &previous_avatar_id) {
+        if new_id.as_ref() != Some(old_id) {
+            delete_replaced_avatar(state, user_id, old_id).await;
+        }
+    }
+
     get_me(state, user_id).await
+}
+
+/// Best effort (`docs/design/api.md` §9.7): the profile no longer points at the
+/// old avatar, so a failure here only leaves its objects behind.
+async fn delete_replaced_avatar(state: &AppState, user_id: &UserId, avatar_id: &AvatarId) {
+    let avatar = match media::get_avatar(&state.repo, user_id, avatar_id).await {
+        Ok(Some(avatar)) => avatar,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(error = ?e, user_id = %user_id, avatar_id = %avatar_id, "replaced avatar lookup failed; not deleted");
+            return;
+        }
+    };
+    if let Err(e) =
+        media_delete::delete_avatar_media(&state.repo, &state.avatar_deleter, &avatar).await
+    {
+        tracing::error!(error = ?e, user_id = %user_id, avatar_id = %avatar_id, "replaced avatar delete failed");
+    }
 }
 
 pub async fn list_memberships(

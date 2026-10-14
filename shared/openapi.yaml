@@ -5,13 +5,13 @@ info:
   version: "1.0.0"
   description: >
     Canonical contract for the OpenNewsletter HTTP API. Hand-maintained; see
-    `plans/03-api-contract.md` for the human-readable prose mirror and
-    `plans/11-testing-ci-cd.md` §2.3 for the contract test that round-trips every
+    `docs/design/api.md` for the human-readable prose mirror and
+    `docs/development/testing-and-ci.md` §2.3 for the contract test that round-trips every
     example below against `backend/crates/domain/src/api.rs`.
 
-    Routes are added here in the same PR that ships them (`plans/coding-standards.md`
+    Routes are added here in the same PR that ships them (`docs/development/coding-standards.md`
     §8). This file currently covers every route through Milestone 4
-    (`plans/03-api-contract.md` §2-§4, §13); Milestone 5 adds the newsletter and
+    (`docs/design/api.md` §2-§4, §13); Milestone 5 adds the newsletter and
     candidate-question routes (§5-§6) as new tags alongside these; Milestone 8
     adds the media routes (§9); Milestone 10 adds the engagement routes (§8).
 
@@ -29,25 +29,29 @@ security:
 
 tags:
   - name: bootstrap
-    description: Bootstrap / metadata routes (`03-api-contract.md` §2).
+    description: Bootstrap / metadata routes (`docs/design/api.md` §2).
   - name: invites
-    description: Invite & membership routes (`03-api-contract.md` §3).
+    description: Invite & membership routes (`docs/design/api.md` §3).
   - name: groups
-    description: Group routes (`03-api-contract.md` §4).
+    description: Group routes (`docs/design/api.md` §4).
   - name: newsletters
-    description: Newsletter list + detail routes (`03-api-contract.md` §5).
+    description: Newsletter list + detail routes (`docs/design/api.md` §5).
   - name: candidate-questions
-    description: Candidate question and vote routes (`03-api-contract.md` §6).
+    description: Candidate question and vote routes (`docs/design/api.md` §6).
   - name: responses
-    description: Response draft/publish routes (`03-api-contract.md` §7).
+    description: Response draft/publish routes (`docs/design/api.md` §7).
   - name: engagement
-    description: Comment and reaction routes (`03-api-contract.md` §8).
+    description: Comment and reaction routes (`docs/design/api.md` §8).
   - name: media
-    description: Upload, avatar and signed-cookie routes (`03-api-contract.md` §9).
+    description: Upload, avatar and signed-cookie routes (`docs/design/api.md` §9).
   - name: push
-    description: Web Push subscription, test and preference routes (`03-api-contract.md` §10).
+    description: Web Push subscription, test and preference routes (`docs/design/api.md` §10).
   - name: health
-    description: Health check (`03-api-contract.md` §11).
+    description: Health check (`docs/design/api.md` §11).
+  - name: dev
+    description: >
+      Dev-only tick routes (`docs/design/api.md` §11a). Deployed only when
+      `ENV=dev`; every other environment answers 404.
 
 paths:
   /config:
@@ -142,7 +146,8 @@ paths:
             example:
               groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
               ttlDays: 7
-              roleOnRedeem: "member"
+              roleOnRedeem: "admin"
+              boundEmail: "quinn@example.com"
       responses:
         "201":
           description: The created invite.
@@ -154,7 +159,8 @@ paths:
                 code: "ABCD-EFGH-JKMN-PQRS"
                 groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
                 expiresAt: "2026-02-01T00:00:00Z"
-                roleOnRedeem: "member"
+                roleOnRedeem: "admin"
+                boundEmail: "quinn@example.com"
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -185,6 +191,7 @@ paths:
                     expiresAt: "2026-02-01T00:00:00Z"
                     consumedBy: null
                     consumedAt: null
+                    boundEmail: null
                 nextCursor: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -237,6 +244,22 @@ paths:
                 role: "member"
         "400":
           $ref: "#/components/responses/InviteInvalid"
+        "403":
+          description: >
+            `INVITE_EMAIL_MISMATCH` — the invite has `boundEmail` set and the
+            caller's ID-token `email` (compared lowercased) doesn't match it,
+            or `email_verified` isn't true (`docs/design/auth.md` §4.2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/invite-email-mismatch"
+                title: "Invite is bound to a different email"
+                status: 403
+                detail: "this invite is for a different email address; sign in with Google using the invited address"
+                code: "INVITE_EMAIL_MISMATCH"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
         "409":
           $ref: "#/components/responses/Conflict"
         "410":
@@ -286,7 +309,7 @@ paths:
                 cycleSettings:
                   questionsPerCycle: 5
                   votesPerUserPerCycle: 3
-                  responseWindowDays: 4
+                  responseWindowDays: 7
                 notificationSettings:
                   offsetsHoursBeforeClose: [96, 48, 24]
                   onCycleOpen: true
@@ -308,7 +331,13 @@ paths:
     patch:
       operationId: patchGroup
       tags: [groups]
-      summary: Update group settings. Admin only.
+      summary: >
+        Update group settings. Admin only. A `responseWindowDays` change applies
+        to the current cycles (`docs/design/lifecycle.md` §6): the `voting`
+        cycle is rescheduled, and an `open` cycle's close moves to
+        `responseOpenAt + days` if that is still in the future, else the request
+        is refused with a 422 whose field error is `responseWindowDays` with
+        code `CLOSES_IN_PAST`, and nothing changes.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
       requestBody:
@@ -322,7 +351,7 @@ paths:
               cycleSettings:
                 questionsPerCycle: 5
                 votesPerUserPerCycle: 3
-                responseWindowDays: 4
+                responseWindowDays: 7
       responses:
         "200":
           description: The updated group.
@@ -338,7 +367,7 @@ paths:
                 cycleSettings:
                   questionsPerCycle: 5
                   votesPerUserPerCycle: 3
-                  responseWindowDays: 4
+                  responseWindowDays: 7
                 notificationSettings:
                   offsetsHoursBeforeClose: [96, 48, 24]
                   onCycleOpen: true
@@ -356,7 +385,22 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
-          $ref: "#/components/responses/ValidationFailed"
+          description: Validation failed; see `fieldErrors`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/validation-failed"
+                title: "Validation failed"
+                status: 422
+                detail: "responseWindowDays 2 would close the open cycle in the past"
+                code: "VALIDATION_FAILED"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                fieldErrors:
+                  - field: "responseWindowDays"
+                    code: "CLOSES_IN_PAST"
+                    message: "responseWindowDays 2 would close the open cycle in the past"
 
   /groups/{groupId}/members/{userId}:
     delete:
@@ -449,7 +493,7 @@ paths:
       tags: [newsletters]
       summary: >
         The full edition. Shape depends on `status` — see `NewsletterDetailResponse`.
-        `archived` returns 410 instead of a body (`06-newsletter-lifecycle.md` §1;
+        `archived` returns 410 instead of a body (`docs/design/lifecycle.md` §1;
         not reachable until archival ships).
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
@@ -661,7 +705,7 @@ paths:
       tags: [candidate-questions]
       summary: >
         Delete a candidate while it's still in `voting` (cascades its votes).
-        Admin only. There is no admin curate/promote surface (`06-newsletter-lifecycle.md` §7).
+        Admin only. There is no admin curate/promote surface (`docs/design/lifecycle.md` §7).
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
         - $ref: "#/components/parameters/QuestionIdPath"
@@ -753,7 +797,7 @@ paths:
         Save a draft or publish an answer. Last-write-wins on content — no
         version tokens, no conflict errors. Publishing is sticky: once
         published, a later `publish=false` save keeps the new content but
-        cannot unpublish (`03-api-contract.md` §7.3). Caller must be a member.
+        cannot unpublish (`docs/design/api.md` §7.3). Caller must be a member.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
         - $ref: "#/components/parameters/CycleIdPath"
@@ -853,7 +897,7 @@ paths:
         `imageMediaId` must be a `ready` image owned by the caller, uploaded
         for this group, cycle and question with `purpose: "comment"`, and not
         already attached to another comment. At least one of a non-whitespace
-        `body` or an image is required (`09-engagement.md` §1.3). Caller must
+        `body` or an image is required (`docs/design/engagement.md` §1.3). Caller must
         be a member.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
@@ -1023,7 +1067,7 @@ paths:
         Idempotently add the caller's reaction. `emoji` is URL-encoded,
         NFC-normalized, 1-12 codepoints with at least one
         `Extended_Pictographic` or regional-indicator codepoint
-        (`09-engagement.md` §2.2); otherwise 422. No request body. Returns
+        (`docs/design/engagement.md` §2.2); otherwise 422. No request body. Returns
         the answer's reactions after the change.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
@@ -1096,7 +1140,7 @@ paths:
       tags: [media]
       summary: >
         Request a presigned S3 PUT URL for a response or comment image
-        (`03-api-contract.md` §9.1). Creates a `pending` ImageMedia row. Caller
+        (`docs/design/api.md` §9.1). Creates a `pending` ImageMedia row. Caller
         must be a member of `groupId`. `purpose=response` requires the cycle to
         be `open` and counts toward the 10-images-per-answer cap;
         `purpose=comment` requires it to be `published`. The client PUTs the
@@ -1145,7 +1189,7 @@ paths:
       operationId: getUpload
       tags: [media]
       summary: >
-        Status of one uploaded image (`03-api-contract.md` §9.3). The frontend
+        Status of one uploaded image (`docs/design/api.md` §9.3). The frontend
         polls this after the PUT until `status` leaves `pending`. Caller must be
         a member of `groupId`.
       parameters:
@@ -1185,7 +1229,7 @@ paths:
       operationId: patchUpload
       tags: [media]
       summary: >
-        Set or clear an image's caption (`03-api-contract.md` §9.6). Caller must
+        Set or clear an image's caption (`docs/design/api.md` §9.6). Caller must
         own the image.
       parameters:
         - $ref: "#/components/parameters/ImageIdPath"
@@ -1234,22 +1278,23 @@ paths:
       operationId: deleteUpload
       tags: [media]
       summary: >
-        Soft-delete an image: marks it `failed` with `errorMessage: "DELETED"`;
-        the bucket lifecycle reclaims storage (`03-api-contract.md` §9.4).
-        Idempotent. Caller must own the image. Refused with `IMAGE_IN_USE` when
-        the caller's published answer still references it, or (for a
-        `purpose: "comment"` image) a live comment has it attached.
+        Permanently delete an image: its original and processed S3 objects, a
+        CloudFront invalidation of its path, then its row
+        (`docs/design/api.md` §9.4). Caller must own the image. Refused with
+        `IMAGE_IN_USE` when the caller's published answer still references it,
+        or (for a `purpose: "comment"` image) a live comment has it attached.
+        Idempotent: an image that is already gone returns 204. If the S3 or
+        CloudFront step fails, returns 500 and keeps the row so a retry can
+        finish.
       parameters:
         - $ref: "#/components/parameters/ImageIdPath"
         - $ref: "#/components/parameters/GroupIdQuery"
         - $ref: "#/components/parameters/CycleIdQuery"
       responses:
         "204":
-          description: Deleted.
+          description: Deleted, or already gone.
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -1259,7 +1304,7 @@ paths:
       tags: [media]
       summary: >
         Optional convenience the client may call after its PUT
-        (`03-api-contract.md` §9.2). Processing is driven by the S3 trigger, so
+        (`docs/design/api.md` §9.2). Processing is driven by the S3 trigger, so
         this returns the same body as `GET /uploads/{imageId}`. Caller must be a
         member of `groupId`.
       parameters:
@@ -1302,13 +1347,13 @@ paths:
       tags: [media]
       summary: >
         CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for
-        one hour (`03-api-contract.md` §9.5, `08-media-uploads.md` §4). When the
+        one hour (`docs/design/api.md` §9.5, `docs/design/media.md` §4). When the
         Lambda has a cookie domain configured (prod) the response also carries
         three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`,
         `CloudFront-Key-Pair-Id`); the client must call this with
         `credentials: "include"`. Dev has no shared registrable domain, so the
         SPA appends the body values as signed-URL query parameters instead
-        (`08-media-uploads.md` §4.5). Caller must be a member of `groupId`.
+        (`docs/design/media.md` §4.5). Caller must be a member of `groupId`.
       parameters:
         - $ref: "#/components/parameters/GroupIdQuery"
       responses:
@@ -1333,7 +1378,7 @@ paths:
       operationId: createAvatar
       tags: [media]
       summary: >
-        Request a presigned S3 PUT URL for a new avatar (`03-api-contract.md`
+        Request a presigned S3 PUT URL for a new avatar (`docs/design/api.md`
         §9.7). JPEG, PNG or WebP, at most 5 MB. Creates a `pending` AvatarMedia
         row owned by the caller.
       requestBody:
@@ -1397,16 +1442,19 @@ paths:
       operationId: deleteAvatar
       tags: [media]
       summary: >
-        Soft-delete one of the caller's avatars (marks it `failed` with
-        `errorMessage: "DELETED"`). If it is the caller's current
-        `avatarMediaId`, that is cleared to `null`. Idempotent.
+        Permanently delete one of the caller's avatars: its original and
+        processed S3 objects, a CloudFront invalidation of
+        `/avatar/{avatarId}/*`, then its row (`docs/design/api.md` §9.7). If it
+        is the caller's current `avatarMediaId`, that is cleared to `null`
+        first. Idempotent: the lookup is under the caller's own user, so an
+        avatar that is already gone (or isn't theirs) returns 204 and touches
+        nothing. If the S3 or CloudFront step fails, returns 500 and keeps the
+        row.
       parameters:
         - $ref: "#/components/parameters/AvatarIdPath"
       responses:
         "204":
-          description: Deleted.
-        "404":
-          $ref: "#/components/responses/NotFound"
+          description: Deleted, or already gone.
 
   /push/subscribe:
     post:
@@ -1414,7 +1462,7 @@ paths:
       tags: [push]
       summary: >
         Upsert the caller's push subscription for one browser endpoint, keyed
-        by `(userId, sha256(endpoint))` (`07-notifications.md` §3.1). Resets
+        by `(userId, sha256(endpoint))` (`docs/design/notifications.md` §3.1). Resets
         `failureCount` to 0 and keeps the row's original `createdAt` and
         `lastSuccessAt`. `endpoint` must be an `https://` URL of at most 2048
         characters; `keys.p256dh` must base64url-decode to a 65-byte
@@ -1505,7 +1553,7 @@ paths:
       tags: [push]
       summary: >
         Send a `kind: test` push to every one of the caller's subscriptions
-        (`07-notifications.md` §9). No request body. Each result is
+        (`docs/design/notifications.md` §9). No request body. Each result is
         `delivered`, `expired` (the push service answered 404/410, and the
         subscription has been deleted) or `failed` (anything else; the
         subscription's `failureCount` is incremented, and it is deleted at 5).
@@ -1535,7 +1583,7 @@ paths:
         The caller's notification preferences, one entry per group they
         belong to, in `GET /config` membership order. Groups with no stored
         `NotificationPref` row report the defaults (both true). Added M11:
-        `03` §10 only had the PUT, which left Settings no way to read state.
+        `docs/design/api.md` §10 only had the PUT, which left Settings no way to read state.
       responses:
         "200":
           description: One preference per membership.
@@ -1610,13 +1658,151 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthenticated"
 
+  /admin/dev/tick/cycle:
+    post:
+      operationId: devTickCycle
+      tags: [dev]
+      summary: >
+        Run the cycle tick now (`docs/design/api.md` §11a.1). This route exists
+        only when `ENV=dev`. Every other environment returns 404: the route
+        isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if
+        it's ever reached. With `advanceCycleClosesBy`, the group's active
+        cycle (its `open` cycle if it has one, else its `voting` cycle) has its
+        deadline rewound by that duration first, so its transition is due at
+        once. `groupId` is then required and the caller must be that group's
+        admin. Without it, the tick runs globally and the caller must be an
+        admin of at least one group. An absent or empty body is allowed.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevTickCycleRequest"
+            example:
+              groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+              advanceCycleClosesBy: "7d"
+      responses:
+        "200":
+          description: >
+            Every state change the tick made, across all groups. `from: null`
+            marks a newly created `voting` cycle (`docs/design/lifecycle.md`
+            §5.4) rather than a transition of an existing one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevTickCycleResponse"
+              example:
+                transitions:
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202610"
+                    from: "voting"
+                    to: "open"
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202611"
+                    from: null
+                    to: "voting"
+                  - groupId: "01HG2F3K4M5N6P7Q8R9S0T1V2W"
+                    cycleId: "202609"
+                    from: "open"
+                    to: "published"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >
+            Not `ENV=dev`. The example is the Lambda's own refusal, a backstop.
+            Outside dev the route isn't deployed, so API Gateway answers first
+            with its own body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/not-found"
+                title: "Not found"
+                status: 404
+                detail: "dev routes are only available when ENV=dev"
+                code: "NOT_FOUND"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+        "422":
+          description: >
+            `advanceCycleClosesBy` isn't an integer plus `m`/`h`/`d` between 0
+            and 366 days, or it was sent without `groupId`, or the body isn't
+            valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/validation-failed"
+                title: "Validation failed"
+                status: 422
+                detail: "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+                code: "VALIDATION_FAILED"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+                fieldErrors:
+                  - field: "advanceCycleClosesBy"
+                    code: "INVALID"
+                    message: "invalid duration `5x`: expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
+
+  /admin/dev/tick/notify:
+    post:
+      operationId: devTickNotify
+      tags: [dev]
+      summary: >
+        Run the notify tick now, globally (`docs/design/api.md` §11a.2). No
+        request body. This route exists only when `ENV=dev`. Every other
+        environment returns 404: the route isn't deployed there, and the
+        Lambda also refuses with `NOT_FOUND` if it's ever reached. The caller
+        must be an admin of at least one group. Only deadline reminders run
+        here. Cycle-open and publication fan-outs come from the cycle tick via
+        `lambda-push` and aren't reported by either dev route.
+      responses:
+        "200":
+          description: >
+            One entry per deadline reminder sent this tick. `failed` counts
+            expired and failed sends together.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevTickNotifyResponse"
+              example:
+                fanouts:
+                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                    cycleId: "202610"
+                    kind: "deadline_reminder"
+                    offsetHours: 24
+                    delivered: 5
+                    failed: 1
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >
+            Not `ENV=dev`. The example is the Lambda's own refusal, a backstop.
+            Outside dev the route isn't deployed, so API Gateway answers first
+            with its own body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: "https://api.opennewsletter.example.com/errors/not-found"
+                title: "Not found"
+                status: 404
+                detail: "dev routes are only available when ENV=dev"
+                code: "NOT_FOUND"
+                correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: "Cognito ID token (`Authorization: Bearer {idToken}`), per `03-api-contract.md` §1."
+      description: "Cognito ID token (`Authorization: Bearer {idToken}`), per `docs/design/api.md` §1."
 
   parameters:
     GroupIdPath:
@@ -1679,7 +1865,7 @@ components:
       name: emoji
       in: path
       required: true
-      description: URL-encoded emoji (`09-engagement.md` §2.2).
+      description: URL-encoded emoji (`docs/design/engagement.md` §2.2).
       schema:
         type: string
       example: "%F0%9F%94%A5"
@@ -1696,7 +1882,7 @@ components:
       required: true
       description: >
         Required with `groupId` because an ImageMedia row is keyed by
-        `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+        `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
       schema:
         type: string
       example: "202606"
@@ -1720,7 +1906,7 @@ components:
       name: limit
       in: query
       required: false
-      description: Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description.
+      description: Page size, 1-100 (`docs/design/api.md` §1). Some routes cap this lower — see their description.
       schema:
         type: integer
         minimum: 1
@@ -1782,7 +1968,7 @@ components:
         `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`,
         `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or
         `CANDIDATE_PROMOTED`
-        (`03-api-contract.md` §1.1).
+        (`docs/design/api.md` §1.1).
       content:
         application/json:
           schema:
@@ -1814,14 +2000,14 @@ components:
     NewsletterArchived:
       description: >
         The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see
-        `10-archival.md` for the (deferred) archive-link behavior.
+        `docs/design/archival.md` for the (deferred) archive-link behavior.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ProblemDetails"
 
   schemas:
-    # ---- Shared enums (canonical home per 03-api-contract.md §2.3/§4.3) ----
+    # ---- Shared enums (canonical home per docs/design/api.md §2.3/§4.3) ----
 
     Role:
       type: string
@@ -1868,11 +2054,23 @@ components:
       required: [field, code, message]
       properties:
         field:
+          description: >-
+            The request field's camelCase wire name. A nested field uses its
+            bare name (`responseWindowDays`, not `cycleSettings.responseWindowDays`).
           type: string
         code:
-          type: string
+          $ref: "#/components/schemas/FieldErrorCode"
         message:
           type: string
+
+    FieldErrorCode:
+      description: >-
+        Why the field failed. `INVALID` covers almost everything, and `message`
+        says what's wrong. `CLOSES_IN_PAST`: a `responseWindowDays` change would
+        close the group's open cycle in the past. Clients should treat an
+        unknown code as `INVALID`.
+      type: string
+      enum: [INVALID, CLOSES_IN_PAST]
 
     ProblemDetails:
       type: object
@@ -1889,7 +2087,7 @@ components:
           type: string
         code:
           type: string
-          description: Machine-readable code from the `03-api-contract.md` §1.1 catalog.
+          description: Machine-readable code from the `docs/design/api.md` §1.1 catalog.
         correlationId:
           type: string
         fieldErrors:
@@ -1911,7 +2109,7 @@ components:
           type: string
         timezone:
           type: string
-          description: The group's IANA timezone, for labelling cycles client-side (`04` §14a).
+          description: The group's IANA timezone, for labelling cycles client-side (`docs/design/frontend.md` §14a).
         gradient:
           $ref: "#/components/schemas/GradientSlug"
 
@@ -1963,7 +2161,10 @@ components:
         avatarColor:
           $ref: "#/components/schemas/AvatarColorSlug"
         avatarMediaId:
-          description: Absent leaves the photo alone; an explicit `null` clears it.
+          description: >-
+            Absent leaves the photo alone. A new id replaces the photo, and an
+            explicit `null` clears it. Either way the displaced avatar is
+            permanently deleted (`docs/design/api.md` §9.7).
           type: [string, "null"]
 
     # ---- §3 Invite & membership routes ----
@@ -1980,10 +2181,17 @@ components:
           description: Defaults to the group's invite TTL setting when omitted.
         roleOnRedeem:
           $ref: "#/components/schemas/Role"
+        boundEmail:
+          type: string
+          maxLength: 254
+          description: >
+            Restricts redemption to a caller whose verified ID-token `email`
+            matches it, case-insensitively. Trimmed and stored lowercased; must
+            contain `@`.
 
     CreateInviteResponse:
       type: object
-      required: [code, groupId, expiresAt, roleOnRedeem]
+      required: [code, groupId, expiresAt, roleOnRedeem, boundEmail]
       properties:
         code:
           type: string
@@ -1994,6 +2202,9 @@ components:
           format: date-time
         roleOnRedeem:
           $ref: "#/components/schemas/Role"
+        boundEmail:
+          type: [string, "null"]
+          description: The lowercased bound email, or `null` for an unbound invite.
 
     InviteSummary:
       type: object
@@ -2007,6 +2218,7 @@ components:
         - expiresAt
         - consumedBy
         - consumedAt
+        - boundEmail
       properties:
         code:
           type: string
@@ -2029,6 +2241,9 @@ components:
         consumedAt:
           type: [string, "null"]
           format: date-time
+        boundEmail:
+          type: [string, "null"]
+          description: The lowercased bound email, or `null` for an unbound invite.
 
     InviteListResponse:
       type: object
@@ -2457,7 +2672,7 @@ components:
     CommentResponse:
       type: object
       description: >
-        One comment (`09-engagement.md` §1.1). Used both on the engagement
+        One comment (`docs/design/engagement.md` §1.1). Used both on the engagement
         routes and inline in the published newsletter. A soft-deleted comment
         has `deletedAt` set, an empty `body` and a null `image`.
       required: [commentId, authorUserId, displayName, body, image, createdAt, editedAt, deletedAt]
@@ -2860,8 +3075,9 @@ components:
         errorMessage:
           type: [string, "null"]
           description: >
-            Set when `status=failed`: `IMAGE_TOO_LARGE`, `IMAGE_DECODE_FAILED`
-            or `DELETED`.
+            Set when `status=failed`: `IMAGE_TOO_LARGE` or
+            `IMAGE_DECODE_FAILED`. A deleted image has no row, so `DELETED` is
+            no longer returned.
         uploadedAt:
           type: string
           format: date-time
@@ -3091,3 +3307,70 @@ components:
         buildAt:
           type: [string, "null"]
           format: date-time
+
+    # ---- §11a Dev-only tick routes ----
+
+    DevTickCycleRequest:
+      type: object
+      properties:
+        groupId:
+          type: string
+          description: Required when `advanceCycleClosesBy` is set.
+        advanceCycleClosesBy:
+          type: string
+          description: >
+            An integer plus `m`, `h` or `d` (`5m`, `2h`, `4d`), between 0 and
+            366 days.
+
+    CycleTransition:
+      type: object
+      required: [groupId, cycleId, from, to]
+      properties:
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        from:
+          description: "`null` when the tick created this cycle."
+          oneOf:
+            - $ref: "#/components/schemas/NewsletterStatus"
+            - type: "null"
+        to:
+          $ref: "#/components/schemas/NewsletterStatus"
+
+    DevTickCycleResponse:
+      type: object
+      required: [transitions]
+      properties:
+        transitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CycleTransition"
+
+    DeadlineFanout:
+      type: object
+      required: [groupId, cycleId, kind, offsetHours, delivered, failed]
+      properties:
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        kind:
+          type: string
+          enum: [deadline_reminder]
+        offsetHours:
+          type: integer
+        delivered:
+          type: integer
+        failed:
+          type: integer
+          description: Expired and failed sends together.
+
+    DevTickNotifyResponse:
+      type: object
+      required: [fanouts]
+      properties:
+        fanouts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeadlineFanout"

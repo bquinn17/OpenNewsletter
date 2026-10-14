@@ -1,4 +1,4 @@
-//! Request validation for the media routes (`plans/03-api-contract.md` §9).
+//! Request validation for the media routes (`docs/design/api.md` §9).
 
 use base64::Engine;
 use domain::{ApiError, ApiErrorCode, ImageMimeType};
@@ -8,7 +8,7 @@ use shared::config::MAX_IMAGE_CAPTION_CHARS;
 /// string (including a type that's simply not one we accept, like an SVG)
 /// is `IMAGE_BAD_TYPE` (415), never a generic 422 — which is why the DTO
 /// field is a bare `String` rather than an enum that would fail JSON
-/// deserialization first (`08-media-uploads.md` §1).
+/// deserialization first (`docs/design/media.md` §1).
 pub fn parse_image_mime_type(raw: &str) -> Result<ImageMimeType, ApiError> {
     match raw {
         "image/jpeg" => Ok(ImageMimeType::Jpeg),
@@ -38,7 +38,7 @@ fn bad_type(mime: &str) -> ApiError {
 }
 
 /// The file extension used in S3 keys for a given mime type
-/// (`08-media-uploads.md` §2).
+/// (`docs/design/media.md` §2).
 pub fn extension_for(mime: ImageMimeType) -> &'static str {
     match mime {
         ImageMimeType::Jpeg => "jpg",
@@ -66,7 +66,7 @@ pub fn validate_byte_size(byte_size: u64, max_bytes: u64) -> Result<(), ApiError
 }
 
 /// `sha256`, when present, must be a standard-base64 encoding of exactly 32
-/// bytes (44 chars, per `03-api-contract.md` §9.1's `CreateUploadRequest`).
+/// bytes (44 chars, per `docs/design/api.md` §9.1's `CreateUploadRequest`).
 pub fn validate_sha256(sha256: Option<&str>) -> Result<(), ApiError> {
     let Some(sha256) = sha256 else {
         return Ok(());

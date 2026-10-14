@@ -1,4 +1,4 @@
-//! Push payload JSON and per-kind copy (`plans/07-notifications.md` §5,
+//! Push payload JSON and per-kind copy (`docs/design/notifications.md` §5,
 //! M11 decision D6). Pure formatting — no I/O, no persistence lookups.
 
 use chrono::{DateTime, Utc};
@@ -18,7 +18,7 @@ pub struct PushPayload {
     pub group_name: String,
 }
 
-/// `cycle_open` (`07-notifications.md` §6, D6): title "{groupName}: time to
+/// `cycle_open` (`docs/design/notifications.md` §6, D6): title "{groupName}: time to
 /// write", body "{total} questions are waiting. You have {window} days to
 /// respond." `window` is computed by the caller as
 /// `round((closeAt - openAt) / 24h)`, minimum 1.
@@ -50,7 +50,7 @@ pub fn cycle_open(
     )
 }
 
-/// `deadline_reminder` (`07-notifications.md` §7.2, D5/D6). `is_done` means
+/// `deadline_reminder` (`docs/design/notifications.md` §7.2, D5/D6). `is_done` means
 /// this recipient has published every locked question in the cycle; D5
 /// decides whether a done member is sent at all before this is called.
 #[allow(clippy::too_many_arguments)]
@@ -133,7 +133,7 @@ pub fn format_due_time(at: DateTime<Utc>, tz: Tz) -> String {
     at.with_timezone(&tz).format("%-I:%M %p %Z").to_string()
 }
 
-/// `publication` (`07-notifications.md` §8, D6). `answers` is published
+/// `publication` (`docs/design/notifications.md` §8, D6). `answers` is published
 /// responses to text questions across all members; `polls` is the number of
 /// poll questions locked in the cycle. Always-on; no preference, no group
 /// switch.
@@ -163,7 +163,7 @@ pub fn publication(
     build("publication", title, body, group_name, group_id, cycle_id)
 }
 
-/// `test` (`03-api-contract.md` §10.4, D6). `groupName` is empty; `url` and
+/// `test` (`docs/design/api.md` §10.4, D6). `groupName` is empty; `url` and
 /// `tag` are the fixed strings `/settings` and `test`, not the
 /// group/cycle-scoped forms the other kinds use.
 pub fn test() -> PushPayload {
@@ -200,7 +200,7 @@ fn build(
 /// Truncates `body` (never `title`/`url`/`tag`, which are short and fixed in
 /// shape) until the serialized payload fits [`MAX_PUSH_PAYLOAD_BYTES`]. A
 /// defensive backstop — no copy this module generates should ever actually
-/// hit it (`07-notifications.md` §5, D6).
+/// hit it (`docs/design/notifications.md` §5, D6).
 fn enforce_payload_budget(payload: &mut PushPayload) {
     loop {
         let size = serde_json::to_vec(payload).map(|v| v.len()).unwrap_or(0);

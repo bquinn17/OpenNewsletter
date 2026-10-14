@@ -6,7 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_CDN_BASE_URL: string;
   readonly VITE_COGNITO_USER_POOL_ID: string;
   readonly VITE_COGNITO_CLIENT_ID: string;
-  readonly VITE_COGNITO_BOOTSTRAP_CLIENT_ID: string;
+  /** Dev only (D5): prod has no `admin-bootstrap` client. */
+  readonly VITE_COGNITO_BOOTSTRAP_CLIENT_ID?: string;
   readonly VITE_COGNITO_HOSTED_DOMAIN: string;
   readonly VITE_REDIRECT_URI: string;
   readonly VITE_ENV: string;

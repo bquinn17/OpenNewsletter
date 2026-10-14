@@ -12,6 +12,7 @@ from typing import Any
 
 import aws_cdk as cdk
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
@@ -84,6 +85,18 @@ class MediaPipelineStack(cdk.Stack):
         avatars_originals_bucket.grant_read(self.image_process_fn)
         avatars_originals_bucket.grant_delete(self.image_process_fn)
         avatars_processed_bucket.grant_put(self.image_process_fn)
+        # Removes the variants it just wrote when the row was deleted
+        # mid-processing (`docs/design/media.md` §8.0). Plain `s3:DeleteObject`
+        # on the processed prefixes, as in ApiStack, rather than `grant_delete`.
+        self.image_process_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:DeleteObject"],
+                resources=[
+                    processed_bucket.arn_for_objects("img/*"),
+                    avatars_processed_bucket.arn_for_objects("avatar/*"),
+                ],
+            )
+        )
 
         # S3 event subscription — fires on every upload to the originals prefix.
         #

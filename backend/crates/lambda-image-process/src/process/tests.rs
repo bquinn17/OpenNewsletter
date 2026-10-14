@@ -209,3 +209,20 @@ fn a_gif_avatar_fails_terminally() {
     let err = process_avatar(&bytes).unwrap_err();
     assert_eq!(err, ProcessError::DecodeFailed);
 }
+
+#[test]
+fn an_image_wider_than_the_decode_budget_is_refused_before_decoding() {
+    let img = solid_image(shared::config::MAX_IMAGE_EDGE_PX + 1, 1);
+    let bytes = encode(&img, ImageFormat::Png);
+    assert_eq!(process_image(&bytes).unwrap_err(), ProcessError::TooLarge);
+    assert_eq!(process_avatar(&bytes).unwrap_err(), ProcessError::TooLarge);
+}
+
+#[test]
+fn a_gif_with_more_frames_than_the_budget_is_refused() {
+    let frames: Vec<DynamicImage> = (0..=shared::config::MAX_GIF_FRAMES)
+        .map(|_| solid_image(2, 2))
+        .collect();
+    let bytes = encode_gif_fixture(&frames, 10);
+    assert_eq!(process_image(&bytes).unwrap_err(), ProcessError::TooLarge);
+}

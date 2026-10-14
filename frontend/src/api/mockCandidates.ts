@@ -10,7 +10,7 @@ type CandidateItemResponse = S["CandidateItemResponse"];
 type CreateCandidateRequest = S["CreateCandidateRequest"];
 
 /**
- * Mock routes for `/groups/{g}/candidate-questions*` (`03-api-contract.md`
+ * Mock routes for `/groups/{g}/candidate-questions*` (`docs/design/api.md`
  * §6). Mirrors `backend/crates/lambda-questions`: prompt/poll-option
  * validation (`validation.rs`), the vote cap transaction semantics
  * (`handlers.rs`), and anonymity redaction.
@@ -257,7 +257,7 @@ function listCandidates(groupId: string, query: URLSearchParams): S["CandidateLi
   };
 }
 
-type FieldError = { field: string; code: string; message: string };
+type FieldError = S["FieldError"];
 
 function validationFailed(fieldErrors: FieldError[]): never {
   const problem: S["ProblemDetails"] = {
@@ -333,7 +333,8 @@ function validatePollOptions(
         },
       ]);
     }
-    if (seen.has(label)) {
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
       validationFailed([
         {
           field: "pollOptions",
@@ -342,7 +343,7 @@ function validatePollOptions(
         },
       ]);
     }
-    seen.add(label);
+    seen.add(key);
     result.push({ optionId: `cq_${nextQuestionId}_opt_${result.length + 1}`, label });
   }
   return result;

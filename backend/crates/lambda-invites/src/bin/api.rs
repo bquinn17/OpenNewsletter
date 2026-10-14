@@ -1,4 +1,4 @@
-//! `lambda-invites` API entry point — `plans/03-api-contract.md` §3.
+//! `lambda-invites` API entry point — `docs/design/api.md` §3.
 
 use invites::{router, state::AppState};
 use lambda_http::{service_fn, Error};

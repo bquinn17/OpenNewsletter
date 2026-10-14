@@ -4,9 +4,15 @@ The `PreSignUp` trigger Lambda is built here rather than in ApiStack: CDK attach
 trigger wiring to the user pool's own stack, so defining the function elsewhere
 would make this stack depend on that one while ApiStack already depends on this one
 for the JWT authorizer. There is no `PostConfirmation` trigger
-(`plans/05-auth-flow.md` §5).
+(`docs/design/auth.md` §5).
 
-Placeholder ARNs are used for IdP secrets until M1 operator tasks are complete.
+IdP credentials come from the one per-env app secret (`config.app_secret_arn`),
+via CloudFormation dynamic references; a placeholder ARN is used until the
+operator creates it.
+
+The `admin-bootstrap` password client exists only in dev
+(`docs/design/infrastructure.md` §4.3): prod bootstraps its first admin through
+an email-bound invite redeemed via Google instead (`docs/design/auth.md` §9.1a).
 """
 
 from __future__ import annotations
@@ -19,13 +25,15 @@ from aws_cdk import aws_lambda
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 
-from .config import EnvConfig
+from .config import (
+    APP_SECRET_FACEBOOK_APP_ID,
+    APP_SECRET_FACEBOOK_APP_SECRET,
+    APP_SECRET_GOOGLE_CLIENT_ID,
+    APP_SECRET_GOOGLE_CLIENT_SECRET,
+    EnvConfig,
+    secret_ref,
+)
 from .lambda_assets import lambda_code
-
-
-# CloudFormation dynamic reference; resolves at deploy time, never logged.
-def _sm_ref(secret_arn: str, json_field: str) -> str:
-    return f"{{{{resolve:secretsmanager:{secret_arn}:SecretString:{json_field}}}}}"
 
 
 class AuthStack(cdk.Stack):
@@ -55,13 +63,13 @@ class AuthStack(cdk.Stack):
                 fullname=cognito.StandardAttribute(required=False, mutable=True),
             ),
             # No custom attributes: the invite code rides in the OIDC `state`
-            # parameter, not on the user record (`plans/05-auth-flow.md` §1).
+            # parameter, not on the user record (`docs/design/auth.md` §1).
             # Keep the user pool in dev too — recreating it loses all users.
             removal_policy=cdk.RemovalPolicy.RETAIN,
         )
 
         # Pass-through that auto-confirms federated accounts. It never sees the
-        # invite code and never touches DynamoDB (`plans/05-auth-flow.md` §3).
+        # invite code and never touches DynamoDB (`docs/design/auth.md` §3).
         self.presignup_fn = aws_lambda.Function(
             self,
             "PreSignUpFn",
@@ -99,27 +107,36 @@ class AuthStack(cdk.Stack):
             "GoogleIdP",
             user_pool=self.user_pool,
             # client_id is public-facing; resolved from the same secret for consistency.
-            client_id=_sm_ref(config.google_oauth_secret_arn, "clientId"),
+            client_id=secret_ref(config.app_secret_arn, APP_SECRET_GOOGLE_CLIENT_ID),
             client_secret_value=cdk.SecretValue.secrets_manager(
-                config.google_oauth_secret_arn, json_field="clientSecret"
+                config.app_secret_arn, json_field=APP_SECRET_GOOGLE_CLIENT_SECRET
             ),
             scopes=["openid", "email", "profile"],
             attribute_mapping=cognito.AttributeMapping(
                 email=cognito.ProviderAttribute.GOOGLE_EMAIL,
                 fullname=cognito.ProviderAttribute.GOOGLE_NAME,
+                # `POST /invites/redeem` checks this claim for an email-bound
+                # invite (`docs/design/auth.md` §4.2). CDK has no named field
+                # for it, so it goes through `custom`. Facebook doesn't supply
+                # it, which is why a bound invite can only be redeemed via Google.
+                custom={
+                    "email_verified": cognito.ProviderAttribute.other("email_verified"),
+                },
             ),
         )
 
         # No Apple IdP: Sign In with Apple requires a paid ($99/yr) Apple
         # Developer membership, which the owner declined (decision recorded
-        # in `plans/PROGRESS.md`). Google + Facebook only.
+        # in `docs/decisions.md`). Google + Facebook only.
 
         facebook_idp = cognito.UserPoolIdentityProviderFacebook(
             self,
             "FacebookIdP",
             user_pool=self.user_pool,
-            client_id=_sm_ref(config.facebook_oauth_secret_arn, "clientId"),
-            client_secret=_sm_ref(config.facebook_oauth_secret_arn, "clientSecret"),
+            client_id=secret_ref(config.app_secret_arn, APP_SECRET_FACEBOOK_APP_ID),
+            client_secret=secret_ref(
+                config.app_secret_arn, APP_SECRET_FACEBOOK_APP_SECRET
+            ),
             scopes=["public_profile", "email"],
             attribute_mapping=cognito.AttributeMapping(
                 email=cognito.ProviderAttribute.FACEBOOK_EMAIL,
@@ -160,18 +177,21 @@ class AuthStack(cdk.Stack):
         self.frontend_client.node.add_dependency(google_idp)
         self.frontend_client.node.add_dependency(facebook_idp)
 
-        self.bootstrap_client = self.user_pool.add_client(
-            "AdminBootstrapClient",
-            user_pool_client_name="admin-bootstrap",
-            generate_secret=False,
-            auth_flows=cognito.AuthFlow(user_password=True),
-            supported_identity_providers=[
-                cognito.UserPoolClientIdentityProvider.COGNITO,
-            ],
-            id_token_validity=cdk.Duration.minutes(60),
-            access_token_validity=cdk.Duration.minutes(60),
-            refresh_token_validity=cdk.Duration.days(30),
-        )
+        # Dev only: prod has no password auth at all (module docstring).
+        self.bootstrap_client: cognito.UserPoolClient | None = None
+        if config.env == "dev":
+            self.bootstrap_client = self.user_pool.add_client(
+                "AdminBootstrapClient",
+                user_pool_client_name="admin-bootstrap",
+                generate_secret=False,
+                auth_flows=cognito.AuthFlow(user_password=True),
+                supported_identity_providers=[
+                    cognito.UserPoolClientIdentityProvider.COGNITO,
+                ],
+                id_token_validity=cdk.Duration.minutes(60),
+                access_token_validity=cdk.Duration.minutes(60),
+                refresh_token_validity=cdk.Duration.days(30),
+            )
 
         # --- Hosted UI domain ---
 
@@ -189,9 +209,10 @@ class AuthStack(cdk.Stack):
         cdk.CfnOutput(
             self, "UserPoolClientId", value=self.frontend_client.user_pool_client_id
         )
-        cdk.CfnOutput(
-            self,
-            "UserPoolBootstrapClientId",
-            value=self.bootstrap_client.user_pool_client_id,
-        )
+        if self.bootstrap_client is not None:
+            cdk.CfnOutput(
+                self,
+                "UserPoolBootstrapClientId",
+                value=self.bootstrap_client.user_pool_client_id,
+            )
         cdk.CfnOutput(self, "HostedUiDomain", value=self.domain.base_url())

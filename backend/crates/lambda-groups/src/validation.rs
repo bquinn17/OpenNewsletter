@@ -1,5 +1,5 @@
 //! Request validation for the group and profile routes
-//! (`plans/03-api-contract.md` §2.3 and §4.3).
+//! (`docs/design/api.md` §2.3 and §4.3).
 
 use domain::api::{CycleSettingsPatch, NotificationSettingsPatch, PatchGroupRequest};
 use domain::{ApiError, CycleSettings, Group, NotificationSettings};

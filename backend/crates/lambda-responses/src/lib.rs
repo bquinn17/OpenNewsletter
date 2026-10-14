@@ -1,4 +1,4 @@
-//! Response (answer) draft/publish routes (`plans/03-api-contract.md` §7). Split
+//! Response (answer) draft/publish routes (`docs/design/api.md` §7). Split
 //! into a library so integration tests can call the handlers directly.
 
 pub mod handlers;

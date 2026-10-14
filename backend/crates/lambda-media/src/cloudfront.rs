@@ -1,11 +1,12 @@
-//! Pure CloudFront signed-cookie/URL helpers (`plans/08-media-uploads.md` §4,
-//! `plans/03-api-contract.md` §9.5). No network I/O — the private key and the
+//! Pure CloudFront signed-cookie/URL helpers (`docs/design/media.md` §4,
+//! `docs/design/api.md` §9.5). No network I/O — the private key and the
 //! policy string are both passed in, so every function here is cheap to unit
 //! test directly without a Secrets Manager call or a live CloudFront
 //! distribution.
 
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
+use rsa::rand_core::OsRng;
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use sha1::{Digest, Sha1};
 use thiserror::Error;
@@ -30,7 +31,7 @@ pub fn parse_private_key(pem: &str) -> Result<RsaPrivateKey, CloudFrontError> {
 }
 
 /// The exact, whitespace-free CloudFront custom policy for a signed
-/// cookie/URL scoped to one resource pattern (`08-media-uploads.md` §4.3).
+/// cookie/URL scoped to one resource pattern (`docs/design/media.md` §4.3).
 /// CloudFront verifies the signature over these literal bytes, so field
 /// order and the absence of whitespace are load-bearing, not stylistic.
 pub fn policy_json(resource: &str, expires_at_epoch_seconds: i64) -> String {
@@ -41,14 +42,19 @@ pub fn policy_json(resource: &str, expires_at_epoch_seconds: i64) -> String {
 
 /// RSA PKCS#1 v1.5 signature over the SHA-1 digest of `policy` — the scheme
 /// CloudFront's signed cookies and signed URLs both require.
+///
+/// Signs with an RNG so `rsa` applies base blinding. The crate's private-key
+/// operation isn't constant-time (RUSTSEC-2023-0071, no fix upstream), and
+/// any member can trigger signing via `GET /media-cookie`. Blinding
+/// decorrelates the timing from the key; `deny.toml` records the residual risk.
 pub fn sign_policy(key: &RsaPrivateKey, policy: &[u8]) -> Result<Vec<u8>, CloudFrontError> {
     let digest = Sha1::digest(policy);
-    key.sign(Pkcs1v15Sign::new::<Sha1>(), &digest)
+    key.sign_with_rng(&mut OsRng, Pkcs1v15Sign::new::<Sha1>(), &digest)
         .map_err(|e| CloudFrontError::SignFailed(e.to_string()))
 }
 
 /// CloudFront's modified base64 alphabet: standard base64, then `+`→`-`,
-/// `=`→`_`, `/`→`~` (`08-media-uploads.md` §4.3).
+/// `=`→`_`, `/`→`~` (`docs/design/media.md` §4.3).
 pub fn modified_base64_encode(bytes: &[u8]) -> String {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;

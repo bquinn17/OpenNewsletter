@@ -1,40 +1,23 @@
 //! The `lambda-notify-tick` deadline-reminder fan-out algorithm
-//! (`plans/07-notifications.md` §7, M11 decision D5). Runs identically
+//! (`docs/design/notifications.md` §7, M11 decision D5). Runs identically
 //! whether triggered by the EventBridge schedule or the dev
 //! `POST /admin/dev/tick/notify` route — both call [`run_notify_tick`].
 
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
-use domain::{Group, Newsletter, ResponseStatus};
+use domain::api::{DeadlineFanout, DeadlineFanoutKind, DevTickNotifyResponse};
+use domain::{Group, Newsletter, PushSubscription, ResponseStatus, UserId};
+use futures::{stream, StreamExt};
 use persistence::{groups, newsletters, push as push_repo, responses};
 use push::metrics::FanoutMetrics;
+use push::payload::PushPayload;
 use push::state::AppState;
 use push::{delivery, payload};
-use serde::Serialize;
 use shared::config::{
     MAX_REMINDER_OFFSET_HOURS, NOTIFY_TICK_CYCLE_CUTOFF_SECS, NOTIFY_TICK_SEND_CUTOFF_SECS,
+    PUSH_MEMBER_READ_CONCURRENCY,
 };
 use std::time::Instant;
-
-/// One deadline-reminder fan-out this tick ran
-/// (`plans/03-api-contract.md` §11a.2). This route/tick only ever reports
-/// `deadline_reminder` — cycle-open and publication are fanned out from
-/// `lambda-cycle-tick` via `lambda-push` directly.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NotifyFanout {
-    pub group_id: String,
-    pub cycle_id: String,
-    pub kind: &'static str,
-    pub offset_hours: u32,
-    pub delivered: u32,
-    pub failed: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct NotifyTickSummary {
-    pub fanouts: Vec<NotifyFanout>,
-}
 
 /// Run one full tick: find every `open` cycle whose `responseCloseAt` falls
 /// within the configurable max offset, fan out at most one deadline
@@ -44,7 +27,7 @@ pub struct NotifyTickSummary {
 /// `NOTIFY_TICK_CYCLE_CUTOFF_SECS` (the rest stay unclaimed and the next
 /// tick picks them up), and no send starts after
 /// `NOTIFY_TICK_SEND_CUTOFF_SECS`.
-pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
+pub async fn run_notify_tick(state: &AppState) -> DevTickNotifyResponse {
     let now = Utc::now();
     let started = Instant::now();
     let cycle_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_CYCLE_CUTOFF_SECS);
@@ -83,7 +66,7 @@ pub async fn run_notify_tick(state: &AppState) -> NotifyTickSummary {
         tracing::error!(error = ?e, "failed to upsert the notify-tick sentinel row");
     }
 
-    NotifyTickSummary { fanouts }
+    DevTickNotifyResponse { fanouts }
 }
 
 /// Claims the `NOTIFIED#CLOSE#{offset}` marker for every due-or-moot offset
@@ -96,7 +79,7 @@ async fn process_cycle(
     nl: &Newsletter,
     now: DateTime<Utc>,
     send_cutoff: Instant,
-) -> Option<NotifyFanout> {
+) -> Option<DeadlineFanout> {
     let group = match groups::get_group(&state.repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -175,10 +158,10 @@ async fn process_cycle(
     )
     .await;
 
-    Some(NotifyFanout {
-        group_id: nl.group_id.to_string(),
-        cycle_id: nl.cycle_id.to_string(),
-        kind: "deadline_reminder",
+    Some(DeadlineFanout {
+        group_id: nl.group_id.clone(),
+        cycle_id: nl.cycle_id.clone(),
+        kind: DeadlineFanoutKind::DeadlineReminder,
         offset_hours: offset_to_send,
         delivered: fanout_metrics.delivered_count(),
         failed: fanout_metrics.failed_count(),
@@ -214,68 +197,91 @@ async fn fan_out_deadline_reminder(
 
     let total_questions = nl.locked_question_ids.len() as u32;
 
-    // Each member's message differs (their own progress), so gather
-    // (user, subscriptions, message) first, then send everything at once.
-    let mut targets = Vec::new();
-    for member in members {
-        let pref = match push_repo::get_pref(&state.repo, &member.user_id, &nl.group_id).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: pref lookup failed");
-                continue;
+    // Each member's message differs (their own progress). The three reads
+    // behind it (pref, answered count, subscriptions) don't depend
+    // on each other's results, so they run together; per-member work is
+    // likewise independent across members, so it's bounded-concurrent rather
+    // than one member at a time.
+    let targets: Vec<(UserId, Vec<PushSubscription>, PushPayload)> = stream::iter(members)
+        .map(|member| async move {
+            let (pref_result, responses_result, subs_result) = futures::join!(
+                push_repo::get_pref(&state.repo, &member.user_id, &nl.group_id),
+                responses::list_my_responses_in_cycle(
+                    &state.repo,
+                    &member.user_id,
+                    &nl.group_id,
+                    &nl.cycle_id,
+                ),
+                push_repo::list_subs_for_user(&state.repo, &member.user_id),
+            );
+
+            let pref = match pref_result {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: pref lookup failed");
+                    return None;
+                }
+            };
+            if !pref.map(|p| p.deadline_reminders).unwrap_or(true) {
+                return None;
             }
-        };
-        if !pref.map(|p| p.deadline_reminders).unwrap_or(true) {
-            continue;
-        }
 
-        let published_count = match responses::list_my_responses_in_cycle(
-            &state.repo,
-            &member.user_id,
-            &nl.group_id,
-            &nl.cycle_id,
-        )
-        .await
-        {
-            Ok(list) => list
-                .iter()
-                .filter(|r| r.status == ResponseStatus::Published)
-                .count() as u32,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
-                continue;
+            // A draft with live content counts as answered: it auto-publishes at
+            // close (`docs/design/notifications.md` §7.2). Same rule as the
+            // close-time sweep, so a draft whose only images are gone doesn't.
+            let list = match responses_result {
+                Ok(list) => list,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
+                    return None;
+                }
+            };
+            let mut answered_count = 0u32;
+            for r in &list {
+                let answered = r.status == ResponseStatus::Published
+                    || match responses::has_live_content(&state.repo, r).await {
+                        Ok(live) => live,
+                        Err(e) => {
+                            tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: draft image lookup failed");
+                            return None;
+                        }
+                    };
+                answered_count += u32::from(answered);
             }
-        };
-        let is_done = total_questions > 0 && published_count >= total_questions;
-        if is_done && offset_hours == smallest_offset_overall {
-            continue;
-        }
-
-        let subs = match push_repo::list_subs_for_user(&state.repo, &member.user_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = ?e, user_id = %member.user_id, "notify tick: subscription listing failed");
-                continue;
+            let is_done = total_questions > 0 && answered_count >= total_questions;
+            if is_done && offset_hours == smallest_offset_overall {
+                return None;
             }
-        };
-        if subs.is_empty() {
-            continue;
-        }
 
-        let message = payload::deadline_reminder(
-            &group.name,
-            &nl.group_id,
-            &nl.cycle_id,
-            offset_hours,
-            nl.response_close_at,
-            tz,
-            published_count,
-            total_questions,
-            is_done,
-        );
+            let subs = match subs_result {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = ?e, user_id = %member.user_id, "notify tick: subscription listing failed");
+                    return None;
+                }
+            };
+            if subs.is_empty() {
+                return None;
+            }
 
-        targets.push((member.user_id, subs, message));
-    }
+            let message = payload::deadline_reminder(
+                &group.name,
+                &nl.group_id,
+                &nl.cycle_id,
+                offset_hours,
+                nl.response_close_at,
+                tz,
+                answered_count,
+                total_questions,
+                is_done,
+            );
+
+            Some((member.user_id, subs, message))
+        })
+        .buffer_unordered(PUSH_MEMBER_READ_CONCURRENCY)
+        .filter_map(futures::future::ready)
+        .collect()
+        .await;
 
     let deliveries: Vec<_> = targets
         .iter()

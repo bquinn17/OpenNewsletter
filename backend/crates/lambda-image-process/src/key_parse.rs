@@ -1,4 +1,4 @@
-//! S3 key decoding and parsing (`plans/08-media-uploads.md` §2, §11.1).
+//! S3 key decoding and parsing (`docs/design/media.md` §2, §11.1).
 //!
 //! S3 event records URL-encode the object key (and use `+` for a literal
 //! space, the old `application/x-www-form-urlencoded` convention, not plain

@@ -1,5 +1,5 @@
 //! Presigned S3 `PUT` URLs for direct browser uploads
-//! (`plans/08-media-uploads.md` §3.2).
+//! (`docs/design/media.md` §3.2).
 
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::Client as S3Client;
@@ -7,7 +7,7 @@ use domain::ApiError;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-/// How long a presigned upload URL stays valid (`03-api-contract.md` §9.1).
+/// How long a presigned upload URL stays valid (`docs/design/api.md` §9.1).
 pub const EXPIRES_IN_SECONDS: u64 = 600;
 
 pub struct Presigned {
@@ -19,7 +19,7 @@ pub struct Presigned {
 
 /// Builds a presigned `PUT` for `key` in `bucket`. When `sha256_base64` is
 /// given, it's signed in as `x-amz-checksum-sha256` so S3 rejects a body
-/// that doesn't match (`08-media-uploads.md` §3.2). `Content-Length` is
+/// that doesn't match (`docs/design/media.md` §3.2). `Content-Length` is
 /// deliberately not signed — S3 presigned `PUT`s can't enforce a size range
 /// (only presigned POST policies can); the byte-size cap is enforced in the
 /// request-validation layer instead.

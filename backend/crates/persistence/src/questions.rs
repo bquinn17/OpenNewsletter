@@ -1,12 +1,14 @@
 //! Candidate questions, candidate votes, locked questions.
-//! AP10, AP11, AP12, AP13 plus transactions §4 #1, #2, #3.
+//! AP10, AP12, AP13 plus transactions §4 #1, #2, #3. AP11 has no reader
+//! (`docs/design/data-model.md` §2.6).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, candidate_gsi1pk, candidate_gsi1sk, candidate_pk, candidate_sk, candidate_vote_pk,
-    candidate_vote_sk, group_pk, index, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
+    candidate_vote_sk, group_pk, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, CANDIDATE_VOTE_SK_PREFIX, VOTER_TALLY_SK,
 };
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
@@ -16,14 +18,62 @@ use domain::{
     NewsletterStatus, QuestionId, UserId,
 };
 use serde_dynamo::{from_item, to_item};
+use std::collections::HashMap;
 
-/// AP10 — list candidate questions for the next cycle.
+/// AP10 — list candidate questions for the next cycle. Follows
+/// `LastEvaluatedKey`, so a pool past one 1 MB page is never silently cut.
 pub async fn list_candidates(
     repo: &Repo,
     group_id: &GroupId,
     next_cycle_id: &CycleId,
 ) -> Result<Vec<CandidateQuestion>, RepoError> {
-    let resp = repo
+    query_candidate_items(repo, group_id, next_cycle_id)
+        .await?
+        .into_iter()
+        .map(|item| Ok(from_item::<_, CandidateQuestion>(item)?))
+        .collect()
+}
+
+/// A candidate row that wouldn't deserialize, identified by its sort key.
+#[derive(Debug)]
+pub struct UnreadableCandidate {
+    pub sk: String,
+    pub error: String,
+}
+
+/// [`list_candidates`] for promotion: a row that doesn't deserialize comes
+/// back in the second list instead of failing the whole listing, so one
+/// corrupt candidate can't hold the group's cycle in `voting` forever
+/// (`docs/design/lifecycle.md` §5.2).
+pub async fn list_candidates_lenient(
+    repo: &Repo,
+    group_id: &GroupId,
+    next_cycle_id: &CycleId,
+) -> Result<(Vec<CandidateQuestion>, Vec<UnreadableCandidate>), RepoError> {
+    let mut candidates = Vec::new();
+    let mut unreadable = Vec::new();
+    for item in query_candidate_items(repo, group_id, next_cycle_id).await? {
+        let sk = match item.get(attr::SK) {
+            Some(AttributeValue::S(sk)) => sk.clone(),
+            _ => String::new(),
+        };
+        match from_item::<_, CandidateQuestion>(item) {
+            Ok(candidate) => candidates.push(candidate),
+            Err(e) => unreadable.push(UnreadableCandidate {
+                sk,
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok((candidates, unreadable))
+}
+
+async fn query_candidate_items(
+    repo: &Repo,
+    group_id: &GroupId,
+    next_cycle_id: &CycleId,
+) -> Result<Vec<HashMap<String, AttributeValue>>, RepoError> {
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -34,43 +84,8 @@ pub async fn list_candidates(
             ":pk",
             AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
         )
-        .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
-        .into_iter()
-        .map(|i| from_item::<_, CandidateQuestion>(i).map_err(RepoError::from))
-        .collect()
-}
-
-/// AP11 — top N candidates by vote count.
-pub async fn list_top_candidates_by_votes(
-    repo: &Repo,
-    group_id: &GroupId,
-    next_cycle_id: &CycleId,
-    limit: i32,
-) -> Result<Vec<CandidateQuestion>, RepoError> {
-    let resp = repo
-        .client
-        .query()
-        .table_name(&repo.table)
-        .index_name(index::GSI1)
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", attr::GSI1PK)
-        .expression_attribute_values(
-            ":pk",
-            AttributeValue::S(candidate_gsi1pk(group_id, next_cycle_id)),
-        )
-        .scan_index_forward(false)
-        .limit(limit)
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
-        .into_iter()
-        .map(|i| from_item::<_, CandidateQuestion>(i).map_err(RepoError::from))
-        .collect()
+        .expression_attribute_values(":prefix", AttributeValue::S("QC#".into()));
+    query_all(request).await
 }
 
 /// AP12 — list a voter's votes for one cycle.
@@ -80,7 +95,7 @@ pub async fn list_my_votes(
     next_cycle_id: &CycleId,
     user_id: &UserId,
 ) -> Result<Vec<CandidateVote>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -94,11 +109,9 @@ pub async fn list_my_votes(
         .expression_attribute_values(
             ":vote",
             AttributeValue::S(CANDIDATE_VOTE_SK_PREFIX.to_owned()),
-        )
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        );
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, CandidateVote>(i).map_err(RepoError::from))
         .collect()
@@ -110,7 +123,7 @@ pub async fn list_locked_questions(
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<Vec<LockedQuestion>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -118,11 +131,9 @@ pub async fn list_locked_questions(
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#sk", attr::SK)
         .expression_attribute_values(":pk", AttributeValue::S(locked_pk(group_id, cycle_id)))
-        .expression_attribute_values(":prefix", AttributeValue::S("Q#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S("Q#".into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, LockedQuestion>(i).map_err(RepoError::from))
         .collect()
@@ -208,8 +219,8 @@ pub async fn get_candidate(
     }
 }
 
-/// Cascading part of admin candidate deletion (`03-api-contract.md` §6.5).
-/// `02-data-model-dynamodb.md` has no access pattern for "list voters of
+/// Cascading part of admin candidate deletion (`docs/design/api.md` §6.5).
+/// `docs/design/data-model.md` has no access pattern for "list voters of
 /// question X" — `CandidateVote` is keyed by voter, not by question — so
 /// callers delete speculatively for every group member (bounded by
 /// `memberSoftCap`) rather than scanning the table. Deleting an absent item is
@@ -246,11 +257,17 @@ pub async fn delete_vote_if_present(
     }
 }
 
+/// Deletes a candidate, conditioned on its `vote_count` still being
+/// `expected_vote_count` (`docs/design/api.md` §6.5). The vote cascade doesn't
+/// change `vote_count`, so a mismatch means a vote was cast (or withdrawn)
+/// since the caller read it; that, or the row already being gone, is
+/// `RepoError::ConditionalCheckFailed`.
 pub async fn delete_candidate(
     repo: &Repo,
     group_id: &GroupId,
     next_cycle_id: &CycleId,
     question_id: &QuestionId,
+    expected_vote_count: u32,
 ) -> Result<(), RepoError> {
     repo.client
         .delete_item()
@@ -260,8 +277,11 @@ pub async fn delete_candidate(
             AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
         )
         .key(attr::SK, AttributeValue::S(candidate_sk(question_id)))
+        .condition_expression("vote_count = :n")
+        .expression_attribute_values(":n", AttributeValue::N(expected_vote_count.to_string()))
         .send()
-        .await?;
+        .await
+        .map_err(error::from_delete_item_error)?;
     Ok(())
 }
 
@@ -287,7 +307,7 @@ pub enum VoteTxError {
 /// - Put `CandidateVote` (must not already exist)
 /// - Update `CandidateQuestion`: `vote_count += 1` and refresh the GSI1 sort key
 /// - Update the voter's `VoterTally`: `votes_cast += 1`, conditioned on
-///   `votes_cast < votes_cap`. This is the cap check `02` §4 #1 requires; a
+///   `votes_cast < votes_cap`. This is the cap check `docs/design/data-model.md` §4 #1 requires; a
 ///   pre-read alone lets concurrent votes on different candidates exceed it.
 pub async fn cast_vote_tx(
     repo: &Repo,
@@ -533,7 +553,7 @@ const _: () = assert!(
 ///
 /// Returns `Err(RepoError::TransactionCancelled)` when the flip lost a race
 /// against another tick — the caller should log that at INFO and move on
-/// rather than treating it as a failure (`plans/06-newsletter-lifecycle.md` §8).
+/// rather than treating it as a failure (`docs/design/lifecycle.md` §8).
 pub async fn promote_candidates_tx(
     repo: &Repo,
     locked: &[LockedQuestion],

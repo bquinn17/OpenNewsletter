@@ -1,5 +1,5 @@
 //! Send one push message end-to-end — encrypt, sign, POST — and apply the
-//! delivery-outcome bookkeeping from `plans/07-notifications.md` §3.2 (M11
+//! delivery-outcome bookkeeping from `docs/design/notifications.md` §3.2 (M11
 //! decision D7).
 
 use crate::payload::PushPayload;

@@ -2,7 +2,7 @@ import type { components } from "../types/api";
 
 export type AvatarColorSlug = components["schemas"]["AvatarColorSlug"];
 
-/** Every `AvatarColorSlug` value (`03-api-contract.md` §2.3). Keep in sync with `AVATAR_COLOR_CLASSES` below. */
+/** Every `AvatarColorSlug` value (`docs/design/api.md` §2.3). Keep in sync with `AVATAR_COLOR_CLASSES` below. */
 export const AVATAR_COLOR_SLUGS = [
   "red",
   "orange",
@@ -16,7 +16,7 @@ export const AVATAR_COLOR_SLUGS = [
 
 // Tailwind classes for the eight `AvatarColorSlug` values. `Record` over the
 // literal union forces this to stay exhaustive if the enum ever changes
-// (04-frontend-architecture.md §14a).
+// (docs/design/frontend.md §14a).
 const AVATAR_COLOR_CLASSES: Record<AvatarColorSlug, string> = {
   red: "bg-red-500 text-white",
   orange: "bg-orange-500 text-white",

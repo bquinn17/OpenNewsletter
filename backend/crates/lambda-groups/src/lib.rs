@@ -1,5 +1,5 @@
 //! `lambda-groups` — `/config`, `/healthz`, `/me`, and the group + member routes
-//! (`plans/03-api-contract.md` §2, §3.5, §3.6, §4). Split into a library so
+//! (`docs/design/api.md` §2, §3.5, §3.6, §4). Split into a library so
 //! integration tests can call the handlers directly (mirrors `lambda-questions`
 //! / `lambda-responses`).
 

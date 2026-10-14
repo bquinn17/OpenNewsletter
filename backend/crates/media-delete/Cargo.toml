@@ -1,0 +1,32 @@
+[package]
+name = "media-delete"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Real deletion of an uploaded image or avatar: S3 objects, CloudFront
+# invalidation, then the DynamoDB row (`docs/design/media.md` §8.0).
+# A crate of its own because `shared` can't depend on `persistence`.
+
+[lib]
+name = "media_delete"
+path = "src/lib.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+persistence = { path = "../persistence" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-cloudfront.workspace = true
+aws-sdk-s3.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+pretty_assertions.workspace = true
+persistence = { path = "../persistence", features = ["test-utils"] }
+testcontainers.workspace = true
+testcontainers-modules.workspace = true

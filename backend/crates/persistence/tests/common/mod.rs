@@ -5,106 +5,14 @@
 //! and creates a uniquely-named table. The caller must keep the returned
 //! `ContainerAsync` alive for the duration of the test (prefix it with `_`).
 
-use aws_sdk_dynamodb::{
-    config::{BehaviorVersion, Credentials, Region},
-    types::{
-        AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType,
-        Projection, ProjectionType, ScalarAttributeType,
-    },
-    Client,
-};
 use chrono::{Duration, TimeZone, Utc};
 use domain::*;
 use persistence::Repo;
 use testcontainers::ContainerAsync;
 use testcontainers_modules::dynamodb_local::DynamoDb;
-use uuid::Uuid;
 
 pub async fn make_repo() -> (ContainerAsync<DynamoDb>, Repo) {
-    use testcontainers::runners::AsyncRunner;
-    let container = DynamoDb::default()
-        .start()
-        .await
-        .expect("DynamoDB local started");
-    let port = container
-        .get_host_port_ipv4(8000)
-        .await
-        .expect("DDB port available");
-
-    let endpoint = format!("http://localhost:{port}");
-    let creds = Credentials::new("fake", "fake", None, None, "test");
-    let config = aws_sdk_dynamodb::Config::builder()
-        .behavior_version(BehaviorVersion::latest())
-        .endpoint_url(&endpoint)
-        .region(Region::new("us-east-1"))
-        .credentials_provider(creds)
-        .build();
-    let client = Client::from_conf(config);
-
-    let table = format!("test-{}", Uuid::new_v4());
-    create_table(&client, &table).await;
-    (container, Repo::new(client, table))
-}
-
-async fn create_table(client: &Client, table: &str) {
-    fn s_attr(name: &str) -> AttributeDefinition {
-        AttributeDefinition::builder()
-            .attribute_name(name)
-            .attribute_type(ScalarAttributeType::S)
-            .build()
-            .unwrap()
-    }
-    fn hash(name: &str) -> KeySchemaElement {
-        KeySchemaElement::builder()
-            .attribute_name(name)
-            .key_type(KeyType::Hash)
-            .build()
-            .unwrap()
-    }
-    fn range(name: &str) -> KeySchemaElement {
-        KeySchemaElement::builder()
-            .attribute_name(name)
-            .key_type(KeyType::Range)
-            .build()
-            .unwrap()
-    }
-    let all = Projection::builder()
-        .projection_type(ProjectionType::All)
-        .build();
-
-    client
-        .create_table()
-        .table_name(table)
-        .attribute_definitions(s_attr("pk"))
-        .attribute_definitions(s_attr("sk"))
-        .attribute_definitions(s_attr("gsi1pk"))
-        .attribute_definitions(s_attr("gsi1sk"))
-        .attribute_definitions(s_attr("gsi2pk"))
-        .attribute_definitions(s_attr("gsi2sk"))
-        .billing_mode(BillingMode::PayPerRequest)
-        .key_schema(hash("pk"))
-        .key_schema(range("sk"))
-        .global_secondary_indexes(
-            GlobalSecondaryIndex::builder()
-                .index_name("gsi1")
-                .key_schema(hash("gsi1pk"))
-                .key_schema(range("gsi1sk"))
-                .projection(all.clone())
-                .build()
-                .unwrap(),
-        )
-        .global_secondary_indexes(
-            GlobalSecondaryIndex::builder()
-                .index_name("gsi2")
-                .key_schema(hash("gsi2pk"))
-                .key_schema(range("gsi2sk"))
-                .projection(all)
-                .build()
-                .unwrap(),
-        )
-        .send()
-        .await
-        .expect("create table");
+    persistence::test_factories::make_test_repo().await
 }
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -166,6 +74,7 @@ pub fn invite(code: &str, group_id: &str, created_by: &str) -> Invite {
         consumed_by: None,
         consumed_at: None,
         role_on_redeem: Role::Member,
+        bound_email: None,
     }
 }
 

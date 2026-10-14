@@ -52,12 +52,12 @@ describe("renewSession", () => {
   });
 
   it("renews a bootstrap session through Cognito REFRESH_TOKEN_AUTH, keeping the refresh token", async () => {
-    manager.getUser.mockResolvedValue(storedUser(env.cognitoBootstrapClientId));
+    manager.getUser.mockResolvedValue(storedUser(env.cognitoBootstrapClientId!));
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
           AuthenticationResult: {
-            IdToken: jwt({ sub: "s1", aud: env.cognitoBootstrapClientId, name: "José" }),
+            IdToken: jwt({ sub: "s1", aud: env.cognitoBootstrapClientId!, name: "José" }),
             AccessToken: "a2",
             TokenType: "Bearer",
             ExpiresIn: 3600,
@@ -73,7 +73,7 @@ describe("renewSession", () => {
     const body: unknown = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body).toMatchObject({
       AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: env.cognitoBootstrapClientId,
+      ClientId: env.cognitoBootstrapClientId!,
       AuthParameters: { REFRESH_TOKEN: "refresh-1" },
     });
     expect(renewed?.refresh_token).toBe("refresh-1");

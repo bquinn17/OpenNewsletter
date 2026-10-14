@@ -1,5 +1,5 @@
 //! `lambda-questions` — candidate question and vote routes
-//! (`plans/03-api-contract.md` §6).
+//! (`docs/design/api.md` §6).
 
 use lambda_http::{service_fn, Error};
 use persistence::Repo;

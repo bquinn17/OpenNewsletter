@@ -11,11 +11,13 @@ use domain::{
     ResponseId, ResponseStatus, Role, UserId,
 };
 use engagement::state::AppState;
+use media_delete::fakes::{fake_deleter, RecordingInvalidator, RecordingObjectStore};
 use persistence::keys::{
     attr, locked_pk, locked_sk, membership_gsi1pk, membership_gsi1sk, membership_sk,
     response_gsi1pk, response_gsi1sk, response_pk, response_sk, user_pk,
 };
 use persistence::{groups, media, newsletters, test_factories, users, Repo};
+use std::sync::Arc;
 
 pub use test_factories::{group, locked_question, user, voting_newsletter};
 
@@ -26,11 +28,45 @@ pub async fn make_repo() -> (
     test_factories::make_test_repo().await
 }
 
+pub const MEDIA_ORIGINALS: &str = "test-media-originals";
+pub const MEDIA_PROCESSED: &str = "test-media-processed";
+
 pub fn test_state(repo: Repo) -> AppState {
-    AppState {
+    test_state_with_fakes(repo).0
+}
+
+/// An `AppState` whose image deleter records into the returned fakes.
+pub fn test_state_with_fakes(
+    repo: Repo,
+) -> (
+    AppState,
+    Arc<RecordingObjectStore>,
+    Arc<RecordingInvalidator>,
+) {
+    let (image_deleter, store, cdn) = fake_deleter(MEDIA_ORIGINALS, MEDIA_PROCESSED);
+    let state = AppState {
         repo,
         cdn_base_url: "https://cdn.example.com".into(),
-    }
+        image_deleter,
+    };
+    (state, store, cdn)
+}
+
+/// The image row, or `None` once it has been deleted.
+pub async fn find_image(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    image_id: &ImageId,
+) -> Option<ImageMedia> {
+    media::get_image(
+        repo,
+        &GroupId::new(group_id),
+        &CycleId::new(cycle_id),
+        image_id,
+    )
+    .await
+    .expect("image lookup")
 }
 
 /// Writes a `Group` row and a `GroupMembership` row for `user_id`, so
@@ -170,7 +206,7 @@ pub async fn put_published_text_answer(
 }
 
 /// A published **poll** answer — engagement routes must 404 on these
-/// (`09-engagement.md` §3, decided M10 #1/#13).
+/// (`docs/design/engagement.md` §3, decided M10 #1/#13).
 pub async fn put_published_poll_answer(
     repo: &Repo,
     group_id: &str,

@@ -1,5 +1,5 @@
 //! `POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{imageId}`, and
-//! `POST /uploads/{imageId}/complete` (`plans/03-api-contract.md` §9.1-§9.4,
+//! `POST /uploads/{imageId}/complete` (`docs/design/api.md` §9.1-§9.4,
 //! §9.6).
 //!
 //! Each test uses its own group id (never a shared one): `persistence::auth`
@@ -12,7 +12,8 @@ mod common;
 use ::media::handlers;
 use domain::api::{CreateUploadRequest, PatchUploadRequest};
 use domain::{
-    ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, QuestionId, Role, UserId,
+    ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, QuestionId, ResponseStatus,
+    Role, UserId,
 };
 use pretty_assertions::assert_eq;
 
@@ -445,40 +446,114 @@ async fn patch_upload_rejects_an_overlong_caption() {
 }
 
 #[tokio::test]
-async fn delete_of_a_draft_only_image_succeeds_and_marks_it_failed() {
+async fn delete_removes_the_objects_invalidates_the_cdn_and_deletes_the_row() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gdelok", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    let image_id = common::seed_image(
-        &repo,
-        "gdelok",
-        "202606",
-        "q1",
-        "img-1",
-        "u1",
-        MediaStatus::Ready,
-        ImagePurpose::Response,
-    )
-    .await;
-    let state = common::test_state(repo);
+    let image = common::seed_ready_image(&repo, "gdelok", "202606", "q1", "img-1", "u1").await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
     let group_id = GroupId::new("gdelok");
     let cycle_id = CycleId::new("202606");
     let caller = UserId::new("u1");
 
-    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image_id)
+    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
         .await
         .expect("draft-only image can be deleted");
 
-    let after = handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image_id)
+    assert_eq!(
+        fakes.store.deleted().await,
+        vec![
+            (
+                common::MEDIA_ORIGINALS.to_owned(),
+                image.original_key.clone()
+            ),
+            (
+                common::MEDIA_PROCESSED.to_owned(),
+                "img/gdelok/202606/q1/u1/img-1/display.webp".to_owned()
+            ),
+            (
+                common::MEDIA_PROCESSED.to_owned(),
+                "img/gdelok/202606/q1/u1/img-1/thumb.webp".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        fakes.cdn.invalidations().await,
+        vec![vec![
+            "/img/gdelok/202606/q1/u1/img-1/display.webp".to_owned(),
+            "/img/gdelok/202606/q1/u1/img-1/thumb.webp".to_owned(),
+        ]]
+    );
+    let err = handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
         .await
-        .expect("still readable after delete");
-    assert_eq!(after.status, MediaStatus::Failed);
-    assert_eq!(after.error_message, Some("DELETED".into()));
+        .expect_err("the row is gone");
+    assert_eq!(err.code, ApiErrorCode::NotFound);
+}
 
-    // Idempotent: deleting it again still succeeds.
-    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image_id)
+#[tokio::test]
+async fn deleting_an_already_deleted_image_succeeds_and_touches_nothing() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdelagain", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image = common::seed_ready_image(&repo, "gdelagain", "202606", "q1", "img-1", "u1").await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    let group_id = GroupId::new("gdelagain");
+    let cycle_id = CycleId::new("202606");
+    let caller = UserId::new("u1");
+    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
         .await
-        .expect("delete is idempotent");
+        .unwrap();
+
+    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect("a repeat delete is a no-op success");
+
+    assert_eq!(fakes.store.deleted().await.len(), 3);
+    assert_eq!(fakes.cdn.invalidations().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_s3_delete_is_a_500_and_keeps_the_row() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdels3fail", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image = common::seed_ready_image(&repo, "gdels3fail", "202606", "q1", "img-1", "u1").await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    fakes.store.set_failing(true);
+    let group_id = GroupId::new("gdels3fail");
+    let cycle_id = CycleId::new("202606");
+    let caller = UserId::new("u1");
+
+    let err = handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect_err("an S3 failure fails the delete");
+
+    assert_eq!(err.code, ApiErrorCode::Internal);
+    handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect("the row is kept for a retry");
+}
+
+#[tokio::test]
+async fn a_failed_invalidation_is_a_500_and_keeps_the_row() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdelcdnfail", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image = common::seed_ready_image(&repo, "gdelcdnfail", "202606", "q1", "img-1", "u1").await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    fakes.cdn.set_failing(true);
+    let group_id = GroupId::new("gdelcdnfail");
+    let cycle_id = CycleId::new("202606");
+    let caller = UserId::new("u1");
+
+    let err = handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect_err("an invalidation failure fails the delete");
+
+    assert_eq!(err.code, ApiErrorCode::Internal);
+    handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect("the row is kept for a retry");
 }
 
 #[tokio::test]
@@ -510,6 +585,86 @@ async fn delete_of_an_image_in_a_published_answer_is_refused() {
     .await
     .expect_err("an in-use image can't be deleted");
     assert_eq!(err.code, ApiErrorCode::ImageInUse);
+}
+
+#[tokio::test]
+async fn delete_of_an_image_in_a_draft_drops_it_from_the_draft() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gdeldraft", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let image = common::seed_ready_image(&repo, "gdeldraft", "202606", "q1", "img-1", "u1").await;
+    common::seed_ready_image(&repo, "gdeldraft", "202606", "q1", "img-2", "u1").await;
+    // A stale tab that never saved the draft without the image.
+    common::put_response(
+        &repo,
+        "gdeldraft",
+        "202606",
+        "q1",
+        "u1",
+        &["img-1", "img-2"],
+        ResponseStatus::Draft,
+    )
+    .await;
+    let (state, fakes) = common::test_state_with_fakes(repo);
+    let group_id = GroupId::new("gdeldraft");
+    let cycle_id = CycleId::new("202606");
+    let caller = UserId::new("u1");
+
+    handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
+        .await
+        .expect("a draft's image can be deleted");
+
+    let draft = persistence::responses::get_my_response(
+        &state.repo,
+        &group_id,
+        &cycle_id,
+        &QuestionId::new("q1"),
+        &caller,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(draft.status, ResponseStatus::Draft);
+    assert_eq!(draft.image_media_ids, vec![ImageId::new("img-2")]);
+    assert_eq!(draft.body.as_deref(), Some("Lake 22, hands down."));
+    assert_eq!(fakes.store.deleted().await.len(), 3);
+}
+
+#[tokio::test]
+async fn stripping_a_draft_fails_once_the_draft_has_changed() {
+    let (_c, repo) = common::make_repo().await;
+    common::put_response(
+        &repo,
+        "gdelstale",
+        "202606",
+        "q1",
+        "u1",
+        &["img-1"],
+        ResponseStatus::Draft,
+    )
+    .await;
+    let (group_id, cycle_id) = (GroupId::new("gdelstale"), CycleId::new("202606"));
+    let (question_id, caller) = (QuestionId::new("q1"), UserId::new("u1"));
+    let read =
+        persistence::responses::get_my_response(&repo, &group_id, &cycle_id, &question_id, &caller)
+            .await
+            .unwrap()
+            .unwrap();
+    // Published between the read and the strip.
+    common::put_published_response(&repo, "gdelstale", "202606", "q1", "u1", &["img-1"]).await;
+
+    let err = persistence::responses::remove_image_from_draft(
+        &repo,
+        &read,
+        &ImageId::new("img-1"),
+        chrono::Utc::now(),
+    )
+    .await
+    .expect_err("the draft is no longer what was read");
+    assert!(
+        matches!(err, persistence::RepoError::ConditionalCheckFailed),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]

@@ -1,8 +1,11 @@
-//! Comments and reactions (AP18, AP19; `plans/03-api-contract.md` §8).
+//! Comments and reactions (AP18, AP19; `docs/design/api.md` §8).
 
 use crate::error::{self, RepoError};
-use crate::keys::{attr, comment_sk, engagement_pk, reaction_sk, COMMENT_SK_PREFIX};
+use crate::keys::{
+    attr, comment_sk, engagement_pk, reaction_sk, COMMENT_SK_PREFIX, REACTION_SK_PREFIX,
+};
 use crate::media;
+use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
@@ -12,7 +15,7 @@ use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
 
 /// AP18 — every comment on an answer, oldest first. Unpaginated; used by the
-/// inline published-newsletter view (`03` §5.2), which always wants the
+/// inline published-newsletter view (`docs/design/api.md` §5.2), which always wants the
 /// whole thread. The dedicated `GET .../comments` route uses
 /// [`list_comments_page`] instead.
 pub async fn list_comments(
@@ -22,7 +25,7 @@ pub async fn list_comments(
     question_id: &QuestionId,
     answer_user_id: &UserId,
 ) -> Result<Vec<Comment>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -38,11 +41,9 @@ pub async fn list_comments(
                 answer_user_id,
             )),
         )
-        .expression_attribute_values(":prefix", AttributeValue::S(COMMENT_SK_PREFIX.into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S(COMMENT_SK_PREFIX.into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Comment>(i).map_err(RepoError::from))
         .collect()
@@ -121,10 +122,10 @@ pub async fn list_comments_page(
     Ok((comments, next))
 }
 
-/// Finds one comment by id (decision M10, `09-engagement.md` §1.4): the
+/// Finds one comment by id (decision M10, `docs/design/engagement.md` §1.4): the
 /// engagement partition has no index on `comment_id`, so this walks the `C#`
 /// range, following `LastEvaluatedKey`, filtering server-side. Thread sizes
-/// are expected to stay small (`09-engagement.md` §7 — unbounded but
+/// are expected to stay small (`docs/design/engagement.md` §7 — unbounded but
 /// activity-driven), so a full scan of the partition is acceptable.
 pub async fn get_comment_by_id(
     repo: &Repo,
@@ -172,7 +173,7 @@ pub async fn get_comment_by_id(
 }
 
 /// A new comment's content, independent of how it's addressed
-/// (`03-api-contract.md` §8.2).
+/// (`docs/design/api.md` §8.2).
 pub struct NewComment<'a> {
     pub group_id: &'a GroupId,
     pub cycle_id: &'a CycleId,
@@ -422,7 +423,7 @@ pub async fn list_reactions(
     question_id: &QuestionId,
     answer_user_id: &UserId,
 ) -> Result<Vec<Reaction>, RepoError> {
-    let resp = repo
+    let request = repo
         .client
         .query()
         .table_name(&repo.table)
@@ -438,14 +439,59 @@ pub async fn list_reactions(
                 answer_user_id,
             )),
         )
-        .expression_attribute_values(":prefix", AttributeValue::S("R#".into()))
-        .send()
-        .await?;
-    let items = resp.items.unwrap_or_default();
-    items
+        .expression_attribute_values(":prefix", AttributeValue::S(REACTION_SK_PREFIX.into()));
+    query_all(request)
+        .await?
         .into_iter()
         .map(|i| from_item::<_, Reaction>(i).map_err(RepoError::from))
         .collect()
+}
+
+/// One paginated query of the engagement partition shared by a question's
+/// comments (`C#`) and reactions (`R#`) — see [`engagement_pk`]. Replaces a
+/// separate [`list_comments`] + [`list_reactions`] (two round trips) with
+/// one; used by `lambda-newsletters`' published-edition read. Rows sort `C#`
+/// before `R#` lexicographically, so comments come back oldest-first exactly
+/// as [`list_comments`] returns them. A row whose sk starts with neither
+/// prefix is skipped defensively — nothing else is known to live in this
+/// partition today (see `keys.rs`).
+pub async fn list_engagement(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    answer_user_id: &UserId,
+) -> Result<(Vec<Comment>, Vec<Reaction>), RepoError> {
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(engagement_pk(
+                group_id,
+                cycle_id,
+                question_id,
+                answer_user_id,
+            )),
+        );
+
+    let mut comments = Vec::new();
+    let mut reactions = Vec::new();
+    for item in query_all(request).await? {
+        match item.get(attr::SK).and_then(|v| v.as_s().ok()) {
+            Some(sk) if sk.starts_with(COMMENT_SK_PREFIX) => {
+                comments.push(from_item::<_, Comment>(item)?);
+            }
+            Some(sk) if sk.starts_with(REACTION_SK_PREFIX) => {
+                reactions.push(from_item::<_, Reaction>(item)?);
+            }
+            _ => {}
+        }
+    }
+    Ok((comments, reactions))
 }
 
 pub async fn put_reaction(repo: &Repo, r: &Reaction) -> Result<(), RepoError> {

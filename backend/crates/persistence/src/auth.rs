@@ -1,4 +1,4 @@
-//! Caller resolution and tenant authorization (`plans/05-auth-flow.md` §6, §11).
+//! Caller resolution and tenant authorization (`docs/design/auth.md` §6, §11).
 //!
 //! Every group-scoped handler calls [`require_membership`] before touching any
 //! group data. Both lookups are memoized for the life of a warm Lambda container,

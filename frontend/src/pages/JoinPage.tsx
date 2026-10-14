@@ -20,6 +20,9 @@ function messageForError(error: unknown): string {
       return "That invite has already been used.";
     case "MEMBER_CAP_REACHED":
       return "That group is full.";
+    // A `boundEmail` invite redeemed by another, or unverified, email (`docs/design/api.md` §3, D5).
+    case "INVITE_EMAIL_MISMATCH":
+      return "This invite is for a different email address. Sign in with Google using the invited email.";
     default:
       return error.problem?.detail ?? error.message;
   }
