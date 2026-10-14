@@ -25,7 +25,7 @@ import argparse
 import json
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -371,7 +371,7 @@ def main() -> None:
         )
 
     print("[5/5] Writing fixture data…")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     vote_close = now + timedelta(days=27)  # ~1-month voting window
     response_close = vote_close + parse_duration(args.cycle_close_in)
 

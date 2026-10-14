@@ -39,7 +39,7 @@ import json
 import secrets
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -114,7 +114,7 @@ def first_day_of_next_month_local(after_utc: datetime, tz: ZoneInfo) -> datetime
         (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
     )
     local_midnight = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
-    return local_midnight.astimezone(timezone.utc)
+    return local_midnight.astimezone(UTC)
 
 
 def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
@@ -518,7 +518,7 @@ def bootstrap_dev(args: argparse.Namespace) -> None:
         group_id=group_id,
         group_name=args.group_name,
         tz_name=args.timezone,
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
     )
 
     api_endpoint = outputs.get(f"ApiStack-{args.env}", {}).get("ApiEndpoint", "")
@@ -586,7 +586,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
         tz_name=args.timezone,
         bound_email=bound_email,
         invite_code=invite_code,
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
     )
 
     dynamodb = boto3_session().client("dynamodb")

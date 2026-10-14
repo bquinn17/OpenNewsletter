@@ -55,6 +55,15 @@ ignore = [
     # its dependents (`pulp`/`rav1e`, both pulled in transitively by
     # `image`'s AVIF support). No known advisory beyond "unmaintained".
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained (no vulnerability); pulled in transitively via image's AVIF support (pulp/rav1e), no fix adopted upstream yet" },
+
+    # Not a vulnerability — `unsafe-libyaml` (the C2Rust translation of
+    # libyaml used by `serde_yaml`) is archived/unmaintained upstream. The
+    # maintained fork, `serde_yaml_ng`, still depends on the same
+    # `unsafe-libyaml` crate internally, so switching to it would not remove
+    # this advisory. `domain`'s dependency on `serde_yaml` is a dev-only
+    # test-dependency (`tests/openapi_contract.rs` parses `shared/openapi.yaml`
+    # into `serde_json::Value`), never part of a deployed Lambda artifact.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (no vulnerability); reached only via serde_yaml, a dev-only test-dependency of domain used to parse shared/openapi.yaml, never shipped in a Lambda" },
 ]
 
 # This section is considered when running `cargo deny check licenses`.
