@@ -14,7 +14,7 @@ import argparse
 import dataclasses
 import importlib.util
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -45,7 +45,7 @@ _INVITE_ATTRIBUTES = {
     "bound_email",
 }
 
-_NOW = datetime(2026, 10, 7, 15, 30, 45, tzinfo=timezone.utc)
+_NOW = datetime(2026, 10, 7, 15, 30, 45, tzinfo=UTC)
 _GROUP_ID = "0b6f3c3e-1111-5222-8333-444455556666"
 _CODE = "ABCDEFGHJKMNPQRS"
 
