@@ -20,7 +20,7 @@ export const MOCK_IMAGE_DATA_URL =
 /**
  * Uploaded `ImageMediaResponse` rows by `imageId`. Shared so a comment edit or
  * delete in `mockEngagement.ts` can release (really delete) the image it
- * held, like the backend (`03-api-contract.md` §9.4, D8).
+ * held, like the backend (`docs/design/api.md` §9.4, D8).
  */
 export const imageRows = new Map<string, S["ImageMediaResponse"]>();
 

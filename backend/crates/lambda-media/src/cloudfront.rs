@@ -1,5 +1,5 @@
-//! Pure CloudFront signed-cookie/URL helpers (`plans/08-media-uploads.md` §4,
-//! `plans/03-api-contract.md` §9.5). No network I/O — the private key and the
+//! Pure CloudFront signed-cookie/URL helpers (`docs/design/media.md` §4,
+//! `docs/design/api.md` §9.5). No network I/O — the private key and the
 //! policy string are both passed in, so every function here is cheap to unit
 //! test directly without a Secrets Manager call or a live CloudFront
 //! distribution.
@@ -31,7 +31,7 @@ pub fn parse_private_key(pem: &str) -> Result<RsaPrivateKey, CloudFrontError> {
 }
 
 /// The exact, whitespace-free CloudFront custom policy for a signed
-/// cookie/URL scoped to one resource pattern (`08-media-uploads.md` §4.3).
+/// cookie/URL scoped to one resource pattern (`docs/design/media.md` §4.3).
 /// CloudFront verifies the signature over these literal bytes, so field
 /// order and the absence of whitespace are load-bearing, not stylistic.
 pub fn policy_json(resource: &str, expires_at_epoch_seconds: i64) -> String {
@@ -54,7 +54,7 @@ pub fn sign_policy(key: &RsaPrivateKey, policy: &[u8]) -> Result<Vec<u8>, CloudF
 }
 
 /// CloudFront's modified base64 alphabet: standard base64, then `+`→`-`,
-/// `=`→`_`, `/`→`~` (`08-media-uploads.md` §4.3).
+/// `=`→`_`, `/`→`~` (`docs/design/media.md` §4.3).
 pub fn modified_base64_encode(bytes: &[u8]) -> String {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;

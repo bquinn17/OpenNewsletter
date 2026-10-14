@@ -4,7 +4,7 @@ import { persist } from "zustand/middleware";
 type State = {
   currentGroupId: string | null;
   setCurrentGroup: (groupId: string) => void;
-  /** Forget the selection. Called on logout (`05-auth-flow.md` §8). */
+  /** Forget the selection. Called on logout (`docs/design/auth.md` §8). */
   clear: () => void;
 };
 

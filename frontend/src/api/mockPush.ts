@@ -5,7 +5,7 @@ import { fail, NO_MOCK_ROUTE, type MockRequest } from "./mockShared";
 type S = components["schemas"];
 
 /**
- * Mock routes for `/push/*` (`03-api-contract.md` §10, `07-notifications.md`,
+ * Mock routes for `/push/*` (`docs/design/api.md` §10, `docs/design/notifications.md`,
  * M11 D8/D11). Self-contained in-memory fixtures — no real crypto, no real
  * push service. `GET /config`'s `vapidPublicKey` (`mockTransport.ts`) is a
  * placeholder string, so subscribing for real in mock mode may fail the

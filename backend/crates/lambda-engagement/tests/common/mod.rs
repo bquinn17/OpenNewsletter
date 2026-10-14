@@ -206,7 +206,7 @@ pub async fn put_published_text_answer(
 }
 
 /// A published **poll** answer — engagement routes must 404 on these
-/// (`09-engagement.md` §3, decided M10 #1/#13).
+/// (`docs/design/engagement.md` §3, decided M10 #1/#13).
 pub async fn put_published_poll_answer(
     repo: &Repo,
     group_id: &str,

@@ -1,7 +1,7 @@
 //! Event-type dispatch and the dev-only HTTP route.
 //!
-//! This Lambda is invoked two ways (`plans/07-notifications.md` §7,
-//! `plans/03-api-contract.md` §11a.2):
+//! This Lambda is invoked two ways (`docs/design/notifications.md` §7,
+//! `docs/design/api.md` §11a.2):
 //!
 //! - An EventBridge Scheduler rule, firing every 15 minutes with a plain
 //!   scheduled-event payload (no `requestContext`).
@@ -48,7 +48,7 @@ pub async fn handle_scheduled(state: &AppState) -> Value {
     serde_json::to_value(&summary).unwrap_or_else(|_| json!({ "fanouts": [] }))
 }
 
-/// Handle `POST /admin/dev/tick/notify` (`plans/03-api-contract.md` §11a.2).
+/// Handle `POST /admin/dev/tick/notify` (`docs/design/api.md` §11a.2).
 pub async fn handle_http(state: &AppState, event: &Value) -> Value {
     let correlation_id = correlation_id(event);
 
@@ -62,7 +62,7 @@ pub async fn handle_http(state: &AppState, event: &Value) -> Value {
             }
             http_response(
                 err.http_status(),
-                problem_json(&err, &correlation_id),
+                shared::http::problem_body(&err, &correlation_id),
                 &correlation_id,
             )
         }
@@ -144,30 +144,6 @@ fn http_response(status: u16, body: Value, correlation_id: &str) -> Value {
         "body": body.to_string(),
         "isBase64Encoded": false,
     })
-}
-
-/// Mirrors `shared::http::problem_response`'s RFC-7807 body
-/// (`plans/03-api-contract.md` §1.1), rebuilt here because this crate works
-/// with raw JSON events/responses rather than `lambda_http::Request`/`Response`.
-fn problem_json(err: &ApiError, correlation_id: &str) -> Value {
-    let base = std::env::var("API_BASE_URL").unwrap_or_default();
-    let type_uri = if base.is_empty() {
-        format!("/errors/{}", err.code.slug())
-    } else {
-        format!("{}/errors/{}", base.trim_end_matches('/'), err.code.slug())
-    };
-    let mut problem = json!({
-        "type": type_uri,
-        "title": err.code.title(),
-        "status": err.http_status(),
-        "detail": err.detail,
-        "code": err.code.as_str(),
-        "correlationId": correlation_id,
-    });
-    if !err.field_errors.is_empty() {
-        problem["fieldErrors"] = json!(err.field_errors);
-    }
-    problem
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ it gets read access to the stacks' templates and nothing else.
 
 The $5/mo AWS Budget lives here because it's account-wide too: dev and prod
 share the account, and a per-env budget would only see part of the bill
-(`plans/01-infrastructure-cdk.md` §9.2a).
+(`docs/design/infrastructure.md` §9.2a).
 """
 
 from __future__ import annotations

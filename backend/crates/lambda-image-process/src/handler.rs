@@ -1,4 +1,4 @@
-//! The S3-trigger handler (`plans/08-media-uploads.md` §5.2).
+//! The S3-trigger handler (`docs/design/media.md` §5.2).
 //!
 //! Records are processed independently: a terminal content problem (too
 //! large, undecodable, malformed key, missing/already-finished row) on one
@@ -25,7 +25,7 @@ use crate::state::AppState;
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
 const IMAGE_DECODE_FAILED: &str = "IMAGE_DECODE_FAILED";
 /// 60 days. Kept at two months or less so a browser or CDN copy can't outlive
-/// a fix for long, such as a header or CORS change (`08` §5.1).
+/// a fix for long, such as a header or CORS change (`docs/design/media.md` §5.1).
 const IMAGE_CACHE_CONTROL: &str = "public, max-age=5184000, immutable";
 const AVATAR_CACHE_CONTROL: &str = "public, max-age=86400, immutable";
 

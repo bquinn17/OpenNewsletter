@@ -1,4 +1,4 @@
-//! Business logic for the media routes (`plans/03-api-contract.md` §9).
+//! Business logic for the media routes (`docs/design/api.md` §9).
 
 use crate::presign;
 use crate::state::AppState;
@@ -12,11 +12,11 @@ use domain::{
     ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
     ImagePurpose, MediaStatus, NewsletterStatus, UserId,
 };
-use persistence::{auth, media, newsletters, questions, responses, users};
+use persistence::{auth, media, newsletters, questions, responses, users, RepoError};
 use shared::config::{MAX_AVATAR_BYTES, MAX_IMAGES_PER_RESPONSE, MAX_IMAGE_BYTES};
 
 /// `POST /uploads` (§9.1). Validation order follows
-/// `08-media-uploads.md` §3.1: membership, mime type, byte size, sha256
+/// `docs/design/media.md` §3.1: membership, mime type, byte size, sha256
 /// shape, newsletter existence + cycle status for `purpose`, the question
 /// being locked into this cycle, then (for `purpose=response`) the
 /// per-answer image cap.
@@ -195,9 +195,13 @@ pub async fn patch_upload(
     let caption = validation::validate_caption(request.caption)?;
     media::set_image_caption(&state.repo, group_id, cycle_id, image_id, caption.as_deref())
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "caption update failed");
-            ApiError::internal("failed to update caption")
+        .map_err(|e| match e {
+            // Deleted between the load above and this write.
+            RepoError::ConditionalCheckFailed => ApiError::not_found("image not found"),
+            e => {
+                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "caption update failed");
+                ApiError::internal("failed to update caption")
+            }
         })?;
 
     let updated = load_image(state, group_id, cycle_id, image_id).await?;
@@ -208,8 +212,8 @@ pub async fn patch_upload(
 /// with `IMAGE_IN_USE` when the caller's own *published* response for the
 /// image's question still references it, or (`purpose=comment`, added M10)
 /// a live comment still has it claimed via `attachedCommentId`
-/// (`09-engagement.md` §1.5, `03-api-contract.md` §8.2). Otherwise deletes
-/// the S3 objects, the CDN copies and the row (`08-media-uploads.md` §8.0).
+/// (`docs/design/engagement.md` §1.5, `docs/design/api.md` §8.2). Otherwise deletes
+/// the S3 objects, the CDN copies and the row (`docs/design/media.md` §8.0).
 /// Idempotent: an already-deleted image is a no-op success.
 pub async fn delete_upload(
     state: &AppState,
@@ -266,7 +270,7 @@ pub struct MediaCookie {
     pub set_cookie_headers: Vec<String>,
 }
 
-/// `GET /media-cookie` (§9.5, `08-media-uploads.md` §4.3).
+/// `GET /media-cookie` (§9.5, `docs/design/media.md` §4.3).
 pub async fn get_media_cookie(
     state: &AppState,
     caller: &UserId,
@@ -319,7 +323,7 @@ pub async fn get_media_cookie(
 }
 
 /// `POST /avatars` (§9.7). No group/membership check — avatars cross group
-/// boundaries by design (`08-media-uploads.md` §11).
+/// boundaries by design (`docs/design/media.md` §11).
 pub async fn create_avatar(
     state: &AppState,
     caller: &UserId,
@@ -384,7 +388,7 @@ pub async fn get_avatar(
 
 /// `DELETE /avatars/{avatarId}` (§9.7). Unlinks it from `User.avatar_media_id`
 /// if it's the current one, then deletes its S3 objects, CDN copies and row
-/// (`08-media-uploads.md` §11.4). Unlinking first means a failed delete never
+/// (`docs/design/media.md` §11.4). Unlinking first means a failed delete never
 /// leaves the profile pointing at a half-deleted avatar. Idempotent: the
 /// lookup is under the caller's own partition, so an already-deleted avatar
 /// (or another user's id, which touches nothing of theirs) is a no-op success.

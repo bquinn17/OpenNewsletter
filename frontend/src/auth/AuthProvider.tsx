@@ -119,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     }
     if (!userManager) return;
     loggingOut.current = true;
-    // `05-auth-flow.md` §8, in order. Read the user first: the refresh token
+    // `docs/design/auth.md` §8, in order. Read the user first: the refresh token
     // (and which client issued it) is needed for step 4, after step 1 has
     // already dropped it from storage.
     const stored = await userManager.getUser().catch(() => null);

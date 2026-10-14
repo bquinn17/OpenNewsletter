@@ -12,12 +12,12 @@ pub struct AppState {
     pub repo: Repo,
     pub secrets: aws_sdk_secretsmanager::Client,
     /// Secrets Manager ARN of the per-env app secret `opennewsletter/{env}`,
-    /// whose JSON carries the VAPID keys (`plans/07-notifications.md` §2).
+    /// whose JSON carries the VAPID keys (`docs/design/notifications.md` §2).
     pub app_secret_arn: String,
     pub sender: Arc<dyn PushSender>,
     /// `dev` | `staging` | `prod` — the dev-only HTTP route refuses with
     /// `404 NOT_FOUND` unless this is exactly `dev`
-    /// (`plans/03-api-contract.md` §11a). Unused by `push-api` itself today
+    /// (`docs/design/api.md` §11a). Unused by `push-api` itself today
     /// (its dev route lives on `notify-tick`) but kept for parity with the
     /// other Lambdas' `AppState` and in case a push-side dev route is added.
     pub env: String,
@@ -61,7 +61,7 @@ impl AppState {
     }
 
     /// The VAPID keypair, fetched from Secrets Manager on first use and
-    /// cached for the life of the warm container (`07-notifications.md` §2,
+    /// cached for the life of the warm container (`docs/design/notifications.md` §2,
     /// M11 decision D1).
     pub async fn vapid_keys(&self) -> Result<&VapidKeys, ApiError> {
         self.vapid

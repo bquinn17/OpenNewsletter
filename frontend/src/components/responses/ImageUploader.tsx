@@ -46,7 +46,7 @@ type Props = {
   onChange?: (images: UploaderImage[]) => void;
   /**
    * Ask before removing an uploaded image, because removal deletes it for
-   * real (`08-media-uploads.md` §8.0, D8). A purely local, never-presigned
+   * real (`docs/design/media.md` §8.0, D8). A purely local, never-presigned
    * entry is dropped without asking.
    */
   confirmRemove?: boolean;

@@ -30,10 +30,16 @@ Still open:
 - **Confirm the OAuth secrets hold real client IDs and secrets**, and that both IdP apps list the redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
 - **Fill in `opennewsletter/prod`.** It holds only `cdn_signing_private_key`; *merge* the OAuth and VAPID keys into it (M14).
 - **The four old dev secrets are scheduled for deletion on 2026-10-18.** Deploy dev before then. If the new secret misbehaves, `aws secretsmanager restore-secret --secret-id <name>`.
-- **`.env.local` overrides environment variables for prod too** (`load_config`), so a workstation prod synth/deploy would pick up the dev `APP_SECRET_ARN`. Make it dev-only or override it before a local prod bring-up. CI has no `.env.local`.
+- **`.env.local` overrides environment variables for prod too** (`load_config`), so a workstation prod synth/deploy would pick up the dev `APP_SECRET_ARN`. Make it dev-only or override it before a local prod bring-up (swap `APP_SECRET_ARN`/`ROOT_DOMAIN`/`API_DOMAIN` with the `PROD_*`-prefixed lines next to them, then swap back). CI has no `.env.local`.
 - `aws login` sessions expire. Check `aws sts get-caller-identity` before deploying.
 
+**Decision (2026-10-13) — dev gets its own subdomain (`dev.betterloop.site`/`api.dev.betterloop.site`), not prod's apex.** `config.py` has no local dev/prod split for `ROOT_DOMAIN`/`API_DOMAIN`, and `MediaPersistentStack`'s CloudFront alias isn't gated on env the way `ApiStack`'s custom domain is — so the first local dev deploy claimed `cdn.betterloop.site`/`api.betterloop.site`, which would have collided with prod's later deploy of the same alias (one enabled distribution per alias, account-wide). Fixed in `.env.local`; full writeup in [`docs/development/environments.md` §2](../docs/development/environments.md#2-environments). `MediaPersistentStack`'s missing dev-gate itself is unfixed (not needed now, worth closing later for consistency).
+
 These block every deploy gate (M3–M14), not code work.
+
+### B7 — AWS account not yet verified for CloudFront
+
+First `MediaPersistentStack-dev` deploy (2026-10-12) failed: `AWS::CloudFront::Distribution` returned `AccessDenied` — "Your account must be verified before you can add new CloudFront resources." New-account anti-abuse gate, unrelated to billing/free-tier (CloudFront costs are negligible at this project's scale either way — see `docs/design/media.md` §6.1's own cost comparison). Rollback was clean (all resources `DELETE_COMPLETE`, nothing orphaned). Support case filed 2026-10-13 requesting account verification; typically resolved within hours. Once cleared, re-run `make deploy-dev` — `CiStack`, `AuthStack-dev`, `DataStack-dev`, `FrontendStack-dev`, `NotificationsStack-dev` are already up; only `MediaPersistentStack-dev`, `MediaPipelineStack-dev`, `ApiStack-dev` and `MonitoringStack-dev` remain.
 
 ### B6 — Lambda release builds
 

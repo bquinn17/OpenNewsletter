@@ -7,7 +7,7 @@ import { buildCspPolicy, cspMetaTag, CHARSET_META_RE } from "./csp";
  * after the charset meta. `apply: "build"` is what keeps this out of
  * `vite dev` entirely — under `vite dev`, `@vitejs/plugin-react`'s inline
  * preamble script would be blocked by `script-src 'self'`
- * (`04-frontend-architecture.md` §13).
+ * (`docs/design/frontend.md` §13).
  *
  * Split out from `csp.ts` (the pure, Vitest-covered policy builder) because
  * importing the `vite` package in a file that a jsdom-environment test also

@@ -5,7 +5,7 @@
 //! after a cycle opens or publishes, it async-invokes `lambda-push`
 //! (`InvocationType::Event`) with the internal envelope
 //! `{"internal": "cycle_open_fanout"|"publication_fanout", "groupId", "cycleId"}`
-//! (`plans/07-notifications.md` §6, M11). `lambda-push` owns the
+//! (`docs/design/notifications.md` §6, M11). `lambda-push` owns the
 //! `NOTIFIED#OPEN`/`NOTIFIED#PUBLISH` idempotency markers, so a duplicate
 //! invoke from a retried tick is harmless.
 
@@ -17,9 +17,9 @@ use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FanoutKind {
-    /// `voting -> open` (`07-notifications.md` §4).
+    /// `voting -> open` (`docs/design/notifications.md` §4).
     CycleOpen,
-    /// `open -> published` (`07-notifications.md` §5).
+    /// `open -> published` (`docs/design/notifications.md` §5).
     Publication,
 }
 

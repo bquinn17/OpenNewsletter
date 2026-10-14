@@ -4,8 +4,8 @@
 // Node's built-in `zlib`) drawing a simple ring glyph in the app's brand
 // colors (see `frontend/index.html` / `public/favicon.svg`). Stand-in
 // artwork until a real design lands; re-run with `node scripts/generate-icons.mjs`
-// after editing the colors/sizes below. Per `plans/04-frontend-architecture.md`
-// §14.1 and `plans/07-notifications.md` §12 (monochrome Android badge).
+// after editing the colors/sizes below. Per `docs/design/frontend.md`
+// §14.1 and `docs/design/notifications.md` §12 (monochrome Android badge).
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

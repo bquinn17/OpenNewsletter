@@ -1,4 +1,4 @@
-//! Request validation for response saves (`plans/03-api-contract.md` §7.3).
+//! Request validation for response saves (`docs/design/api.md` §7.3).
 
 use domain::{ApiError, ApiErrorCode, ImageId, LockedQuestion, PollOptionId};
 use shared::config::{MAX_IMAGES_PER_RESPONSE, MAX_RESPONSE_BODY_CHARS};

@@ -161,7 +161,7 @@ pub async fn update_profile(
 
 /// Clears `avatar_media_id` back to `null`, but only if it still points at
 /// `avatar_id` — a conditional update so `DELETE /avatars/{avatarId}`
-/// (`03-api-contract.md` §9.7) can't clobber a concurrent `PATCH /me` that
+/// (`docs/design/api.md` §9.7) can't clobber a concurrent `PATCH /me` that
 /// set a *different* avatar in between. A lost race (the field already
 /// points elsewhere, or the user row is otherwise gone) is not an error:
 /// the delete is still idempotent from the caller's point of view.

@@ -1,5 +1,5 @@
 //! `lambda-media` — upload, avatar, and CloudFront signed-cookie routes
-//! (`plans/03-api-contract.md` §9).
+//! (`docs/design/api.md` §9).
 
 use lambda_http::{service_fn, Error};
 use media::{router, state::AppState};
@@ -18,7 +18,7 @@ async fn main() -> Result<(), Error> {
         // Newer aws-sdk-s3 defaults to signing a CRC32 checksum of the (empty,
         // for a presigned PUT) body, which breaks a browser's direct upload —
         // only sign a checksum when the caller explicitly asked for one via
-        // `sha256` (`plans/08-media-uploads.md` §3.2).
+        // `sha256` (`docs/design/media.md` §3.2).
         .request_checksum_calculation(aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired)
         .build();
 

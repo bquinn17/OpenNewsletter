@@ -1,5 +1,5 @@
 //! `lambda-engagement` — comment and reaction routes
-//! (`plans/03-api-contract.md` §8).
+//! (`docs/design/api.md` §8).
 
 use engagement::{router, state::AppState};
 use lambda_http::{service_fn, Error};

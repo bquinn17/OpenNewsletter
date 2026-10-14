@@ -1,4 +1,4 @@
-//! Contract test per `plans/11-testing-ci-cd.md` §2.3: loads `shared/openapi.yaml`
+//! Contract test per `docs/development/testing-and-ci.md` §2.3: loads `shared/openapi.yaml`
 //! and round-trips every request/response example against the matching
 //! `domain::api` type via the `ROUTE_TABLE` below.
 //!
@@ -323,7 +323,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "422",
         round_trip::<ProblemDetails>,
     ),
-    // ---- `03-api-contract.md` §8 — Engagement routes (comments + reactions) ----
+    // ---- `docs/design/api.md` §8 — Engagement routes (comments + reactions) ----
     (
         "GET",
         "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
@@ -444,7 +444,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "422",
         round_trip::<ProblemDetails>,
     ),
-    // ---- `03-api-contract.md` §9 — Media routes ----
+    // ---- `docs/design/api.md` §9 — Media routes ----
     (
         "POST",
         "/uploads",
@@ -538,7 +538,7 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "404",
         round_trip::<ProblemDetails>,
     ),
-    // ---- `03-api-contract.md` §10 — Push routes ----
+    // ---- `docs/design/api.md` §10 — Push routes ----
     (
         "POST",
         "/push/subscribe",

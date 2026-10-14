@@ -79,7 +79,7 @@ describe("MarkdownBody sanitization", () => {
   });
 });
 
-describe("MarkdownBody with allowImages=false (comments, `09-engagement.md` §5)", () => {
+describe("MarkdownBody with allowImages=false (comments, `docs/design/engagement.md` §5)", () => {
   it("still strips script tags", () => {
     render(
       <MarkdownBody

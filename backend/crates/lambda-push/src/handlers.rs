@@ -1,4 +1,4 @@
-//! Business logic for the push routes (`plans/03-api-contract.md` §10).
+//! Business logic for the push routes (`docs/design/api.md` §10).
 
 use crate::state::AppState;
 use crate::validation;
@@ -84,7 +84,7 @@ pub async fn list_subscriptions(
     })
 }
 
-/// `POST /push/test` (§10.4, `07-notifications.md` §9). A caller with no
+/// `POST /push/test` (§10.4, `docs/design/notifications.md` §9). A caller with no
 /// subscriptions gets an empty list. Sends to every device concurrently so
 /// the reply lands inside API Gateway's 30s limit even when several
 /// endpoints hang; a device not attempted before the cutoff reports

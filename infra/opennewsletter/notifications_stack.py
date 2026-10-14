@@ -1,14 +1,14 @@
 """NotificationsStack — EventBridge-scheduled tick Lambdas.
 
-Per `plans/01-infrastructure-cdk.md` §7. M5 wires `lambda-cycle-tick`, which polls
+Per `docs/design/infrastructure.md` §7. M5 wires `lambda-cycle-tick`, which polls
 GSI2 every 5 minutes and advances cycles whose transition timestamps have passed
-(`plans/06-newsletter-lifecycle.md` §5). M11 adds `lambda-notify-tick`, which runs
+(`docs/design/lifecycle.md` §5). M11 adds `lambda-notify-tick`, which runs
 the deadline reminder fan-out every 15 minutes.
 
 `ApiStack` takes `cycle_tick_fn` and `notify_tick_fn` as constructor parameters so
 it can wire the dev-only routes directly to these Lambdas. That makes `ApiStack`
 depend on this stack, the opposite of the direction listed in
-`01-infrastructure-cdk.md` §1's stack table (which has `NotificationsStack`
+`docs/design/infrastructure.md` §1's stack table (which has `NotificationsStack`
 depending on `ApiStack`, for the M11 `lambda-push` invoke grant). See that file's
 note for how M11 resolves both directions without a cycle.
 """
@@ -85,7 +85,7 @@ class NotificationsStack(cdk.Stack):
         table.grant_read_write_data(self.cycle_tick_fn)
 
         # Grant cycle_tick_fn permission to invoke the Push Lambda
-        # Use format_arn to avoid circular dependency (per 01-infrastructure-cdk.md §1 Correction (M5))
+        # Use format_arn to avoid circular dependency (per docs/design/infrastructure.md §1 Correction (M5))
         push_lambda_arn = self.format_arn(
             service="lambda",
             resource="function",
@@ -130,7 +130,7 @@ class NotificationsStack(cdk.Stack):
                 "TABLE_NAME": table.table_name,
                 "ENV": config.env,
                 "RUST_LOG": "info",
-                # VAPID keys are its `vapid_*` JSON keys (`01` §7.1).
+                # VAPID keys are its `vapid_*` JSON keys (`docs/design/infrastructure.md` §7.1).
                 "APP_SECRET_ARN": config.app_secret_arn,
             },
             log_group=notify_tick_log_group,

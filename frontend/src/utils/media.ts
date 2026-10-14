@@ -27,7 +27,7 @@ function isFresh(cookie: MediaCookie): boolean {
   return new Date(cookie.expiresAt).getTime() - REFRESH_BEFORE_EXPIRY_MS > Date.now();
 }
 
-/** Fetches (and caches per group) the CloudFront signed-cookie values, per `08-media-uploads.md` §4.4. No-op in mock mode. */
+/** Fetches (and caches per group) the CloudFront signed-cookie values, per `docs/design/media.md` §4.4. No-op in mock mode. */
 export async function ensureCookie(groupId: string): Promise<void> {
   if (env.useMocks) return;
 
@@ -43,7 +43,7 @@ export async function ensureCookie(groupId: string): Promise<void> {
 }
 
 /**
- * Appends CloudFront signed-URL query params in dev (`08-media-uploads.md` §4.5); pass-through in
+ * Appends CloudFront signed-URL query params in dev (`docs/design/media.md` §4.5); pass-through in
  * prod (cookies do the work there) and for any URL this group has no cached cookie for yet
  * (including `/avatar/*`, which is never signed).
  */
@@ -103,7 +103,7 @@ type MediaPollHandlers<T extends Pollable> = {
 
 /**
  * Polls `fetchStatus` every 1.5s, backing off ×1.5 (capped at 5s) once pending for more than 10s,
- * giving up after ~2 minutes (`08-media-uploads.md` §3.3). Returns a cancel function.
+ * giving up after ~2 minutes (`docs/design/media.md` §3.3). Returns a cancel function.
  */
 export function pollMediaStatus<T extends Pollable>(
   fetchStatus: () => Promise<T>,

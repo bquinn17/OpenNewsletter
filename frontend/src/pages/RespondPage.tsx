@@ -208,7 +208,7 @@ function QuestionBody({
   const [pollClosed, setPollClosed] = useState(false);
   const pollIsPublished = (pollResponse?.status ?? question.myResponse?.status) === "published";
   const pollIsUnpublishedDraft = !pollIsPublished && pollOptionId !== null;
-  // `04` §7.3 (D2): a non-empty draft auto-publishes when responses close.
+  // `docs/design/frontend.md` §7.3 (D2): a non-empty draft auto-publishes when responses close.
   const showAutoPublishNote = isText
     ? textIsUnpublishedDraft && !editor.readOnly
     : pollIsUnpublishedDraft && !pollClosed;
@@ -248,9 +248,9 @@ function QuestionBody({
   function handlePollSelect(optionId: string) {
     setPollOptionId(optionId);
     // Every pick saves right away as a draft, the first one included, the
-    // same as a text autosave (`04` §7.3, D2). An unpublished pick is then
+    // same as a text autosave (`docs/design/frontend.md` §7.3, D2). An unpublished pick is then
     // auto-published at the deadline; once published, a change stays
-    // published (publishing is sticky server-side, `03-api-contract.md` §7.3).
+    // published (publishing is sticky server-side, `docs/design/api.md` §7.3).
     void savePoll(false, optionId);
   }
 

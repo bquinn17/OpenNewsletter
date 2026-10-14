@@ -1,5 +1,5 @@
 """`load_config` assertions for the M13.5 config changes
-(`plans/01-infrastructure-cdk.md` §2).
+(`docs/design/infrastructure.md` §2).
 
 Each test points `config._REPO_ROOT` at an empty directory, so a developer's
 `.env.local` can't leak into the result.

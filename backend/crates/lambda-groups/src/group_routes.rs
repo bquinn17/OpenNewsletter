@@ -1,5 +1,5 @@
 //! `GET /groups/{g}`, `PATCH /groups/{g}`, and the member-management routes
-//! (`plans/03-api-contract.md` §3.5, §3.6, §4).
+//! (`docs/design/api.md` §3.5, §3.6, §4).
 
 use crate::state::AppState;
 use crate::validation;
@@ -50,7 +50,7 @@ pub async fn patch_group(
     Ok(GroupResponse::new(updated, members))
 }
 
-/// `plans/06-newsletter-lifecycle.md` §6 — when `responseWindowDays` changes
+/// `docs/design/lifecycle.md` §6 — when `responseWindowDays` changes
 /// and the group has an `open` cycle, that cycle's close moves to
 /// `responseOpenAt + days`. Returns the cycle and its new close, or a 422 on
 /// `responseWindowDays` with code `CLOSES_IN_PAST` if the new close isn't in
@@ -64,10 +64,10 @@ async fn open_cycle_close_change(
     let Some(settings) = &patch.cycle_settings else {
         return Ok(None);
     };
+    // No early exit when `days` is unchanged: re-submitting the same value
+    // repairs a close whose best-effort move failed on an earlier PATCH. The
+    // `new_close == response_close_at` check below covers the true no-op.
     let days = settings.response_window_days;
-    if days == current.cycle_settings.response_window_days {
-        return Ok(None);
-    }
     let open = newsletters::find_open_cycle(&state.repo, group_id)
         .await
         .map_err(|e| {
@@ -88,6 +88,11 @@ async fn open_cycle_close_change(
     }
     let new_close = open.response_open_at + Duration::days(days.into());
     if new_close <= now {
+        // An unchanged value can't be repaired any more; don't fail a PATCH
+        // that only resent it alongside some other setting.
+        if days == current.cycle_settings.response_window_days {
+            return Ok(None);
+        }
         return Err(ApiError::invalid_field_because(
             "responseWindowDays",
             FieldErrorCode::ClosesInPast,
@@ -120,20 +125,18 @@ async fn move_open_cycle_close(
     }
 }
 
-/// `plans/06-newsletter-lifecycle.md` §6 — a `timezone`/`responseWindowDays`
+/// `docs/design/lifecycle.md` §6 — a `timezone`/`responseWindowDays`
 /// change recomputes the group's current `voting` cycle's schedule, whether
 /// or not it already has candidates.
 ///
-/// `cycleId` is derived from the recomputed `responseOpenAt` and doubles as
-/// the row's partition key. If recomputing would change it (a timezone shift
-/// can push the same creation instant into a different local month), the row
-/// is left untouched rather than moved to a new key — silently renaming an
-/// in-flight cycle out from under anyone looking at its old id would be more
-/// disorienting than deferring the setting by one cycle.
+/// The schedule is anchored on the cycle's own `cycleId` (local midnight on
+/// the 1st of that month, in the new timezone), so the recomputed
+/// `responseOpenAt` always maps back to the same `cycleId` and the row never
+/// has to move keys.
 ///
 /// Best-effort: a failure here is logged but does not fail the settings PATCH,
 /// consistent with how `create_next_voting_cycle` is a best-effort step
-/// outside the tick's core transaction (`06-newsletter-lifecycle.md` §5.2).
+/// outside the tick's core transaction (`docs/design/lifecycle.md` §5.2).
 async fn reschedule_voting_cycle_if_needed(
     state: &AppState,
     group_id: &GroupId,
@@ -161,27 +164,18 @@ async fn reschedule_voting_cycle_if_needed(
         return;
     };
 
-    let schedule = shared::cycle_time::next_cycle_schedule(
-        voting.vote_window_open_at,
-        tz,
-        updated.cycle_settings.response_window_days,
-    );
-
-    if schedule.cycle_id != voting.cycle_id {
-        tracing::info!(
-            group_id = %group_id,
-            old_cycle_id = %voting.cycle_id,
-            new_cycle_id = %schedule.cycle_id,
-            "timezone change would move the voting cycle's id; leaving it unchanged this cycle"
-        );
+    let Some(response_open_at) = shared::cycle_time::cycle_month_start(&voting.cycle_id, tz) else {
+        tracing::error!(group_id = %group_id, cycle_id = %voting.cycle_id, "voting cycle id is not a valid yyyymm; leaving its schedule unchanged");
         return;
-    }
+    };
+    let response_close_at =
+        response_open_at + Duration::days(updated.cycle_settings.response_window_days.into());
 
     let mut rescheduled = voting;
-    rescheduled.response_open_at = schedule.response_open_at;
-    rescheduled.vote_window_close_at = schedule.response_open_at;
-    rescheduled.response_close_at = schedule.response_close_at;
-    rescheduled.next_transition_at = Some(schedule.response_open_at);
+    rescheduled.response_open_at = response_open_at;
+    rescheduled.vote_window_close_at = response_open_at;
+    rescheduled.response_close_at = response_close_at;
+    rescheduled.next_transition_at = Some(response_open_at);
 
     match newsletters::reschedule_voting_cycle(&state.repo, &rescheduled).await {
         Ok(()) => {}
@@ -315,7 +309,7 @@ async fn list_members(
 
 /// Pick the admin whose role the removal/demotion of admin `target` is
 /// conditioned on, so the group can never commit a state with zero admins
-/// (`02` §4, last-admin guard). An admin acting on someone else is their own
+/// (`docs/design/data-model.md` §4, last-admin guard). An admin acting on someone else is their own
 /// witness, already verified by `require_membership(.., true)`; an admin acting
 /// on themselves needs another admin, or gets `LAST_ADMIN`.
 async fn admin_witness(

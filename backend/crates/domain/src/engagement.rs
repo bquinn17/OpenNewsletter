@@ -1,12 +1,12 @@
 //! Pure helpers shared by `lambda-engagement` and `lambda-newsletters`
-//! (`plans/09-engagement.md` §2.2, §2.3; `plans/03-api-contract.md` §8.5-§8.7).
+//! (`docs/design/engagement.md` §2.2, §2.3; `docs/design/api.md` §8.5-§8.7).
 //! No I/O — callers own fetching the data and mapping failures to `ApiError`.
 //!
-//! **Emoji predicate note:** `09-engagement.md` §2.2 specifies `Extended_Pictographic`
+//! **Emoji predicate note:** `docs/design/engagement.md` §2.2 specifies `Extended_Pictographic`
 //! (a UTS #51 property used for emoji segmentation). No small, actively maintained
 //! crate exposes that exact property as a public API (the full Unicode Character
 //! Database property set lives in `icu_properties`, which is Unicode-3.0 licensed —
-//! not on the MIT/Apache-2.0/BSD list `coding-standards.md` §2.10 requires — and pulls
+//! not on the MIT/Apache-2.0/BSD list `docs/development/coding-standards.md` §2.10 requires — and pulls
 //! in a much larger dependency tree than this one predicate needs). `unicode-properties`
 //! (part of the `unicode-rs` org, MIT/Apache-2.0, already a dependency for
 //! `unicode-normalization` below) exposes the related `Emoji` (`Emoji=Yes`) property
@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
 use unicode_properties::emoji::UnicodeEmoji;
 
-/// NFC-normalizes an emoji string, per `09-engagement.md` §2.2. The normalized
+/// NFC-normalizes an emoji string, per `docs/design/engagement.md` §2.2. The normalized
 /// form is what gets stored and compared.
 pub fn normalize_emoji(raw: &str) -> String {
     raw.nfc().collect()
@@ -50,7 +50,7 @@ pub fn is_valid_emoji(normalized: &str) -> bool {
 }
 
 /// Groups raw reactions by emoji for the `ReactionsResponse`/`PublishedAnswerResponse`
-/// shape (`09-engagement.md` §2.3, decided M10): count descending, then earliest
+/// shape (`docs/design/engagement.md` §2.3, decided M10): count descending, then earliest
 /// reaction first, then emoji — the one shared ordering used by both callers.
 pub fn group_reactions(reactions: &[Reaction], caller: &UserId) -> Vec<ReactionGroupResponse> {
     struct Group {
@@ -137,7 +137,7 @@ mod tests {
     fn keycap_less_ascii_digit_is_rejected() {
         // A bare digit/`#`/`*` is `Emoji=Yes` (it's a valid keycap *base*) but
         // not `Extended_Pictographic` — must still be rejected without the
-        // combining keycap character attached (`09-engagement.md` §2.2).
+        // combining keycap character attached (`docs/design/engagement.md` §2.2).
         assert!(!is_valid_emoji("1"));
         assert!(!is_valid_emoji("#"));
         assert!(!is_valid_emoji("*"));

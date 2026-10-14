@@ -6,7 +6,7 @@ import { ApiError } from "../../api/client";
 import { Button } from "../ui/Button";
 
 // Mirrors `backend/crates/shared/src/config.rs` and
-// `backend/crates/lambda-questions/src/validation.rs` (`03-api-contract.md` §6.2).
+// `backend/crates/lambda-questions/src/validation.rs` (`docs/design/api.md` §6.2).
 const MIN_PROMPT_CHARS = 5;
 const MAX_PROMPT_CHARS = 500;
 const MIN_POLL_OPTIONS = 2;
@@ -56,7 +56,7 @@ const schema = z
         ctx.addIssue({ code: "custom", path: ["pollOptions", i, "label"], message: "Required" });
         return;
       }
-      // Case-insensitive, matching the server (`09` §3.3).
+      // Case-insensitive, matching the server (`docs/design/engagement.md` §3.3).
       const key = label.toLowerCase();
       if (seen.has(key)) {
         ctx.addIssue({

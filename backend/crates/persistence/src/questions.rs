@@ -1,6 +1,6 @@
 //! Candidate questions, candidate votes, locked questions.
 //! AP10, AP12, AP13 plus transactions §4 #1, #2, #3. AP11 has no reader
-//! (`plans/02-data-model-dynamodb.md` §2.6).
+//! (`docs/design/data-model.md` §2.6).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
@@ -44,7 +44,7 @@ pub struct UnreadableCandidate {
 /// [`list_candidates`] for promotion: a row that doesn't deserialize comes
 /// back in the second list instead of failing the whole listing, so one
 /// corrupt candidate can't hold the group's cycle in `voting` forever
-/// (`06-newsletter-lifecycle.md` §5.2).
+/// (`docs/design/lifecycle.md` §5.2).
 pub async fn list_candidates_lenient(
     repo: &Repo,
     group_id: &GroupId,
@@ -219,8 +219,8 @@ pub async fn get_candidate(
     }
 }
 
-/// Cascading part of admin candidate deletion (`03-api-contract.md` §6.5).
-/// `02-data-model-dynamodb.md` has no access pattern for "list voters of
+/// Cascading part of admin candidate deletion (`docs/design/api.md` §6.5).
+/// `docs/design/data-model.md` has no access pattern for "list voters of
 /// question X" — `CandidateVote` is keyed by voter, not by question — so
 /// callers delete speculatively for every group member (bounded by
 /// `memberSoftCap`) rather than scanning the table. Deleting an absent item is
@@ -257,11 +257,17 @@ pub async fn delete_vote_if_present(
     }
 }
 
+/// Deletes a candidate, conditioned on its `vote_count` still being
+/// `expected_vote_count` (`docs/design/api.md` §6.5). The vote cascade doesn't
+/// change `vote_count`, so a mismatch means a vote was cast (or withdrawn)
+/// since the caller read it; that, or the row already being gone, is
+/// `RepoError::ConditionalCheckFailed`.
 pub async fn delete_candidate(
     repo: &Repo,
     group_id: &GroupId,
     next_cycle_id: &CycleId,
     question_id: &QuestionId,
+    expected_vote_count: u32,
 ) -> Result<(), RepoError> {
     repo.client
         .delete_item()
@@ -271,8 +277,11 @@ pub async fn delete_candidate(
             AttributeValue::S(candidate_pk(group_id, next_cycle_id)),
         )
         .key(attr::SK, AttributeValue::S(candidate_sk(question_id)))
+        .condition_expression("vote_count = :n")
+        .expression_attribute_values(":n", AttributeValue::N(expected_vote_count.to_string()))
         .send()
-        .await?;
+        .await
+        .map_err(error::from_delete_item_error)?;
     Ok(())
 }
 
@@ -298,7 +307,7 @@ pub enum VoteTxError {
 /// - Put `CandidateVote` (must not already exist)
 /// - Update `CandidateQuestion`: `vote_count += 1` and refresh the GSI1 sort key
 /// - Update the voter's `VoterTally`: `votes_cast += 1`, conditioned on
-///   `votes_cast < votes_cap`. This is the cap check `02` §4 #1 requires; a
+///   `votes_cast < votes_cap`. This is the cap check `docs/design/data-model.md` §4 #1 requires; a
 ///   pre-read alone lets concurrent votes on different candidates exceed it.
 pub async fn cast_vote_tx(
     repo: &Repo,
@@ -544,7 +553,7 @@ const _: () = assert!(
 ///
 /// Returns `Err(RepoError::TransactionCancelled)` when the flip lost a race
 /// against another tick — the caller should log that at INFO and move on
-/// rather than treating it as a failure (`plans/06-newsletter-lifecycle.md` §8).
+/// rather than treating it as a failure (`docs/design/lifecycle.md` §8).
 pub async fn promote_candidates_tx(
     repo: &Repo,
     locked: &[LockedQuestion],

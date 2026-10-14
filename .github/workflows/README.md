@@ -1,7 +1,7 @@
 # workflows
 
 GitHub Actions. Each file starts with a top-level comment describing its
-trigger and purpose. See [`../../plans/11-testing-ci-cd.md`](../../plans/11-testing-ci-cd.md) §6.
+trigger and purpose. See [`docs/development/testing-and-ci.md` §6](../../docs/development/testing-and-ci.md#6-github-actions-workflows).
 
 `deploy.yml` (M13.5, D6) is the only deploy workflow; it replaced
 `frontend-deploy.yml` and `backend-deploy.yml`. On every push to `main`:
@@ -80,7 +80,7 @@ therefore never silently pick up a prod value. An unset variable reaches
 | `FRONTEND_DOMAIN` | `deploy.yml` (`promote-prod`) | written to `dist/CNAME` |
 | `ROOT_DOMAIN`, `API_DOMAIN`, `COGNITO_DOMAIN_PREFIX` | `deploy.yml` (`promote-prod`), `infra-ci.yml` (diff) | prod values. `promote-prod` fails fast if any is empty. |
 | `HOSTED_ZONE_ID`, `HOSTED_ZONE_NAME` | same | prod values. Leave them empty while DNS stays outside Route53. |
-| `APP_SECRET_ARN` | same | ARN of prod's combined Secrets Manager secret `opennewsletter/prod`. It replaces `GOOGLE_OAUTH_SECRET_ARN`, `FACEBOOK_OAUTH_SECRET_ARN`, `VAPID_SECRET_ARN` and `CDN_SIGNING_SECRET_ARN` (D7), which can be deleted. See `docs/milestone-1-operator-runbook.md` §7. |
+| `APP_SECRET_ARN` | same | ARN of prod's combined Secrets Manager secret `opennewsletter/prod`. It replaces `GOOGLE_OAUTH_SECRET_ARN`, `FACEBOOK_OAUTH_SECRET_ARN`, `VAPID_SECRET_ARN` and `CDN_SIGNING_SECRET_ARN` (D7), which can be deleted. See [`operator-setup.md` §7](../../docs/operations/operator-setup.md#7-combine-credentials-into-one-secrets-manager-secret-per-env). |
 | `BOOTSTRAP_ADMIN_EMAIL` | same | prod only (D5): the email the prod admin invite is bound to. No stack uses it; `scripts/bootstrap_admin.py --env prod` does. It's passed through so the config matches what the operator runs locally. |
 | `ALARM_EMAIL` | both `deploy.yml` jobs, `infra-ci.yml` | **account-wide**, one value for both envs. It receives prod's alarm emails and the account's $5/mo budget alerts. The budget lives in the account-wide `CiStack`, which both jobs deploy, so a per-env value would flip its subscriber back and forth. |
 | `DEV_ROOT_DOMAIN`, `DEV_API_DOMAIN`, `DEV_COGNITO_DOMAIN_PREFIX`, `DEV_HOSTED_ZONE_ID`, `DEV_HOSTED_ZONE_NAME` | `deploy.yml` (`dev`) | dev's values for the same `config.py` inputs. Mirror whatever your local `.env.local` has; leave a variable empty to use `config.py`'s dev default. |
@@ -104,7 +104,7 @@ sees repo-level values, so keep those in sync if you go this way.
 | `E2E_USERNAME`, `E2E_PASSWORD` | `e2e.yml` | dev-stack sign-in. The dev-stack-only tests skip when these are empty. |
 
 `VITE_COGNITO_BOOTSTRAP_CLIENT_ID` is no longer passed to the prod build:
-prod has no `admin-bootstrap` client (D5, `plans/01-infrastructure-cdk.md`
+prod has no `admin-bootstrap` client (D5, [`infrastructure.md`](../../docs/design/infrastructure.md)
 §4.3). Delete the secret if it was set. It only matters for dev builds,
 which get it from `frontend/.env.dev` via `scripts/write_frontend_env.py`.
 

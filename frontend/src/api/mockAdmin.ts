@@ -13,7 +13,7 @@ import {
 type S = components["schemas"];
 
 /**
- * Mock routes for the M12 admin surface: invite CRUD (`03-api-contract.md`
+ * Mock routes for the M12 admin surface: invite CRUD (`docs/design/api.md`
  * §3) and `PATCH /groups/{g}` / `PATCH /groups/{g}/members/{u}` (§4).
  * Mirrors `backend/crates/lambda-groups/src/validation.rs` for the settings
  * bounds and `group_routes.rs::admin_witness` for the LAST_ADMIN guard.
@@ -236,7 +236,7 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
     notificationSettings = next;
   }
 
-  // D10 (`06-newsletter-lifecycle.md` §6): a window change moves the open
+  // D10 (`docs/design/lifecycle.md` §6): a window change moves the open
   // cycle's close, but only to an instant still in the future — else 422.
   const openCycle = newsletters[groupId]?.find((n) => n.status === "open");
   let openCycleCloseAt: string | null = null;

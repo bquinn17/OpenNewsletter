@@ -32,7 +32,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <HomePage /> },
       { path: "join", element: <JoinPage /> },
-      // Dev only, and only with an `admin-bootstrap` client (D5, `05` §9.2).
+      // Dev only, and only with an `admin-bootstrap` client (D5, `docs/design/auth.md` §9.2).
       ...(env.bootstrapLoginEnabled
         ? [{ path: "admin/bootstrap-login", element: <BootstrapLoginPage /> }]
         : []),
@@ -68,7 +68,7 @@ export function App() {
   const { data: config } = useConfig();
   const captureInstallPrompt = useInstallPrompt((s) => s.capture);
 
-  // Re-subscribe-on-load (`07-notifications.md` §11.2): refreshes an
+  // Re-subscribe-on-load (`docs/design/notifications.md` §11.2): refreshes an
   // already-granted subscription so `lastSuccessAt` keeps ticking and a
   // dropped browser subscription reattaches. Never prompts — `prompt: false`.
   useEffect(() => {
@@ -76,7 +76,7 @@ export function App() {
     ensurePushSubscription(config.vapidPublicKey, { prompt: false }).catch(() => undefined);
   }, [status, config?.vapidPublicKey]);
 
-  // Install prompt capture (`04-frontend-architecture.md` §14.4).
+  // Install prompt capture (`docs/design/frontend.md` §14.4).
   useEffect(() => {
     function handler(event: Event) {
       event.preventDefault();

@@ -34,7 +34,7 @@ class DataStack(cdk.Stack):
             point_in_time_recovery=config.env == "prod",
             removal_policy=removal_policy,
             # AWS-owned key: free, unlike the AWS-managed `aws/dynamodb` KMS key,
-            # which bills per request (`plans/01-infrastructure-cdk.md` §3.1, §12).
+            # which bills per request (`docs/design/infrastructure.md` §3.1, §12).
             encryption=dynamodb.TableEncryption.DEFAULT,
         )
 

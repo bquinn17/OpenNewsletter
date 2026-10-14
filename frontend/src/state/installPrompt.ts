@@ -3,7 +3,7 @@ import { create } from "zustand";
 /**
  * Not in `lib.dom.d.ts` (the spec is still a WICG draft). Minimal shape
  * `App.tsx` needs from the `beforeinstallprompt` event
- * (`04-frontend-architecture.md` §14.4).
+ * (`docs/design/frontend.md` §14.4).
  */
 export interface BeforeInstallPromptEvent extends Event {
   readonly userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;

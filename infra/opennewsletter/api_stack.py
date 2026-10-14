@@ -1,7 +1,7 @@
 """ApiStack — HTTP API, request-handler Lambdas, and their routes.
 
-Per `plans/01-infrastructure-cdk.md` §6. The route table is driven from
-`plans/03-api-contract.md` §13, which is authoritative when the two disagree.
+Per `docs/design/infrastructure.md` §6. The route table is driven from
+`docs/design/api.md` §13, which is authoritative when the two disagree.
 
 M4 wires `lambda-invites` and `lambda-groups`. M5 adds `lambda-newsletters` and
 `lambda-questions`, M6 `lambda-responses`, M8 `lambda-media`, M10
@@ -43,7 +43,7 @@ from .lambda_assets import lambda_code
 from .ssm_refs import http_api_id_parameter_name
 
 # (handler key, method, path). Every route carries the JWT authorizer — there are
-# no public routes (`plans/01-infrastructure-cdk.md` §6.5).
+# no public routes (`docs/design/infrastructure.md` §6.5).
 _ROUTES: list[tuple[str, str, str]] = [
     ("groups", "GET", "/healthz"),
     ("groups", "GET", "/config"),
@@ -169,14 +169,14 @@ class ApiStack(cdk.Stack):
             else cdk.RemovalPolicy.RETAIN
         )
 
-        # Dev has no custom domains (`plans/13-dev-environments.md` §2), so media
+        # Dev has no custom domains (`docs/development/environments.md` §2), so media
         # URLs use the distribution's own `*.cloudfront.net` domain there.
         if config.env == "dev":
             cdn_base_url = f"https://{cdn_domain}"
         else:
             cdn_base_url = f"https://cdn.{config.domain}"
 
-        # Real media deletion (`plans/01-infrastructure-cdk.md` §6.2, D8): the
+        # Real media deletion (`docs/design/infrastructure.md` §6.2, D8): the
         # Lambdas that delete media get `s3:DeleteObject` on exactly the key
         # prefixes they delete from, plus `cloudfront:CreateInvalidation` on this
         # one distribution. The id is a construct reference onto
@@ -205,7 +205,7 @@ class ApiStack(cdk.Stack):
         delete_media = iam.PolicyStatement(
             actions=["s3:DeleteObject"],
             resources=[
-                # `08-media-uploads.md` §2 key layout.
+                # `docs/design/media.md` §2 key layout.
                 media_originals_bucket.arn_for_objects("uploads/*"),
                 media_processed_bucket.arn_for_objects("img/*"),
             ],
@@ -213,7 +213,7 @@ class ApiStack(cdk.Stack):
         delete_avatars = iam.PolicyStatement(
             actions=["s3:DeleteObject"],
             resources=[
-                # `08-media-uploads.md` §11 key layout.
+                # `docs/design/media.md` §11 key layout.
                 avatars_originals_bucket.arn_for_objects("uploads/*"),
                 avatars_processed_bucket.arn_for_objects("avatar/*"),
             ],
@@ -321,8 +321,8 @@ class ApiStack(cdk.Stack):
             allowed_origins.append("http://localhost:5173")
 
         # The dev-only bootstrap client is included so password-auth tokens from
-        # /admin/bootstrap-login pass the same authorizer (13 §6). Prod has no
-        # such client, so its audience is the frontend client alone (01 §6.1).
+        # /admin/bootstrap-login pass the same authorizer (docs/development/environments.md §6). Prod has no
+        # such client, so its audience is the frontend client alone (docs/design/infrastructure.md §6.1).
         jwt_audience = [user_pool_client.user_pool_client_id]
         if bootstrap_client is not None:
             jwt_audience.append(bootstrap_client.user_pool_client_id)
@@ -376,7 +376,7 @@ class ApiStack(cdk.Stack):
                 ),
             )
 
-        # Dev-only fast-forward routes (`plans/03-api-contract.md` §11a.1, §11a.2);
+        # Dev-only fast-forward routes (`docs/design/api.md` §11a.1, §11a.2);
         # refuse with 404 in prod simply by not existing there.
         if config.env == "dev":
             self.api.add_routes(
@@ -398,7 +398,7 @@ class ApiStack(cdk.Stack):
         self._add_throttling()
 
         # Dev has no custom domains — the raw execute-api endpoint is used
-        # (`plans/13-dev-environments.md` §2).
+        # (`docs/development/environments.md` §2).
         self.domain_name: apigw.DomainName | None = None
         if config.env != "dev":
             self.domain_name = apigw.DomainName(
@@ -526,7 +526,7 @@ class ApiStack(cdk.Stack):
 
 
 def _read_app_secret(config: EnvConfig) -> iam.PolicyStatement:
-    """Read access to the one per-env app secret (`01` §7.1). Granted only to
+    """Read access to the one per-env app secret (`docs/design/infrastructure.md` §7.1). Granted only to
     the Lambdas that read a private key from it at runtime: media, push and
     notify-tick (NotificationsStack builds its own copy)."""
     return iam.PolicyStatement(

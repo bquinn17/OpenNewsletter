@@ -15,7 +15,7 @@ type GroupResponse = S["GroupResponse"];
 type PatchGroupRequest = S["PatchGroupRequest"];
 
 // Mirrors `backend/crates/shared/src/config.rs` and
-// `backend/crates/lambda-groups/src/validation.rs` (`03-api-contract.md` §4.3).
+// `backend/crates/lambda-groups/src/validation.rs` (`docs/design/api.md` §4.3).
 const MAX_NAME_CHARS = 40;
 const MIN_QUESTIONS_PER_CYCLE = 1;
 const MAX_QUESTIONS_PER_CYCLE = 20;
@@ -208,8 +208,8 @@ const SERVER_FIELD_TO_FORM_FIELD: Record<string, keyof FormValues> = {
 /**
  * Copy for the `CLOSES_IN_PAST` field error: a `responseWindowDays` change
  * that would close the already-open cycle in the past
- * (`06-newsletter-lifecycle.md` §6, D10). The form shows its own copy
- * (`04` §7.7) rather than the server's detail.
+ * (`docs/design/lifecycle.md` §6, D10). The form shows its own copy
+ * (`docs/design/frontend.md` §7.7) rather than the server's detail.
  */
 const CLOSES_IN_PAST_MESSAGE = "Would close the open cycle in the past.";
 

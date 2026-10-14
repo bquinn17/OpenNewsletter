@@ -1,5 +1,5 @@
 //! Newsletter (cycle) access (AP7, AP8, AP9), status-transition writer, and the
-//! read/write helpers from `plans/06-newsletter-lifecycle.md` §5, §10.
+//! read/write helpers from `docs/design/lifecycle.md` §5, §10.
 
 use crate::error::{self, RepoError};
 use crate::keys::{
@@ -85,7 +85,7 @@ pub async fn list_cycles_due(
         .collect()
 }
 
-/// `lambda-notify-tick`'s candidate query (`07-notifications.md` §7.1, M11
+/// `lambda-notify-tick`'s candidate query (`docs/design/notifications.md` §7.1, M11
 /// decision D5): every `open` cycle whose `responseCloseAt` falls within
 /// `[now, now + max_offset]`. The lower bound is a plain `key_timestamp`
 /// (shorter than, and therefore sorting before, any `gsi2sk` at the same
@@ -119,14 +119,26 @@ pub async fn list_open_cycles_closing_within(
         .collect()
 }
 
+/// A newsletter row that wouldn't deserialize, identified by its keys.
+#[derive(Debug)]
+pub struct UnreadableNewsletter {
+    pub pk: String,
+    pub sk: String,
+    pub error: String,
+}
+
 /// Every cycle currently in `status`, across all groups, regardless of its
 /// transition time. `lambda-cycle-tick`'s successor repair pass uses it with
-/// `Open` (`plans/06-newsletter-lifecycle.md` §5.4). Follows
+/// `Open` (`docs/design/lifecycle.md` §5.4). Follows
 /// `LastEvaluatedKey`, so it never silently truncates at one 1 MB page.
-pub async fn list_cycles_in_status(
+///
+/// Lenient, like [`crate::questions::list_candidates_lenient`]: a row that
+/// doesn't deserialize comes back in the second list instead of failing the
+/// whole listing, so one bad row can't block every other group's repair.
+pub async fn list_cycles_in_status_lenient(
     repo: &Repo,
     status: NewsletterStatus,
-) -> Result<Vec<Newsletter>, RepoError> {
+) -> Result<(Vec<Newsletter>, Vec<UnreadableNewsletter>), RepoError> {
     let request = repo
         .client
         .query()
@@ -135,15 +147,28 @@ pub async fn list_cycles_in_status(
         .key_condition_expression("#pk = :pk")
         .expression_attribute_names("#pk", attr::GSI2PK)
         .expression_attribute_values(":pk", AttributeValue::S(newsletter_gsi2pk(status)));
-    query_all(request)
-        .await?
-        .into_iter()
-        .map(|i| from_item::<_, Newsletter>(i).map_err(RepoError::from))
-        .collect()
+    let mut cycles = Vec::new();
+    let mut unreadable = Vec::new();
+    for item in query_all(request).await? {
+        let key = |name: &str| match item.get(name) {
+            Some(AttributeValue::S(v)) => v.clone(),
+            _ => String::new(),
+        };
+        let (pk, sk) = (key(attr::PK), key(attr::SK));
+        match from_item::<_, Newsletter>(item) {
+            Ok(nl) => cycles.push(nl),
+            Err(e) => unreadable.push(UnreadableNewsletter {
+                pk,
+                sk,
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok((cycles, unreadable))
 }
 
 /// The groups with a cycle currently in `status`, from the same GSI2 query as
-/// [`list_cycles_in_status`] but projecting only `group_id`, for callers that
+/// [`list_cycles_in_status_lenient`] but projecting only `group_id`, for callers that
 /// only need to know which groups have one.
 pub async fn list_group_ids_in_status(
     repo: &Repo,
@@ -170,7 +195,7 @@ pub async fn list_group_ids_in_status(
 }
 
 /// Write or rewrite a Newsletter with consistent GSI2 keys. The single chokepoint
-/// for state transitions referenced in §9 of `02-data-model-dynamodb.md`.
+/// for state transitions referenced in §9 of `docs/design/data-model.md`.
 pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
     repo.client
         .put_item()
@@ -181,7 +206,7 @@ pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(),
     Ok(())
 }
 
-/// Rewrite a `voting` cycle's schedule (`06` §6, a settings change), as
+/// Rewrite a `voting` cycle's schedule (`docs/design/lifecycle.md` §6, a settings change), as
 /// [`write_status_transition`] does but conditioned on the row still being
 /// `voting`. A tick that promoted it in the meantime would otherwise be
 /// undone by this copy read before the promotion; that lost race is
@@ -220,7 +245,7 @@ fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, R
     Ok(item)
 }
 
-/// Move an `open` cycle's close (`06` §6, `responseWindowDays` applied to the
+/// Move an `open` cycle's close (`docs/design/lifecycle.md` §6, `responseWindowDays` applied to the
 /// current cycle): `response_close_at`, `next_transition_at` (which equals it
 /// while open) and the GSI2 sort key change together. Conditioned on the row
 /// still being `open` and its current close still in the future, so neither a
@@ -296,10 +321,10 @@ pub async fn record_failed_sweep(
 
 /// The group's 3 most-recent `NL#` rows, newest first.
 ///
-/// Invariant this relies on (`plans/02-data-model-dynamodb.md` §3, decided
+/// Invariant this relies on (`docs/design/data-model.md` §3, decided
 /// 2026-10-08): cycle ids are `yyyymm` and a group gains a new cycle only
 /// when the tick creates the month after the one it just opened (§5.4 of
-/// `06`). So a group's non-terminal cycles are always its newest rows: the
+/// `docs/design/lifecycle.md`). So a group's non-terminal cycles are always its newest rows: the
 /// `voting` cycle (if any) is the newest, the `open` cycle (if any) is the
 /// month before it, and every `published`/`archived` cycle is older still.
 /// Three rows leave one row of slack. [`find_voting_cycle`] and
@@ -535,7 +560,7 @@ pub async fn upsert_tick_sentinel(repo: &Repo, ran_at: DateTime<Utc>) -> Result<
 }
 
 /// Dev-only helper backing `POST /admin/dev/tick/cycle`'s `advanceCycleClosesBy`
-/// (`plans/03-api-contract.md` §11a.1). Rewinds whichever of the group's
+/// (`docs/design/api.md` §11a.1). Rewinds whichever of the group's
 /// non-terminal cycles is due to transition next — the `open` cycle if one
 /// exists (its `responseCloseAt`), else the `voting` cycle (its
 /// `responseOpenAt`/`voteWindowCloseAt`) — so the next tick treats the

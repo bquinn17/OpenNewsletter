@@ -1,5 +1,5 @@
 //! `lambda-responses` — response draft/publish routes
-//! (`plans/03-api-contract.md` §7).
+//! (`docs/design/api.md` §7).
 
 use lambda_http::{service_fn, Error};
 use persistence::Repo;

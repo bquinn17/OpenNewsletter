@@ -16,11 +16,11 @@ function originOf(url: string | undefined): string | null {
 
 /**
  * Builds the `Content-Security-Policy` directive string for `index.html`
- * (`04-frontend-architecture.md` §12.1). A pure function of the three
+ * (`docs/design/frontend.md` §12.1). A pure function of the three
  * origin-bearing env vars so it's unit-testable without spinning up Vite —
  * `cspPlugin` below is the only caller in the real build.
  *
- * `worker-src`/`manifest-src` aren't in the `04` §12.1 policy text; added
+ * `worker-src`/`manifest-src` aren't in the `docs/design/frontend.md` §12.1 policy text; added
  * here because the service worker and PWA manifest need them and a `meta`
  * CSP with neither falls back to `default-src`, which would also work, but
  * being explicit documents the requirement.
@@ -34,7 +34,7 @@ export function buildCspPolicy(vars: CspEnvVars): string {
     ["default-src", ["'self'"]],
     ["script-src", ["'self'"]],
     // Google Fonts: `index.html` links the stylesheet, which pulls the font
-    // files from gstatic (decided M13, `04` §12.1).
+    // files from gstatic (decided M13, `docs/design/frontend.md` §12.1).
     ["style-src", ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"]],
     ["img-src", ["'self'", "data:", "blob:", cdnOrigin]],
     [

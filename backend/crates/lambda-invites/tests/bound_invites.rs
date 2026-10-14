@@ -1,5 +1,5 @@
-//! Email-bound invites (`plans/05-auth-flow.md` §4.2 step 2,
-//! `03-api-contract.md` §3.1, §3.4).
+//! Email-bound invites (`docs/design/auth.md` §4.2 step 2,
+//! `docs/design/api.md` §3.1, §3.4).
 //!
 //! Each test uses its own group id: `persistence::auth` keeps process-wide
 //! caches, and tests run concurrently.

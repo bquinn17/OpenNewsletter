@@ -109,7 +109,7 @@ export function useToggleVote(groupId: string) {
   });
 }
 
-// ---- Engagement (comments + reactions, M10 — `09-engagement.md`) ----------
+// ---- Engagement (comments + reactions, M10 — `docs/design/engagement.md`) ----------
 //
 // Comments and reactions come inline on the published newsletter (no
 // separate per-answer query). Every mutation below patches the one answer
@@ -139,7 +139,7 @@ function patchAnswer(
 
 /**
  * Optimistic local toggle, mirroring the server's ordering (count desc, then
- * earliest reaction, then emoji — `03-api-contract.md` §8.5): a new emoji is
+ * earliest reaction, then emoji — `docs/design/api.md` §8.5): a new emoji is
  * appended at the end, an existing group's position is otherwise kept, and a
  * group that hits zero is dropped. The server's response (applied in
  * `onSuccess` below) always wins over this guess.
@@ -283,7 +283,7 @@ export function useDeleteComment(groupId: string, cycleId: string, questionId: s
   });
 }
 
-// ---- Push notifications (M11 — `07-notifications.md` §11, D11) -----------
+// ---- Push notifications (M11 — `docs/design/notifications.md` §11, D11) -----------
 
 /** Sends a `kind: test` push to every one of the caller's subscriptions. */
 export function useSendTestPush() {
@@ -342,7 +342,7 @@ export function usePutPushPreference(groupId: string) {
   });
 }
 
-// ---- Group admin (M12 — `03-api-contract.md` §3/§4) -----------------------
+// ---- Group admin (M12 — `docs/design/api.md` §3/§4) -----------------------
 
 /** Creates an invite for the given group (`GroupAdminPage`'s Invites tab). */
 export function useCreateInvite(groupId: string) {
@@ -403,7 +403,7 @@ export function usePatchGroup(groupId: string) {
       // reads the group row live, so a refetch picks up the new values.
       qc.invalidateQueries({ queryKey: queryKeys.config });
       // A timezone/responseWindowDays change can reschedule the voting
-      // cycle's dates (`06-newsletter-lifecycle.md` §6).
+      // cycle's dates (`docs/design/lifecycle.md` §6).
       qc.invalidateQueries({ queryKey: queryKeys.newsletters(groupId) });
     },
   });

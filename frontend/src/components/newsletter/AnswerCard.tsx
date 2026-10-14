@@ -16,7 +16,7 @@ type Props = {
   timezone: string;
 };
 
-/** One published answer to a text question, with its reactions and comments (`09-engagement.md` §4.1). */
+/** One published answer to a text question, with its reactions and comments (`docs/design/engagement.md` §4.1). */
 export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: Props) {
   const { data: group } = useGroup(groupId);
   const member = group?.members.find((m) => m.userId === answer.userId);

@@ -1,6 +1,6 @@
 //! Cycle-open / publication notification fan-outs, triggered by
 //! `lambda-cycle-tick`'s async invoke of this Lambda
-//! (`plans/07-notifications.md` §6, §8; M11 decisions D2-D4, D9).
+//! (`docs/design/notifications.md` §6, §8; M11 decisions D2-D4, D9).
 
 use crate::payload::{self, PushPayload};
 use crate::state::AppState;
@@ -15,7 +15,7 @@ use persistence::{groups, newsletters, push as push_repo, questions, responses};
 use shared::config::{PUSH_FANOUT_SEND_CUTOFF_SECS, PUSH_MEMBER_READ_CONCURRENCY};
 use std::time::{Duration, Instant};
 
-/// `cycle_open_fanout` (`07-notifications.md` §6.1). Skipped entirely when
+/// `cycle_open_fanout` (`docs/design/notifications.md` §6.1). Skipped entirely when
 /// `group.notificationSettings.onCycleOpen` is false; per member skipped
 /// when their `NotificationPref.cycleOpen` is false or they have zero
 /// subscriptions. At-most-once via the `NOTIFIED#OPEN` marker.
@@ -63,7 +63,7 @@ pub async fn cycle_open_fanout(state: &AppState, group_id: &GroupId, cycle_id: &
     fanout_metrics.emit();
 }
 
-/// `publication_fanout` (`07-notifications.md` §8). Always on — no group
+/// `publication_fanout` (`docs/design/notifications.md` §8). Always on — no group
 /// switch, no per-user preference. At-most-once via the `NOTIFIED#PUBLISH`
 /// marker.
 pub async fn publication_fanout(state: &AppState, group_id: &GroupId, cycle_id: &CycleId) {
@@ -203,7 +203,7 @@ async fn load_newsletter(
     }
 }
 
-/// Fan-out over a group's members (`07-notifications.md` §6.2): resolve the
+/// Fan-out over a group's members (`docs/design/notifications.md` §6.2): resolve the
 /// VAPID keys once, then for each member apply `should_send` to their
 /// (possibly absent) `NotificationPref` and gather their subscriptions;
 /// finally send the same `payload` to every gathered subscription

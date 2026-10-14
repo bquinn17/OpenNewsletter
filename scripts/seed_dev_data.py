@@ -79,7 +79,7 @@ def iso(dt: datetime) -> str:
 
 def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
     """cycleId = yyyymm of responseOpenAt in the group's local time zone
-    (`06-newsletter-lifecycle.md` §4.1; mirrors
+    (`docs/design/lifecycle.md` §4.1; mirrors
     `backend/crates/shared/src/cycle_time.rs::cycle_id_for`).
     """
     local = response_open_at.astimezone(tz)

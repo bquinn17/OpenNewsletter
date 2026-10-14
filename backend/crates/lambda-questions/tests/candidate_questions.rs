@@ -1,8 +1,8 @@
-//! Handler-level tests for `lambda-questions` (`plans/03-api-contract.md` §6).
+//! Handler-level tests for `lambda-questions` (`docs/design/api.md` §6).
 //!
 //! Each test uses its own group id (never a shared "g1"): `persistence::auth`
 //! keeps a process-wide membership cache keyed by `(userId, groupId)` with a
-//! 60s TTL (`plans/02-data-model-dynamodb.md` §6), and `cargo test` runs many
+//! 60s TTL (`docs/design/data-model.md` §6), and `cargo test` runs many
 //! of these tests concurrently in the same process. Reusing a group id across
 //! tests let one test's cached role leak into another's assertions.
 

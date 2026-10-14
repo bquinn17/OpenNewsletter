@@ -218,7 +218,7 @@ pub async fn update_group(
 /// membership row (`role = admin`). DynamoDB transactions are serializable,
 /// so as long as every removal/demotion of an admin names a still-admin
 /// witness, no interleaving of concurrent requests can ever commit a state
-/// with zero admins (`plans/03-api-contract.md` §3.6's `LAST_ADMIN` guard;
+/// with zero admins (`docs/design/api.md` §3.6's `LAST_ADMIN` guard;
 /// see also [`leave_group_tx`]). Pass `None` when `user_id` does not
 /// currently hold the admin role — no witness is needed to protect an
 /// invariant that isn't at stake.

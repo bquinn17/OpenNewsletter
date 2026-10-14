@@ -1,5 +1,5 @@
 # `cargo deny check` policy for the backend workspace (M13 hardening).
-# Run from `backend/`. See `plans/coding-standards.md` §2.2, §2.10.
+# Run from `backend/`. See `docs/development/coding-standards.md` §2.2, §2.10.
 
 [graph]
 all-features = false
@@ -14,7 +14,7 @@ ignore = [
     # No fix exists in the `rsa` crate itself (patched = [] upstream); the
     # RustCrypto team's own tracking issue is still open. `lambda-media`
     # uses `rsa::Pkcs1v15Sign` once per `GET /media-cookie` call to sign
-    # CloudFront cookies (`08-media-uploads.md` §4.3) — the exploit needs an
+    # CloudFront cookies (`docs/design/media.md` §4.3) — the exploit needs an
     # attacker who can observe fine-grained timing of that signing call over
     # the network to attempt RSA key recovery. Mitigated, not fixed: since
     # M13 `cloudfront::sign_policy` signs with `sign_with_rng`, so the key
@@ -59,7 +59,7 @@ ignore = [
 
 # This section is considered when running `cargo deny check licenses`.
 [licenses]
-# Permissive licenses only, matching `coding-standards.md` §2.10
+# Permissive licenses only, matching `docs/development/coding-standards.md` §2.10
 # ("MIT/Apache-2.0/BSD-equivalent"). Every crate actually resolved in this
 # workspace's dependency graph (`cargo deny check licenses` with an empty
 # allow list, M13 audit) uses one of these, or an OR-expression where one of

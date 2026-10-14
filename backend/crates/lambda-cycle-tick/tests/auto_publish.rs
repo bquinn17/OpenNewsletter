@@ -1,5 +1,5 @@
 //! `publish(nl)` auto-publishes non-empty drafts before flipping the cycle
-//! (`plans/06-newsletter-lifecycle.md` §5.3, `02-data-model-dynamodb.md` §4 #4a).
+//! (`docs/design/lifecycle.md` §5.3, `docs/design/data-model.md` §4 #4a).
 //!
 //! Each test starts its own DynamoDB Local, and the tick acts on every due
 //! cycle in the table, so tests can't see each other's cycles.

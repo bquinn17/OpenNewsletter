@@ -15,8 +15,8 @@ test("no CSP violation walking Home → group → newsletter → candidates → 
   await gotoHome(page);
 
   // Home → a group's open edition, via the bottom nav's "Respond" tab
-  // (lands on the redirect route, which forwards to the open cycle — `04`
-  // §4.1's `BottomNav`).
+  // (lands on the redirect route, which forwards to the open cycle —
+  // `docs/design/frontend.md` §4.1's `BottomNav`).
   await page.getByRole("link", { name: "Respond" }).click();
   await expect(page.getByText("Open for responses")).toBeVisible();
 

@@ -1,5 +1,5 @@
 //! `GET`/`POST .../comments`, `PATCH`/`DELETE .../comments/{commentId}`
-//! (`plans/03-api-contract.md` §8.1-§8.4).
+//! (`docs/design/api.md` §8.1-§8.4).
 //!
 //! Each test uses its own group id (never a shared one): `persistence::auth`
 //! keeps a process-wide membership cache keyed by `(userId, groupId)` with a
@@ -796,7 +796,7 @@ async fn list_rejects_an_invalid_cursor_and_an_out_of_range_limit() {
 }
 
 /// The check order shared by all seven engagement routes
-/// (`03-api-contract.md` §8): membership -> cycle exists -> not archived ->
+/// (`docs/design/api.md` §8): membership -> cycle exists -> not archived ->
 /// published -> answer resolves to a published text response.
 mod check_order {
     use super::*;

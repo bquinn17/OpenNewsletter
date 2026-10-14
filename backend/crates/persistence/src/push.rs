@@ -1,5 +1,5 @@
 //! PushSubscription, NotificationPref, and notification idempotency markers
-//! (AP20, AP21; `plans/02-data-model-dynamodb.md` §2.13-§2.15).
+//! (AP20, AP21; `docs/design/data-model.md` §2.13-§2.15).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
@@ -35,7 +35,7 @@ pub async fn list_subs_for_user(
         .collect()
 }
 
-/// `POST /push/subscribe` (`03-api-contract.md` §10.1, M11 decision D8).
+/// `POST /push/subscribe` (`docs/design/api.md` §10.1, M11 decision D8).
 /// Upserts by `(userId, endpointHash)`: `failureCount` always resets to 0,
 /// `createdAt` is set once via `if_not_exists`, and `lastSuccessAt` is left
 /// untouched (absent on a brand-new row, preserved on a re-subscribe).
@@ -125,7 +125,7 @@ pub async fn delete_subscription(
     Ok(())
 }
 
-/// Delivery bookkeeping (`07-notifications.md` §3.2, M11 decision D7):
+/// Delivery bookkeeping (`docs/design/notifications.md` §3.2, M11 decision D7):
 /// 200/201/202 resets `failureCount` to 0 and bumps `lastSuccessAt`,
 /// conditioned on the row still existing. A lost condition — the row was
 /// deleted concurrently, e.g. by its own failure path crossing the cap — is
@@ -268,7 +268,7 @@ pub async fn put_pref(repo: &Repo, p: &NotificationPref) -> Result<(), RepoError
     Ok(())
 }
 
-// ---------- Idempotency markers (`02-data-model-dynamodb.md` §2.15, M11 decision D3) ----------
+// ---------- Idempotency markers (`docs/design/data-model.md` §2.15, M11 decision D3) ----------
 
 /// Claim the `NOTIFIED#OPEN` marker for one cycle, at-most-once. `Ok(true)`
 /// means this call won the race and the caller should fan out; `Ok(false)`

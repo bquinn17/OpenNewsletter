@@ -1,5 +1,5 @@
 //! `PATCH /me` deletes the avatar that a new one replaces, or that clearing the
-//! photo removes (`plans/03-api-contract.md` §2.3/§9.7, `08-media-uploads.md` §11.4).
+//! photo removes (`docs/design/api.md` §2.3/§9.7, `docs/design/media.md` §11.4).
 
 mod common;
 

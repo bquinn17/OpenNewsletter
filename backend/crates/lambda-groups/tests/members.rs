@@ -1,5 +1,5 @@
 //! Handler-level tests for the last-admin guard on member removal and demotion
-//! (`plans/03-api-contract.md` §4, `LAST_ADMIN`).
+//! (`docs/design/api.md` §4, `LAST_ADMIN`).
 //!
 //! Each test uses its own group id: `persistence::auth` keeps a process-wide
 //! membership cache keyed by `(userId, groupId)`, and tests run concurrently.

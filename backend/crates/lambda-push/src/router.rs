@@ -1,5 +1,5 @@
 //! Method + path dispatch for the six `/push/*` routes
-//! (`plans/03-api-contract.md` §10).
+//! (`docs/design/api.md` §10).
 
 use crate::handlers;
 use crate::state::AppState;

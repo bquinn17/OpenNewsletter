@@ -14,7 +14,7 @@ export const userManager: UserManager | null = env.useMocks
       scope: "openid email profile",
       response_type: "code",
       // `localStorage` so an installed PWA stays signed in across launches
-      // (`05-auth-flow.md` §7, D1). Logout removes it and revokes the refresh
+      // (`docs/design/auth.md` §7, D1). Logout removes it and revokes the refresh
       // token (`AuthProvider`). The sign-in state store (PKCE verifier +
       // invite data) keeps the library default; the invite stash itself stays
       // in `sessionStorage` (`inviteStash.ts`).

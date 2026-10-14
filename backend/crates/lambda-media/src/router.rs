@@ -1,5 +1,5 @@
 //! Method + path dispatch for the routes `ApiStack` points at this Lambda
-//! (`plans/03-api-contract.md` §9).
+//! (`docs/design/api.md` §9).
 
 use crate::handlers;
 use crate::state::AppState;
@@ -140,7 +140,7 @@ fn required_query(req: &Request, key: &str) -> Result<String, ApiError> {
 }
 
 /// `groupId`/`cycleId` query params shared by every `/uploads/{imageId}...`
-/// route (`03-api-contract.md` §9 — an `ImageMedia` row is keyed by
+/// route (`docs/design/api.md` §9 — an `ImageMedia` row is keyed by
 /// `(groupId, cycleId, imageId)`).
 fn group_and_cycle_query(req: &Request) -> Result<(GroupId, CycleId), ApiError> {
     let group_id = required_query(req, "groupId")?;
@@ -149,7 +149,7 @@ fn group_and_cycle_query(req: &Request) -> Result<(GroupId, CycleId), ApiError> 
 }
 
 /// `GET /media-cookie` carries extra `Set-Cookie` headers alongside the JSON
-/// body (`03-api-contract.md` §9.5) — `shared::http::json_response` only
+/// body (`docs/design/api.md` §9.5) — `shared::http::json_response` only
 /// emits the one `content-type` header, so this builds the response by hand.
 fn media_cookie_response(cookie: &handlers::MediaCookie, correlation_id: &str) -> Response<Body> {
     let payload = match serde_json::to_string(&cookie.body) {

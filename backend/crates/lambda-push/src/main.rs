@@ -1,6 +1,6 @@
 //! `lambda-push` — push subscription routes and the cycle-open /
 //! publication notification fan-outs, dispatched from one binary by event
-//! shape (`plans/07-notifications.md`, M11 decision D2).
+//! shape (`docs/design/notifications.md`, M11 decision D2).
 //!
 //! `recursion_limit` raised for the same reason as `lambda-cycle-tick`'s
 //! binary: routing through this crate's own library boundary nests the

@@ -45,7 +45,7 @@ impl VapidKeys {
     /// `opennewsletter/vapid/{env}` secret and verifies the private key
     /// actually derives the given public key — a mismatched pair would
     /// otherwise fail silently at send time with a push-service-side
-    /// signature error (`07-notifications.md` §2).
+    /// signature error (`docs/design/notifications.md` §2).
     pub fn parse(
         public_key_b64: &str,
         private_key_b64: &str,

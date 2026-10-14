@@ -105,11 +105,13 @@ node --version
 
 | Env | Purpose | Lifetime | Auth | URL |
 |---|---|---|---|---|
-| `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints |
+| `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints for actual traffic (`ROOT_DOMAIN`/`API_DOMAIN` only register `dev.{domain}` on the shared ACM cert/CloudFront alias — see decision below) |
 | `ci-pr-{n}` | *Not built* — per-PR ephemeral stack for E2E (§11) | Spun up per PR, torn down on merge/close | Reuses `dev` Cognito user pool | Raw AWS endpoints |
-| `prod` | The real thing | Permanent | Federated IdPs only | Custom domains |
+| `prod` | The real thing | Permanent | Federated IdPs only | Custom domains (bare apex) |
 
 `dev` is shared today because the project is solo. To split into per-developer stacks later, change the env suffix from `dev` to `dev-{username}` in `--context env=...` and the rest of CDK falls into place.
+
+**Decision (2026-10-13) — dev uses a subdomain, not raw endpoints, for its `ROOT_DOMAIN`/`API_DOMAIN`.** `config.py` has no local dev/prod split for these — it always reads the unprefixed `.env.local` names, regardless of `--context env=`. `MediaPersistentStack` attaches `domain_names=[f"cdn.{config.domain}"]` to its CloudFront distribution unconditionally (unlike `ApiStack`'s custom domain, which is correctly gated on `config.env != "dev"`). The first local `cdk deploy --context env=dev` had `.env.local`'s `ROOT_DOMAIN` set to the real apex (`betterloop.site`), so it created a real ACM cert and CloudFront alias for `cdn.betterloop.site`/`api.betterloop.site` on the **dev** distribution — and an alias can only be attached to one enabled distribution account-wide, so prod's later deploy of the same alias would conflict. Fix: `.env.local`'s `ROOT_DOMAIN`/`API_DOMAIN` are `dev.betterloop.site`/`api.dev.betterloop.site` (own ACM validation CNAMEs, see `plans/PROGRESS.md` B5); prod's real values live only in `PROD_ROOT_DOMAIN`/`PROD_API_DOMAIN` (local reference) and the unprefixed GitHub repo variables (CI only, never read locally). `ApiStack`'s `config.env != "dev"` gate means dev's `api.dev.betterloop.site` never actually gets a working API Gateway mapping — same as before, dev traffic still goes over the raw `execute-api.amazonaws.com`/`cloudfront.net` endpoints (`api_stack.py`'s `cdn_base_url`/`api_endpoint` branches are unchanged). The subdomain is registered on the cert/alias only so dev stops squatting on prod's name; it is not a live, routable hostname. `MediaPersistentStack`'s missing dev-gate is not itself fixed — not needed once the aliases no longer collide, but worth closing later for consistency with `ApiStack`.
 
 ---
 

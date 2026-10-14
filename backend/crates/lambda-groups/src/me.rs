@@ -1,4 +1,4 @@
-//! `GET /config`, `GET /me`, `PATCH /me` (`plans/03-api-contract.md` §2).
+//! `GET /config`, `GET /me`, `PATCH /me` (`docs/design/api.md` §2).
 
 use crate::state::AppState;
 use crate::validation;
@@ -103,7 +103,7 @@ pub async fn patch_me(
     })?;
 
     // Replacing or clearing the photo deletes the one it displaced
-    // (`03-api-contract.md` §2.3, §9.7). `previous_avatar_id` comes from the
+    // (`docs/design/api.md` §2.3, §9.7). `previous_avatar_id` comes from the
     // write itself, so two concurrent PATCHes each delete the avatar they
     // really displaced.
     if let (Some(new_id), Some(old_id)) = (&request.avatar_media_id, &previous_avatar_id) {
@@ -115,7 +115,7 @@ pub async fn patch_me(
     get_me(state, user_id).await
 }
 
-/// Best effort (`03-api-contract.md` §9.7): the profile no longer points at the
+/// Best effort (`docs/design/api.md` §9.7): the profile no longer points at the
 /// old avatar, so a failure here only leaves its objects behind.
 async fn delete_replaced_avatar(state: &AppState, user_id: &UserId, avatar_id: &AvatarId) {
     let avatar = match media::get_avatar(&state.repo, user_id, avatar_id).await {

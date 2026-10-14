@@ -1,4 +1,4 @@
-//! Handler-level tests for `lambda-newsletters` (`plans/03-api-contract.md` §5).
+//! Handler-level tests for `lambda-newsletters` (`docs/design/api.md` §5).
 
 mod common;
 

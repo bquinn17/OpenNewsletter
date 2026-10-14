@@ -267,7 +267,7 @@ function PublishedLayout({
   );
   const sorted = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // Client-derived display data (`04-frontend-architecture.md` §14a) — the
+  // Client-derived display data (`docs/design/frontend.md` §14a) — the
   // server never sends a total, so sum every answer's reaction groups here.
   const reactionTotal = sorted.reduce(
     (sum, q) =>

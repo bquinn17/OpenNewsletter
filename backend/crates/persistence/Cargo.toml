@@ -8,7 +8,7 @@ license.workspace = true
 default = []
 # Also pulls in testcontainers so downstream crates' integration tests can call
 # `test_factories::make_test_repo()` without duplicating the DDB-local table setup
-# (`plans/03-api-contract.md` M5 test guidance — see `lambda-questions/tests/`).
+# (`docs/design/api.md` M5 test guidance — see `lambda-questions/tests/`).
 test-utils = ["dep:testcontainers", "dep:testcontainers-modules"]
 
 [dependencies]

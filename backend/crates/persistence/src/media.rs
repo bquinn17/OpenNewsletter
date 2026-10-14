@@ -150,7 +150,7 @@ pub async fn put_avatar(repo: &Repo, a: &AvatarMedia) -> Result<(), RepoError> {
 }
 
 /// The caller's `purpose=response` image count for `(cycleId, questionId)`,
-/// excluding `failed` rows (`03-api-contract.md` §9.1, `08-media-uploads.md`
+/// excluding `failed` rows (`docs/design/api.md` §9.1, `docs/design/media.md`
 /// §3.1 — the 10-images-per-answer cap). A `Query` of the cycle's `IMG#`
 /// range filtered on `user_id`/`question_id`/`purpose`/`status`, not GSI1 —
 /// the GSI1 inversion is keyed by uploader across every cycle they've ever
@@ -189,6 +189,10 @@ pub async fn count_active_response_images(
 
 /// `PATCH /uploads/{imageId}` (§9.6) — overwrite just the caption. The caller
 /// already resolved ownership via [`get_image`], so this doesn't re-check it.
+///
+/// Conditioned on the row existing: `DELETE /uploads` hard-deletes rows, and
+/// an unconditioned `SET` racing it would recreate a partial row that never
+/// deserializes. A lost race is `RepoError::ConditionalCheckFailed`.
 pub async fn set_image_caption(
     repo: &Repo,
     group_id: &GroupId,
@@ -206,6 +210,8 @@ pub async fn set_image_caption(
         .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
         .update_expression("SET caption = :caption")
+        .condition_expression("attribute_exists(#pk)")
+        .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":caption", value)
         .send()
         .await
@@ -213,7 +219,7 @@ pub async fn set_image_caption(
     Ok(())
 }
 
-/// Deletes an `ImageMedia` row (`03-api-contract.md` §9.4). Called by the
+/// Deletes an `ImageMedia` row (`docs/design/api.md` §9.4). Called by the
 /// `media-delete` helper only after the image's S3 objects and CDN copies are
 /// gone. Deleting an absent row succeeds, so a retry is harmless.
 ///
@@ -268,7 +274,7 @@ pub async fn delete_avatar_row(
 }
 
 /// Builds the `Update` that claims a `purpose=comment` image for `comment_id`,
-/// for inclusion in the caller's own `TransactWriteItems` (`03-api-contract.md`
+/// for inclusion in the caller's own `TransactWriteItems` (`docs/design/api.md`
 /// §8.2, decided M10) — never sent standalone. Conditioned on the image being
 /// unclaimed or already claimed by this same comment (an idempotent re-save),
 /// so a transaction cancellation on this item unambiguously means "claimed by
@@ -280,6 +286,10 @@ pub async fn delete_avatar_row(
 /// absent attribute, so every row written through [`put_image`] already
 /// "exists" with a null value. The condition also matches that null form
 /// directly.
+///
+/// The row must also exist: `DELETE /uploads` hard-deletes rows, and the claim
+/// conditions alone are true on a missing item, so a create racing that
+/// delete would otherwise recreate the row as an undeserializable stub.
 pub fn attach_image_to_comment_update(
     repo: &Repo,
     group_id: &GroupId,
@@ -293,9 +303,10 @@ pub fn attach_image_to_comment_update(
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
         .update_expression("SET attached_comment_id = :cid")
         .condition_expression(
-            "attribute_not_exists(attached_comment_id) OR attached_comment_id = :null \
-             OR attached_comment_id = :cid",
+            "attribute_exists(#pk) AND (attribute_not_exists(attached_comment_id) \
+             OR attached_comment_id = :null OR attached_comment_id = :cid)",
         )
+        .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":null", AttributeValue::Null(true))
         .expression_attribute_values(":cid", AttributeValue::S(comment_id.to_string()))
         .build()
@@ -304,8 +315,8 @@ pub fn attach_image_to_comment_update(
 
 /// Builds the unconditioned `Update` that releases a `purpose=comment`
 /// image's claim, for inclusion in the caller's own `TransactWriteItems`
-/// (changing/removing a comment's image, or soft-deleting it — `03`
-/// §8.3, §8.4, decided M10). Unconditioned because only the comment's own
+/// (changing/removing a comment's image, or soft-deleting it —
+/// `docs/design/api.md` §8.3, §8.4, decided M10). Unconditioned because only the comment's own
 /// author (or an admin, for delete) can ever reach this, and they're
 /// releasing a claim their own write holds.
 pub fn detach_image_from_comment_update(

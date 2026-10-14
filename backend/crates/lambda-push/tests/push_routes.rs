@@ -1,6 +1,6 @@
 //! `POST /push/subscribe`, `POST /push/unsubscribe`, `GET /push/subscriptions`,
 //! `POST /push/test`, `GET /push/preferences`, `PUT /push/preferences/{groupId}`
-//! (`plans/03-api-contract.md` §10).
+//! (`docs/design/api.md` §10).
 //!
 //! Each test uses its own group id: `persistence::auth` keeps a process-wide
 //! membership cache keyed by `(userId, groupId)`.

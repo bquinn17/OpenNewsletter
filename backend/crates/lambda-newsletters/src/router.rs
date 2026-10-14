@@ -1,5 +1,5 @@
 //! Method + path dispatch for the routes `ApiStack` points at this Lambda
-//! (`plans/03-api-contract.md` §5, §13).
+//! (`docs/design/api.md` §5, §13).
 
 use crate::handlers;
 use crate::state::AppState;

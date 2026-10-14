@@ -1,5 +1,5 @@
 //! `POST /avatars`, `GET /avatars/{avatarId}`, `DELETE /avatars/{avatarId}`
-//! (`plans/03-api-contract.md` §9.7).
+//! (`docs/design/api.md` §9.7).
 
 mod common;
 

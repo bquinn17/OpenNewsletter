@@ -3,7 +3,7 @@
 //! These are deliberately separate from `crate::entities`: DynamoDB attributes are
 //! snake_case, the HTTP contract is camelCase, and the two are allowed to drift (a
 //! `Group` row carries `created_by`, the API does not expose it). Sections below are
-//! grouped by route family and each names the `plans/03-api-contract.md` section it
+//! grouped by route family and each names the `docs/design/api.md` section it
 //! implements. `domain/tests/openapi_contract.rs` round-trips the YAML's examples
 //! against these types — any new route's DTOs belong here, with an entry added to
 //! that test's mapping table in the same PR.
@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-// ===== `03-api-contract.md` §2 — Bootstrap / metadata routes =====
+// ===== `docs/design/api.md` §2 — Bootstrap / metadata routes =====
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +89,7 @@ pub struct PatchMeRequest {
     pub avatar_media_id: Option<Option<AvatarId>>,
 }
 
-// ===== `03-api-contract.md` §3 — Invite & membership routes =====
+// ===== `docs/design/api.md` §3 — Invite & membership routes =====
 
 /// `POST /admin/invites` request body (§3.1).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -172,7 +172,7 @@ pub struct RedeemResponse {
     pub role: Role,
 }
 
-// ===== `03-api-contract.md` §4 — Group routes =====
+// ===== `docs/design/api.md` §4 — Group routes =====
 
 /// `GET /groups` response (§4.1) — the same join `/config` returns, standalone.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -194,7 +194,7 @@ pub struct MemberResponse {
 }
 
 /// Wire mirror of `crate::CycleSettings`, camelCase and without the persistence-only
-/// `autoPublish` flag (not part of the public contract — `03-api-contract.md` §4.2/§4.3
+/// `autoPublish` flag (not part of the public contract — `docs/design/api.md` §4.2/§4.3
 /// never mention it). Kept distinct from the entity so the entity can stay snake_case
 /// for its DynamoDB attributes without leaking into the HTTP response.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -314,7 +314,7 @@ pub struct PatchMemberRequest {
     pub role: Role,
 }
 
-// ===== `03-api-contract.md` §5/§6 — Newsletter and candidate-question routes =====
+// ===== `docs/design/api.md` §5/§6 — Newsletter and candidate-question routes =====
 
 /// "Who asked this" for a candidate or locked question (§6.1), redacted to `None`
 /// when `isAnonymous=true` and the caller is neither the submitter nor a group admin.
@@ -509,7 +509,7 @@ pub struct PublishedQuestionResponse {
 
 /// `GET /groups/{groupId}/newsletters/{cycleId}` response (§5.2). Shape depends on
 /// `status`. `archived` is a bare 410 (`ApiErrorCode::NewsletterArchived`), not
-/// modeled here — see `06-newsletter-lifecycle.md` §1 (archival is deferred).
+/// modeled here — see `docs/design/lifecycle.md` §1 (archival is deferred).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum NewsletterDetailResponse {
@@ -533,7 +533,7 @@ pub enum NewsletterDetailResponse {
     },
 }
 
-// ===== `03-api-contract.md` §7 — Response routes (drafts + publish) =====
+// ===== `docs/design/api.md` §7 — Response routes (drafts + publish) =====
 
 /// A saved response — the full shape, returned by every §7 route (§7.1-§7.3).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -600,10 +600,10 @@ pub enum SaveResponseRequest {
     },
 }
 
-// ===== `03-api-contract.md` §8 — Engagement routes (comments + reactions) =====
+// ===== `docs/design/api.md` §8 — Engagement routes (comments + reactions) =====
 
 /// A comment's attached image, hydrated only while the underlying
-/// `ImageMedia` row is `ready` (§8, `09-engagement.md` §1.1).
+/// `ImageMedia` row is `ready` (§8, `docs/design/engagement.md` §1.1).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentImageResponse {
@@ -615,7 +615,7 @@ pub struct CommentImageResponse {
     pub caption: Option<String>,
 }
 
-/// One comment (§8, `09-engagement.md` §1.1). Used both on the dedicated
+/// One comment (§8, `docs/design/engagement.md` §1.1). Used both on the dedicated
 /// engagement routes and inline in the published newsletter
 /// (`PublishedAnswerResponse::comments`) — one shape, one place it's built. A
 /// soft-deleted comment has `deletedAt` set, an empty `body`, and a null
@@ -681,7 +681,7 @@ pub struct ReactionsResponse {
     pub my_reactions: Vec<String>,
 }
 
-// ===== `03-api-contract.md` §9 — Media routes =====
+// ===== `docs/design/api.md` §9 — Media routes =====
 
 /// `POST /uploads` request body (§9.1). `mimeType` is deliberately a bare
 /// `String`, not `ImageMimeType` — an unrecognized value (e.g. an SVG) must
@@ -693,7 +693,7 @@ pub struct CreateUploadRequest {
     pub group_id: GroupId,
     pub cycle_id: CycleId,
     pub question_id: QuestionId,
-    /// Defaults to `response` when absent (`08-media-uploads.md` §3.1).
+    /// Defaults to `response` when absent (`docs/design/media.md` §3.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<ImagePurpose>,
     pub mime_type: String,
@@ -835,7 +835,7 @@ impl AvatarMediaResponse {
     }
 }
 
-// ===== `03-api-contract.md` §10 — Push routes =====
+// ===== `docs/design/api.md` §10 — Push routes =====
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -932,14 +932,14 @@ pub struct PushPreferenceResponse {
     pub deadline_reminders: bool,
 }
 
-/// `GET /push/preferences` response. Added M11: `03` §10 only had the PUT.
+/// `GET /push/preferences` response. Added M11: `docs/design/api.md` §10 only had the PUT.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushPreferenceListResponse {
     pub items: Vec<PushPreferenceResponse>,
 }
 
-// ===== `03-api-contract.md` §11 — Health =====
+// ===== `docs/design/api.md` §11 — Health =====
 
 /// `GET /healthz` response (§11.1).
 ///
@@ -954,7 +954,7 @@ pub struct HealthResponse {
     pub build_at: Option<String>,
 }
 
-// ===== `03-api-contract.md` §11a — Dev-only tick routes =====
+// ===== `docs/design/api.md` §11a — Dev-only tick routes =====
 
 /// `POST /admin/dev/tick/cycle` request body (§11a.1). Both fields are
 /// optional, and an absent or empty body runs the tick globally.
@@ -1017,7 +1017,7 @@ pub struct DevTickNotifyResponse {
     pub fanouts: Vec<DeadlineFanout>,
 }
 
-// ===== `03-api-contract.md` §1.1 — RFC-7807 error shape =====
+// ===== `docs/design/api.md` §1.1 — RFC-7807 error shape =====
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

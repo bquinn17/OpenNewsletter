@@ -4,7 +4,7 @@ import { useEffect, type RefObject } from "react";
  * Close behaviour for a dropdown menu rendered inside `containerRef`, whose
  * first `<button>` is the trigger. Closes on an outside click or Escape.
  * Opening moves focus to the first `[role="menuitem"]`; Escape returns focus
- * to the trigger, so keyboard users never get stranded (`04` §11).
+ * to the trigger, so keyboard users never get stranded (`docs/design/frontend.md` §11).
  */
 export function useDismissableMenu(
   containerRef: RefObject<HTMLElement>,

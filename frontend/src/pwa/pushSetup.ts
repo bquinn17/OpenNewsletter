@@ -1,7 +1,7 @@
 import { api } from "../api/client";
 
 /**
- * Web Push subscription lifecycle (`plans/07-notifications.md` §3/§11, M11
+ * Web Push subscription lifecycle (`docs/design/notifications.md` §3/§11, M11
  * decision D11). Talks to `navigator.serviceWorker` / `PushManager` /
  * `Notification` directly — there's no React involved here, so this module
  * stays plain functions that `App.tsx` (resubscribe-on-load), `SettingsPage`'s
@@ -61,7 +61,7 @@ export type EnsurePushResult =
   | { status: "subscribed" };
 
 /**
- * `prompt: false` (app load, `07` §11.2): only refreshes an existing,
+ * `prompt: false` (app load, `docs/design/notifications.md` §11.2): only refreshes an existing,
  * already-granted subscription — never shows the OS permission prompt.
  * `prompt: true` (Settings toggle on): requests permission if needed, then
  * subscribes (or reuses/rekeys) and posts to the server.

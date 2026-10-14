@@ -1,5 +1,5 @@
-"""CiStack assertions per 11-testing-ci-cd.md / M13 (GitHub OIDC deploy roles)
-and 01-infrastructure-cdk.md §9.2a (the one account-wide budget, M13.5).
+"""CiStack assertions per docs/development/testing-and-ci.md / M13 (GitHub OIDC deploy roles)
+and docs/design/infrastructure.md §9.2a (the one account-wide budget, M13.5).
 
 Run with: pytest infra/tests/
 """
@@ -178,7 +178,7 @@ def test_outputs_both_role_arns(ci_template: assertions.Template) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Account-wide budget (`01` §9.2a)
+# Account-wide budget (`docs/design/infrastructure.md` §9.2a)
 # ---------------------------------------------------------------------------
 
 

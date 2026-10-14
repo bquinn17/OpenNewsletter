@@ -23,7 +23,7 @@ import type { components } from "../../types/api";
 type S = components["schemas"];
 
 /**
- * Settings "Notifications" section (`07-notifications.md` §11.1/§14, M11
+ * Settings "Notifications" section (`docs/design/notifications.md` §11.1/§14, M11
  * D11). Three top-level states — iOS-not-installed, unsupported, and the
  * full control surface (master toggle, test push, devices, per-group prefs)
  * — plus a denied-permission sub-state of the last one.

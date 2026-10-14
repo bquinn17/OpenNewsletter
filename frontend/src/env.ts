@@ -7,7 +7,7 @@ type Env = {
   cognitoClientId: string;
   /**
    * The `admin-bootstrap` client, or `null`. Dev only: prod has no such client
-   * (D5, `05-auth-flow.md` §9.2) and its build doesn't pass the variable, so a
+   * (D5, `docs/design/auth.md` §9.2) and its build doesn't pass the variable, so a
    * prod build ignores it even if it's set.
    */
   cognitoBootstrapClientId: string | null;
@@ -18,7 +18,7 @@ type Env = {
   appEnv: AppEnv;
   buildSha: string;
   useMocks: boolean;
-  /** Quiet period after the last keystroke before a draft autosaves (`04` §7.3, §8.2). */
+  /** Quiet period after the last keystroke before a draft autosaves (`docs/design/frontend.md` §7.3, §8.2). */
   autosaveDebounceMs: number;
 };
 

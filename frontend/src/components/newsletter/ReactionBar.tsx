@@ -15,10 +15,10 @@ type Props = {
 };
 
 // One-tap quick pills for anything not already shown as a group
-// (`09-engagement.md` §2.5).
+// (`docs/design/engagement.md` §2.5).
 const QUICK_EMOJI = ["🔥", "🤣", "❤️", "😍", "👍", "🎉"];
 
-/** `[🔥 4] [🤣 2] [+]` — `09-engagement.md` §2.5, §4.2. */
+/** `[🔥 4] [🤣 2] [+]` — `docs/design/engagement.md` §2.5, §4.2. */
 export function ReactionBar({ groupId, cycleId, questionId, responseId, reactionGroups }: Props) {
   const toggle = useToggleReaction(groupId, cycleId, questionId);
   const [pickerOpen, setPickerOpen] = useState(false);

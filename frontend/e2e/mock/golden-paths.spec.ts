@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { gotoHome } from "./helpers";
 
 /**
- * As many of `11-testing-ci-cd.md` §4.3's golden paths as the mock transport
+ * As many of `docs/development/testing-and-ci.md` §4.3's golden paths as the mock transport
  * supports — it has no `/admin/dev/tick` and no real Cognito session, so the
  * cycle-advance and real-auth paths aren't attempted here (see
  * `e2e/dev/golden-paths.spec.ts`, scaffolded and skipped pending a deployed
@@ -93,12 +93,12 @@ test.describe("save draft → reload", () => {
   test("recovers an unsaved draft from the localStorage mirror after a reload", async ({
     page,
   }) => {
-    // The literal golden path (`11` §4.3 #5: save → reload → the *saved*
+    // The literal golden path (`docs/development/testing-and-ci.md` §4.3 #5: save → reload → the *saved*
     // answer persists) isn't testable in mock mode: `mockTransport`'s state
     // is a plain in-memory module-level object (`src/api/mockTransport.ts`),
     // so it resets on every real page load, unlike a real backend. What
     // *does* survive a reload in mock mode is the editor's own localStorage
-    // tab-crash-recovery mirror (`useResponseEditor.ts`, `04` §8.3), which is
+    // tab-crash-recovery mirror (`useResponseEditor.ts`, `docs/design/frontend.md` §8.3), which is
     // the part of the persistence design this test exercises instead.
     const draftText = `E2E unsaved draft ${Date.now()}`;
 
@@ -122,7 +122,7 @@ test.describe("save draft → reload", () => {
 test("a poll pick saves as a draft at once and warns that drafts auto-publish", async ({
   page,
 }) => {
-  // D2 (`04` §7.3): every pick, the first included, saves with `publish:false`,
+  // D2 (`docs/design/frontend.md` §7.3): every pick, the first included, saves with `publish:false`,
   // and an unpublished non-empty answer shows the auto-publish note.
   await gotoHome(page);
   await page.getByRole("link", { name: "Respond" }).click();

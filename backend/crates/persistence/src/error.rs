@@ -27,7 +27,7 @@ impl RepoError {
     /// True for a condition failure — an in-flight race that a concurrent
     /// writer won, not a real error. Callers such as `lambda-cycle-tick` log
     /// these at INFO and move on rather than treating them as failures
-    /// (`plans/06-newsletter-lifecycle.md` §8).
+    /// (`docs/design/lifecycle.md` §8).
     pub fn is_lost_race(&self) -> bool {
         matches!(
             self,

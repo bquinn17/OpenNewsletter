@@ -1,5 +1,5 @@
 //! `POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{imageId}`, and
-//! `POST /uploads/{imageId}/complete` (`plans/03-api-contract.md` §9.1-§9.4,
+//! `POST /uploads/{imageId}/complete` (`docs/design/api.md` §9.1-§9.4,
 //! §9.6).
 //!
 //! Each test uses its own group id (never a shared one): `persistence::auth`

@@ -4,7 +4,7 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
-# Two entry points sharing one persistence module (`plans/05-auth-flow.md` §3):
+# Two entry points sharing one persistence module (`docs/design/auth.md` §3):
 # the API routes, and the Cognito PreSignUp trigger.
 [[bin]]
 name = "invites-api"

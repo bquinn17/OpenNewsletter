@@ -1,5 +1,5 @@
 /**
- * Mirrors the server's emoji predicate for reactions (`09-engagement.md`
+ * Mirrors the server's emoji predicate for reactions (`docs/design/engagement.md`
  * §2.2): NFC-normalized, 1-12 codepoints, with at least one codepoint that is
  * `Extended_Pictographic` or a regional-indicator (flag) codepoint
  * (U+1F1E6-1F1FF). This rules out plain ASCII while allowing arbitrary emoji,

@@ -1,5 +1,5 @@
 //! S3 access behind a small trait, so the handler can be exercised against an
-//! in-memory fake in tests instead of real S3 (`plans/08-media-uploads.md`
+//! in-memory fake in tests instead of real S3 (`docs/design/media.md`
 //! §5, testability note from the milestone brief).
 
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ pub struct StoreError(pub String);
 pub trait ObjectStore: Send + Sync {
     /// The object's size in bytes, without downloading its body — used to
     /// reject an oversized upload before paying for a GET
-    /// (`plans/08-media-uploads.md` §3.2).
+    /// (`docs/design/media.md` §3.2).
     async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError>;
     async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError>;
     async fn put(

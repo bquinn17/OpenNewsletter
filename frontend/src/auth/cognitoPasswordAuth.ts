@@ -2,7 +2,7 @@ import { User, type UserProfile } from "oidc-client-ts";
 import { env } from "../env";
 
 // Direct Cognito `InitiateAuth` calls for the `admin-bootstrap` client
-// (`05-auth-flow.md` §9.2). The hosted-UI/OIDC path never comes through here.
+// (`docs/design/auth.md` §9.2). The hosted-UI/OIDC path never comes through here.
 
 type AuthenticationResult = {
   AccessToken: string;

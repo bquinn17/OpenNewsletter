@@ -1,4 +1,4 @@
-//! Entity structs mirroring `plans/02-data-model-dynamodb.md`. Pure data — no I/O.
+//! Entity structs mirroring `docs/design/data-model.md`. Pure data — no I/O.
 
 use crate::ids::*;
 use chrono::{DateTime, Utc};
@@ -133,7 +133,7 @@ pub struct Invite {
     pub consumed_at: Option<DateTime<Utc>>,
     pub role_on_redeem: Role,
     /// When set (stored lowercased), only a caller whose verified ID-token
-    /// `email` matches may redeem (`plans/02-data-model-dynamodb.md` §2.4).
+    /// `email` matches may redeem (`docs/design/data-model.md` §2.4).
     /// Absent on rows written before M13.5, which reads as unbound.
     #[serde(default)]
     pub bound_email: Option<String>,
@@ -178,7 +178,7 @@ pub struct CandidateQuestion {
 impl CandidateQuestion {
     /// The order candidates promote in, and the order `sort=top` lists them:
     /// `vote_count` DESC, then `submitted_at` ASC (the older suggestion wins a
-    /// tie), then `question_id` ASC (`plans/06-newsletter-lifecycle.md` §5.2).
+    /// tie), then `question_id` ASC (`docs/design/lifecycle.md` §5.2).
     pub fn promotion_order(a: &Self, b: &Self) -> Ordering {
         b.vote_count
             .cmp(&a.vote_count)
@@ -230,7 +230,7 @@ impl Response {
     /// Whether this answer has content worth publishing: a text answer with a
     /// non-whitespace body or at least one image, or a poll answer with a pick.
     /// Non-empty drafts auto-publish at cycle close and count towards reminder
-    /// totals (`plans/06-newsletter-lifecycle.md` §5.3, `07-notifications.md` §7.2).
+    /// totals (`docs/design/lifecycle.md` §5.3, `docs/design/notifications.md` §7.2).
     pub fn is_non_empty(&self) -> bool {
         match self.kind {
             QuestionKind::Text => self.has_text_body() || !self.image_media_ids.is_empty(),
@@ -264,12 +264,12 @@ pub struct ImageMedia {
     pub uploaded_at: DateTime<Utc>,
     pub processed_at: Option<DateTime<Utc>>,
     /// Why `status` is `failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED`
-    /// (`plans/08-media-uploads.md` §3.2). A deleted image has no row at all.
+    /// (`docs/design/media.md` §3.2). A deleted image has no row at all.
     #[serde(default)]
     pub error_message: Option<String>,
     /// The comment this `purpose=comment` image is attached to, if any. Set
-    /// and cleared in the same transaction as the comment write (`03`
-    /// §8.2, §9.4). `#[serde(default)]` so rows written before M10 (which
+    /// and cleared in the same transaction as the comment write
+    /// (`docs/design/api.md` §8.2, §9.4). `#[serde(default)]` so rows written before M10 (which
     /// never had this attribute) load as `None`. Not exposed on
     /// `ImageMediaResponse`.
     #[serde(default)]

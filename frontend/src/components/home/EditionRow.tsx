@@ -6,7 +6,7 @@ type NewsletterSummary = components["schemas"]["NewsletterSummary"];
 
 type Props = {
   groupId: string;
-  /** The group's IANA timezone, so month labels match the group's calendar (`04` §14a). */
+  /** The group's IANA timezone, so month labels match the group's calendar (`docs/design/frontend.md` §14a). */
   timezone: string;
   newsletter: NewsletterSummary;
 };

@@ -1,5 +1,5 @@
 //! Business logic for the newsletter list + detail routes
-//! (`plans/03-api-contract.md` §5).
+//! (`docs/design/api.md` §5).
 
 use crate::state::AppState;
 use domain::api::{
@@ -233,7 +233,7 @@ async fn open_detail(
 }
 
 /// The published edition is read in a fixed number of concurrent waves, not
-/// per answer (`plans/03-api-contract.md` §5.2): locked questions, then every
+/// per answer (`docs/design/api.md` §5.2): locked questions, then every
 /// question's answers, then every text answer's engagement partition, then one
 /// batch each for the user profiles and images the whole edition references.
 async fn published_detail(
@@ -253,31 +253,19 @@ async fn published_detail(
     )
     .await?;
 
-    let text_answers: Vec<(QuestionId, UserId)> = locked
-        .iter()
-        .zip(&answers_per_question)
-        .filter(|(lq, _)| lq.kind == QuestionKind::Text)
-        .flat_map(|(lq, answers)| {
-            answers
-                .iter()
-                .map(move |r| (lq.question_id.clone(), r.user_id.clone()))
-        })
-        .collect();
-
+    // One pass over the text questions' answers collects everything they
+    // hydrate: engagement keys, answer authors and answer images.
     let mut user_ids: HashSet<UserId> = locked.iter().map(|l| l.submitted_by.clone()).collect();
     let mut image_ids: HashSet<ImageId> = HashSet::new();
-    user_ids.extend(
-        text_answers
-            .iter()
-            .map(|(_, answer_user)| answer_user.clone()),
-    );
+    let mut text_answers: Vec<(QuestionId, UserId)> = Vec::new();
     for (lq, answers) in locked.iter().zip(&answers_per_question) {
-        if lq.kind == QuestionKind::Text {
-            image_ids.extend(
-                answers
-                    .iter()
-                    .flat_map(|r| r.image_media_ids.iter().cloned()),
-            );
+        if lq.kind != QuestionKind::Text {
+            continue;
+        }
+        for r in answers {
+            text_answers.push((lq.question_id.clone(), r.user_id.clone()));
+            user_ids.insert(r.user_id.clone());
+            image_ids.extend(r.image_media_ids.iter().cloned());
         }
     }
     let engagement = load_engagement(state, group_id, cycle_id, text_answers).await?;
@@ -547,7 +535,7 @@ fn published_image(state: &AppState, img: &ImageMedia) -> Option<PublishedImageR
 }
 
 /// Builds the wire `CommentResponse` for one comment row, including a
-/// soft-deleted one as a `[deleted]` placeholder (`09-engagement.md` §1.1,
+/// soft-deleted one as a `[deleted]` placeholder (`docs/design/engagement.md` §1.1,
 /// decided M10 — soft-deleted comments are returned here too, not filtered).
 /// The attached image is hydrated only while it's `ready`.
 fn comment_response(

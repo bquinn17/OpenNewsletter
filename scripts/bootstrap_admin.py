@@ -3,7 +3,7 @@
 
 Invites can only be minted by an admin of an existing group, so the first group
 has to come from outside the API. This script is that door. Dev and prod use
-different flows (`plans/05-auth-flow.md` §9):
+different flows (`docs/design/auth.md` §9):
 
 dev  (§9.1)  — creates a password-auth Cognito user, then writes the user, the
                group, an admin membership and the first `voting` cycle.
@@ -81,9 +81,9 @@ DEFAULT_MEMBER_SOFT_CAP = 50
 # hyphenated quads.
 INVITE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 INVITE_CODE_LEN = 16
-# `ttlDays = 30` for the bootstrap invite (`05` §9.1a), and the row lingers
+# `ttlDays = 30` for the bootstrap invite (`docs/design/auth.md` §9.1a), and the row lingers
 # INVITE_AUDIT_RETENTION_DAYS past expiry before DynamoDB TTL purges it
-# (`02` §2.4, backend/crates/shared/src/config.rs).
+# (`docs/design/data-model.md` §2.4, backend/crates/shared/src/config.rs).
 BOOTSTRAP_INVITE_TTL_DAYS = 30
 INVITE_AUDIT_RETENTION_DAYS = 30
 # `created_by` on the prod Group and Invite rows: there is no user yet, since
@@ -200,7 +200,7 @@ def group_meta_item(
     created_by: str,
     timestamp: str,
 ) -> dict[str, Any]:
-    """The Group META row (`02` §2.3)."""
+    """The Group META row (`docs/design/data-model.md` §2.3)."""
     return {
         "pk": {"S": f"GROUP#{group_id}"},
         "sk": {"S": "META"},
@@ -248,7 +248,7 @@ def group_meta_item(
 def first_newsletter_item(
     *, group_id: str, tz: ZoneInfo, now: datetime
 ) -> tuple[str, dict[str, Any]]:
-    """The group's very first `voting` Newsletter (`06` §4.2's "very first
+    """The group's very first `voting` Newsletter (`docs/design/lifecycle.md` §4.2's "very first
     cycle" case — `after` is always "now" here). Returns (cycle_id, item)."""
     cycle_id, response_open_at, response_close_at = next_cycle_schedule(
         now, tz, DEFAULT_CYCLE_SETTINGS["response_window_days"]
@@ -279,7 +279,7 @@ def bound_admin_invite_item(
     *, code: str, group_id: str, bound_email: str, now: datetime
 ) -> dict[str, Any]:
     """An admin Invite bound to one email, in exactly the shape
-    `persistence::invites::put_invite` writes (`02` §2.4): the serde fields of
+    `persistence::invites::put_invite` writes (`docs/design/data-model.md` §2.4): the serde fields of
     `domain::Invite` plus pk/sk, the GSI1 keys, `entity` and `ttl`."""
     expires_at = now + timedelta(days=BOOTSTRAP_INVITE_TTL_DAYS)
     ttl = expires_at + timedelta(days=INVITE_AUDIT_RETENTION_DAYS)
@@ -320,7 +320,7 @@ def prod_bootstrap_transact_items(
     invite_code: str,
     now: datetime,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """The one TransactWriteItems for `--env prod` (`05` §9.1a): Group META with
+    """The one TransactWriteItems for `--env prod` (`docs/design/auth.md` §9.1a): Group META with
     `memberCount = 0`, the first `voting` Newsletter, and the bound admin
     Invite. Every put is conditional on the row not existing, so a re-run can
     never reset a live group's member count. Returns (cycle_id, items)."""
@@ -554,7 +554,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
             "to the email the prod admin will sign in with via Google."
         )
     bound_email = config.bootstrap_admin_email.strip().lower()
-    # The email comes from config, not the flag (`05` §9.1a); the flag is only
+    # The email comes from config, not the flag (`docs/design/auth.md` §9.1a); the flag is only
     # accepted as a cross-check.
     if args.admin_email and args.admin_email.strip().lower() != bound_email:
         sys.exit(

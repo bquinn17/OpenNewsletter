@@ -1,5 +1,5 @@
 //! The `lambda-notify-tick` deadline-reminder fan-out algorithm
-//! (`plans/07-notifications.md` §7, M11 decision D5). Runs identically
+//! (`docs/design/notifications.md` §7, M11 decision D5). Runs identically
 //! whether triggered by the EventBridge schedule or the dev
 //! `POST /admin/dev/tick/notify` route — both call [`run_notify_tick`].
 
@@ -226,17 +226,28 @@ async fn fan_out_deadline_reminder(
                 return None;
             }
 
-            // A non-empty draft counts as answered: it auto-publishes at close (`07` §7.2).
-            let answered_count = match responses_result {
-                Ok(list) => list
-                    .iter()
-                    .filter(|r| r.status == ResponseStatus::Published || r.is_non_empty())
-                    .count() as u32,
+            // A draft with live content counts as answered: it auto-publishes at
+            // close (`docs/design/notifications.md` §7.2). Same rule as the
+            // close-time sweep, so a draft whose only images are gone doesn't.
+            let list = match responses_result {
+                Ok(list) => list,
                 Err(e) => {
                     tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: response listing failed");
                     return None;
                 }
             };
+            let mut answered_count = 0u32;
+            for r in &list {
+                let answered = r.status == ResponseStatus::Published
+                    || match responses::has_live_content(&state.repo, r).await {
+                        Ok(live) => live,
+                        Err(e) => {
+                            tracing::error!(error = ?e, user_id = %member.user_id, group_id = %nl.group_id, "notify tick: draft image lookup failed");
+                            return None;
+                        }
+                    };
+                answered_count += u32::from(answered);
+            }
             let is_done = total_questions > 0 && answered_count >= total_questions;
             if is_done && offset_hours == smallest_offset_overall {
                 return None;

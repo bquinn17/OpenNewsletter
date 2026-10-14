@@ -1,8 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * `11-testing-ci-cd.md` §4.3 golden paths, split by what the run target can
- * support (`04-frontend-architecture.md` §16 names the two targets):
+ * `docs/development/testing-and-ci.md` §4.3 golden paths, split by what the run target can
+ * support (`docs/design/frontend.md` §16 names the two targets):
  *
  * - `E2E_BASE_URL` unset: builds the app in mock mode (`vite build --mode
  *   e2e`, `.env.e2e`) and serves it with `vite preview` on :4173. Only the

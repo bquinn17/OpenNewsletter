@@ -4,10 +4,12 @@ This file is loaded into every Claude Code conversation in this repo. Keep it sh
 
 ## Required reading before writing code
 
-1. [`plans/00-overview.md`](plans/00-overview.md) — system map, glossary, repo layout
-2. [`plans/coding-standards.md`](plans/coding-standards.md) — style, linting, testing, error handling, naming, comments, commits, PR conventions
+1. [`docs/overview.md`](docs/overview.md) — system map, glossary, repo layout
+2. [`docs/development/coding-standards.md`](docs/development/coding-standards.md) — style, linting, testing, error handling, naming, comments, commits, PR conventions
 
-A milestone or task is not "done" until its work conforms to those standards. The pre-flight checklist at `coding-standards.md` §8 applies before opening any PR.
+A milestone or task is not "done" until its work conforms to those standards. The pre-flight checklist at [`coding-standards.md` §8](docs/development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task) applies before opening any PR.
+
+The rest of the documentation is indexed in [`docs/README.md`](docs/README.md): one design page per subsystem under `docs/design/`, plus development and operations guides. Code comments cite design sections as `docs/design/<page>.md` §N, so **never renumber a doc's sections**; reword headings freely and add new sections at the end.
 
 ## Running the Rust tests (read this before `cargo test`)
 
@@ -52,7 +54,7 @@ Under the hood that's exactly `npx aws-cdk@2`. Don't use `npx cdk` or a global `
 export PATH="/opt/homebrew/bin:$PATH" NVM_DIR="$HOME/.nvm" && source /opt/homebrew/opt/nvm/nvm.sh && nvm use >/dev/null &&
 ```
 
-Full first-time setup for each machine: [`plans/13-dev-environments.md`](plans/13-dev-environments.md) (which also covers which test layers need Docker at all).
+Full first-time setup for each machine: [`docs/development/environments.md`](docs/development/environments.md) (which also covers which test layers need Docker at all).
 
 ## What this app is
 
@@ -62,14 +64,14 @@ OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce 
 
 - **Idle backend.** Unauthenticated traffic never reaches Lambda. Static frontend on GitHub Pages; API Gateway only after Cognito issues a JWT.
 - **Single repo, IaC-first.** Frontend, backend, infra, and ops scripts live here. CDK is source of truth for AWS resources.
-- **Single-table DynamoDB.** All durable state lives in `OpenNewsletter` with two GSIs. Multi-tenancy is enforced via partition-key prefixes — see [`plans/02-data-model-dynamodb.md`](plans/02-data-model-dynamodb.md).
+- **Single-table DynamoDB.** All durable state lives in `OpenNewsletter` with two GSIs. Multi-tenancy is enforced via partition-key prefixes — see [`docs/design/data-model.md`](docs/design/data-model.md).
 - **Strict tenant isolation.** Every group-scoped Lambda handler resolves caller memberships from the JWT and refuses any request whose group ID is not in that set. No exceptions.
 - **Best-judgment defaults.** Numeric tunables (debounces, image dimensions, vote counts) live in `backend/crates/shared/src/config.rs` so they change in one place.
 
 ## Stack at a glance
 
 Frontend: React 18 + TS + Vite + Tailwind, GitHub Pages.
-Auth: Cognito User Pool, hosted UI, Google/Facebook IdPs. (Apple dropped — see PROGRESS.md decisions; Apple Developer membership is $99/yr.)
+Auth: Cognito User Pool, hosted UI, Google/Facebook IdPs. (Apple dropped — see [`docs/decisions.md`](docs/decisions.md#apple-idp-dropped); Apple Developer membership is $99/yr.)
 API: API Gateway HTTP API + Cognito JWT authorizer → Rust Lambdas (`provided.al2023`, `cargo-lambda`).
 Data: DynamoDB on-demand single table.
 Media: S3 + CloudFront with signed cookies.
@@ -79,19 +81,20 @@ IaC: AWS CDK in Python.
 
 ## Glossary (use these terms exactly)
 
-Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/Answer, Comment, Reaction, Invite, Push subscription. Definitions in [`plans/00-overview.md`](plans/00-overview.md) §5.
+Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/Answer, Comment, Reaction, Invite, Push subscription. Definitions in [`docs/overview.md` §5](docs/overview.md#5-glossary-use-these-terms-exactly).
 
 ## Build order
 
-[`plans/12-build-order.md`](plans/12-build-order.md) is the milestone sequence an executor should follow. Each milestone names the plan docs to consult and the done-when gate.
+[`plans/build-order.md`](plans/build-order.md) is the milestone sequence an executor should follow. Each milestone names the docs to consult and the done-when gate.
 
 ## Picking up work
 
 **Start with [`plans/PROGRESS.md`](plans/PROGRESS.md).** It's kept short and records:
 - which milestone is next, and the test baselines
 - active blockers and next steps
-- standing owner decisions (D1–D12 and later)
 - known gaps carried forward
+
+Standing owner decisions (D1–D12 and later), with their reasoning, are in [`docs/decisions.md`](docs/decisions.md).
 
 What each finished milestone landed, including the bugs found and per-milestone decisions, is in [`plans/archive/progress-log.md`](plans/archive/progress-log.md). Read it only when you need the history. Update both at the end of every milestone; PROGRESS.md's last section says how.
 
@@ -100,17 +103,17 @@ Standing rules learned the hard way:
 - **Crate template:** new Lambda crates copy the layout of `lambda-questions` / `lambda-responses`: `lib.rs`, `router.rs`, `handlers.rs`, `state.rs`, `validation.rs`, and DynamoDB Local tests under `tests/`. The binary is named `<name>-api`. Wire it in `infra/opennewsletter/api_stack.py` and add a `FUNCTION_<binary>` entry to the `Makefile`.
 - **Key timestamps:** every timestamp in a key attribute goes through `persistence::keys::key_timestamp`.
 - **Test group IDs:** integration tests use unique group IDs, because the membership cache is process-wide.
-- **Spec gaps:** when you fill a gap in the spec, record the decision in the owning plan doc and in that milestone's entry in `plans/archive/progress-log.md` (standing owner decisions also go in PROGRESS.md).
+- **Spec gaps:** when you fill a gap in the spec, record the decision in the owning design page under `docs/` and in that milestone's entry in `plans/archive/progress-log.md`. Standing owner decisions also go in [`docs/decisions.md`](docs/decisions.md).
 
 ## Delegating to parallel agents
 
 The owner prefers that work be delegated to cheaper sub-agents, running in parallel where possible, with the lead agent planning, reviewing and verifying. The pattern that has worked (M5, M6):
 
-1. **Lead reads the spec first.** Read the milestone's plan sections and settle ambiguities *before* spawning agents. Write the decided semantics into the agent prompt verbatim, and put them into the plan docs yourself while the agents run.
+1. **Lead reads the spec first.** Read the milestone's doc sections and settle ambiguities *before* spawning agents. Write the decided semantics into the agent prompt verbatim, and put them into the docs yourself while the agents run.
 2. **Split by directory so agents never edit the same files.** Typically:
    - a **backend agent** (Sonnet) covering `backend/`, `shared/openapi.yaml` and the generated `frontend/src/types/api.ts`
    - an **infra agent** (Haiku is enough) covering `infra/` and the `Makefile`
-   - a **docs agent** if plan docs need sweeping
+   - a **docs agent** if `docs/` needs sweeping
 
    Run them in the background, in parallel. Tell each one which paths it may *not* touch, and that others are working concurrently, so it doesn't "fix" their changes.
 3. **Every agent prompt must include:**
@@ -129,4 +132,4 @@ Commit only when the owner asks.
 
 ## When something is ambiguous
 
-If a plan document seems wrong or contradicts another, **stop and surface it** rather than guessing. Plan docs are intended to be edited as we learn. For low-stakes gaps: pick the simplest default, document it in the appropriate plan file in the same PR, and continue.
+If a doc seems wrong or contradicts the code or another doc, **stop and surface it** rather than guessing. The docs are meant to be edited as we learn. For low-stakes gaps: pick the simplest default, document it in the owning page in the same PR, and continue.

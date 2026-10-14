@@ -1,5 +1,5 @@
 //! `PATCH /groups/{g}` applies `responseWindowDays` to the current cycles
-//! (`plans/06-newsletter-lifecycle.md` §6, `03-api-contract.md` §4.3).
+//! (`docs/design/lifecycle.md` §6, `docs/design/api.md` §4.3).
 //!
 //! Each test uses its own group id: `persistence::auth` keeps a process-wide
 //! membership cache keyed by `(userId, groupId)`, and tests run concurrently.
@@ -7,7 +7,7 @@
 mod common;
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use common::{seed, state};
 use domain::api::{CycleSettingsPatch, PatchGroupRequest};
 use domain::{ApiErrorCode, GroupId, Newsletter, NewsletterStatus, Role, UserId};
@@ -207,4 +207,69 @@ async fn a_voting_cycle_with_candidates_is_rescheduled() {
         rescheduled.response_close_at,
         voting.response_open_at + Duration::days(10)
     );
+}
+
+#[tokio::test]
+async fn resubmitting_the_current_window_repairs_a_close_that_failed_to_move() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-repair", &[("a1", Role::Admin)]).await;
+    let nl = seed_open_cycle(&repo, "g-repair").await;
+    // As if an earlier PATCH saved the default 7-day window but its
+    // best-effort move of this cycle's close failed, leaving a 5-day close.
+    let stale_close = nl.response_open_at + Duration::days(5);
+    newsletters::reschedule_open_cycle_close(&repo, &nl.group_id, &nl.cycle_id, stale_close)
+        .await
+        .unwrap();
+    let state = state(repo);
+
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-repair"),
+        window_patch(7),
+    )
+    .await
+    .unwrap();
+
+    let repaired = reload(&state.repo, &nl).await;
+    assert_eq!(
+        repaired.response_close_at,
+        nl.response_open_at + Duration::days(7)
+    );
+}
+
+#[tokio::test]
+async fn a_timezone_change_reschedules_the_voting_cycle_without_changing_its_id() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-tz-west", &[("a1", Role::Admin)]).await;
+    let ny: chrono_tz::Tz = shared::config::DEFAULT_TIMEZONE.parse().unwrap();
+    // Created well after its own month began, like a successor the repair
+    // pass creates late: its `voteWindowOpenAt` (now) is no anchor for it.
+    let after = Utc.with_ymd_and_hms(2030, 11, 1, 5, 0, 0).unwrap();
+    let voting =
+        newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-tz-west"), ny, 7, after)
+            .await
+            .unwrap();
+    assert_eq!(voting.cycle_id.as_str(), "203012");
+    let state = state(repo);
+
+    let mut patch = window_patch(7);
+    patch.cycle_settings = None;
+    patch.timezone = Some("Pacific/Honolulu".into());
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-tz-west"),
+        patch,
+    )
+    .await
+    .unwrap();
+
+    let rescheduled = reload(&state.repo, &voting).await;
+    // Midnight 1 Dec 2030 in Honolulu (UTC-10).
+    let open_at = Utc.with_ymd_and_hms(2030, 12, 1, 10, 0, 0).unwrap();
+    assert_eq!(rescheduled.cycle_id, voting.cycle_id);
+    assert_eq!(rescheduled.response_open_at, open_at);
+    assert_eq!(rescheduled.response_close_at, open_at + Duration::days(7));
+    assert_eq!(rescheduled.next_transition_at, Some(open_at));
 }

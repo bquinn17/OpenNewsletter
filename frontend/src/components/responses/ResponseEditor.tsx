@@ -46,7 +46,7 @@ function insertImageToken(
   return `${before}${leading}![](image:${imageId})\n${after}`;
 }
 
-/** The markdown textarea + image uploader for a text response (`04-frontend-architecture.md` §7.3, §8.4). */
+/** The markdown textarea + image uploader for a text response (`docs/design/frontend.md` §7.3, §8.4). */
 export function ResponseEditor({
   groupId,
   cycleId,
@@ -113,7 +113,7 @@ export function ResponseEditor({
 
   /**
    * "Remove image", after the uploader's permanent-delete confirm (D8). In
-   * order (`03-api-contract.md` §9.4): strip its tokens and drop its ID, save
+   * order (`docs/design/api.md` §9.4): strip its tokens and drop its ID, save
    * the draft without it, then `DELETE /uploads/{id}` — a draft still listing
    * a deleted image would fail its next save.
    */

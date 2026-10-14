@@ -10,7 +10,7 @@ type CandidateItemResponse = S["CandidateItemResponse"];
 type CreateCandidateRequest = S["CreateCandidateRequest"];
 
 /**
- * Mock routes for `/groups/{g}/candidate-questions*` (`03-api-contract.md`
+ * Mock routes for `/groups/{g}/candidate-questions*` (`docs/design/api.md`
  * §6). Mirrors `backend/crates/lambda-questions`: prompt/poll-option
  * validation (`validation.rs`), the vote cap transaction semantics
  * (`handlers.rs`), and anonymity redaction.

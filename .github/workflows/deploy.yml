@@ -1,10 +1,10 @@
 # Trigger: every push to main.
 # Purpose: deploy the backend to dev, then — behind the `production`
 # environment's required reviewer — deploy the same build to prod and publish
-# the frontend to gh-pages (plans/11-testing-ci-cd.md §6.4). The Lambdas are
+# the frontend to gh-pages (docs/development/testing-and-ci.md §6.4). The Lambdas are
 # built once, in the dev job, and the prod job deploys that exact artifact, so
 # what gets promoted is what ran in dev. Backend before frontend, always from
-# one SHA: API changes are expand → contract (coding-standards.md §8).
+# one SHA: API changes are expand → contract (docs/development/coding-standards.md §8).
 # Inert until the repo variable DEPLOY_ENABLED is "true". AWS access is GitHub
 # OIDC into CiStack's GithubDeployRole (infra/opennewsletter/ci_stack.py) — no
 # long-lived AWS keys in this repo.
@@ -117,7 +117,7 @@ jobs:
         working-directory: infra
         run: npx aws-cdk@2 deploy --context env=dev --all --require-approval never
 
-      # Later: run the Playwright `dev` project here (11 §6.4 step 4).
+      # Later: run the Playwright `dev` project here (docs/development/testing-and-ci.md §6.4 step 4).
 
   promote-prod:
     needs: dev
@@ -215,7 +215,7 @@ jobs:
         working-directory: frontend
         run: echo "${{ vars.FRONTEND_DOMAIN }}" > dist/CNAME
 
-      - name: SPA fallback for deep links (04-frontend-architecture.md §14.5)
+      - name: SPA fallback for deep links (docs/design/frontend.md §14.5)
         working-directory: frontend
         run: cp dist/index.html dist/404.html
 

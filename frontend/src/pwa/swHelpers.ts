@@ -1,12 +1,12 @@
 /**
  * Pure helpers for `sw.ts`'s `push`/`notificationclick` handlers, pulled out
- * so they're unit-testable without a `ServiceWorkerGlobalScope` (`07-notifications.md`
+ * so they're unit-testable without a `ServiceWorkerGlobalScope` (`docs/design/notifications.md`
  * §5, M11 decision D6/D11). Deliberately lib-agnostic (no DOM/webworker
  * ambient types) so this file compiles cleanly under both the app's normal
  * tsconfig and `tsconfig.sw.json`.
  */
 
-/** The push payload shape sent by `push-api` (`07-notifications.md` §5, D6). */
+/** The push payload shape sent by `push-api` (`docs/design/notifications.md` §5, D6). */
 export interface PushPayload {
   title: string;
   body?: string;
@@ -81,7 +81,7 @@ export interface ActivationScope {
 
 /**
  * Makes a newly deployed service worker take over as soon as it installs
- * (`04-frontend-architecture.md` §5.2/§14.2, D6), instead of waiting for
+ * (`docs/design/frontend.md` §5.2/§14.2, D6), instead of waiting for
  * every tab of the installed PWA to close: the prod promotion gate ships the
  * backend and frontend together, so clients must pick up the matching
  * frontend quickly. It doesn't reload anything: an open page keeps running
@@ -92,7 +92,7 @@ export function activatePromptly(scope: ActivationScope): void {
   scope.addEventListener("activate", (event) => event.waitUntil(scope.clients.claim()));
 }
 
-/** CloudFront signed-URL query params (`08-media-uploads.md` §4.5). */
+/** CloudFront signed-URL query params (`docs/design/media.md` §4.5). */
 const MEDIA_AUTH_PARAMS = ["Policy", "Signature", "Key-Pair-Id", "Expires"];
 
 /**

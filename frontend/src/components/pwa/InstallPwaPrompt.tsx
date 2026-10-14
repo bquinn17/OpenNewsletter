@@ -3,7 +3,7 @@ import { isIOS, isStandaloneDisplay } from "../../utils/platform";
 import { Button } from "../ui/Button";
 
 /**
- * Install nudge shown on Home and Settings (`04-frontend-architecture.md`
+ * Install nudge shown on Home and Settings (`docs/design/frontend.md`
  * §14.4): a real "Install" button where `beforeinstallprompt` fired, else a
  * dismissible static banner on iOS (which never fires that event). Renders
  * nothing once installed (standalone) or when neither applies.

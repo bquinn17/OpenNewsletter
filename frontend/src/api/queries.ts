@@ -87,7 +87,7 @@ export function useInvites(groupId: string | undefined) {
 }
 
 /**
- * The caller's push subscriptions ("My devices", `07-notifications.md` §11.1).
+ * The caller's push subscriptions ("My devices", `docs/design/notifications.md` §11.1).
  * Only ever rendered inside `SettingsPage` (behind `RequireAuth`), so — like
  * `useGroup`/`useCandidates` — no separate auth-status gate.
  */

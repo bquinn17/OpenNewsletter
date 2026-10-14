@@ -357,7 +357,7 @@ describe("RespondPage", () => {
     });
 
     expect(textarea).toHaveValue("");
-    // Strip and save the draft without it first, then DELETE (`03` §9.4).
+    // Strip and save the draft without it first, then DELETE (`docs/design/api.md` §9.4).
     expect(calls).toEqual(["save [img1]", "save []", "delete img1"]);
     expect(saveMyResponse).toHaveBeenLastCalledWith("g1", "c1", "q1", {
       kind: "text",
@@ -550,7 +550,7 @@ describe("RespondPage", () => {
     });
 
     // No "Publish" click needed — a pick on an already-published poll
-    // response is sticky and saves right away (`03-api-contract.md` §7.3).
+    // response is sticky and saves right away (`docs/design/api.md` §7.3).
     expect(saveMyResponse).toHaveBeenCalledWith("g1", "c1", "q2", {
       kind: "poll",
       pollOptionId: "optB",

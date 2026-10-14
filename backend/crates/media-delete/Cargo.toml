@@ -5,7 +5,7 @@ version.workspace = true
 license.workspace = true
 
 # Real deletion of an uploaded image or avatar: S3 objects, CloudFront
-# invalidation, then the DynamoDB row (`plans/08-media-uploads.md` §8.0).
+# invalidation, then the DynamoDB row (`docs/design/media.md` §8.0).
 # A crate of its own because `shared` can't depend on `persistence`.
 
 [lib]

@@ -62,7 +62,7 @@ pub fn test_state_with_fakes(repo: Repo) -> (AppState, Fakes) {
 }
 
 /// Same as [`test_state`] but with `MEDIA_COOKIE_DOMAIN` empty, matching dev
-/// (`08-media-uploads.md` §4.5) — `/media-cookie` must emit no `Set-Cookie`
+/// (`docs/design/media.md` §4.5) — `/media-cookie` must emit no `Set-Cookie`
 /// headers in this configuration.
 pub fn test_state_without_cookie_domain(repo: Repo) -> AppState {
     build_state(repo, String::new()).0
@@ -308,7 +308,7 @@ pub async fn seed_ready_image(
 
 /// Claims a `purpose=comment` image for a comment, bypassing the comment
 /// create/patch transaction — just enough for `lambda-media`'s `DELETE
-/// /uploads/{imageId}` `IMAGE_IN_USE` check (`03-api-contract.md` §9.4) to
+/// /uploads/{imageId}` `IMAGE_IN_USE` check (`docs/design/api.md` §9.4) to
 /// have something to find.
 pub async fn attach_image_to_comment(
     repo: &Repo,

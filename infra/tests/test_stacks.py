@@ -1,4 +1,4 @@
-"""CDK stack assertion tests per 11-testing-ci-cd.md §3.
+"""CDK stack assertion tests per docs/development/testing-and-ci.md §3.
 
 Run with: pytest infra/tests/
 """
@@ -164,7 +164,7 @@ def test_user_pool_exactly_two_clients(auth_template: assertions.Template) -> No
 
 
 def test_user_pool_two_idps(auth_template: assertions.Template) -> None:
-    # Google + Facebook only — Apple dropped (plans/PROGRESS.md decisions, M1).
+    # Google + Facebook only — Apple dropped (docs/decisions.md).
     auth_template.resource_count_is("AWS::Cognito::UserPoolIdentityProvider", 2)
 
 
@@ -596,7 +596,7 @@ def test_prod_jwt_authorizer_accepts_only_the_frontend_audience(
     prod_api_template: assertions.Template,
 ) -> None:
     # Prod has no admin-bootstrap client, so no password-auth token can pass
-    # (`01` §6.1).
+    # (`docs/design/infrastructure.md` §6.1).
     audiences = _authorizer_audiences(prod_api_template)
     assert len(audiences) == 1
     assert "FrontendClient" in str(audiences[0])
@@ -1114,7 +1114,7 @@ def test_user_pool_has_no_custom_attributes(auth_template: assertions.Template) 
 # ---------------------------------------------------------------------------
 
 
-# Alarms are prod-only (`01` §9.2), so these build the prod stack; the
+# Alarms are prod-only (`docs/design/infrastructure.md` §9.2), so these build the prod stack; the
 # dev/prod split and the alarm-metric budget are covered in
 # test_monitoring_stack.py.
 @pytest.fixture(scope="module")
@@ -1169,7 +1169,7 @@ def test_notify_tick_has_no_separate_errors_alarm(
     monitoring_template: assertions.Template,
 ) -> None:
     # Dropped to stay within the 10 free alarm metrics: notify-tick failures
-    # surface as push failures, already alarmed (`01` §9.2).
+    # surface as push failures, already alarmed (`docs/design/infrastructure.md` §9.2).
     alarms = monitoring_template.find_resources("AWS::CloudWatch::Alarm")
     names = {a["Properties"]["AlarmName"] for a in alarms.values()}
     assert not any("NotifyTick" in name for name in names)
@@ -1253,7 +1253,7 @@ def test_dynamodb_table_uses_the_aws_owned_key(
     data_template: assertions.Template,
 ) -> None:
     # AWS-owned key = SSE not explicitly enabled (enabling it selects the
-    # billed AWS-managed `aws/dynamodb` KMS key). `01` §3.1.
+    # billed AWS-managed `aws/dynamodb` KMS key). `docs/design/infrastructure.md` §3.1.
     (table,) = data_template.find_resources("AWS::DynamoDB::Table").values()
     sse = table["Properties"].get("SSESpecification", {})
     assert sse.get("SSEEnabled", False) is False
@@ -1262,7 +1262,7 @@ def test_dynamodb_table_uses_the_aws_owned_key(
 
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_no_media_bucket_is_versioned(env: str) -> None:
-    # A real delete must not leave the object behind a delete marker (`01` §5.1).
+    # A real delete must not leave the object behind a delete marker (`docs/design/infrastructure.md` §5.1).
     buckets = _media_persistent_template(env).find_resources("AWS::S3::Bucket")
     assert len(buckets) == 4
     for bucket in buckets.values():
@@ -1277,7 +1277,7 @@ def test_media_persistent_stack_no_longer_outputs_a_signing_secret_arn(
 
 
 def test_google_idp_maps_email_verified(auth_template: assertions.Template) -> None:
-    # `POST /invites/redeem` checks it for email-bound invites (`05` §4.2).
+    # `POST /invites/redeem` checks it for email-bound invites (`docs/design/auth.md` §4.2).
     auth_template.has_resource_properties(
         "AWS::Cognito::UserPoolIdentityProvider",
         {
@@ -1316,7 +1316,7 @@ def test_dev_outputs_the_bootstrap_client_id(
 
 
 def test_prod_has_no_bootstrap_client(prod_auth_template: assertions.Template) -> None:
-    # Prod has no password auth at all (`01` §4.3, `05` §9.1a).
+    # Prod has no password auth at all (`docs/design/infrastructure.md` §4.3, `docs/design/auth.md` §9.1a).
     prod_auth_template.resource_count_is("AWS::Cognito::UserPoolClient", 1)
     prod_auth_template.has_resource_properties(
         "AWS::Cognito::UserPoolClient", {"ClientName": "frontend"}
@@ -1467,6 +1467,18 @@ def test_s3_delete_is_scoped_per_lambda(
     api_template: assertions.Template, name: str, expected: set[tuple[str, str]]
 ) -> None:
     assert _delete_targets(api_template, f"OpenNewsletter-{name}-dev") == expected
+
+
+def test_image_process_can_delete_processed_variants(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # A row deleted mid-processing leaves ImageProcess to remove the variants
+    # it just wrote (`docs/design/media.md` §8.0).
+    _, pipeline = media_templates
+    assert _delete_targets(pipeline, "OpenNewsletter-ImageProcess-dev") == {
+        ("media-processed", "/img/*"),
+        ("avatars-processed", "/avatar/*"),
+    }
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""CloudFront signing keys: one RSA-2048 public key per env (`05-auth-flow.md` §10).
+"""CloudFront signing keys: one RSA-2048 public key per env (`docs/design/auth.md` §10).
 
 `lambda-media` signs with RSA-SHA1 only, so an EC key would deploy cleanly and
 then fail every `GET /media-cookie`. These tests catch that at synth time.

@@ -4,7 +4,7 @@
 //! ever writes is constructed here. If a key format changes, change it here
 //! and the type system finds every dependent call site.
 //!
-//! Layouts mirror `plans/02-data-model-dynamodb.md` §2.
+//! Layouts mirror `docs/design/data-model.md` §2.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{

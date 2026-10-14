@@ -7,7 +7,7 @@ import { CdnImage } from "../components/ui/CdnImage";
 import { ensureCookie } from "./media";
 
 /**
- * Allows `image:{imageId}` tokens (`08-media-uploads.md` §7) through the
+ * Allows `image:{imageId}` tokens (`docs/design/media.md` §7) through the
  * sanitizer on `img[src]` in addition to the default `http`/`https`.
  * `<script>`/`<iframe>`/`<style>`, event handlers, and `javascript:` links
  * are rejected by `defaultSchema` already and untouched here.
@@ -60,7 +60,7 @@ type Props = {
   groupId: string;
   className?: string;
   /**
-   * When `false` (comments — `09-engagement.md` §1.3/§5), `image:{id}` tokens
+   * When `false` (comments — `docs/design/engagement.md` §1.3/§5), `image:{id}` tokens
    * never render an `<img>`, regardless of `images`. A remote `http(s)` image
    * already degrades to a link either way, so this only changes the
    * `image:` token path.
@@ -90,7 +90,7 @@ export function MarkdownBody({ body, images, groupId, className, allowImages = t
     img: ({ src, alt }) => {
       if (!src) return null;
       // Only uploaded images render inline. A remote image would be blocked
-      // by the CSP's `img-src` (`04` §12.1) and would leak readers' IPs to
+      // by the CSP's `img-src` (`docs/design/frontend.md` §12.1) and would leak readers' IPs to
       // its host, so it degrades to a link.
       if (!src.startsWith("image:")) {
         return (

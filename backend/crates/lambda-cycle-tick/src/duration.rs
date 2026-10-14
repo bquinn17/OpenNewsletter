@@ -1,5 +1,5 @@
 //! Parses the compact duration strings used by `advanceCycleClosesBy`
-//! (`plans/03-api-contract.md` §11a.1), e.g. `"5m"`, `"1h"`, `"4d"`.
+//! (`docs/design/api.md` §11a.1), e.g. `"5m"`, `"1h"`, `"4d"`.
 //!
 //! Mirrors `scripts/seed_dev_data.py`'s `parse_duration` so both dev tools
 //! accept exactly the same syntax.

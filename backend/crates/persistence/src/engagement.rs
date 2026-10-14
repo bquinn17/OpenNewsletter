@@ -1,4 +1,4 @@
-//! Comments and reactions (AP18, AP19; `plans/03-api-contract.md` §8).
+//! Comments and reactions (AP18, AP19; `docs/design/api.md` §8).
 
 use crate::error::{self, RepoError};
 use crate::keys::{
@@ -15,7 +15,7 @@ use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
 
 /// AP18 — every comment on an answer, oldest first. Unpaginated; used by the
-/// inline published-newsletter view (`03` §5.2), which always wants the
+/// inline published-newsletter view (`docs/design/api.md` §5.2), which always wants the
 /// whole thread. The dedicated `GET .../comments` route uses
 /// [`list_comments_page`] instead.
 pub async fn list_comments(
@@ -122,10 +122,10 @@ pub async fn list_comments_page(
     Ok((comments, next))
 }
 
-/// Finds one comment by id (decision M10, `09-engagement.md` §1.4): the
+/// Finds one comment by id (decision M10, `docs/design/engagement.md` §1.4): the
 /// engagement partition has no index on `comment_id`, so this walks the `C#`
 /// range, following `LastEvaluatedKey`, filtering server-side. Thread sizes
-/// are expected to stay small (`09-engagement.md` §7 — unbounded but
+/// are expected to stay small (`docs/design/engagement.md` §7 — unbounded but
 /// activity-driven), so a full scan of the partition is acceptable.
 pub async fn get_comment_by_id(
     repo: &Repo,
@@ -173,7 +173,7 @@ pub async fn get_comment_by_id(
 }
 
 /// A new comment's content, independent of how it's addressed
-/// (`03-api-contract.md` §8.2).
+/// (`docs/design/api.md` §8.2).
 pub struct NewComment<'a> {
     pub group_id: &'a GroupId,
     pub cycle_id: &'a CycleId,

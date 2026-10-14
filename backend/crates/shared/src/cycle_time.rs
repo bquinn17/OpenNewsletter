@@ -1,4 +1,4 @@
-//! Cycle scheduling time math (`plans/06-newsletter-lifecycle.md` §4, §5.4, §5.5).
+//! Cycle scheduling time math (`docs/design/lifecycle.md` §4, §5.4, §5.5).
 //!
 //! All wall-clock math for "when does the next cycle start" lives here so
 //! `persistence` and `lambda-cycle-tick` share one implementation.
@@ -49,7 +49,7 @@ pub fn cycle_id_for(response_open_at: DateTime<Utc>, tz: Tz) -> CycleId {
 /// Anchoring on the cycle's identity rather than one of its timestamps keeps
 /// the next cycle exactly one month on: `responseCloseAt` can itself land on
 /// the 1st of the next month (a 28-day window in a non-leap February), and the
-/// dev-only deadline rewind (§11a.1 of `03`) moves `responseOpenAt` back into
+/// dev-only deadline rewind (`docs/design/api.md` §11a.1) moves `responseOpenAt` back into
 /// earlier months.
 pub fn cycle_month_start(cycle_id: &CycleId, tz: Tz) -> Option<DateTime<Utc>> {
     let id = cycle_id.as_str();
@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(got, utc(2026, 7, 1, 4, 0, 0));
     }
 
-    /// `06-newsletter-lifecycle.md` §11 #8 — a New York cycle whose
+    /// `docs/design/lifecycle.md` §11 #8 — a New York cycle whose
     /// `responseOpenAt` is 2026-03-01 must land at the correct UTC instant.
     /// 2026 US DST starts March 8, so March 1 is still EST (UTC-5).
     #[test]
@@ -202,6 +202,20 @@ mod tests {
         let got = cycle_month_start(&CycleId::new("202711"), America::New_York);
         // EST (UTC-5): US DST ends 2027-11-07.
         assert_eq!(got, Some(utc(2027, 11, 1, 4, 0, 0)));
+    }
+
+    /// `lambda-groups` reschedules a `voting` cycle from its own id after a
+    /// timezone change, so the recomputed open must map back to that id in
+    /// any zone, never moving the row's key (`docs/design/lifecycle.md` §6).
+    #[test]
+    fn cycle_month_start_maps_back_to_its_own_cycle_id() {
+        let zones: [Tz; 4] = [America::New_York, Pacific::Honolulu, Pacific::Auckland, UTC];
+        for tz in zones {
+            for id in ["202607", "202701", "202711"] {
+                let start = cycle_month_start(&CycleId::new(id), tz).unwrap();
+                assert_eq!(cycle_id_for(start, tz), CycleId::new(id), "{id} in {tz}");
+            }
+        }
     }
 
     #[test]

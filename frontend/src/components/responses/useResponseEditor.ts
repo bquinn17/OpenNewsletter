@@ -143,7 +143,7 @@ function isRetryable(error: unknown): boolean {
 }
 
 /**
- * Drives the text-response autosave loop (`04-frontend-architecture.md` §8):
+ * Drives the text-response autosave loop (`docs/design/frontend.md` §8):
  * a debounced PUT after `env.autosaveDebounceMs` of no local changes, at
  * most one save in flight (later edits coalesce into the next save),
  * exponential-backoff retry on network/5xx failures, a hard stop on
@@ -295,7 +295,7 @@ export function useResponseEditor({
     };
   }, [local, enabled]);
 
-  // Mirror `local` into localStorage (`04` §8.3) — best-effort, wrapped in try/catch inside the helpers.
+  // Mirror `local` into localStorage (`docs/design/frontend.md` §8.3) — best-effort, wrapped in try/catch inside the helpers.
   useEffect(() => {
     if (!enabled || !key) return;
     if (draftsEqual(local, serverDraftRef.current)) {
@@ -336,7 +336,7 @@ export function useResponseEditor({
   /**
    * Drops `imageId` from the draft (its ID, and its tokens via
    * `transformBody`) and resolves once a save without it has landed — the
-   * first two steps of the editor's "remove image" (`03-api-contract.md`
+   * first two steps of the editor's "remove image" (`docs/design/api.md`
    * §9.4): the draft must stop referencing an image before
    * `DELETE /uploads/{id}` removes it, or its next save would fail image
    * validation. Rejects if saving stops (closed cycle, non-retryable error).

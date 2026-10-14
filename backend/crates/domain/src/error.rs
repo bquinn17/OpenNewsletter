@@ -1,4 +1,4 @@
-//! API error catalog mirroring `plans/03-api-contract.md` §1.1.
+//! API error catalog mirroring `docs/design/api.md` §1.1.
 
 use crate::api::FieldError;
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ pub enum ApiErrorCode {
 }
 
 impl ApiErrorCode {
-    /// The machine-readable code as it appears on the wire (`03-api-contract.md` §1.1).
+    /// The machine-readable code as it appears on the wire (`docs/design/api.md` §1.1).
     pub fn as_str(self) -> &'static str {
         use ApiErrorCode::*;
         match self {
@@ -121,12 +121,12 @@ impl ApiErrorCode {
 pub struct ApiError {
     pub code: ApiErrorCode,
     pub detail: String,
-    /// Per-field details for `VALIDATION_FAILED` (`03` §1.1 `fieldErrors`). Empty
+    /// Per-field details for `VALIDATION_FAILED` (`docs/design/api.md` §1.1 `fieldErrors`). Empty
     /// for every other error, and for validation errors not tied to one field.
     pub field_errors: Vec<FieldError>,
 }
 
-/// Why one field failed: `fieldErrors[].code` (`03-api-contract.md` §1.1).
+/// Why one field failed: `fieldErrors[].code` (`docs/design/api.md` §1.1).
 /// Almost every failure is `Invalid`, and its `message` says what's wrong. A
 /// more specific code exists only where a client must react to the reason
 /// itself rather than just show the message.
@@ -134,7 +134,7 @@ pub struct ApiError {
 pub enum FieldErrorCode {
     Invalid,
     /// A `responseWindowDays` change would close the group's `open` cycle in
-    /// the past (`06-newsletter-lifecycle.md` §6, D10).
+    /// the past (`docs/design/lifecycle.md` §6, D10).
     ClosesInPast,
 }
 

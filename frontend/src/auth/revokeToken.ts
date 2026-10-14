@@ -7,10 +7,10 @@ const REVOKE_TIMEOUT_MS = 3000;
 
 /**
  * Best-effort revocation of `user`'s refresh token via Cognito
- * `POST /oauth2/revoke` (`05-auth-flow.md` §8 step 4, D1).
+ * `POST /oauth2/revoke` (`docs/design/auth.md` §8 step 4, D1).
  *
  * Cognito only revokes a token when `client_id` is the client that issued it,
- * so a bootstrap-login session (`05` §9.2) revokes against the
+ * so a bootstrap-login session (`docs/design/auth.md` §9.2) revokes against the
  * `admin-bootstrap` client and everything else against the frontend client.
  * Never throws and never waits more than `REVOKE_TIMEOUT_MS`: the caller has
  * already removed the stored user, so a failure here doesn't leave the session

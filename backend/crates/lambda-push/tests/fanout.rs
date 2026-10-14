@@ -1,5 +1,5 @@
 //! `cycle_open_fanout` / `publication_fanout` — the internal fan-outs
-//! `lambda-cycle-tick` triggers (`plans/07-notifications.md` §6, §8).
+//! `lambda-cycle-tick` triggers (`docs/design/notifications.md` §6, §8).
 
 mod common;
 

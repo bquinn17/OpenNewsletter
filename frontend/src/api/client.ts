@@ -129,7 +129,7 @@ function mediaQuery(groupId: string, cycleId: string): string {
   return new URLSearchParams({ groupId, cycleId }).toString();
 }
 
-/** Shared prefix for every engagement route (`03-api-contract.md` §8). */
+/** Shared prefix for every engagement route (`docs/design/api.md` §8). */
 function engagementBasePath(
   groupId: string,
   cycleId: string,

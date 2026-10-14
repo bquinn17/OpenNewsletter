@@ -1,6 +1,6 @@
 //! Pure image processing — no AWS, no I/O. `handler.rs` wires this to S3 and
 //! the DynamoDB row updates; this module is what the unit tests in
-//! `plans/08-media-uploads.md` §10 exercise directly.
+//! `docs/design/media.md` §10 exercise directly.
 
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::codecs::jpeg::JpegDecoder;
@@ -95,7 +95,7 @@ pub struct AvatarVariant {
 /// Center-crops to a square, resizes to 256x256, and encodes lossy WebP q82.
 /// Only `jpeg`/`png`/`webp` are accepted; a GIF (or anything else) is a
 /// decode failure — animated avatars aren't supported
-/// (`plans/08-media-uploads.md` §11.1).
+/// (`docs/design/media.md` §11.1).
 pub fn process_avatar(bytes: &[u8]) -> Result<AvatarVariant, ProcessError> {
     let format = image::guess_format(bytes).map_err(|_| ProcessError::DecodeFailed)?;
     if format == ImageFormat::Gif {
@@ -174,7 +174,7 @@ fn check_decode_budget(decoder: &impl ImageDecoder) -> Result<(), ProcessError> 
 
 /// Resizes so the long edge is at most `max_long_edge`, preserving aspect
 /// ratio. Never upscales — an image already at or under the target keeps its
-/// size (`plans/08-media-uploads.md` §1).
+/// size (`docs/design/media.md` §1).
 fn resize_long_edge(img: &DynamicImage, max_long_edge: u32) -> DynamicImage {
     let (width, height) = (img.width(), img.height());
     let long_edge = width.max(height);

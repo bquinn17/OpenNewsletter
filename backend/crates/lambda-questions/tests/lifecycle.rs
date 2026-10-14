@@ -2,7 +2,7 @@
 //! flow (which needs real AWS): bootstrap a group, suggest and vote on
 //! candidates through `lambda-questions`' own handlers, then drive the cycle
 //! through `voting -> open -> published` via `lambda-cycle-tick`'s `run_tick`,
-//! exactly as the real EventBridge schedule would (`06-newsletter-lifecycle.md` §5).
+//! exactly as the real EventBridge schedule would (`docs/design/lifecycle.md` §5).
 
 mod common;
 
@@ -54,7 +54,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     // transition at once and collapse both ticks below into a single call.
     //
     // The cycle id must agree with those dates, as a real cycle's always does:
-    // the tick seeds the next cycle from it (`06` §5.4), and a stale id would
+    // the tick seeds the next cycle from it (`docs/design/lifecycle.md` §5.4), and a stale id would
     // make that next cycle already due, so the second tick would open it too.
     let now = Utc::now();
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
@@ -151,7 +151,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .await
         .unwrap()
         .expect("tick creates the next voting cycle alongside promotion");
-    // ...for the month right after this one (`06` §5.4).
+    // ...for the month right after this one (`docs/design/lifecycle.md` §5.4).
     let following = shared::cycle_time::first_day_of_next_month_local(now + Duration::days(10), tz);
     assert_eq!(
         next_voting.cycle_id,
@@ -205,7 +205,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     assert_eq!(still_voting.cycle_id, next_voting.cycle_id);
 }
 
-/// `06` §5.4 repair: promotion creates the next voting cycle best-effort, after
+/// `docs/design/lifecycle.md` §5.4 repair: promotion creates the next voting cycle best-effort, after
 /// its own transaction. If that create failed, the group sits with an `open`
 /// cycle and no `voting` one; nothing else would ever create it, so its
 /// lifecycle would stop after this edition. Every tick re-checks.

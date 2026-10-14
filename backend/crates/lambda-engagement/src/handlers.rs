@@ -1,5 +1,5 @@
 //! Business logic for the comment and reaction routes
-//! (`plans/03-api-contract.md` §8).
+//! (`docs/design/api.md` §8).
 
 use crate::state::AppState;
 use crate::validation;
@@ -128,7 +128,7 @@ pub async fn create_comment(
             if e.is_lost_race() {
                 ApiError::invalid_field(
                     "imageMediaId",
-                    "image is already attached to another comment",
+                    "image is attached to another comment or was deleted",
                 )
             } else {
                 tracing::error!(error = ?e, group_id = %group_id, "comment create failed");
@@ -252,7 +252,7 @@ pub async fn patch_comment(
                 if current.image_media_id == existing.image_media_id {
                     return Err(ApiError::invalid_field(
                         "imageMediaId",
-                        "image is already attached to another comment",
+                        "image is attached to another comment or was deleted",
                     ));
                 }
                 if attempts >= COMMENT_WRITE_ATTEMPTS {
@@ -368,8 +368,8 @@ pub async fn delete_comment(
     }
 }
 
-/// Permanently delete an image a comment just released (`09-engagement.md`
-/// §1.1, `08-media-uploads.md` §8.0). Best effort: the comment write has
+/// Permanently delete an image a comment just released (`docs/design/engagement.md`
+/// §1.1, `docs/design/media.md` §8.0). Best effort: the comment write has
 /// already committed, so a failure is logged rather than surfaced.
 async fn delete_released_image(
     state: &AppState,
@@ -502,7 +502,7 @@ pub async fn delete_reaction(
 
 // ---------- shared helpers ----------
 
-/// Check order shared by all seven routes (`03-api-contract.md` §8, GETs
+/// Check order shared by all seven routes (`docs/design/api.md` §8, GETs
 /// included): membership (403) -> cycle exists (404) -> not archived (410)
 /// -> published (409) -> answer resolves to a published text response
 /// (404). Returns the answer's `userId` (the engagement partition's
@@ -589,7 +589,7 @@ async fn load_live_comment(
 
 /// An attached `imageMediaId` must be `ready`, owned by the caller, uploaded
 /// for this group/cycle/question with `purpose=comment`, and not attached to
-/// a *different* comment (`03-api-contract.md` §8.2). `existing_comment_id`
+/// a *different* comment (`docs/design/api.md` §8.2). `existing_comment_id`
 /// is `None` on create (any attachment is "someone else's") and
 /// `Some(this comment)` on patch (re-claiming its own current image is
 /// fine).
@@ -670,7 +670,7 @@ async fn hydrate_comments(
 }
 
 /// Builds the wire `CommentResponse`, including a soft-deleted comment as a
-/// `[deleted]` placeholder (`09-engagement.md` §1.1).
+/// `[deleted]` placeholder (`docs/design/engagement.md` §1.1).
 async fn hydrate_comment(
     state: &AppState,
     group_id: &GroupId,
@@ -708,7 +708,7 @@ async fn hydrate_comment(
 }
 
 /// The comment's attached image, hydrated only while it's `ready`
-/// (`09-engagement.md` §1.1).
+/// (`docs/design/engagement.md` §1.1).
 async fn hydrate_comment_image(
     state: &AppState,
     group_id: &GroupId,

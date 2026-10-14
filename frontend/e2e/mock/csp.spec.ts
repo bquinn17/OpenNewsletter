@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 /**
  * Checks the built, served app actually carries the CSP `<meta>` tag
  * `src/csp/cspPlugin.ts` injects, with real values from `.env.e2e`
- * (`04-frontend-architecture.md` §12.1, decided M13).
+ * (`docs/design/frontend.md` §12.1, decided M13).
  */
 test.describe("Content-Security-Policy meta tag", () => {
   test("is present exactly once, with the CDN origin in img-src and a locked-down script-src", async ({

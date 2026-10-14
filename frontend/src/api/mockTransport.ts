@@ -73,7 +73,7 @@ function handleGetConfig(): S["ConfigResponse"] {
       "BJTfWJoykcXuskzxVht3DnGpI07IIX8QCxj668lx_G0GgtvMi_mAFvD0_r6Z5Hvy3QRzrVQJrXo7NUUc9Nnix40",
     groupDefaults: {},
     // The real server computes these fields from the live group row rather
-    // than a denormalized copy (`03-api-contract.md` §4) — read `groups` live
+    // than a denormalized copy (`docs/design/api.md` §4) — read `groups` live
     // here too, so a `patchGroup` is immediately visible after invalidating
     // `/config`.
     memberships: memberships.map((m) => {
@@ -96,7 +96,7 @@ function handlePatchMe(body: unknown): S["UserResponse"] {
     next.avatarUrl = next.avatarMediaId
       ? (avatarRows.get(next.avatarMediaId)?.avatarUrl ?? null)
       : null;
-    // Replacing or clearing an avatar deletes the old one for real (`03` §2.3/§9.7).
+    // Replacing or clearing an avatar deletes the old one for real (`docs/design/api.md` §2.3/§9.7).
     if (me.avatarMediaId && me.avatarMediaId !== next.avatarMediaId) {
       avatarRows.delete(me.avatarMediaId);
     }
@@ -268,7 +268,7 @@ function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"
   return { ...row };
 }
 
-/** Real delete (`03-api-contract.md` §9.4, D8): the row is gone; a repeat is still 204. */
+/** Real delete (`docs/design/api.md` §9.4, D8): the row is gone; a repeat is still 204. */
 function handleDeleteUpload(imageId: string): undefined {
   deleteMockImage(imageId);
   return undefined;
@@ -331,7 +331,7 @@ function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
 }
 
 /**
- * Real delete (`03-api-contract.md` §9.7, D8): the row is gone (a repeat is
+ * Real delete (`docs/design/api.md` §9.7, D8): the row is gone (a repeat is
  * still 204), and the caller's current avatar falls back to `avatarColor`.
  */
 function handleDeleteAvatar(avatarId: string): undefined {

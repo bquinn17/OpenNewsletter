@@ -44,7 +44,7 @@ function friendlyAvatarError(code: string | null | undefined): string {
   }
 }
 
-// Bounds per `03-api-contract.md` §5.2 / `shared/openapi.yaml` (`PatchMeRequest.displayName`).
+// Bounds per `docs/design/api.md` §5.2 / `shared/openapi.yaml` (`PatchMeRequest.displayName`).
 const profileSchema = z.object({
   displayName: z.string().trim().min(1, "Name can't be empty.").max(40, "40 characters max."),
   avatarColor: z.enum(AVATAR_COLOR_SLUGS),
@@ -208,7 +208,7 @@ export function SettingsPage() {
   }
 
   function chooseAvatarFile() {
-    // Replacing an existing photo deletes it (`03` §9.7), so confirm first.
+    // Replacing an existing photo deletes it (`docs/design/api.md` §9.7), so confirm first.
     if (me?.avatarMediaId) setAvatarConfirm("replace");
     else avatarInputRef.current?.click();
   }
@@ -227,7 +227,7 @@ export function SettingsPage() {
     } catch {
       return;
     }
-    // The server deletes a cleared avatar itself (`03` §2.3). This DELETE
+    // The server deletes a cleared avatar itself (`docs/design/api.md` §2.3). This DELETE
     // covers a backend from before that change; otherwise it's a 204 no-op.
     if (oldAvatarId) {
       api.media.deleteAvatar(oldAvatarId).catch(() => undefined);

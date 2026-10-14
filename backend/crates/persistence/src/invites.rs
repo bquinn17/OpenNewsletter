@@ -121,7 +121,7 @@ where
 ///
 /// Atomically:
 /// - create the `CognitoSubLookup` + `User` rows when `new_user` is set (first-ever
-///   redemption for this Cognito account — `plans/05-auth-flow.md` §4.2)
+///   redemption for this Cognito account — `docs/design/auth.md` §4.2)
 /// - flip Invite `pending → consumed`
 /// - Put GroupMembership
 /// - Update Group.memberCount += 1 with member-cap check

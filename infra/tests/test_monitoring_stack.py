@@ -1,6 +1,6 @@
 """MonitoringStack assertions: dashboard in every env, alarms in prod only.
 
-Per `plans/01-infrastructure-cdk.md` §9 (M13.5): prod's alarms fit inside the
+Per `docs/design/infrastructure.md` §9 (M13.5): prod's alarms fit inside the
 10 free CloudWatch alarm metrics, dev has the dashboard and nothing else, and
 the cost budget lives in CiStack (`test_ci_stack.py`), not here. The
 PushFailureRate / CycleTick-Errors alarm tests stay in `test_stacks.py`.
@@ -146,7 +146,7 @@ def test_dev_has_no_alarms_and_no_topic(dev_template: assertions.Template) -> No
 
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_monitoring_stack_has_no_budget(env: str) -> None:
-    # One account-wide budget, in CiStack (`01` §9.2a).
+    # One account-wide budget, in CiStack (`docs/design/infrastructure.md` §9.2a).
     _template(env, f"TestMonitoringStackBudget{env}").resource_count_is(
         "AWS::Budgets::Budget", 0
     )

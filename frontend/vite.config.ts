@@ -8,13 +8,13 @@ import { cspPlugin } from "./src/csp/cspPlugin";
 // `npm run dev:https` (`vite --mode https`) is the only mode that gets the
 // self-signed cert — Web Push's `PushManager.subscribe`/`Notification.requestPermission`
 // need a secure context, but plain `npm run dev` (http, mocks) shouldn't pay
-// the cert-trust tax for everyday UI work (`04-frontend-architecture.md` §14.6).
+// the cert-trust tax for everyday UI work (`docs/design/frontend.md` §14.6).
 export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     ...(mode === "https" ? [basicSsl()] : []),
     // `apply: "build"` (set inside `cspPlugin`) keeps this off `vite dev`
-    // entirely — never gated on `mode` here (`04-frontend-architecture.md` §13).
+    // entirely — never gated on `mode` here (`docs/design/frontend.md` §13).
     cspPlugin(),
     VitePWA({
       strategies: "injectManifest",

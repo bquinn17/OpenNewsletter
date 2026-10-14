@@ -9,7 +9,7 @@ import {
 } from "./dates";
 
 // A UTC instant chosen so the local calendar date — and even the month/year
-// — differs by timezone (`04-frontend-architecture.md` §14a: every date on a
+// — differs by timezone (`docs/design/frontend.md` §14a: every date on a
 // group page renders in the *group's* zone, never the viewer's).
 const NEW_YEAR_EVE_UTC = "2026-01-01T02:00:00Z";
 

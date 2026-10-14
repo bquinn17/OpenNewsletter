@@ -10,11 +10,11 @@ type Props = {
 
 /**
  * An `<img>` for a CDN-served asset that retries once on error after refreshing the group's
- * signed-cookie/query-param auth (`08-media-uploads.md` §9: a stale cookie mid-session is a
+ * signed-cookie/query-param auth (`docs/design/media.md` §9: a stale cookie mid-session is a
  * recoverable 403, not a permanent failure).
  *
  * Loaded in CORS mode, so the service worker sees the real status and caches only 200s
- * (`04` §5.2). CloudFront sends the matching credentialed CORS headers. Every CDN `<img>`
+ * (`docs/design/frontend.md` §5.2). CloudFront sends the matching credentialed CORS headers. Every CDN `<img>`
  * must use the same mode (`Avatar` too), or a cached copy from one mode fails the other.
  */
 export function CdnImage({ src, groupId, alt, className }: Props) {

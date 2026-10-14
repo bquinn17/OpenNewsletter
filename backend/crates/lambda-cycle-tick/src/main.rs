@@ -1,9 +1,9 @@
 //! `lambda-cycle-tick` — runs the newsletter lifecycle state machine
-//! (`plans/06-newsletter-lifecycle.md` §5).
+//! (`docs/design/lifecycle.md` §5).
 //!
 //! One binary, two invocation sources: the EventBridge Scheduler rule (every
 //! 5 minutes) and, when `ENV=dev`, API Gateway's `POST /admin/dev/tick/cycle`
-//! (`plans/03-api-contract.md` §11a.1). See `dispatch.rs` for how the two are
+//! (`docs/design/api.md` §11a.1). See `dispatch.rs` for how the two are
 //! told apart.
 //!
 //! `recursion_limit` raised: routing `dispatch`'s async fns through this crate's

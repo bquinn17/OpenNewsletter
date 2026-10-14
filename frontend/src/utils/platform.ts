@@ -1,7 +1,7 @@
 /**
  * iOS/standalone-display detection, shared by the install-prompt banner
- * (`04-frontend-architecture.md` §14.4) and the Settings notifications
- * section's "add to Home Screen" copy (`07-notifications.md` §14, M11 D11).
+ * (`docs/design/frontend.md` §14.4) and the Settings notifications
+ * section's "add to Home Screen" copy (`docs/design/notifications.md` §14, M11 D11).
  * iOS Safari doesn't fire `beforeinstallprompt` and (pre-install) doesn't
  * expose the Push API at all, so both surfaces need to tell "iOS, not yet
  * installed" apart from "unsupported browser".

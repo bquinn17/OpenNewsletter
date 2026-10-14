@@ -1,5 +1,5 @@
-//! Real deletion of an uploaded image or avatar (`plans/08-media-uploads.md`
-//! §8.0, §11.4; `03-api-contract.md` §9.4, §9.7): the S3 objects first, then
+//! Real deletion of an uploaded image or avatar (`docs/design/media.md`
+//! §8.0, §11.4; `docs/design/api.md` §9.4, §9.7): the S3 objects first, then
 //! a CloudFront invalidation, then the DynamoDB row. Any S3 or invalidation
 //! failure returns an error and leaves the row, so a retry redoes the steps,
 //! all of which are idempotent.
@@ -246,7 +246,7 @@ async fn delete_object(
 
 /// `img/g/c/q/u/i/display.webp` → `/img/g/c/q/u/i/display.webp`. Processed
 /// keys are laid out to match the CDN paths they're served at
-/// (`08-media-uploads.md` §4).
+/// (`docs/design/media.md` §4).
 fn invalidation_path(processed_key: &str) -> String {
     format!("/{}", processed_key.trim_start_matches('/'))
 }

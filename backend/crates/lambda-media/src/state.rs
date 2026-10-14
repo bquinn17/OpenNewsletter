@@ -35,7 +35,7 @@ pub struct AppState {
     /// whose JSON key `cdn_signing_private_key` is the RSA private-key PEM
     /// used to sign CloudFront policies.
     pub app_secret_arn: String,
-    /// `Set-Cookie` `Domain` for `/media-cookie` (`08-media-uploads.md` §4.2).
+    /// `Set-Cookie` `Domain` for `/media-cookie` (`docs/design/media.md` §4.2).
     /// Empty in dev, where there's no registrable domain shared with the CDN
     /// — `GET /media-cookie` then emits no `Set-Cookie` headers at all, and
     /// the SPA falls back to signed query params (§4.5).
@@ -81,7 +81,7 @@ impl AppState {
     }
 
     /// Absolute CloudFront URL for a processed image's S3 key
-    /// (`plans/03-api-contract.md` §5.2).
+    /// (`docs/design/api.md` §5.2).
     pub fn image_url(&self, key: &str) -> Option<String> {
         if self.cdn_base_url.is_empty() {
             return None;
@@ -106,7 +106,7 @@ impl AppState {
 
     /// The RSA private key used to sign CloudFront policies, fetched from
     /// Secrets Manager on first use and cached for the life of the warm
-    /// Lambda container (`plans/08-media-uploads.md` §4.3).
+    /// Lambda container (`docs/design/media.md` §4.3).
     pub async fn signing_key(&self) -> Result<&RsaPrivateKey, ApiError> {
         self.signing_key
             .get_or_try_init(|| async {
@@ -138,7 +138,7 @@ impl AppState {
     }
 
     /// Escape hatch for tests: inject a key directly so they never need a
-    /// Secrets Manager call (`plans/08-media-uploads.md` §4.3 — "Design
+    /// Secrets Manager call (`docs/design/media.md` §4.3 — "Design
     /// `AppState` so tests can inject an in-memory RSA key"). A no-op if the
     /// key has already been loaded.
     pub fn set_signing_key_for_test(&self, key: RsaPrivateKey) {

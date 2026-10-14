@@ -1,4 +1,4 @@
-//! Request validation for candidate questions (`plans/03-api-contract.md` §6.2).
+//! Request validation for candidate questions (`docs/design/api.md` §6.2).
 
 use domain::api::CreatePollOptionRequest;
 use domain::{ApiError, PollOption, PollOptionId, QuestionKind};
@@ -58,7 +58,7 @@ pub fn poll_options(
                     ),
                     ));
                 }
-                // Case-insensitive (`09` §3.3): "Yes" and "yes" are the same option.
+                // Case-insensitive (`docs/design/engagement.md` §3.3): "Yes" and "yes" are the same option.
                 if !seen.insert(label.to_lowercase()) {
                     return Err(ApiError::invalid_field(
                         "pollOptions",

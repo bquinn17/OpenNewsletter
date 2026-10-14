@@ -12,7 +12,7 @@ export const GRADIENT_SLUGS = [
   "slate-lilac",
 ] as const;
 
-// Tailwind classes for each `GradientSlug` (`04` §14a). The slug is the API
+// Tailwind classes for each `GradientSlug` (`docs/design/frontend.md` §14a). The slug is the API
 // contract; the class string is presentation. `Record` over the literal union
 // keeps this exhaustive if the enum changes. Full class strings, not
 // interpolated, so Tailwind's scanner sees them.

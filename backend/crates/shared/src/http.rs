@@ -1,6 +1,6 @@
 //! HTTP boundary helpers shared by every request-handling Lambda:
 //! claim extraction, correlation IDs, and the RFC-7807 error shape from
-//! `plans/03-api-contract.md` §1.1.
+//! `docs/design/api.md` §1.1.
 
 use domain::{ApiError, ApiErrorCode, CognitoSub};
 use lambda_http::request::RequestContext;
@@ -14,13 +14,13 @@ pub const CORRELATION_ID_HEADER: &str = "x-correlation-id";
 /// Claims lifted from the API Gateway JWT authorizer.
 ///
 /// API Gateway has already validated issuer, audience, signature and expiry, so
-/// handlers trust these values without re-verifying (`plans/05-auth-flow.md` §6).
+/// handlers trust these values without re-verifying (`docs/design/auth.md` §6).
 #[derive(Debug, Clone)]
 pub struct AuthClaims {
     pub sub: CognitoSub,
     pub email: Option<String>,
     /// Cognito's `email_verified`, which only the Google IdP populates
-    /// (`plans/05-auth-flow.md` §4.2). False when the claim is missing.
+    /// (`docs/design/auth.md` §4.2). False when the claim is missing.
     pub email_verified: bool,
     pub name: Option<String>,
 }
@@ -113,8 +113,21 @@ pub fn no_content(correlation_id: &str) -> Response<Body> {
     build(204, "application/json", String::new(), correlation_id)
 }
 
-/// RFC-7807 Problem Details body (`plans/03-api-contract.md` §1.1).
+/// RFC-7807 Problem Details response (`docs/design/api.md` §1.1).
 pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> {
+    let payload = serde_json::to_string(&problem_body(err, correlation_id))
+        .unwrap_or_else(|_| "{}".to_owned());
+    build(
+        err.http_status(),
+        "application/problem+json",
+        payload,
+        correlation_id,
+    )
+}
+
+/// The RFC-7807 Problem Details body alone, for the tick Lambdas' dev routes,
+/// which answer raw JSON events rather than `lambda_http` requests.
+pub fn problem_body(err: &ApiError, correlation_id: &str) -> serde_json::Value {
     let mut problem = serde_json::json!({
         "type": error_type_uri(err.code),
         "title": err.code.title(),
@@ -126,13 +139,7 @@ pub fn problem_response(err: &ApiError, correlation_id: &str) -> Response<Body> 
     if !err.field_errors.is_empty() {
         problem["fieldErrors"] = serde_json::json!(err.field_errors);
     }
-    let payload = serde_json::to_string(&problem).unwrap_or_else(|_| "{}".to_owned());
-    build(
-        err.http_status(),
-        "application/problem+json",
-        payload,
-        correlation_id,
-    )
+    problem
 }
 
 fn error_type_uri(code: ApiErrorCode) -> String {

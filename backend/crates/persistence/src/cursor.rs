@@ -1,10 +1,10 @@
 //! Opaque pagination cursor: `base64url(JSON(LastEvaluatedKey))`
-//! (`plans/03-api-contract.md` §1 — "Cursor is base64url(JSON) encoding
+//! (`docs/design/api.md` §1 — "Cursor is base64url(JSON) encoding
 //! DynamoDB's LastEvaluatedKey").
 //!
 //! Every paginated query in this crate pages the base table by `pk`/`sk`
 //! alone, and both attributes are always `AttributeValue::S`
-//! (`plans/02-data-model-dynamodb.md` §1), so this only needs to round-trip
+//! (`docs/design/data-model.md` §1), so this only needs to round-trip
 //! string-valued keys — not the general DynamoDB attribute-value tree.
 
 use crate::error::RepoError;

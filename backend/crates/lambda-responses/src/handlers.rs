@@ -1,5 +1,5 @@
 //! Business logic for the response draft/publish routes
-//! (`plans/03-api-contract.md` §7).
+//! (`docs/design/api.md` §7).
 
 use crate::state::AppState;
 use crate::validation;
@@ -212,7 +212,7 @@ async fn validate_content(
 }
 
 /// An attached image must exist, belong to the caller, be `ready`, have
-/// `purpose=response`, and reference this group/cycle (`03-api-contract.md`
+/// `purpose=response`, and reference this group/cycle (`docs/design/api.md`
 /// §7.3). Images are looked up by `(groupId, cycleId, imageId)`, so finding
 /// one already guarantees the group/cycle match; `image` is `None` when the
 /// lookup found nothing.

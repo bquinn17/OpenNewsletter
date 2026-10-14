@@ -1,4 +1,4 @@
-//! Upload, avatar, and CloudFront signed-cookie routes (`plans/03-api-contract.md`
+//! Upload, avatar, and CloudFront signed-cookie routes (`docs/design/api.md`
 //! §9). Split into a library so integration tests can call the handlers directly.
 
 pub mod cloudfront;

@@ -1,5 +1,5 @@
 //! Promotion order: votes DESC, then the older suggestion, then question id
-//! (`plans/06-newsletter-lifecycle.md` §5.2).
+//! (`docs/design/lifecycle.md` §5.2).
 
 mod common;
 

@@ -71,7 +71,7 @@ class MediaPersistentStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             # No versioning in either env: a user-initiated delete must remove
             # the object, not leave it behind a delete marker
-            # (`plans/01-infrastructure-cdk.md` §5.1).
+            # (`docs/design/infrastructure.md` §5.1).
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
             cors=cors_rules,
@@ -158,7 +158,7 @@ class MediaPersistentStack(cdk.Stack):
 
         # --- CloudFront signing KeyGroup ---
         # Each env has its own RSA-2048 pair, so a leaked dev private key can't
-        # sign prod cookies (`plans/05-auth-flow.md` §10).
+        # sign prod cookies (`docs/design/auth.md` §10).
         pub_key_path = _KEYS_DIR / _SIGNING_PUBLIC_KEY_FILES[config.env]
         pub_key_body = pub_key_path.read_text()
 
@@ -187,7 +187,7 @@ class MediaPersistentStack(cdk.Stack):
         # CORS on every CDN response, so the SPA can load images with
         # `crossorigin`. Without it they load no-cors, the service worker sees
         # opaque status-0 responses, and its `cdn-images` cache can't tell a 403
-        # from an image, so it stores nothing (`04` §5.2). Credentialed because
+        # from an image, so it stores nothing (`docs/design/frontend.md` §5.2). Credentialed because
         # prod's signed cookies ride along; that requires an explicit origin
         # list, never `*`.
         media_cors_policy = cloudfront.ResponseHeadersPolicy(
@@ -232,7 +232,7 @@ class MediaPersistentStack(cdk.Stack):
         # Store the key pair ID from the public key for use by lambda-media
         self.cdn_key_pair_id = cf_public_key.public_key_id
         # For the media-delete CloudFront invalidations ApiStack's Lambdas issue
-        # (`plans/01-infrastructure-cdk.md` §6.2). ApiStack already depends on
+        # (`docs/design/infrastructure.md` §6.2). ApiStack already depends on
         # this stack for the buckets and key pair id, so this adds no new edge.
         self.distribution_id = self.distribution.distribution_id
 

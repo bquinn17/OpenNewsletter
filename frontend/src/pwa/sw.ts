@@ -1,12 +1,12 @@
 /// <reference lib="webworker" />
 // Custom service worker, injected into Workbox's precache manifest via
-// `vite-plugin-pwa`'s `injectManifest` strategy (`plans/04-frontend-architecture.md`
+// `vite-plugin-pwa`'s `injectManifest` strategy (`docs/design/frontend.md`
 // §14.2). Handles: prompt activation of a new deploy (D6), precaching the
 // build, `CacheFirst` for CDN images only, and Web Push
-// `push`/`notificationclick` (`plans/07-notifications.md` §5, M11 D11).
+// `push`/`notificationclick` (`docs/design/notifications.md` §5, M11 D11).
 //
 // Deliberately does NOT runtime-cache any API response (M11 D11 deviation
-// from `04` §5.2): authenticated JSON sitting in Cache Storage would outlive
+// from `docs/design/frontend.md` §5.2): authenticated JSON sitting in Cache Storage would outlive
 // logout and could leak between users on a shared device.
 import { precacheAndRoute } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
@@ -45,7 +45,7 @@ const CDN_ORIGIN: string | null = (() => {
 })();
 
 // CDN images only (`/img/*`, `/avatar/*`) — the signed-cookie URL is the same
-// path for every viewer, so caching is effective (`04` §5.2). `CdnImage` and
+// path for every viewer, so caching is effective (`docs/design/frontend.md` §5.2). `CdnImage` and
 // `Avatar` load these in CORS mode, so responses aren't opaque and `CacheFirst`'s
 // default stores only status 200s: a 403 from a stale cookie is never pinned.
 // Keys drop dev's rotating signed-URL params, or dev would never get a hit.

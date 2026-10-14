@@ -39,7 +39,7 @@ export interface CycleLabels {
 
 /**
  * Month/year labels for a cycle, computed client-side from `responseOpenAt`
- * in the given IANA timezone (`04-frontend-architecture.md` §14a — the
+ * in the given IANA timezone (`docs/design/frontend.md` §14a — the
  * server never sends a display label). Uses `Intl.DateTimeFormat` directly
  * rather than `date-fns-tz` (not an installed dependency).
  */

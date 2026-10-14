@@ -138,7 +138,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update group settings. Admin only. A `responseWindowDays` change applies to the current cycles (`06-newsletter-lifecycle.md` §6): the `voting` cycle is rescheduled, and an `open` cycle's close moves to `responseOpenAt + days` if that is still in the future, else the request is refused with a 422 whose field error is `responseWindowDays` with code `CLOSES_IN_PAST`, and nothing changes. */
+        /** Update group settings. Admin only. A `responseWindowDays` change applies to the current cycles (`docs/design/lifecycle.md` §6): the `voting` cycle is rescheduled, and an `open` cycle's close moves to `responseOpenAt + days` if that is still in the future, else the request is refused with a 422 whose field error is `responseWindowDays` with code `CLOSES_IN_PAST`, and nothing changes. */
         patch: operations["patchGroup"];
         trace?: never;
     };
@@ -184,7 +184,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The full edition. Shape depends on `status` — see `NewsletterDetailResponse`. `archived` returns 410 instead of a body (`06-newsletter-lifecycle.md` §1; not reachable until archival ships). */
+        /** The full edition. Shape depends on `status` — see `NewsletterDetailResponse`. `archived` returns 410 instead of a body (`docs/design/lifecycle.md` §1; not reachable until archival ships). */
         get: operations["getNewsletter"];
         put?: never;
         post?: never;
@@ -240,7 +240,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete a candidate while it's still in `voting` (cascades its votes). Admin only. There is no admin curate/promote surface (`06-newsletter-lifecycle.md` §7). */
+        /** Delete a candidate while it's still in `voting` (cascades its votes). Admin only. There is no admin curate/promote surface (`docs/design/lifecycle.md` §7). */
         delete: operations["adminDeleteCandidateQuestion"];
         options?: never;
         head?: never;
@@ -273,7 +273,7 @@ export interface paths {
         };
         /** The caller's draft/published answer to one question. 404 if none exists yet. Caller must be a member. */
         get: operations["getMyResponse"];
-        /** Save a draft or publish an answer. Last-write-wins on content — no version tokens, no conflict errors. Publishing is sticky: once published, a later `publish=false` save keeps the new content but cannot unpublish (`03-api-contract.md` §7.3). Caller must be a member. */
+        /** Save a draft or publish an answer. Last-write-wins on content — no version tokens, no conflict errors. Publishing is sticky: once published, a later `publish=false` save keeps the new content but cannot unpublish (`docs/design/api.md` §7.3). Caller must be a member. */
         put: operations["saveMyResponse"];
         post?: never;
         delete?: never;
@@ -292,7 +292,7 @@ export interface paths {
         /** Comments on one published text answer, oldest first (AP18). Soft-deleted comments are included as placeholders (`deletedAt` set, `body` empty, `image` null) so ordering is preserved. Cycle must be `published` (409 `CYCLE_NOT_PUBLISHED`). 404 when the response is missing, not published, or a poll answer. Caller must be a member. Default page size 50. */
         get: operations["listComments"];
         put?: never;
-        /** Comment on a published text answer. `body` 0-2000 chars; optional `imageMediaId` must be a `ready` image owned by the caller, uploaded for this group, cycle and question with `purpose: "comment"`, and not already attached to another comment. At least one of a non-whitespace `body` or an image is required (`09-engagement.md` §1.3). Caller must be a member. */
+        /** Comment on a published text answer. `body` 0-2000 chars; optional `imageMediaId` must be a `ready` image owned by the caller, uploaded for this group, cycle and question with `purpose: "comment"`, and not already attached to another comment. At least one of a non-whitespace `body` or an image is required (`docs/design/engagement.md` §1.3). Caller must be a member. */
         post: operations["createComment"];
         delete?: never;
         options?: never;
@@ -343,7 +343,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Idempotently add the caller's reaction. `emoji` is URL-encoded, NFC-normalized, 1-12 codepoints with at least one `Extended_Pictographic` or regional-indicator codepoint (`09-engagement.md` §2.2); otherwise 422. No request body. Returns the answer's reactions after the change. */
+        /** Idempotently add the caller's reaction. `emoji` is URL-encoded, NFC-normalized, 1-12 codepoints with at least one `Extended_Pictographic` or regional-indicator codepoint (`docs/design/engagement.md` §2.2); otherwise 422. No request body. Returns the answer's reactions after the change. */
         put: operations["putReaction"];
         post?: never;
         /** Idempotently remove the caller's reaction with this emoji. Same emoji validation as PUT. Returns the answer's reactions after the change. */
@@ -362,7 +362,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request a presigned S3 PUT URL for a response or comment image (`03-api-contract.md` §9.1). Creates a `pending` ImageMedia row. Caller must be a member of `groupId`. `purpose=response` requires the cycle to be `open` and counts toward the 10-images-per-answer cap; `purpose=comment` requires it to be `published`. The client PUTs the bytes to `uploadUrl` with every header in `headers`. */
+        /** Request a presigned S3 PUT URL for a response or comment image (`docs/design/api.md` §9.1). Creates a `pending` ImageMedia row. Caller must be a member of `groupId`. `purpose=response` requires the cycle to be `open` and counts toward the 10-images-per-answer cap; `purpose=comment` requires it to be `published`. The client PUTs the bytes to `uploadUrl` with every header in `headers`. */
         post: operations["createUpload"];
         delete?: never;
         options?: never;
@@ -377,15 +377,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Status of one uploaded image (`03-api-contract.md` §9.3). The frontend polls this after the PUT until `status` leaves `pending`. Caller must be a member of `groupId`. */
+        /** Status of one uploaded image (`docs/design/api.md` §9.3). The frontend polls this after the PUT until `status` leaves `pending`. Caller must be a member of `groupId`. */
         get: operations["getUpload"];
         put?: never;
         post?: never;
-        /** Permanently delete an image: its original and processed S3 objects, a CloudFront invalidation of its path, then its row (`03-api-contract.md` §9.4). Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. Idempotent: an image that is already gone returns 204. If the S3 or CloudFront step fails, returns 500 and keeps the row so a retry can finish. */
+        /** Permanently delete an image: its original and processed S3 objects, a CloudFront invalidation of its path, then its row (`docs/design/api.md` §9.4). Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. Idempotent: an image that is already gone returns 204. If the S3 or CloudFront step fails, returns 500 and keeps the row so a retry can finish. */
         delete: operations["deleteUpload"];
         options?: never;
         head?: never;
-        /** Set or clear an image's caption (`03-api-contract.md` §9.6). Caller must own the image. */
+        /** Set or clear an image's caption (`docs/design/api.md` §9.6). Caller must own the image. */
         patch: operations["patchUpload"];
         trace?: never;
     };
@@ -398,7 +398,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Optional convenience the client may call after its PUT (`03-api-contract.md` §9.2). Processing is driven by the S3 trigger, so this returns the same body as `GET /uploads/{imageId}`. Caller must be a member of `groupId`. */
+        /** Optional convenience the client may call after its PUT (`docs/design/api.md` §9.2). Processing is driven by the S3 trigger, so this returns the same body as `GET /uploads/{imageId}`. Caller must be a member of `groupId`. */
         post: operations["completeUpload"];
         delete?: never;
         options?: never;
@@ -413,7 +413,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for one hour (`03-api-contract.md` §9.5, `08-media-uploads.md` §4). When the Lambda has a cookie domain configured (prod) the response also carries three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`, `CloudFront-Key-Pair-Id`); the client must call this with `credentials: "include"`. Dev has no shared registrable domain, so the SPA appends the body values as signed-URL query parameters instead (`08-media-uploads.md` §4.5). Caller must be a member of `groupId`. */
+        /** CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for one hour (`docs/design/api.md` §9.5, `docs/design/media.md` §4). When the Lambda has a cookie domain configured (prod) the response also carries three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`, `CloudFront-Key-Pair-Id`); the client must call this with `credentials: "include"`. Dev has no shared registrable domain, so the SPA appends the body values as signed-URL query parameters instead (`docs/design/media.md` §4.5). Caller must be a member of `groupId`. */
         get: operations["getMediaCookie"];
         put?: never;
         post?: never;
@@ -432,7 +432,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request a presigned S3 PUT URL for a new avatar (`03-api-contract.md` §9.7). JPEG, PNG or WebP, at most 5 MB. Creates a `pending` AvatarMedia row owned by the caller. */
+        /** Request a presigned S3 PUT URL for a new avatar (`docs/design/api.md` §9.7). JPEG, PNG or WebP, at most 5 MB. Creates a `pending` AvatarMedia row owned by the caller. */
         post: operations["createAvatar"];
         delete?: never;
         options?: never;
@@ -451,7 +451,7 @@ export interface paths {
         get: operations["getAvatar"];
         put?: never;
         post?: never;
-        /** Permanently delete one of the caller's avatars: its original and processed S3 objects, a CloudFront invalidation of `/avatar/{avatarId}/*`, then its row (`03-api-contract.md` §9.7). If it is the caller's current `avatarMediaId`, that is cleared to `null` first. Idempotent: the lookup is under the caller's own user, so an avatar that is already gone (or isn't theirs) returns 204 and touches nothing. If the S3 or CloudFront step fails, returns 500 and keeps the row. */
+        /** Permanently delete one of the caller's avatars: its original and processed S3 objects, a CloudFront invalidation of `/avatar/{avatarId}/*`, then its row (`docs/design/api.md` §9.7). If it is the caller's current `avatarMediaId`, that is cleared to `null` first. Idempotent: the lookup is under the caller's own user, so an avatar that is already gone (or isn't theirs) returns 204 and touches nothing. If the S3 or CloudFront step fails, returns 500 and keeps the row. */
         delete: operations["deleteAvatar"];
         options?: never;
         head?: never;
@@ -467,7 +467,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upsert the caller's push subscription for one browser endpoint, keyed by `(userId, sha256(endpoint))` (`07-notifications.md` §3.1). Resets `failureCount` to 0 and keeps the row's original `createdAt` and `lastSuccessAt`. `endpoint` must be an `https://` URL of at most 2048 characters; `keys.p256dh` must base64url-decode to a 65-byte uncompressed P-256 point, and `keys.auth` to 16 bytes; `userAgent` is at most 512 characters. A user keeps at most 10 subscriptions: adding an 11th removes the one least recently successful (oldest `createdAt` when none has succeeded). */
+        /** Upsert the caller's push subscription for one browser endpoint, keyed by `(userId, sha256(endpoint))` (`docs/design/notifications.md` §3.1). Resets `failureCount` to 0 and keeps the row's original `createdAt` and `lastSuccessAt`. `endpoint` must be an `https://` URL of at most 2048 characters; `keys.p256dh` must base64url-decode to a 65-byte uncompressed P-256 point, and `keys.auth` to 16 bytes; `userAgent` is at most 512 characters. A user keeps at most 10 subscriptions: adding an 11th removes the one least recently successful (oldest `createdAt` when none has succeeded). */
         post: operations["pushSubscribe"];
         delete?: never;
         options?: never;
@@ -518,7 +518,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send a `kind: test` push to every one of the caller's subscriptions (`07-notifications.md` §9). No request body. Each result is `delivered`, `expired` (the push service answered 404/410, and the subscription has been deleted) or `failed` (anything else; the subscription's `failureCount` is incremented, and it is deleted at 5). `statusCode` is the push service's HTTP status, or null for a network error. A caller with no subscriptions gets an empty list. */
+        /** Send a `kind: test` push to every one of the caller's subscriptions (`docs/design/notifications.md` §9). No request body. Each result is `delivered`, `expired` (the push service answered 404/410, and the subscription has been deleted) or `failed` (anything else; the subscription's `failureCount` is incremented, and it is deleted at 5). `statusCode` is the push service's HTTP status, or null for a network error. A caller with no subscriptions gets an empty list. */
         post: operations["sendTestPush"];
         delete?: never;
         options?: never;
@@ -533,7 +533,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's notification preferences, one entry per group they belong to, in `GET /config` membership order. Groups with no stored `NotificationPref` row report the defaults (both true). Added M11: `03` §10 only had the PUT, which left Settings no way to read state. */
+        /** The caller's notification preferences, one entry per group they belong to, in `GET /config` membership order. Groups with no stored `NotificationPref` row report the defaults (both true). Added M11: `docs/design/api.md` §10 only had the PUT, which left Settings no way to read state. */
         get: operations["listPushPreferences"];
         put?: never;
         post?: never;
@@ -586,7 +586,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run the cycle tick now (`03-api-contract.md` §11a.1). This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. With `advanceCycleClosesBy`, the group's active cycle (its `open` cycle if it has one, else its `voting` cycle) has its deadline rewound by that duration first, so its transition is due at once. `groupId` is then required and the caller must be that group's admin. Without it, the tick runs globally and the caller must be an admin of at least one group. An absent or empty body is allowed. */
+        /** Run the cycle tick now (`docs/design/api.md` §11a.1). This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. With `advanceCycleClosesBy`, the group's active cycle (its `open` cycle if it has one, else its `voting` cycle) has its deadline rewound by that duration first, so its transition is due at once. `groupId` is then required and the caller must be that group's admin. Without it, the tick runs globally and the caller must be an admin of at least one group. An absent or empty body is allowed. */
         post: operations["devTickCycle"];
         delete?: never;
         options?: never;
@@ -603,7 +603,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run the notify tick now, globally (`03-api-contract.md` §11a.2). No request body. This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. The caller must be an admin of at least one group. Only deadline reminders run here. Cycle-open and publication fan-outs come from the cycle tick via `lambda-push` and aren't reported by either dev route. */
+        /** Run the notify tick now, globally (`docs/design/api.md` §11a.2). No request body. This route exists only when `ENV=dev`. Every other environment returns 404: the route isn't deployed there, and the Lambda also refuses with `NOT_FOUND` if it's ever reached. The caller must be an admin of at least one group. Only deadline reminders run here. Cycle-open and publication fan-outs come from the cycle tick via `lambda-push` and aren't reported by either dev route. */
         post: operations["devTickNotify"];
         delete?: never;
         options?: never;
@@ -646,7 +646,7 @@ export interface components {
             title: string;
             status: number;
             detail: string;
-            /** @description Machine-readable code from the `03-api-contract.md` §1.1 catalog. */
+            /** @description Machine-readable code from the `docs/design/api.md` §1.1 catalog. */
             code: string;
             correlationId: string;
             fieldErrors?: components["schemas"]["FieldError"][];
@@ -655,7 +655,7 @@ export interface components {
             groupId: string;
             role: components["schemas"]["Role"];
             groupName: string;
-            /** @description The group's IANA timezone, for labelling cycles client-side (`04` §14a). */
+            /** @description The group's IANA timezone, for labelling cycles client-side (`docs/design/frontend.md` §14a). */
             timezone: string;
             gradient: components["schemas"]["GradientSlug"];
         };
@@ -680,7 +680,7 @@ export interface components {
         PatchMeRequest: {
             displayName?: string;
             avatarColor?: components["schemas"]["AvatarColorSlug"];
-            /** @description Absent leaves the photo alone. A new id replaces the photo, and an explicit `null` clears it. Either way the displaced avatar is permanently deleted (`03-api-contract.md` §9.7). */
+            /** @description Absent leaves the photo alone. A new id replaces the photo, and an explicit `null` clears it. Either way the displaced avatar is permanently deleted (`docs/design/api.md` §9.7). */
             avatarMediaId?: string | null;
         };
         CreateInviteRequest: {
@@ -891,7 +891,7 @@ export interface components {
             height: number;
             caption: string | null;
         };
-        /** @description One comment (`09-engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body` and a null `image`. */
+        /** @description One comment (`docs/design/engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body` and a null `image`. */
         CommentResponse: {
             commentId: string;
             authorUserId: string;
@@ -1263,7 +1263,7 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or `CANDIDATE_PROMOTED` (`03-api-contract.md` §1.1). */
+        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or `CANDIDATE_PROMOTED` (`docs/design/api.md` §1.1). */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -1308,7 +1308,7 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see `10-archival.md` for the (deferred) archive-link behavior. */
+        /** @description The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see `docs/design/archival.md` for the (deferred) archive-link behavior. */
         NewsletterArchived: {
             headers: {
                 [name: string]: unknown;
@@ -1336,14 +1336,14 @@ export interface components {
         /** @example 018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b */
         CommentIdPath: string;
         /**
-         * @description URL-encoded emoji (`09-engagement.md` §2.2).
+         * @description URL-encoded emoji (`docs/design/engagement.md` §2.2).
          * @example %F0%9F%94%A5
          */
         EmojiPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
         GroupIdQuery: string;
         /**
-         * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+         * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
          * @example 202606
          */
         CycleIdQuery: string;
@@ -1351,7 +1351,7 @@ export interface components {
         NewsletterStatusQuery: "voting" | "open" | "published";
         /** @description `top` (default) ranks by vote count; `recent` orders by `submittedAt` descending. */
         CandidateSortQuery: "top" | "recent";
-        /** @description Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description. */
+        /** @description Page size, 1-100 (`docs/design/api.md` §1). Some routes cap this lower — see their description. */
         LimitQuery: number;
         /** @description Opaque pagination token from a previous page's `nextCursor`. */
         CursorQuery: string;
@@ -1613,7 +1613,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["InviteInvalid"];
-            /** @description `INVITE_EMAIL_MISMATCH` — the invite has `boundEmail` set and the caller's ID-token `email` (compared lowercased) doesn't match it, or `email_verified` isn't true (`05-auth-flow.md` §4.2). */
+            /** @description `INVITE_EMAIL_MISMATCH` — the invite has `boundEmail` set and the caller's ID-token `email` (compared lowercased) doesn't match it, or `email_verified` isn't true (`docs/design/auth.md` §4.2). */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1908,7 +1908,7 @@ export interface operations {
             query?: {
                 /** @description Filter to newsletters in this status. Omit for all statuses. */
                 status?: components["parameters"]["NewsletterStatusQuery"];
-                /** @description Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description. */
+                /** @description Page size, 1-100 (`docs/design/api.md` §1). Some routes cap this lower — see their description. */
                 limit?: components["parameters"]["LimitQuery"];
                 /** @description Opaque pagination token from a previous page's `nextCursor`. */
                 cursor?: components["parameters"]["CursorQuery"];
@@ -2046,7 +2046,7 @@ export interface operations {
             query?: {
                 /** @description `top` (default) ranks by vote count; `recent` orders by `submittedAt` descending. */
                 sort?: components["parameters"]["CandidateSortQuery"];
-                /** @description Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description. */
+                /** @description Page size, 1-100 (`docs/design/api.md` §1). Some routes cap this lower — see their description. */
                 limit?: components["parameters"]["LimitQuery"];
                 /** @description Opaque pagination token from a previous page's `nextCursor`. */
                 cursor?: components["parameters"]["CursorQuery"];
@@ -2423,7 +2423,7 @@ export interface operations {
     listComments: {
         parameters: {
             query?: {
-                /** @description Page size, 1-100 (`03-api-contract.md` §1). Some routes cap this lower — see their description. */
+                /** @description Page size, 1-100 (`docs/design/api.md` §1). Some routes cap this lower — see their description. */
                 limit?: components["parameters"]["LimitQuery"];
                 /** @description Opaque pagination token from a previous page's `nextCursor`. */
                 cursor?: components["parameters"]["CursorQuery"];
@@ -2695,7 +2695,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
                 responseId: components["parameters"]["ResponseIdPath"];
                 /**
-                 * @description URL-encoded emoji (`09-engagement.md` §2.2).
+                 * @description URL-encoded emoji (`docs/design/engagement.md` §2.2).
                  * @example %F0%9F%94%A5
                  */
                 emoji: components["parameters"]["EmojiPath"];
@@ -2748,7 +2748,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
                 responseId: components["parameters"]["ResponseIdPath"];
                 /**
-                 * @description URL-encoded emoji (`09-engagement.md` §2.2).
+                 * @description URL-encoded emoji (`docs/design/engagement.md` §2.2).
                  * @example %F0%9F%94%A5
                  */
                 emoji: components["parameters"]["EmojiPath"];
@@ -2842,7 +2842,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdQuery"];
                 /**
-                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
                  * @example 202606
                  */
                 cycleId: components["parameters"]["CycleIdQuery"];
@@ -2896,7 +2896,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdQuery"];
                 /**
-                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
                  * @example 202606
                  */
                 cycleId: components["parameters"]["CycleIdQuery"];
@@ -2927,7 +2927,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdQuery"];
                 /**
-                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
                  * @example 202606
                  */
                 cycleId: components["parameters"]["CycleIdQuery"];
@@ -2991,7 +2991,7 @@ export interface operations {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdQuery"];
                 /**
-                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`02-data-model-dynamodb.md` §2.10).
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
                  * @example 202606
                  */
                 cycleId: components["parameters"]["CycleIdQuery"];
@@ -3433,7 +3433,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Every state change the tick made, across all groups. `from: null` marks a newly created `voting` cycle (`06-newsletter-lifecycle.md` §5.4) rather than a transition of an existing one. */
+            /** @description Every state change the tick made, across all groups. `from: null` marks a newly created `voting` cycle (`docs/design/lifecycle.md` §5.4) rather than a transition of an existing one. */
             200: {
                 headers: {
                     [name: string]: unknown;

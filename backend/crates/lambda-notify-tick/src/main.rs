@@ -1,9 +1,9 @@
 //! `lambda-notify-tick` — runs the deadline-reminder fan-out
-//! (`plans/07-notifications.md` §7).
+//! (`docs/design/notifications.md` §7).
 //!
 //! One binary, two invocation sources: the EventBridge Scheduler rule (every
 //! 15 minutes) and, when `ENV=dev`, API Gateway's `POST /admin/dev/tick/notify`
-//! (`plans/03-api-contract.md` §11a.2). See `dispatch.rs` for how the two are
+//! (`docs/design/api.md` §11a.2). See `dispatch.rs` for how the two are
 //! told apart.
 #![recursion_limit = "256"]
 

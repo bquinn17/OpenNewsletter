@@ -1,6 +1,6 @@
 //! `run_notify_tick` due/moot/smallest-only/marker logic (M11 decision D5,
-//! `plans/07-notifications.md` §7), the "done" member rules, and the dev
-//! `POST /admin/dev/tick/notify` route (`plans/03-api-contract.md` §11a.2).
+//! `docs/design/notifications.md` §7), the "done" member rules, and the dev
+//! `POST /admin/dev/tick/notify` route (`docs/design/api.md` §11a.2).
 
 mod common;
 

@@ -1,4 +1,4 @@
-//! Request validation for the push routes (`plans/03-api-contract.md` §10,
+//! Request validation for the push routes (`docs/design/api.md` §10,
 //! M11 decision D8).
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

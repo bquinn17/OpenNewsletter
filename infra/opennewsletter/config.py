@@ -13,7 +13,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _PLACEHOLDER_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:placeholder"
 
-# JSON keys inside the app secret (`plans/01-infrastructure-cdk.md` §7.1).
+# JSON keys inside the app secret (`docs/design/infrastructure.md` §7.1).
 # The backend reads the private ones at runtime; CDK only ever emits
 # CloudFormation dynamic references to them, never their values.
 APP_SECRET_GOOGLE_CLIENT_ID = "google_client_id"
@@ -41,14 +41,14 @@ class EnvConfig:
     hosted_zone_name: str | None
     cognito_domain_prefix: str
     # The one per-env Secrets Manager secret, `opennewsletter/{env}`
-    # (`plans/01-infrastructure-cdk.md` §2, §7.1). A JSON object whose keys
+    # (`docs/design/infrastructure.md` §2, §7.1). A JSON object whose keys
     # are the `APP_SECRET_*` constants below. No Apple IdP — dropped, see
-    # plans/PROGRESS.md decisions (M1).
+    # docs/decisions.md ("Sign in with Apple is not offered").
     app_secret_arn: str
     log_retention_days: int
     alarm_email: str | None
     # Prod only: the email `scripts/bootstrap_admin.py --env prod` binds the
-    # first admin invite to (`plans/05-auth-flow.md` §9.1a). No stack reads it.
+    # first admin invite to (`docs/design/auth.md` §9.1a). No stack reads it.
     bootstrap_admin_email: str | None
     # "owner/repo" slug the GitHub OIDC trust conditions in CiStack match
     # against (`token.actions.githubusercontent.com:sub`).

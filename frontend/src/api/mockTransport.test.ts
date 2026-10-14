@@ -165,7 +165,7 @@ describe("mockFetch", () => {
       expect(me.avatarMediaId).toBeNull();
       expect(me.avatarUrl).toBeNull();
 
-      // Clearing the photo deletes it too (`03` §2.3).
+      // Clearing the photo deletes it too (`docs/design/api.md` §2.3).
       const third = await readyAvatar();
       await mockFetch("PATCH", "/me", { avatarMediaId: third });
       const cleared = (await mockFetch("PATCH", "/me", {

@@ -4,15 +4,15 @@ The `PreSignUp` trigger Lambda is built here rather than in ApiStack: CDK attach
 trigger wiring to the user pool's own stack, so defining the function elsewhere
 would make this stack depend on that one while ApiStack already depends on this one
 for the JWT authorizer. There is no `PostConfirmation` trigger
-(`plans/05-auth-flow.md` §5).
+(`docs/design/auth.md` §5).
 
 IdP credentials come from the one per-env app secret (`config.app_secret_arn`),
 via CloudFormation dynamic references; a placeholder ARN is used until the
 operator creates it.
 
 The `admin-bootstrap` password client exists only in dev
-(`plans/01-infrastructure-cdk.md` §4.3): prod bootstraps its first admin through
-an email-bound invite redeemed via Google instead (`plans/05-auth-flow.md` §9.1a).
+(`docs/design/infrastructure.md` §4.3): prod bootstraps its first admin through
+an email-bound invite redeemed via Google instead (`docs/design/auth.md` §9.1a).
 """
 
 from __future__ import annotations
@@ -63,13 +63,13 @@ class AuthStack(cdk.Stack):
                 fullname=cognito.StandardAttribute(required=False, mutable=True),
             ),
             # No custom attributes: the invite code rides in the OIDC `state`
-            # parameter, not on the user record (`plans/05-auth-flow.md` §1).
+            # parameter, not on the user record (`docs/design/auth.md` §1).
             # Keep the user pool in dev too — recreating it loses all users.
             removal_policy=cdk.RemovalPolicy.RETAIN,
         )
 
         # Pass-through that auto-confirms federated accounts. It never sees the
-        # invite code and never touches DynamoDB (`plans/05-auth-flow.md` §3).
+        # invite code and never touches DynamoDB (`docs/design/auth.md` §3).
         self.presignup_fn = aws_lambda.Function(
             self,
             "PreSignUpFn",
@@ -116,7 +116,7 @@ class AuthStack(cdk.Stack):
                 email=cognito.ProviderAttribute.GOOGLE_EMAIL,
                 fullname=cognito.ProviderAttribute.GOOGLE_NAME,
                 # `POST /invites/redeem` checks this claim for an email-bound
-                # invite (`plans/05-auth-flow.md` §4.2). CDK has no named field
+                # invite (`docs/design/auth.md` §4.2). CDK has no named field
                 # for it, so it goes through `custom`. Facebook doesn't supply
                 # it, which is why a bound invite can only be redeemed via Google.
                 custom={
@@ -127,7 +127,7 @@ class AuthStack(cdk.Stack):
 
         # No Apple IdP: Sign In with Apple requires a paid ($99/yr) Apple
         # Developer membership, which the owner declined (decision recorded
-        # in `plans/PROGRESS.md`). Google + Facebook only.
+        # in `docs/decisions.md`). Google + Facebook only.
 
         facebook_idp = cognito.UserPoolIdentityProviderFacebook(
             self,

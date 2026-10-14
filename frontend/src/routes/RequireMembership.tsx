@@ -5,7 +5,7 @@ import { useConfirmedAccess } from "./useConfirmedAccess";
 /**
  * Layout guard for `/g/:groupId/*`, nested under `RequireAuth` so a signed-out
  * deep link goes to login (with `returnTo`) rather than bouncing home. A
- * non-member is sent to `/` (`04` §3).
+ * non-member is sent to `/` (`docs/design/frontend.md` §3).
  */
 export function RequireMembership() {
   const { groupId = "" } = useParams();

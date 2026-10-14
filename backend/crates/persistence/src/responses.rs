@@ -12,7 +12,8 @@ use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
 use chrono::{DateTime, Utc};
 use domain::{
-    CycleId, GroupId, ImageId, PollOptionId, QuestionId, QuestionKind, Response, ResponseId, UserId,
+    CycleId, GroupId, ImageId, MediaStatus, PollOptionId, QuestionId, QuestionKind, Response,
+    ResponseId, UserId,
 };
 use serde_dynamo::from_item;
 use std::collections::HashMap;
@@ -43,7 +44,7 @@ pub struct UnreadableAnswer {
 /// [`list_answers`] for the close-time auto-publish sweep: a row that doesn't
 /// deserialize comes back in the second list instead of failing the whole
 /// listing, so one corrupt row can't hold back every other answer to the
-/// question (`06-newsletter-lifecycle.md` §5.3).
+/// question (`docs/design/lifecycle.md` §5.3).
 pub async fn list_answers_lenient(
     repo: &Repo,
     group_id: &GroupId,
@@ -161,10 +162,10 @@ pub struct ResponseSave<'a> {
 ///
 /// 1. `Update` the response row. Content (`body`/`imageMediaIds` or
 ///    `pollOptionId`) is a plain overwrite — last-write-wins, no version token
-///    (`02-data-model-dynamodb.md` §5). `responseId` is kept stable across saves
+///    (`docs/design/data-model.md` §5). `responseId` is kept stable across saves
 ///    via `if_not_exists`. `status`/`publishedAt` use DB-side `if_not_exists`
 ///    tricks so publishing is sticky without needing a pre-read to race against
-///    a concurrent save (`03-api-contract.md` §7.3): `publish=true` always sets
+///    a concurrent save (`docs/design/api.md` §7.3): `publish=true` always sets
 ///    `status=published` and `publishedAt=if_not_exists(publishedAt, now)`;
 ///    `publish=false` sets `status=if_not_exists(status, "draft")`, which
 ///    leaves an already-`published` row published.
@@ -549,4 +550,29 @@ fn is_conflict_only(codes: &[Option<String>]) -> bool {
                 None | Some("None") | Some("TransactionConflict")
             )
         })
+}
+
+/// [`Response::is_non_empty`], checked against the images the response
+/// lists. `is_non_empty` trusts `image_media_ids`, but a draft can still list
+/// an image deleted since its last save: a stale tab, a failed autosave or an
+/// older PWA. So a text response with no body counts only if at least one of
+/// its images still exists and hasn't failed processing. The close-time
+/// auto-publish sweep and the deadline reminder's answered count both use
+/// this, so a draft that won't publish never counts as answered
+/// (`docs/design/lifecycle.md` §5.3, `docs/design/notifications.md` §7.2).
+pub async fn has_live_content(repo: &Repo, response: &Response) -> Result<bool, RepoError> {
+    if !response.is_non_empty() {
+        return Ok(false);
+    }
+    if response.kind != QuestionKind::Text || response.has_text_body() {
+        return Ok(true);
+    }
+    let images = crate::media::get_images_batch(
+        repo,
+        &response.group_id,
+        &response.cycle_id,
+        &response.image_media_ids,
+    )
+    .await?;
+    Ok(images.values().any(|i| i.status != MediaStatus::Failed))
 }

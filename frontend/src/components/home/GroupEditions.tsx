@@ -12,7 +12,7 @@ type Props = {
 
 export function GroupEditions({ groupId, timezone, items }: Props) {
   // While a cycle is open, next month's voting cycle already exists
-  // (`06` §5.2), so both can be current at once — show each.
+  // (`docs/design/lifecycle.md` §5.2), so both can be current at once — show each.
   const open = items.find((n) => n.status === "open");
   const voting = items.find((n) => n.status === "voting");
   const published = items.filter((n) => n.status === "published");

@@ -17,7 +17,7 @@ type PublishedAnswer = S["PublishedAnswerResponse"];
 
 /**
  * Mock routes for `/groups/{g}/newsletters/{c}/questions/{q}/responses/{r}/{comments,reactions}*`
- * (`03-api-contract.md` §8, `09-engagement.md`). Mutates the same
+ * (`docs/design/api.md` §8, `docs/design/engagement.md`). Mutates the same
  * `PublishedAnswerResponse` objects `mockNewsletters.ts` serves on
  * `GET .../newsletters/{c}` — there's no separate engagement data store.
  */
@@ -142,7 +142,7 @@ function listReactions(answer: PublishedAnswer): S["ReactionsResponse"] {
 }
 
 /**
- * Server ordering (`03-api-contract.md` §8.5): count desc, then earliest
+ * Server ordering (`docs/design/api.md` §8.5): count desc, then earliest
  * reaction, then emoji. This mock doesn't track per-reaction timestamps, so
  * it ties on emoji instead — good enough for a stable, deterministic demo.
  */
@@ -215,7 +215,7 @@ export function mockEngagementRoute(request: MockRequest): unknown {
           }
           comment.deletedAt = new Date().toISOString();
           comment.body = "";
-          // A deleted comment's image is deleted for real too (`09` §1, D8).
+          // A deleted comment's image is deleted for real too (`docs/design/engagement.md` §1, D8).
           if (comment.image) deleteMockImage(comment.image.imageId);
           comment.image = null;
         }

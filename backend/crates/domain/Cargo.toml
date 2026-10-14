@@ -10,7 +10,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-# Emoji reaction validation (`09-engagement.md` §2.2): NFC normalization plus an
+# Emoji reaction validation (`docs/design/engagement.md` §2.2): NFC normalization plus an
 # Extended_Pictographic / regional-indicator codepoint check. Both are small,
 # maintained unicode-rs crates with no further dependencies.
 unicode-normalization = "0.1"

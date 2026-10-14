@@ -1,6 +1,6 @@
 """Unit tests for `scripts/bootstrap_admin.py`'s DynamoDB item builders.
 
-Covers prod mode (`plans/05-auth-flow.md` §9.1a): the one TransactWriteItems
+Covers prod mode (`docs/design/auth.md` §9.1a): the one TransactWriteItems
 with the Group, first Newsletter and email-bound admin Invite. Nothing here
 touches AWS; the builders are pure, and boto3 is imported only inside the
 script's `main` path.

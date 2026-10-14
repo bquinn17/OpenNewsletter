@@ -81,7 +81,7 @@ describe("token storage (D1)", () => {
   });
 });
 
-describe("logout (05 §8)", () => {
+describe("logout (docs/design/auth.md §8)", () => {
   it("clears storage, caches and stores, revokes the refresh token, then redirects", async () => {
     await userManager!.storeUser(makeUser(env.cognitoClientId));
     const queryClient = new QueryClient();

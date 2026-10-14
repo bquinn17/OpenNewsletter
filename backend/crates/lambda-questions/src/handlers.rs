@@ -1,5 +1,5 @@
 //! Business logic for candidate-question and vote routes
-//! (`plans/03-api-contract.md` §6).
+//! (`docs/design/api.md` §6).
 
 use crate::state::AppState;
 use crate::validation;
@@ -15,9 +15,13 @@ use domain::{
     User, UserId,
 };
 use persistence::questions::VoteTxError;
-use persistence::{auth, groups, newsletters, questions, users};
+use persistence::{auth, groups, newsletters, questions, users, RepoError};
 use shared::config::MAX_LIST_LIMIT;
 use std::collections::{HashMap, HashSet};
+
+/// Read-sweep-delete rounds before an admin candidate delete gives up on a
+/// candidate whose votes keep changing under it.
+const CANDIDATE_DELETE_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
@@ -26,7 +30,7 @@ pub enum Sort {
 }
 
 impl Sort {
-    /// Default (when `sort` is omitted) is `top` (`03-api-contract.md` §6.1).
+    /// Default (when `sort` is omitted) is `top` (`docs/design/api.md` §6.1).
     pub fn parse(raw: Option<&str>) -> Result<Self, ApiError> {
         match raw {
             None | Some("top") => Ok(Sort::Top),
@@ -374,26 +378,51 @@ async fn delete_candidate_and_votes(
     cycle_id: &CycleId,
     question_id: &QuestionId,
 ) -> Result<(), ApiError> {
-    // Votes, candidate, votes again. The first sweep runs while the candidate
-    // still exists, so if it fails partway a retried DELETE finds the
-    // candidate and redoes it. A retry after the candidate is gone gets a 404
-    // and could never reach the leftover votes. The second sweep catches a vote
-    // cast between the first sweep and the delete; once the candidate is gone,
-    // `cast_vote_tx`'s `vote_count` condition fails, so nothing lands after it.
-    cascade_delete_votes(state, group_id, cycle_id, question_id).await?;
-    questions::delete_candidate(&state.repo, group_id, cycle_id, question_id)
+    // Read the count, sweep the votes, then delete the candidate only if the
+    // count hasn't moved. The sweep runs while the candidate still exists, so
+    // if it fails partway a retried DELETE finds the candidate and redoes it.
+    // A vote cast after the sweep moves the count, so the delete fails and
+    // the loop sweeps again; once the candidate is gone, `cast_vote_tx`'s
+    // `vote_count` condition fails, so nothing lands after it.
+    for _ in 0..CANDIDATE_DELETE_ATTEMPTS {
+        let candidate = questions::get_candidate(&state.repo, group_id, cycle_id, question_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, group_id = %group_id, "candidate lookup failed");
+                ApiError::internal("failed to load candidate question")
+            })?;
+        // A concurrent delete already finished the job.
+        let Some(candidate) = candidate else {
+            return Ok(());
+        };
+        cascade_delete_votes(state, group_id, cycle_id, question_id).await?;
+        match questions::delete_candidate(
+            &state.repo,
+            group_id,
+            cycle_id,
+            question_id,
+            candidate.vote_count,
+        )
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "candidate delete failed");
-            ApiError::internal("failed to delete candidate question")
-        })?;
-    cascade_delete_votes(state, group_id, cycle_id, question_id).await
+        {
+            Ok(()) => return Ok(()),
+            Err(RepoError::ConditionalCheckFailed) => continue,
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %group_id, "candidate delete failed");
+                return Err(ApiError::internal("failed to delete candidate question"));
+            }
+        }
+    }
+    tracing::warn!(group_id = %group_id, question_id = %question_id, "candidate votes kept changing during delete");
+    Err(ApiError::internal(
+        "votes on this candidate kept changing; try again",
+    ))
 }
 
-/// `02-data-model-dynamodb.md` has no access pattern for "list voters of
+/// `docs/design/data-model.md` has no access pattern for "list voters of
 /// question X" (`CandidateVote` is keyed by voter, not by question), so this
 /// deletes speculatively for every group member instead of scanning the table
-/// (`03-api-contract.md` §6.5 implementation note).
+/// (`docs/design/api.md` §6.5 implementation note).
 async fn cascade_delete_votes(
     state: &AppState,
     group_id: &GroupId,

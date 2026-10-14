@@ -1,5 +1,5 @@
 //! `lambda-newsletters` — newsletter list + detail routes
-//! (`plans/03-api-contract.md` §5).
+//! (`docs/design/api.md` §5).
 
 use lambda_http::{service_fn, Error};
 use newsletters::{router, state::AppState};

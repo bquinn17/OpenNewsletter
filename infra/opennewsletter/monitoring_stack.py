@@ -1,13 +1,13 @@
 """MonitoringStack — CloudWatch dashboard, alarms, and the SNS topic they page.
 
-Per `plans/01-infrastructure-cdk.md` §9. Every env gets the dashboard; only
+Per `docs/design/infrastructure.md` §9. Every env gets the dashboard; only
 prod gets alarms (and the SNS topic they page), capped at the 10 alarm metrics
 CloudWatch's free tier covers (§9.2). The cost budget is account-wide and lives
 in `CiStack` (§9.2a), not here. All of this is built from the fixed
 naming scheme other stacks use for their resources (`OpenNewsletter-{Name}-{env}`
 for Lambdas, `OpenNewsletter-{env}` for the table) rather than passed in as
 construct references: MonitoringStack is volatile (`make redeploy-volatile`
-destroys and recreates it — `01-infrastructure-cdk.md` §10.5, `Makefile`
+destroys and recreates it — `docs/design/infrastructure.md` §10.5, `Makefile`
 `VOLATILE_STACKS`), and a construct reference from a persistent stack would
 create a CloudFormation export that blocks that stack from ever being updated
 or destroyed while this one still imports it.
@@ -58,7 +58,7 @@ _LAMBDA_NAMES: tuple[str, ...] = (
 )
 
 # The free CloudWatch tier covers 10 alarm metrics; a metric-math alarm costs
-# one per metric it reads (`01` §9.2). Prod's alarms must fit inside it.
+# one per metric it reads (`docs/design/infrastructure.md` §9.2). Prod's alarms must fit inside it.
 MAX_ALARM_METRICS = 10
 
 _FIVE_MIN = cdk.Duration.minutes(5)
@@ -112,7 +112,7 @@ class MonitoringStack(cdk.Stack):
 
         cdk.CfnOutput(self, "DashboardName", value=self.dashboard.dashboard_name)
 
-        # --- Alarms (prod only, `01` §9.2) ---
+        # --- Alarms (prod only, `docs/design/infrastructure.md` §9.2) ---
         # Dev has no alarms and so no topic either: nothing would publish to it.
 
         self.alarm_topic: sns.Topic | None = None
@@ -378,7 +378,7 @@ class MonitoringStack(cdk.Stack):
     def _add_lambda_error_rate_alarm(self) -> cloudwatch.Alarm:
         # Account-level aggregate (no FunctionName dimension): one metric pair
         # covers every function, where a per-Lambda alarm would need a pair per
-        # function (`01` §9.2). Dev and prod share the account, so a dev error
+        # function (`docs/design/infrastructure.md` §9.2). Dev and prod share the account, so a dev error
         # burst can trip this too; the alarm says so in its description.
         invocations = cloudwatch.Metric(
             namespace="AWS/Lambda",
@@ -449,12 +449,12 @@ class MonitoringStack(cdk.Stack):
     def _add_cycle_tick_errors_alarm(self, env: str) -> cloudwatch.Alarm:
         # Any cycle-tick error at all: a stuck tick stalls every group's
         # lifecycle. Notify-tick isn't separately alarmed; its failures mostly
-        # surface as push failures, already covered (`01` §9.2).
+        # surface as push failures, already covered (`docs/design/infrastructure.md` §9.2).
         #
         # The tick logs per-cycle failures rather than failing the invocation,
         # so Lambda `Errors` alone misses the one that loses user content:
         # auto-publish giving up on drafts after
-        # `AUTO_PUBLISH_MAX_FAILED_SWEEPS` sweeps (`06` §5.3). The tick emits
+        # `AUTO_PUBLISH_MAX_FAILED_SWEEPS` sweeps (`docs/design/lifecycle.md` §5.3). The tick emits
         # that as the EMF metric `AutoPublishAbandoned`.
         one_minute = cdk.Duration.minutes(1)
         errors = cloudwatch.Metric(

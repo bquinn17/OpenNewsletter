@@ -12,7 +12,7 @@ pub struct AppState {
     /// [`AppState::image_url`] returns `None`) until infra wires
     /// `CDN_BASE_URL` for this Lambda.
     pub cdn_base_url: String,
-    /// Deletes an image a comment releases (`plans/09-engagement.md` §1.1).
+    /// Deletes an image a comment releases (`docs/design/engagement.md` §1.1).
     pub image_deleter: MediaDeleter,
 }
 

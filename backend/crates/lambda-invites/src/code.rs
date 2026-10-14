@@ -3,7 +3,7 @@
 //! Crockford base32 without `I`, `L`, `O` or `U`, so codes survive being read
 //! aloud or retyped. 16 characters over a 32-symbol alphabet is 80 bits of
 //! entropy, which is what makes guessing codes infeasible
-//! (`plans/05-auth-flow.md` §12).
+//! (`docs/design/auth.md` §12).
 
 use domain::InviteCode;
 use rand::Rng;

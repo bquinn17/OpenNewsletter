@@ -1,4 +1,4 @@
-//! The `lambda-cycle-tick` algorithm itself (`plans/06-newsletter-lifecycle.md` §5.1).
+//! The `lambda-cycle-tick` algorithm itself (`docs/design/lifecycle.md` §5.1).
 //!
 //! Runs identically whether triggered by the EventBridge schedule or the dev
 //! `POST /admin/dev/tick/cycle` route — both call [`run_tick`].
@@ -7,11 +7,11 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use domain::api::{CycleTransition, DevTickCycleResponse};
 use domain::{
-    CandidateQuestion, CycleId, GroupId, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus,
-    QuestionKind, Response, ResponseStatus,
+    CandidateQuestion, CycleId, GroupId, LockedQuestion, Newsletter, NewsletterStatus, Response,
+    ResponseStatus,
 };
 use persistence::responses::AutoPublishOutcome;
-use persistence::{groups, media, newsletters, questions, responses, Repo, RepoError};
+use persistence::{groups, newsletters, questions, responses, Repo, RepoError};
 
 use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 
@@ -47,11 +47,14 @@ pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> DevTickCycle
     // promoted moments ago that still shows as `voting` only defers its
     // group's repair by one tick.
     let (open, has_voting) = tokio::join!(
-        newsletters::list_cycles_in_status(repo, NewsletterStatus::Open),
+        newsletters::list_cycles_in_status_lenient(repo, NewsletterStatus::Open),
         newsletters::list_group_ids_in_status(repo, NewsletterStatus::Voting),
     );
     match (open, has_voting) {
-        (Ok(open), Ok(has_voting)) => {
+        (Ok((open, unreadable)), Ok(has_voting)) => {
+            for bad in unreadable {
+                tracing::error!(pk = %bad.pk, sk = %bad.sk, error = %bad.error, "skipping an unreadable open cycle in successor repair");
+            }
             for nl in open.iter().filter(|nl| !has_voting.contains(&nl.group_id)) {
                 transitions.extend(ensure_next_voting_cycle(repo, nl).await);
             }
@@ -71,7 +74,7 @@ pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> DevTickCycle
     }
 
     // Archival (published cycles eligible for cold storage) is deferred to
-    // `10-archival.md` and deliberately not attempted here.
+    // `docs/design/archival.md` and deliberately not attempted here.
 
     if let Err(e) = newsletters::upsert_tick_sentinel(repo, now).await {
         tracing::error!(error = ?e, "failed to upsert the tick sentinel row");
@@ -322,7 +325,7 @@ pub struct SweepReport {
     pub failed: u32,
 }
 
-/// §5.3's first step (`02` §4 #4a): publish each locked question's non-empty
+/// §5.3's first step (`docs/design/data-model.md` §4 #4a): publish each locked question's non-empty
 /// drafts, one transaction per draft, with `publishedAt = responseCloseAt`.
 /// Safe to re-run: a row an earlier pass already published is skipped. An
 /// error on one draft is logged and counted, and the sweep carries on, so
@@ -375,7 +378,8 @@ async fn auto_publish_one(
     nl: &Newsletter,
     draft: &Response,
 ) -> Result<bool, RepoError> {
-    if !has_live_content(repo, draft).await? {
+    if !responses::has_live_content(repo, draft).await? {
+        tracing::info!(group_id = %draft.group_id, cycle_id = %draft.cycle_id, response_id = %draft.response_id, "skipping a draft whose only images are gone");
         return Ok(false);
     }
     let outcome = responses::auto_publish_draft(repo, draft, nl.response_close_at).await?;
@@ -383,7 +387,7 @@ async fn auto_publish_one(
 }
 
 /// One EMF log line: drafts the sweep gave up on when it published a cycle
-/// without them (`01` §9.2's cycle-tick alarm counts these). CloudWatch Logs
+/// without them (`docs/design/infrastructure.md` §9.2's cycle-tick alarm counts these). CloudWatch Logs
 /// extracts the metric from stdout, so there's no `PutMetricData` call.
 fn emit_auto_publish_abandoned(count: u32) {
     let env = std::env::var("ENV").unwrap_or_default();
@@ -399,23 +403,4 @@ fn emit_auto_publish_abandoned(count: u32) {
         "AutoPublishAbandoned": count,
     });
     println!("{line}");
-}
-
-/// [`Response::is_non_empty`] trusts `image_media_ids`, but a draft can still
-/// list an image deleted since its last save: a stale tab, a failed autosave or
-/// an older PWA. A text draft with no body publishes only if at least one of
-/// its images still exists and hasn't failed processing. Otherwise it would
-/// publish as an empty answer.
-async fn has_live_content(repo: &Repo, draft: &Response) -> Result<bool, RepoError> {
-    if draft.kind != QuestionKind::Text || draft.has_text_body() {
-        return Ok(true);
-    }
-    for image_id in &draft.image_media_ids {
-        let image = media::get_image(repo, &draft.group_id, &draft.cycle_id, image_id).await?;
-        if image.is_some_and(|i| i.status != MediaStatus::Failed) {
-            return Ok(true);
-        }
-    }
-    tracing::info!(group_id = %draft.group_id, cycle_id = %draft.cycle_id, response_id = %draft.response_id, "skipping a draft whose only images are gone");
-    Ok(false)
 }

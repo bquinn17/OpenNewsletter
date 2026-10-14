@@ -34,7 +34,7 @@ function errorDetail(err: unknown, fallback: string): string {
   return fallback;
 }
 
-/** Collapsible comment thread + composer for one published answer (`09-engagement.md` §1, §4.3). */
+/** Collapsible comment thread + composer for one published answer (`docs/design/engagement.md` §1, §4.3). */
 export function CommentList({
   comments,
   groupId,
@@ -153,7 +153,7 @@ function CommentRow({
     }
     setError(null);
     // Removing or replacing the attached image deletes it for real once the
-    // edit commits (`09-engagement.md` §1, D8), so confirm that first.
+    // edit commits (`docs/design/engagement.md` §1, D8), so confirm that first.
     if (comment.image && (imageRemoved || readyImage)) {
       setConfirmImageRelease(true);
       return;

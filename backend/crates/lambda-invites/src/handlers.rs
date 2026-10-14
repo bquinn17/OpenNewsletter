@@ -1,5 +1,5 @@
 //! Invite creation, listing, revocation, and redemption
-//! (`plans/03-api-contract.md` §3, `plans/05-auth-flow.md` §4).
+//! (`docs/design/api.md` §3, `docs/design/auth.md` §4).
 
 use crate::code;
 use crate::state::AppState;
@@ -90,7 +90,7 @@ fn normalize_bound_email(raw: &str) -> Result<String, ApiError> {
     Ok(trimmed.to_lowercase())
 }
 
-/// `POST /invites/redeem` step 2 (`plans/05-auth-flow.md` §4.2): a bound
+/// `POST /invites/redeem` step 2 (`docs/design/auth.md` §4.2): a bound
 /// invite needs the caller's ID-token `email` to match it and be verified.
 fn check_bound_email(invite: &Invite, claims: &AuthClaims) -> Result<(), ApiError> {
     let Some(bound) = &invite.bound_email else {
@@ -167,7 +167,7 @@ pub async fn revoke_invite(
 
 /// `POST /invites/redeem` — the single point where invites are consumed, covering
 /// both first signup and an existing user joining another group
-/// (`plans/05-auth-flow.md` §4.2).
+/// (`docs/design/auth.md` §4.2).
 pub async fn redeem(
     state: &AppState,
     claims: &AuthClaims,
