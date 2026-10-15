@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { collectCspViolations, gotoHome } from "./helpers";
+import { collectCspViolations, gotoHome, openCurrentEdition, openUpcoming } from "./helpers";
 
 /**
  * Walks Home → a group's open edition ("a newsletter") → candidates
@@ -14,19 +14,20 @@ test("no CSP violation walking Home → group → newsletter → candidates → 
 
   await gotoHome(page);
 
-  // Home → a group's open edition, via the bottom nav's "Respond" tab
-  // (lands on the redirect route, which forwards to the open cycle —
-  // `docs/design/frontend.md` §4.1's `BottomNav`).
-  await page.getByRole("link", { name: "Respond" }).click();
+  // Home → the current group's open edition.
+  await openCurrentEdition(page);
   await expect(page.getByText("Open for responses")).toBeVisible();
 
-  // → candidates ("Upcoming"). `PageHeader` renders its title as a plain
-  // `<div>`, not a heading, so this asserts on page text rather than role.
-  await page.getByRole("link", { name: "Upcoming" }).click();
+  // → back Home (the header logo) → candidates ("Upcoming"). `PageHeader`
+  // renders its title as a plain `<div>`, not a heading, so this asserts on
+  // page text rather than role.
+  await page.getByRole("link", { name: "Home" }).click();
+  await openUpcoming(page);
   await expect(page.getByText("Suggested questions")).toBeVisible();
 
-  // → settings.
-  await page.getByRole("link", { name: "You" }).click();
+  // → settings, via the header's account menu.
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page.getByRole("button", { name: "Edit profile" })).toBeVisible();
 
   expect(violations, violations.join("\n")).toEqual([]);

@@ -85,7 +85,7 @@ Component tests `vi.mock` `api/client` and seed the TanStack Query cache, with f
 ### 4.3 Playwright E2E
 
 Two projects:
-- **`mock`** (default, no env needed): `vite build --mode e2e` (checked-in `.env.e2e`, mocks on) served with `vite preview`. Runs the CSP checks from [`frontend.md` §12.1](../design/frontend.md#121-content-security-policy) against a real production build, plus the golden paths the mock transport supports (it has no auth and no dev tick routes). The viewport is 700px, the only width where `BottomNav` and its labels are both in the accessibility tree.
+- **`mock`** (default, no env needed): `vite build --mode e2e` (checked-in `.env.e2e`, mocks on) served with `vite preview`. Runs the CSP checks from [`frontend.md` §12.1](../design/frontend.md#121-content-security-policy) against a real production build, plus the golden paths the mock transport supports (it has no auth and no dev tick routes). The viewport is phone-sized (390×844), since the app is a mobile-first PWA.
 - **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are scaffolded as `fixme` until a dev deploy exists (B5).
 
 Golden paths (≤10):

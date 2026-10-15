@@ -81,7 +81,6 @@ Standing decisions, including D1–D12 that code and docs cite by ID, are in [`d
 ## Known gaps carried forward
 
 Product and UX:
-- The fixed `BottomNav` covers RespondPage's bottom bar ("Save & exit", "Publish") at 700px; both are `fixed bottom-3 z-40`. The e2e test works around it with `goBack()`.
 - A poll pick can't be cleared (`pollOptionId` is required), so a poll pick always auto-publishes at close. Decide whether polls need a "clear" action ([`frontend.md` §7.3](../docs/design/frontend.md#73-respondpage-ggncrespondq)).
 - No markdown formatting toolbar in `RespondPage` (spec only requires Write/Preview); no "hype check" banner or recurring-question helper text ([`frontend.md` §14a](../docs/design/frontend.md#14a-client-derived-display-data-not-api-fields)).
 - No invite pagination: `GET /admin/groups/{g}/invites` returns everything, including consumed/revoked invites until their TTL (expiry + 30 days).

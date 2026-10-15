@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Outlet, useNavigate } from "react-router-dom";
+import { Link, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useConfig } from "../../api/queries";
 import { useCurrentGroup } from "../../state/currentGroup";
 import { Avatar } from "../ui/Avatar";
 import { useDismissableMenu } from "../ui/useDismissableMenu";
 import { ToastStack } from "../ui/Toast";
-import { BottomNav } from "./BottomNav";
 import { GroupSwitcher } from "./GroupSwitcher";
 
 export function AppShell() {
@@ -15,6 +14,7 @@ export function AppShell() {
   const memberships = useMemo(() => config?.memberships ?? [], [config]);
   const { currentGroupId, setCurrentGroup } = useCurrentGroup();
   const navigate = useNavigate();
+  const urlGroupId = useMatch({ path: "/g/:groupId", end: false })?.params.groupId;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -25,6 +25,15 @@ export function AppShell() {
     if (memberships.some((m) => m.groupId === currentGroupId)) return;
     setCurrentGroup(memberships[0]!.groupId);
   }, [memberships, currentGroupId, setCurrentGroup]);
+
+  // A group page reached by URL (a push notification, a shared link) makes its
+  // group current, so the switcher and Home agree with what's on screen.
+  // Picking another group navigates away from `/g/`, so this never undoes it.
+  useEffect(() => {
+    if (urlGroupId && memberships.some((m) => m.groupId === urlGroupId)) {
+      setCurrentGroup(urlGroupId);
+    }
+  }, [urlGroupId, memberships, setCurrentGroup]);
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   useDismissableMenu(menuRef, menuOpen, closeMenu);
@@ -48,7 +57,7 @@ export function AppShell() {
                   currentGroupId={currentGroupId}
                   onPick={(groupId) => {
                     setCurrentGroup(groupId);
-                    navigate(`/g/${groupId}`);
+                    navigate("/");
                   }}
                 />
               )}
@@ -105,7 +114,6 @@ export function AppShell() {
 
         <Outlet />
       </div>
-      <BottomNav />
       <ToastStack />
     </div>
   );

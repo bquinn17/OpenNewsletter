@@ -17,17 +17,8 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const baseURL = process.env.E2E_BASE_URL;
 
-/**
- * `components/layout/BottomNav.tsx` (the primary nav these tests drive) is
- * `md:hidden` (Tailwind `md` = 768px) — a desktop viewport hides it
- * entirely. Its own tab labels are `hidden sm:inline` (Tailwind `sm` =
- * 640px), so a narrower "mobile" viewport loses the accessible *name*
- * instead (icon only, `aria-hidden`). 700px threads both: narrower than
- * `md` (nav renders) and no narrower than `sm` (labels stay in the a11y
- * tree). This app is mobile-first PWA — a mid-width viewport is also the
- * more representative target than desktop Chrome's default 1280px.
- */
-const mobileViewport = { width: 700, height: 900 };
+/** This app is a mobile-first PWA, so the tests run at phone width. */
+const mobileViewport = { width: 390, height: 844 };
 
 export default defineConfig({
   fullyParallel: true,
