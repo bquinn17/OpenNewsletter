@@ -90,7 +90,7 @@ export function CandidatesPage() {
   }
 
   return (
-    <div className="bg-cream pb-28">
+    <div className="bg-cream pb-12">
       <PageHeader
         eyebrow={`${membership?.groupName ?? "Group"} · upcoming`}
         title="Suggested questions"

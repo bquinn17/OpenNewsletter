@@ -152,6 +152,11 @@ CloudFront sends credentialed CORS headers for the app's origins on `/img/*` and
 
 Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SECONDS` (60 s). A member who is removed or demoted can keep their old access for up to that long. See [`auth.md` §11](design/auth.md#11-tenant-authorization-helper).
 
+<a id="home-shows-one-group"></a>
+### Home shows one group, and there is no bottom tab bar (2026-10-14)
+
+Home lists only the group picked in the header's group switcher, rather than a section per membership under a switcher that didn't affect it. The mobile `BottomNav` is gone: its tabs duplicated Home's edition rows and the header (logo, avatar menu → Settings), and it covered RespondPage's own bottom bar. See [`frontend.md` §4.1](design/frontend.md#41-shell) and [§7.1](design/frontend.md#71-homepage-).
+
 ---
 
 ## Design review, 2026-10-08

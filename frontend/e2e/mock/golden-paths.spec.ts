@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { gotoHome } from "./helpers";
+import { gotoHome, openCurrentEdition, openUpcoming } from "./helpers";
 
 /**
  * As many of `docs/development/testing-and-ci.md` §4.3's golden paths as the mock transport
@@ -13,7 +13,7 @@ test("suggests a candidate question and sees it in the voting list", async ({ pa
   const prompt = `E2E candidate — favorite trail snack ${Date.now()}`;
 
   await gotoHome(page);
-  await page.getByRole("link", { name: "Upcoming" }).click();
+  await openUpcoming(page);
 
   await page.getByRole("link", { name: "＋ Idea" }).click();
   await page.getByLabel("Your question").fill(prompt);
@@ -24,7 +24,7 @@ test("suggests a candidate question and sees it in the voting list", async ({ pa
 
 test("upvotes a candidate and the vote count increments", async ({ page }) => {
   await gotoHome(page);
-  await page.getByRole("link", { name: "Upcoming" }).click();
+  await openUpcoming(page);
 
   const upvote = page.getByRole("button", {
     name: /Upvote "What's the best trail you hiked this summer\?"/,
@@ -44,11 +44,11 @@ test("reacts to a published answer, toggles it off, then reacts with a different
   page,
 }) => {
   await gotoHome(page);
-  // `g_trail` has two published editions on Home; `.first()` is the latest
-  // one (`PUBLISHED_CYCLE_ID`, rendered before `morePast` — `GroupEditions.tsx`),
-  // which is the one seeded with the rich M10 reaction/comment fixtures.
+  // Home shows the current group, `g_trail`, which has two published
+  // editions; `.first()` is the latest one (`PUBLISHED_CYCLE_ID`, rendered
+  // before `morePast` — `GroupEditions.tsx`), which is the one seeded with
+  // the rich M10 reaction/comment fixtures.
   await page
-    .locator("section", { hasText: "Trail Crew" })
     .getByRole("link", { name: /questions · published/ })
     .first()
     .click();
@@ -77,7 +77,6 @@ test("comments on a published answer and sees it without reloading", async ({ pa
 
   await gotoHome(page);
   await page
-    .locator("section", { hasText: "Trail Crew" })
     .getByRole("link", { name: /questions · published/ })
     .first()
     .click();
@@ -103,7 +102,7 @@ test.describe("save draft → reload", () => {
     const draftText = `E2E unsaved draft ${Date.now()}`;
 
     await gotoHome(page);
-    await page.getByRole("link", { name: "Respond" }).click();
+    await openCurrentEdition(page);
     await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
 
     const textarea = page.getByPlaceholder("Tell us about it…");
@@ -125,7 +124,7 @@ test("a poll pick saves as a draft at once and warns that drafts auto-publish", 
   // D2 (`docs/design/frontend.md` §7.3): every pick, the first included, saves with `publish:false`,
   // and an unpublished non-empty answer shows the auto-publish note.
   await gotoHome(page);
-  await page.getByRole("link", { name: "Respond" }).click();
+  await openCurrentEdition(page);
   await page.getByRole("link", { name: /which trail should we do next/i }).click();
 
   await expect(page.getByRole("note")).toHaveCount(0);

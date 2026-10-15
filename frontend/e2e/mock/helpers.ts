@@ -34,3 +34,13 @@ export async function gotoHome(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("heading", { name: /Hey Quinn/ }).waitFor();
 }
+
+/** Home's row for the current group's open edition (`EditionRow.tsx`). */
+export async function openCurrentEdition(page: Page): Promise<void> {
+  await page.getByRole("link", { name: /you've published/ }).click();
+}
+
+/** Home's row for the current group's voting cycle, which links to the candidates page. */
+export async function openUpcoming(page: Page): Promise<void> {
+  await page.getByRole("link", { name: /Suggest and vote on questions/ }).click();
+}

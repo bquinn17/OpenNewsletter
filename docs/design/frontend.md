@@ -64,8 +64,8 @@ frontend/
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
 │   ├── components/
 │   │   ├── ui/                       # Avatar, Button, CdnImage, ConfirmDialog, Pill, Spinner, Toast, useDismissableMenu
-│   │   ├── layout/                   # AppShell, BottomNav, GroupSwitcher, PageHeader
-│   │   ├── home/                     # GroupSection, GroupEditions, EditionRow
+│   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader
+│   │   ├── home/                     # GroupEditions, EditionRow
 │   │   ├── join/JoinForm.tsx
 │   │   ├── newsletter/               # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
 │   │   │                             # CommentList, ReactionBar, EmojiPickerPopover
@@ -76,7 +76,7 @@ frontend/
 │   │   ├── pwa/InstallPwaPrompt.tsx
 │   │   └── admin/GroupSettingsForm.tsx   # Members/Invites tabs live in GroupAdminPage
 │   ├── pages/
-│   │   ├── HomePage.tsx              # / — list of newsletters
+│   │   ├── HomePage.tsx              # / — the current group's newsletters
 │   │   ├── GroupRedirect.tsx         # /g/{g}
 │   │   ├── NewsletterPage.tsx        # /g/{g}/n/{c}
 │   │   ├── RespondPage.tsx           # /g/{g}/n/{c}/respond/{q}
@@ -156,11 +156,12 @@ Route guards:
 │   - Mobile: full width, padding-x: 16px                     │
 │   - ≥md: max-w-3xl mx-auto (middle third effectively)       │
 │   - ≥lg: max-w-2xl mx-auto                                  │
-├────────────────────────────────────────────────────────────┤
-│  BottomNav (mobile only)                                    │
-│   - Home / Upcoming / Respond / Settings                    │
 └────────────────────────────────────────────────────────────┘
 ```
+
+There is no bottom tab bar. Navigation is the header: the logo goes Home, the group switcher picks the group Home shows, and the avatar menu holds Settings. Home's edition rows lead to the open edition (respond) and the voting cycle (Upcoming). A mobile `BottomNav` existed until 2026-10-14; it was removed because it duplicated Home and covered RespondPage's own bottom bar ([`decisions.md`](../decisions.md#home-shows-one-group)).
+
+The current group (`state/currentGroup.ts`, persisted) is set by the switcher, defaults to the first membership, and follows the URL: opening any `/g/:groupId/*` page makes that group current, so a deep link from a push notification or shared link doesn't leave Home showing a different group. Picking a group in the switcher navigates to Home.
 
 Tailwind container choice: stick with `max-w-2xl` on large screens. The "middle third" requirement from the spec is achieved by capping width rather than using a 3-column grid — simpler, more legible, same visual outcome.
 
@@ -283,8 +284,8 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 ### 7.1 HomePage `/`
 
-- Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for each membership in parallel via TanStack `useQueries`.
-- Renders one section per group: the open cycle, then the voting cycle (both exist at once during the response window, [`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)), then the latest published, then up to 3 more past editions.
+- Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
+- Renders the open cycle, then the voting cycle (both exist at once during the response window, [`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)), then the latest published, then up to 3 more past editions.
 - Empty state when no memberships: "You haven't joined a group yet — paste your invite code below" with a `<JoinForm/>`.
 
 ### 7.2 NewsletterPage `/g/:g/n/:c`
