@@ -23,13 +23,12 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-// Keeps the real `withMediaAuth`/`refreshMediaAuth`/`pollMediaStatus` (exercised via real timers
-// below) but stubs out the network-backed cookie fetch and the SHA-256 digest.
+// Keeps the real `pollMediaStatus` (exercised via real timers below) but stubs out the SHA-256
+// digest, which isn't under test here.
 vi.mock("../../utils/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/media")>();
   return {
     ...actual,
-    ensureCookie: vi.fn().mockResolvedValue(undefined),
     sha256Base64: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -114,8 +113,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
 
@@ -245,8 +244,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
     deleteUpload.mockResolvedValue(undefined);
@@ -281,8 +280,8 @@ describe("ImageUploader", () => {
       purpose: "response",
       mimeType: "image/jpeg",
       caption: null,
-      thumbUrl: "https://cdn.test.invalid/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img1/display.webp",
       width: 10,
       height: 10,
       errorMessage: null,
@@ -378,8 +377,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
 

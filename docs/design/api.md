@@ -150,7 +150,7 @@ Last-admin guard: demoting the only admin returns 409 `LAST_ADMIN`. Per-group ni
 
 **Lambda**: `lambda-groups`. **Role**: member.
 
-Response 200: `GroupResponse` in `shared/openapi.yaml`, including `members: MemberResponse[]`. `avatarUrl` is the absolute CloudFront URL for the member's avatar (`https://cdn.{domain}/avatar/{avatarId}/display.webp`) when they have one set, else `null`; `avatarColor` is the deterministic / chosen fallback color slug rendered as a colored initial when `avatarUrl` is null.
+Response 200: `GroupResponse` in `shared/openapi.yaml`, including `members: MemberResponse[]`. `avatarUrl` is a presigned S3 GET URL for the member's avatar (`avatar/{avatarId}/display.webp` in the processed bucket, signed by `media-urls` — [`media.md` §4](media.md#4-serving-presigned-s3-gets)) when they have one set, else `null`; `avatarColor` is the deterministic / chosen fallback color slug rendered as a colored initial when `avatarUrl` is null.
 
 ### 4.3 `PATCH /groups/{groupId}`
 
@@ -203,7 +203,7 @@ The output is unchanged: question, answer, image and comment order, the skip rul
 
 Response 200 (published): `NewsletterDetailResponse` in `shared/openapi.yaml` (the `published`-status branch), nesting `PublishedQuestionResponse` → `PublishedAnswerResponse` → `CommentResponse`/`ReactionGroupResponse` for text questions, or `PublishedPollOptionResponse` + `myVoteOptionId` for polls. Poll questions carry no top-level comments — comments are always attached to a specific text answer (§8); poll widgets are comment-free in v1.
 
-Image URLs are absolute CloudFront URLs. The frontend MUST first call `/media-cookie` (§9.5) to receive signed cookies before requesting any image.
+Image URLs are presigned S3 GET URLs, minted inline by the handler (§9.5); each `displayUrl`/`thumbUrl` is usable as soon as it's returned. See [`media.md` §4](media.md#4-serving-presigned-s3-gets).
 
 **The `open` response shape** is `OpenQuestionResponse` (`shared/openapi.yaml`): each locked question carries `askedBy` redacted per the same anonymity rule as candidates, plus `myResponse` — `null` if the caller has no draft yet, else a `MyResponseSummary`.
 
@@ -400,21 +400,26 @@ Every one of these routes that returns a body returns `ImageMediaResponse` (`sha
 
 ### 9.4 `DELETE /uploads/{imageId}`
 
-**Lambda**: `lambda-media`. **Real delete** — a soft-deleted row would leave the processed S3 variants still servable via CloudFront, so this removes the objects too. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE`.
+**Lambda**: `lambda-media`. **Real delete** — a soft-deleted row would leave the processed S3 variants still servable by presigned URL, so this removes the objects too. Allowed only when image is not referenced by any published response: if the caller's answer to the image's question is published and lists the image, 409 `IMAGE_IN_USE`. A `purpose: "comment"` image that a live comment has claimed (`attached_comment_id` set, §8.2) is also 409 `IMAGE_IN_USE`.
 
-Otherwise: delete the original S3 object, both processed variants (display + thumb), create a CloudFront invalidation for the two processed paths, `/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/display.webp` and `thumb.webp` (exact paths, not a `/*` wildcard: CloudFront allows only 15 wildcard invalidations in progress per distribution) (the first 1,000 invalidation paths/month are free), then delete the `ImageMedia` row — via the shared delete helper ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)). S3 deletes happen first; if any fails, return 500 and leave the row in place so a retry can finish the job. Returns 204 on success. Idempotent: a repeat `DELETE` whose row is already gone also returns 204 (nothing left to leak). If the caller's answer is still a *draft* that lists the image, the handler first drops the ID from the draft (2026-10 review): one `UpdateItem` on the response row, `SET image_media_ids = <the rest>`, conditioned on `status = draft AND image_media_ids = <the list it read>`. A single-item conditional write is already atomic, so no multi-item transaction is needed; it can't share one with the S3 deletes anyway. It runs before any S3 delete, so a draft that is saved or published concurrently fails the condition and the handler rereads (up to 3 rounds, then 500): a now-published answer that lists the image gets `IMAGE_IN_USE` with nothing deleted. The response editor's "remove image" action still saves the draft without the ID before calling this route, so for it the strip is a no-op; it covers stale tabs and older PWAs. A save that validated the image just before the delete can still re-list it, so readers keep tolerating dangling IDs (`persistence::responses::has_live_content` at auto-publish and in reminders; the published read skips missing images).
+Otherwise: delete the original S3 object, both processed variants (display + thumb), then delete the `ImageMedia` row — via the shared delete helper ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)). Once a variant is deleted, its outstanding presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). S3 deletes happen first; if any fails, return 500 and leave the row in place so a retry can finish the job. Returns 204 on success. Idempotent: a repeat `DELETE` whose row is already gone also returns 204 (nothing left to leak). If the caller's answer is still a *draft* that lists the image, the handler first drops the ID from the draft (2026-10 review): one `UpdateItem` on the response row, `SET image_media_ids = <the rest>`, conditioned on `status = draft AND image_media_ids = <the list it read>`. A single-item conditional write is already atomic, so no multi-item transaction is needed; it can't share one with the S3 deletes anyway. It runs before any S3 delete, so a draft that is saved or published concurrently fails the condition and the handler rereads (up to 3 rounds, then 500): a now-published answer that lists the image gets `IMAGE_IN_USE` with nothing deleted. The response editor's "remove image" action still saves the draft without the ID before calling this route, so for it the strip is a no-op; it covers stale tabs and older PWAs. A save that validated the image just before the delete can still re-list it, so readers keep tolerating dangling IDs (`persistence::responses::has_live_content` at auto-publish and in reminders; the published read skips missing images).
 
 Comment images follow the same path: when a comment is soft-deleted, or its image is removed or replaced (§8.3, §8.4), the released image is deleted this way after the comment transaction commits (best effort; a failure is logged at ERROR, not surfaced to the caller). The UI confirms every one of these permanent deletes with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered."): removing an image in the response editor, removing or replacing a comment image, and deleting a comment that has an image.
 
-### 9.5 `GET /media-cookie`
+### 9.5 Image and avatar URLs
 
-**Lambda**: `lambda-media`. Returns CloudFront signed cookies scoped to a single group. Cookies last 1 hour and cover paths matching `/img/{groupId}/*`.
+Every image and avatar URL in a response body is an S3 presigned GET URL for one object in the processed bucket, minted by the handler that returns it after its usual membership or ownership check:
 
-Response 200 sets cookies via `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`, `CloudFront-Key-Pair-Id`) AND returns the same values as a JSON body (`MediaCookieResponse` in `shared/openapi.yaml`) for clients that can't read response cookies cross-origin.
+- `displayUrl` / `thumbUrl` on `PublishedImageResponse`, `CommentImageResponse` and `ImageMediaResponse` (`null` until the image is `ready`)
+- `avatarUrl` on `UserResponse`, `MemberResponse`, `AskedBy` and `AvatarMediaResponse` (`null` when there's no avatar)
 
-`expiresAt` is an RFC 3339 timestamp like every other API timestamp (the epoch seconds live inside the policy). The `Set-Cookie` headers are emitted only when the Lambda has a cookie domain configured (`MEDIA_COOKIE_DOMAIN`, set in prod to `.{domain}`); dev returns the body alone. Cookies use `Path=/img/{groupId}/` and `Max-Age=3600`, so cookies for several groups coexist in the browser.
+There's no media route to call first: a URL is usable as soon as it's returned.
 
-For the SPA in **prod**, the cookies are sufficient (the CloudFront domain is on the same registrable domain as the API via the `cdn.` subdomain — see DNS plan). In **dev** there is no shared registrable domain (raw AWS endpoints), so cookies cannot flow — the SPA instead appends the JSON-body values as CloudFront signed-URL query params to each image URL. See [`media.md` §4.5](media.md#45-dev-environments-signed-query-params-instead-of-cookies).
+- A URL is valid for at most `MEDIA_URL_TTL_SECONDS` (1 h), and can stop working sooner if the signing Lambda's credentials expire first. A client that gets a 403 refetches the resource for fresh URLs rather than retrying the same one.
+- Within one 5-minute signing window, a container returns the same URL for the same object, so a refetch doesn't change an `<img src>`.
+- Clients treat the URLs as opaque. The query string changes between windows, so anything that caches the bytes keys on the path, not the full URL.
+
+See [`media.md` §4](media.md#4-serving-presigned-s3-gets) and [`decisions.md`](../decisions.md#presigned-s3-media).
 
 ### 9.6 `PATCH /uploads/{imageId}`
 
@@ -432,10 +437,10 @@ Avatars use a separate pipeline (see [`media.md` §11](media.md#11-avatars-separ
 
 - `POST /avatars` — request a pre-signed PUT URL. Body: `CreateAvatarRequest` in `shared/openapi.yaml`. Validation: `byteSize` ≤ 5 MB (else 413), MIME as listed (GIF → 415). Server creates an `AvatarMedia` row (`status=pending`) and returns `CreateAvatarResponse`.
 - `GET /avatars/{avatarId}` — returns `AvatarMediaResponse` (status, `avatarUrl` once ready, `errorMessage`). Looked up under the caller's own user partition, so another user's avatar is a 404. Frontend polls until `status=ready`, then issues `PATCH /me` with the new `avatarMediaId`.
-- `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). **Real delete**: deletes the original + processed S3 objects, invalidates `/avatar/{avatarId}/display.webp`, then deletes the `AvatarMedia` row, via the same shared delete helper as §9.4. Idempotent — a repeat `DELETE` of an already-gone row returns 204. If the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering). Because the lookup is under the caller's own user partition, "404 if not owned" and "a repeat DELETE returns 204" can't be told apart: any missing row returns 204, and another user's avatar is never touched. The User row is cleared *before* the objects are deleted, so a failed delete never leaves the profile pointing at half-deleted objects.
-- **Avatar replacement and clearing:** when `PATCH /me` (§2.3) sets a new `avatarMediaId` over an existing one, or sets it to `null`, the handler deletes the old avatar's original + processed objects and invalidates `/avatar/{oldAvatarId}/display.webp` the same way, then deletes the old `AvatarMedia` row, after the `User` row update commits. The frontend confirms both this replace-over-existing case and an explicit `DELETE /avatars/{id}` with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered.").
+- `DELETE /avatars/{avatarId}` — caller must own (404 otherwise). **Real delete**: deletes the original + processed S3 objects, then deletes the `AvatarMedia` row, via the same shared delete helper as §9.4. The deleted object's presigned URLs 403 immediately. Idempotent — a repeat `DELETE` of an already-gone row returns 204. If the avatar is the caller's current `avatarMediaId`, the User row is also cleared back to `null` (the deterministic `avatarColor` takes over for rendering). Because the lookup is under the caller's own user partition, "404 if not owned" and "a repeat DELETE returns 204" can't be told apart: any missing row returns 204, and another user's avatar is never touched. The User row is cleared *before* the objects are deleted, so a failed delete never leaves the profile pointing at half-deleted objects.
+- **Avatar replacement and clearing:** when `PATCH /me` (§2.3) sets a new `avatarMediaId` over an existing one, or sets it to `null`, the handler deletes the old avatar's original + processed objects the same way, then deletes the old `AvatarMedia` row, after the `User` row update commits. The frontend confirms both this replace-over-existing case and an explicit `DELETE /avatars/{id}` with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered.").
 
-Avatar URLs are absolute CloudFront URLs under `https://cdn.{domain}/avatar/{avatarId}/display.webp`. No signed cookies required — see [`data-model.md` §2.16](data-model.md#216-avatarmedia).
+Avatar URLs are presigned S3 GET URLs for `avatar/{avatarId}/display.webp` in the processed bucket, signed by `media-urls` the same way as every other image field ([`media.md` §11.3](media.md#113-serving)) — see [`data-model.md` §2.16](data-model.md#216-avatarmedia).
 
 ---
 
@@ -538,7 +543,7 @@ The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in
 | `*` comments/reactions GET/POST, reactions PUT/DELETE | member |
 | `PATCH` comment | author only |
 | `DELETE` comment | author OR admin |
-| `POST /uploads*`, `GET /uploads/{id}`, `PATCH /uploads/{id}`, `DELETE /uploads/{id}`, `GET /media-cookie` | member (owner for PATCH/DELETE) |
+| `POST /uploads*`, `GET /uploads/{id}`, `PATCH /uploads/{id}`, `DELETE /uploads/{id}` | member (owner for PATCH/DELETE) |
 | `POST /avatars`, `GET /avatars/{id}`, `DELETE /avatars/{id}` | self (owner) |
 | `*` push routes | self |
 | `GET /healthz` | authenticated |

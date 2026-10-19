@@ -24,7 +24,7 @@ export function ErrorPage() {
   const correlationId = apiError?.problem?.correlationId;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-cream px-6 text-center">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-lavender to-blush px-6 text-center">
       <div className="mb-3 text-6xl">{is404 ? "🌫️" : "🛠️"}</div>
       <h1 className="font-display text-3xl font-bold">{title}</h1>
       <p className="mt-2 max-w-sm text-inkmuted">{detail}</p>

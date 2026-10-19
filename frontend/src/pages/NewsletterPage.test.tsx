@@ -22,11 +22,6 @@ vi.mock("../api/client", async (importOriginal) => {
   };
 });
 
-vi.mock("../utils/media", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../utils/media")>();
-  return { ...actual, ensureCookie: vi.fn().mockResolvedValue(undefined) };
-});
-
 function baseConfig(): S["ConfigResponse"] {
   return {
     userId: "u_quinn",

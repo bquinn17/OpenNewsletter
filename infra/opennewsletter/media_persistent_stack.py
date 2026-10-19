@@ -1,34 +1,19 @@
-"""MediaPersistentStack — S3 buckets, CloudFront distribution, and signing KeyGroup.
+"""MediaPersistentStack — S3 buckets for media and avatars.
 
 Intentionally separated from MediaPipelineStack so that `cdk destroy` on the
-volatile pipeline stack never touches the long-lived CloudFront distribution
-(which takes 15–30 min to delete and recreate).
+volatile pipeline stack never touches the long-lived S3 buckets.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
-from aws_cdk import aws_certificatemanager as acm
-from aws_cdk import aws_cloudfront as cloudfront
-from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_s3 as s3
-from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from .config import EnvConfig
-from .ssm_refs import cloudfront_distribution_id_parameter_name
-
-_KEYS_DIR = Path(__file__).parent.parent / "keys"
-# CloudFront signing public key per env; the private halves live in each
-# env's app secret under `cdn_signing_private_key`.
-_SIGNING_PUBLIC_KEY_FILES = {
-    "dev": "cf-signing.pub.pem",
-    "prod": "cf-signing-prod.pub.pem",
-}
 
 
 class MediaPersistentStack(cdk.Stack):
@@ -39,7 +24,6 @@ class MediaPersistentStack(cdk.Stack):
         *,
         config: EnvConfig,
         table: dynamodb.Table,
-        certificate: acm.Certificate,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -49,7 +33,8 @@ class MediaPersistentStack(cdk.Stack):
             cdk.RemovalPolicy.DESTROY if is_dev else cdk.RemovalPolicy.RETAIN
         )
 
-        # The SPA's origins: browser uploads here, and CDN reads (below).
+        # The SPA's origins: browser uploads to the originals buckets, and
+        # image reads from the processed bucket (below).
         spa_origins = (
             [f"https://{config.domain}", "http://localhost:5173"]
             if is_dev
@@ -80,17 +65,25 @@ class MediaPersistentStack(cdk.Stack):
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
                 ),
                 s3.LifecycleRule(
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
-                            transition_after=cdk.Duration.days(30),
-                        )
-                    ]
+                    prefix="uploads/",
+                    expiration=cdk.Duration.days(7),
                 ),
             ],
             auto_delete_objects=is_dev,
             removal_policy=removal_policy,
         )
+
+        # Processed bucket: images under img/* and avatars under avatar/*. The
+        # SPA reads them only through presigned GET URLs the API Lambdas sign
+        # (`docs/design/media.md` §4). GET/HEAD CORS because images load with
+        # `crossorigin="anonymous"`, so the service worker sees real statuses
+        # and can cache them; no credentials, since the signature is in the URL.
+        processed_cors_rules = [
+            s3.CorsRule(
+                allowed_methods=[s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+                allowed_origins=spa_origins,
+            )
+        ]
 
         self.processed_bucket = s3.Bucket(
             self,
@@ -99,6 +92,7 @@ class MediaPersistentStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            cors=processed_cors_rules,
             # No Intelligent-Tiering transition here: processed WebP variants
             # are well under the 128 KB floor where that tier ever pays for
             # itself, so the per-object transition fee would be pure cost.
@@ -125,116 +119,13 @@ class MediaPersistentStack(cdk.Stack):
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
                 ),
                 s3.LifecycleRule(
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INTELLIGENT_TIERING,
-                            transition_after=cdk.Duration.days(30),
-                        )
-                    ]
+                    prefix="uploads/",
+                    expiration=cdk.Duration.days(7),
                 ),
             ],
             auto_delete_objects=is_dev,
             removal_policy=removal_policy,
         )
-
-        self.avatars_processed_bucket = s3.Bucket(
-            self,
-            "AvatarsProcessedBucket",
-            bucket_name=f"opennewsletter-avatars-processed-{config.env}-{self.account}",
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            versioned=False,
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            # No Intelligent-Tiering transition here: 256px processed avatars
-            # are well under the 128 KB floor where that tier ever pays for
-            # itself, so the per-object transition fee would be pure cost.
-            lifecycle_rules=[
-                s3.LifecycleRule(
-                    abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
-                ),
-            ],
-            auto_delete_objects=is_dev,
-            removal_policy=removal_policy,
-        )
-
-        # --- CloudFront signing KeyGroup ---
-        # Each env has its own RSA-2048 pair, so a leaked dev private key can't
-        # sign prod cookies (`docs/design/auth.md` §10).
-        pub_key_path = _KEYS_DIR / _SIGNING_PUBLIC_KEY_FILES[config.env]
-        pub_key_body = pub_key_path.read_text()
-
-        cf_public_key = cloudfront.PublicKey(
-            self,
-            "CdnSigningPublicKey",
-            encoded_key=pub_key_body,
-            comment=f"OpenNewsletter CDN signing key ({config.env})",
-        )
-
-        self.key_group = cloudfront.KeyGroup(
-            self,
-            "CdnKeyGroup",
-            items=[cf_public_key],
-            comment=f"OpenNewsletter CDN key group ({config.env})",
-        )
-
-        # --- CloudFront distribution ---
-        processed_origin = origins.S3BucketOrigin.with_origin_access_control(
-            self.processed_bucket
-        )
-        avatars_processed_origin = origins.S3BucketOrigin.with_origin_access_control(
-            self.avatars_processed_bucket
-        )
-
-        # CORS on every CDN response, so the SPA can load images with
-        # `crossorigin`. Without it they load no-cors, the service worker sees
-        # opaque status-0 responses, and its `cdn-images` cache can't tell a 403
-        # from an image, so it stores nothing (`docs/design/frontend.md` §5.2). Credentialed because
-        # prod's signed cookies ride along; that requires an explicit origin
-        # list, never `*`.
-        media_cors_policy = cloudfront.ResponseHeadersPolicy(
-            self,
-            "MediaCorsPolicy",
-            comment=f"OpenNewsletter CDN CORS for the SPA ({config.env})",
-            cors_behavior=cloudfront.ResponseHeadersCorsBehavior(
-                access_control_allow_credentials=True,
-                access_control_allow_headers=["Range"],
-                access_control_allow_methods=["GET", "HEAD"],
-                access_control_allow_origins=spa_origins,
-                access_control_max_age=cdk.Duration.minutes(10),
-                origin_override=True,
-            ),
-        )
-
-        self.distribution = cloudfront.Distribution(
-            self,
-            "Distribution",
-            domain_names=[f"cdn.{config.domain}"],
-            certificate=certificate,
-            price_class=cloudfront.PriceClass.PRICE_CLASS_100,
-            default_behavior=cloudfront.BehaviorOptions(
-                origin=processed_origin,
-                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
-                allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-                trusted_key_groups=[self.key_group],
-                response_headers_policy=media_cors_policy,
-            ),
-            additional_behaviors={
-                "/avatar/*": cloudfront.BehaviorOptions(
-                    origin=avatars_processed_origin,
-                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                    cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
-                    allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-                    response_headers_policy=media_cors_policy,
-                )
-            },
-        )
-
-        # Store the key pair ID from the public key for use by lambda-media
-        self.cdn_key_pair_id = cf_public_key.public_key_id
-        # For the media-delete CloudFront invalidations ApiStack's Lambdas issue
-        # (`docs/design/infrastructure.md` §6.2). ApiStack already depends on
-        # this stack for the buckets and key pair id, so this adds no new edge.
-        self.distribution_id = self.distribution.distribution_id
 
         # --- Outputs ---
         cdk.CfnOutput(
@@ -254,29 +145,20 @@ class MediaPersistentStack(cdk.Stack):
             "AvatarsOriginalsBucketName",
             value=self.avatars_originals_bucket.bucket_name,
         )
-        cdk.CfnOutput(
-            self,
-            "AvatarsProcessedBucketName",
-            value=self.avatars_processed_bucket.bucket_name,
-        )
-        cdk.CfnOutput(
-            self, "CloudFrontDistributionId", value=self.distribution.distribution_id
-        )
-        cdk.CfnOutput(
-            self, "CloudFrontDomain", value=self.distribution.distribution_domain_name
-        )
-        cdk.CfnOutput(self, "CloudFrontKeyGroupId", value=self.key_group.key_group_id)
-        cdk.CfnOutput(
-            self,
-            "CloudFrontKeyPairId",
-            value=self.cdn_key_pair_id,
-        )
 
-        # Published for MonitoringStack (volatile; see ssm_refs.py for why it
-        # can't take a construct reference onto this persistent stack).
-        ssm.StringParameter(
+        # Origins for the SPA's CSP and service worker (`docs/design/media.md`
+        # §4.4), written to its env by `scripts/write_frontend_env.py`. Built in
+        # the regional virtual-hosted form the S3 SDK presigns against, which
+        # the CSP must match exactly.
+        def s3_origin(bucket: s3.Bucket) -> str:
+            return f"https://{bucket.bucket_name}.s3.{self.region}.{self.url_suffix}"
+
+        cdk.CfnOutput(self, "MediaBaseUrl", value=s3_origin(self.processed_bucket))
+        cdk.CfnOutput(
             self,
-            "CloudFrontDistributionIdParam",
-            parameter_name=cloudfront_distribution_id_parameter_name(config.env),
-            string_value=self.distribution.distribution_id,
+            "UploadOrigins",
+            value=" ".join(
+                s3_origin(bucket)
+                for bucket in (self.originals_bucket, self.avatars_originals_bucket)
+            ),
         )

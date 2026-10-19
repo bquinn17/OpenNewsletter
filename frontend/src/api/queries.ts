@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./client";
 import { useAuth } from "../auth/useAuth";
+import { MEDIA_URLS_META } from "../utils/media";
 
 export const queryKeys = {
   config: ["config"] as const,
@@ -31,7 +32,7 @@ export function useConfig() {
 }
 
 export function useMe() {
-  return useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
+  return useQuery({ queryKey: queryKeys.me, queryFn: api.getMe, meta: MEDIA_URLS_META });
 }
 
 export function useGroup(groupId: string | undefined) {
@@ -40,6 +41,7 @@ export function useGroup(groupId: string | undefined) {
     queryFn: () => api.getGroup(groupId!),
     enabled: !!groupId,
     staleTime: 5 * 60_000,
+    meta: MEDIA_URLS_META,
   });
 }
 
@@ -64,6 +66,7 @@ export function useNewsletter(groupId: string | undefined, cycleId: string | und
     queryFn: () => api.getNewsletter(groupId!, cycleId!),
     enabled: !!groupId && !!cycleId,
     staleTime: 30_000,
+    meta: MEDIA_URLS_META,
   });
 }
 
@@ -73,6 +76,7 @@ export function useCandidates(groupId: string | undefined, sort: CandidateSort =
     queryFn: () => api.listCandidates(groupId!, { sort }),
     enabled: !!groupId,
     staleTime: 30_000,
+    meta: MEDIA_URLS_META,
   });
 }
 

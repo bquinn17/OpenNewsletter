@@ -37,7 +37,7 @@ Safety nets:
 - **Sweeper Lambda**: runs daily and destroys any `ci-pr-*` stack older than 24h.
 - **Budget**: the account-wide AWS Budget ([`infrastructure.md` §9](design/infrastructure.md#9-monitoringstack)) catches stranded resources.
 
-Prerequisites: `config.py` must accept `ci-pr-*` envs, and `ApiStack` and the media stacks must be able to point at an existing user pool. Each stack costs about $0.50, mostly CloudFront creation and deletion time rather than money.
+Prerequisites: `config.py` must accept `ci-pr-*` envs, and `ApiStack` and the media stacks must be able to point at an existing user pool. Each stack costs about $0.50 and stands up and tears down in minutes.
 
 ## 4. Other deferred items (pointers)
 

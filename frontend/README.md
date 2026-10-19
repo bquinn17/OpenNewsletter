@@ -90,8 +90,8 @@ codebase:
   `virtual:pwa-register` module (aliased to a no-op stand-in under Vitest —
   `vite.config.ts`'s `test.alias` — so running the test suite never touches the real
   service worker machinery).
-- `src/pwa/sw.ts` precaches the build, `CacheFirst`-caches CDN images (`/img/*`, `/avatar/*`
-  on the CDN origin) and handles `push`/`notificationclick`. It deliberately does **not**
+- `src/pwa/sw.ts` precaches the build, `CacheFirst`-caches processed media images (`/img/*`,
+  `/avatar/*` on the media bucket's origin) and handles `push`/`notificationclick`. It deliberately does **not**
   cache any API response — an authenticated JSON response sitting in Cache Storage would
   outlive logout and could leak between users on a shared device. Its `push`/`notificationclick`
   logic is pulled out into pure, unit-tested helpers in `src/pwa/swHelpers.ts`, since a real

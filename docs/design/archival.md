@@ -75,7 +75,7 @@ If the row's `status == "archived"`:
 
 ### 4.3 Image visibility
 
-Archived images would stay in the processed bucket — only their storage class moves to `STANDARD_IA`, not a delete — so CloudFront signed cookies would still grant access. `STANDARD_IA` storage is roughly 50% of `STANDARD`; a small win per archived cycle.
+Archived images would stay in the processed bucket — only their storage class moves to `STANDARD_IA`, not a delete — so a presigned GET would still grant access the same way as any other image ([`media.md` §4](media.md#4-serving-presigned-s3-gets)). `STANDARD_IA` storage is roughly 50% of `STANDARD`; a small win per archived cycle.
 
 Moving processed images to `DEEP_ARCHIVE` instead would need the SPA to display "image unavailable" placeholders for archived editions. Leaving processed images in `STANDARD_IA` keeps archives fully readable, at the cost of a smaller storage saving.
 

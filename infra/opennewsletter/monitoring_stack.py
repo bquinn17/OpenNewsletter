@@ -12,9 +12,8 @@ destroys and recreates it — `docs/design/infrastructure.md` §10.5, `Makefile`
 create a CloudFormation export that blocks that stack from ever being updated
 or destroyed while this one still imports it.
 
-The HTTP API id and the CloudFront distribution id aren't deterministic like
-the names above (AWS assigns them at deploy time), so those come from SSM
-parameters the producer stacks (`ApiStack`, `MediaPersistentStack`) publish —
+The HTTP API id isn't deterministic like the names above (AWS assigns it at
+deploy time), so it comes from an SSM parameter `ApiStack` publishes —
 see `ssm_refs.py` for why a CloudFormation dynamic reference is the right tool
 here rather than a lookup or a construct reference.
 """
@@ -32,7 +31,6 @@ from constructs import Construct
 
 from .config import EnvConfig
 from .ssm_refs import (
-    cloudfront_distribution_id_parameter_name,
     http_api_id_parameter_name,
     ssm_dynamic_ref,
 )
@@ -87,9 +85,6 @@ class MonitoringStack(cdk.Stack):
         self._env = config.env
         table_name = f"OpenNewsletter-{config.env}"
         http_api_id = ssm_dynamic_ref(http_api_id_parameter_name(config.env))
-        cloudfront_distribution_id = ssm_dynamic_ref(
-            cloudfront_distribution_id_parameter_name(config.env)
-        )
 
         self.dashboard = cloudwatch.Dashboard(
             self,
@@ -107,7 +102,7 @@ class MonitoringStack(cdk.Stack):
         for lambda_name in _LAMBDA_NAMES:
             self.dashboard.add_widgets(self._lambda_widget(lambda_name, config.env))
         self.dashboard.add_widgets(self._dynamo_widget(table_name))
-        self.dashboard.add_widgets(self._cloudfront_widget(cloudfront_distribution_id))
+        self.dashboard.add_widgets(self._s3_widget())
         self.dashboard.add_widgets(self._push_widget(config.env))
 
         cdk.CfnOutput(self, "DashboardName", value=self.dashboard.dashboard_name)
@@ -270,45 +265,36 @@ class MonitoringStack(cdk.Stack):
             height=6,
         )
 
-    def _cloudfront_widget(
-        self, cloudfront_distribution_id: str
-    ) -> cloudwatch.GraphWidget:
-        # AWS/CloudFront metrics are published only in us-east-1, regardless
-        # of which region the dashboard itself lives in, and require the
-        # literal "Global" Region dimension value.
-        dims = {"DistributionId": cloudfront_distribution_id, "Region": "Global"}
+    def _s3_widget(self) -> cloudwatch.GraphWidget:
+        # S3's daily storage metrics are free. The bucket names follow
+        # MediaPersistentStack's fixed pattern; rebuilding them here keeps this
+        # stack free of cross-stack references.
+        buckets = {
+            kind: f"opennewsletter-{kind}-{self._env}-{cdk.Aws.ACCOUNT_ID}"
+            for kind in ("media-originals", "avatars-originals", "media-processed")
+        }
+
+        def metric(
+            bucket_name: str, metric_name: str, storage_type: str, label: str
+        ) -> cloudwatch.Metric:
+            return cloudwatch.Metric(
+                namespace="AWS/S3",
+                metric_name=metric_name,
+                dimensions_map={"BucketName": bucket_name, "StorageType": storage_type},
+                statistic=cloudwatch.Stats.AVERAGE,
+                period=cdk.Duration.days(1),
+                label=label,
+            )
+
         return cloudwatch.GraphWidget(
-            title="CloudFront — requests / error rates",
+            title="S3 — bucket size (bytes) / object count",
             left=[
-                cloudwatch.Metric(
-                    namespace="AWS/CloudFront",
-                    metric_name="Requests",
-                    dimensions_map=dims,
-                    statistic=cloudwatch.Stats.SUM,
-                    period=_FIVE_MIN,
-                    region="us-east-1",
-                    label="Requests",
-                ),
+                metric(name, "BucketSizeBytes", "StandardStorage", kind)
+                for kind, name in buckets.items()
             ],
             right=[
-                cloudwatch.Metric(
-                    namespace="AWS/CloudFront",
-                    metric_name="4xxErrorRate",
-                    dimensions_map=dims,
-                    statistic=cloudwatch.Stats.AVERAGE,
-                    period=_FIVE_MIN,
-                    region="us-east-1",
-                    label="4xx rate",
-                ),
-                cloudwatch.Metric(
-                    namespace="AWS/CloudFront",
-                    metric_name="5xxErrorRate",
-                    dimensions_map=dims,
-                    statistic=cloudwatch.Stats.AVERAGE,
-                    period=_FIVE_MIN,
-                    region="us-east-1",
-                    label="5xx rate",
-                ),
+                metric(name, "NumberOfObjects", "AllStorageTypes", kind)
+                for kind, name in buckets.items()
             ],
             width=24,
             height=6,

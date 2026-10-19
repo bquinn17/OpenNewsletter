@@ -89,7 +89,7 @@ export function NewsletterPage() {
 
 function LoadingShell() {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Loading…" eyebrow="Edition" back="/" />
       <div className="space-y-3 px-5 pt-6">
         {[0, 1, 2].map((i) => (
@@ -102,7 +102,7 @@ function LoadingShell() {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Edition" eyebrow="Couldn't load" back="/" />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">😬</div>
@@ -120,7 +120,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 function NotFoundState({ groupId }: { groupId: string }) {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Edition" eyebrow="Not found" back={`/g/${groupId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🔍</div>
@@ -132,7 +132,7 @@ function NotFoundState({ groupId }: { groupId: string }) {
 
 function ArchivedState({ groupId }: { groupId: string }) {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Edition" eyebrow="Archived" back={`/g/${groupId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🗄️</div>
@@ -159,7 +159,7 @@ function OpenLayout({
   const { monthLabel, yearLabel } = cycleLabels(data.responseOpenAt, timezone);
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
         title={`${monthLabel} ${yearLabel}`}
@@ -280,7 +280,7 @@ function PublishedLayout({
   );
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
         title={`${monthLabel} ${yearLabel}`}

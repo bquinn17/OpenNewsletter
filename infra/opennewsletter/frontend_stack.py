@@ -1,8 +1,8 @@
 """FrontendStack — ACM certificate and (optionally) Route53 DNS records.
 
 The frontend itself is hosted on GitHub Pages; CDK only manages the domain
-plumbing. The ACM cert is created here and passed to MediaPersistentStack
-(CloudFront alias) and ApiStack (HTTP API custom domain) as a constructor arg.
+plumbing. The ACM cert is created here and passed to ApiStack (HTTP API
+custom domain) as a constructor arg.
 """
 
 from __future__ import annotations
@@ -35,14 +35,13 @@ class FrontendStack(cdk.Stack):
         else:
             hosted_zone = None
 
-        # Single cert covering the app domain, CDN alias, and API domain.
-        # Must be in us-east-1 because CloudFront requires it.
+        # Single cert covering the app domain and API custom domain.
+        # Must be in us-east-1 for the API custom domain.
         self.certificate = acm.Certificate(
             self,
             "Certificate",
             domain_name=config.domain,
             subject_alternative_names=[
-                f"cdn.{config.domain}",
                 config.api_domain,
             ],
             validation=(

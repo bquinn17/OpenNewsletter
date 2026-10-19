@@ -15,9 +15,10 @@ pub struct StoreError(pub String);
 pub trait ObjectStore: Send + Sync {
     /// The object's size in bytes, without downloading its body — used to
     /// reject an oversized upload before paying for a GET
-    /// (`docs/design/media.md` §3.2).
-    async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError>;
-    async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError>;
+    /// (`docs/design/media.md` §3.2). `None` when there is no such object.
+    async fn content_length(&self, bucket: &str, key: &str) -> Result<Option<u64>, StoreError>;
+    /// The object's bytes, or `None` when there is no such object.
+    async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
     async fn put(
         &self,
         bucket: &str,
@@ -41,34 +42,41 @@ impl S3Store {
 
 #[async_trait]
 impl ObjectStore for S3Store {
-    async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError> {
-        let head = self
+    async fn content_length(&self, bucket: &str, key: &str) -> Result<Option<u64>, StoreError> {
+        match self
             .client
             .head_object()
             .bucket(bucket)
             .key(key)
             .send()
             .await
-            .map_err(|e| StoreError(format!("{e:?}")))?;
-        Ok(head.content_length().unwrap_or_default().max(0) as u64)
+        {
+            Ok(head) => Ok(Some(head.content_length().unwrap_or_default().max(0) as u64)),
+            Err(e) if e.as_service_error().is_some_and(|e| e.is_not_found()) => Ok(None),
+            Err(e) => Err(StoreError(format!("{e:?}"))),
+        }
     }
 
-    async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError> {
-        let object = self
+    async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let object = match self
             .client
             .get_object()
             .bucket(bucket)
             .key(key)
             .send()
             .await
-            .map_err(|e| StoreError(format!("{e:?}")))?;
+        {
+            Ok(object) => object,
+            Err(e) if e.as_service_error().is_some_and(|e| e.is_no_such_key()) => return Ok(None),
+            Err(e) => return Err(StoreError(format!("{e:?}"))),
+        };
         let bytes = object
             .body
             .collect()
             .await
             .map_err(|e| StoreError(format!("{e:?}")))?
             .into_bytes();
-        Ok(bytes.to_vec())
+        Ok(Some(bytes.to_vec()))
     }
 
     async fn put(
@@ -162,18 +170,15 @@ pub mod fake {
 
     #[async_trait]
     impl ObjectStore for FakeStore {
-        async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError> {
-            self.get_object(bucket, key)
+        async fn content_length(&self, bucket: &str, key: &str) -> Result<Option<u64>, StoreError> {
+            Ok(self
+                .get_object(bucket, key)
                 .await
-                .map(|o| o.bytes.len() as u64)
-                .ok_or_else(|| StoreError("not found".into()))
+                .map(|o| o.bytes.len() as u64))
         }
 
-        async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError> {
-            self.get_object(bucket, key)
-                .await
-                .map(|o| o.bytes)
-                .ok_or_else(|| StoreError("not found".into()))
+        async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+            Ok(self.get_object(bucket, key).await.map(|o| o.bytes))
         }
 
         async fn put(

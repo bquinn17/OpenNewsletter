@@ -1,7 +1,6 @@
-//! Upload, avatar, and CloudFront signed-cookie routes (`docs/design/api.md`
-//! §9). Split into a library so integration tests can call the handlers directly.
+//! Upload and avatar routes (`docs/design/api.md` §9). Split into a library
+//! so integration tests can call the handlers directly.
 
-pub mod cloudfront;
 pub mod handlers;
 pub mod presign;
 pub mod router;

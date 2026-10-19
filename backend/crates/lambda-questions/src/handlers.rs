@@ -87,13 +87,11 @@ pub async fn list_candidates(
     let is_admin = membership.role == Role::Admin;
     let profiles = load_submitter_profiles(state, &page).await?;
 
-    let items = page
-        .into_iter()
-        .map(|c| {
-            let voted_by_me = voted_ids.contains(&c.question_id);
-            to_candidate_item(state, caller, is_admin, &profiles, c, voted_by_me)
-        })
-        .collect();
+    let mut items = Vec::with_capacity(page.len());
+    for c in page {
+        let voted_by_me = voted_ids.contains(&c.question_id);
+        items.push(to_candidate_item(state, caller, is_admin, &profiles, c, voted_by_me).await?);
+    }
 
     Ok(CandidateListResponse {
         next_cycle_id: next_cycle.cycle_id,
@@ -141,9 +139,7 @@ pub async fn create_candidate(
     let submitter = load_user(state, caller).await?;
     let mut profiles = HashMap::with_capacity(1);
     profiles.insert(caller.clone(), submitter);
-    Ok(to_candidate_item(
-        state, caller, false, &profiles, candidate, false,
-    ))
+    to_candidate_item(state, caller, false, &profiles, candidate, false).await
 }
 
 /// `POST .../votes` (§6.3). Idempotent — re-voting returns the current state.
@@ -554,15 +550,15 @@ async fn load_submitter_profiles(
         })
 }
 
-fn to_candidate_item(
+async fn to_candidate_item(
     state: &AppState,
     caller: &UserId,
     is_admin: bool,
     profiles: &HashMap<UserId, User>,
     candidate: CandidateQuestion,
     voted_by_me: bool,
-) -> CandidateItemResponse {
-    let asked_by = asked_by(state, caller, is_admin, &candidate, profiles);
+) -> Result<CandidateItemResponse, ApiError> {
+    let asked_by = asked_by(state, caller, is_admin, &candidate, profiles).await?;
     let poll_options = candidate.poll_options.map(|opts| {
         opts.into_iter()
             .map(|o| PollOptionResponse {
@@ -572,7 +568,7 @@ fn to_candidate_item(
             .collect()
     });
 
-    CandidateItemResponse {
+    Ok(CandidateItemResponse {
         question_id: candidate.question_id,
         kind: candidate.kind,
         prompt: candidate.prompt,
@@ -582,32 +578,35 @@ fn to_candidate_item(
         vote_count: candidate.vote_count,
         voted_by_me,
         submitted_at: candidate.submitted_at,
-    }
+    })
 }
 
 /// §6.1 — `askedBy` is populated when `isAnonymous=false`, or the caller is the
 /// submitter, or the caller is a group admin; otherwise `None`.
-fn asked_by(
+async fn asked_by(
     state: &AppState,
     caller: &UserId,
     is_admin: bool,
     candidate: &CandidateQuestion,
     profiles: &HashMap<UserId, User>,
-) -> Option<AskedBy> {
+) -> Result<Option<AskedBy>, ApiError> {
     let visible = !candidate.is_anonymous || is_admin || candidate.submitted_by == *caller;
     if !visible {
-        return None;
+        return Ok(None);
     }
-    let user = profiles.get(&candidate.submitted_by)?;
-    Some(AskedBy {
+    let Some(user) = profiles.get(&candidate.submitted_by) else {
+        return Ok(None);
+    };
+    let avatar_url = state
+        .media_urls
+        .optional_avatar_url(user.avatar_media_id.as_ref())
+        .await?;
+    Ok(Some(AskedBy {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
         avatar_color: user.avatar_color.clone(),
-        avatar_url: user
-            .avatar_media_id
-            .as_ref()
-            .and_then(|id| state.avatar_url(id)),
-    })
+        avatar_url,
+    }))
 }
 
 fn encode_offset(offset: usize) -> String {

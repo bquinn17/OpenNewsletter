@@ -20,6 +20,7 @@ pub const GRADIENT_SLUGS: &[&str] = &[
     "ocean-dusk",
     "citrus-blush",
     "slate-lilac",
+    "lavender-blush",
 ];
 
 /// Avatar fallback colour slugs (`docs/design/api.md` §2.3).
@@ -54,6 +55,13 @@ pub const MAX_IMAGES_PER_RESPONSE: usize = 10;
 pub const MAX_COMMENT_BODY_CHARS: usize = 2_000;
 pub const MAX_IMAGE_BYTES: u64 = 15 * 1024 * 1024;
 pub const MAX_AVATAR_BYTES: u64 = 5 * 1024 * 1024;
+
+/// How long a presigned S3 GET URL stays valid (`docs/design/media.md` §4.2).
+pub const MEDIA_URL_TTL_SECONDS: u64 = 3600;
+/// The presign start time is floored to this window, so repeat requests
+/// within it from one warm Lambda container produce byte-identical URLs —
+/// a stable `<img src>` across refetches (`docs/design/media.md` §4.2).
+pub const MEDIA_URL_SIGN_WINDOW_SECONDS: u64 = 300;
 
 /// `lambda-image-process` variant dimensions and WebP quality
 /// (`docs/design/media.md` §1, §5.3, §11.1).

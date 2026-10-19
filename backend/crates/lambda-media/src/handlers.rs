@@ -2,11 +2,11 @@
 
 use crate::presign;
 use crate::state::AppState;
-use crate::{cloudfront, validation};
-use chrono::{Duration, Utc};
+use crate::validation;
+use chrono::Utc;
 use domain::api::{
     AvatarMediaResponse, CreateAvatarRequest, CreateAvatarResponse, CreateUploadRequest,
-    CreateUploadResponse, ImageMediaResponse, MediaCookieResponse, PatchUploadRequest,
+    CreateUploadResponse, ImageMediaResponse, PatchUploadRequest,
 };
 use domain::{
     ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
@@ -162,7 +162,7 @@ pub async fn get_upload(
 ) -> Result<ImageMediaResponse, ApiError> {
     auth::require_membership(&state.repo, caller, group_id, false).await?;
     let image = load_image(state, group_id, cycle_id, image_id).await?;
-    Ok(to_image_response(state, image))
+    to_image_response(state, image).await
 }
 
 /// `POST /uploads/{imageId}/complete` (§9.2) — a convenience alias for
@@ -205,7 +205,7 @@ pub async fn patch_upload(
         })?;
 
     let updated = load_image(state, group_id, cycle_id, image_id).await?;
-    Ok(to_image_response(state, updated))
+    to_image_response(state, updated).await
 }
 
 /// `DELETE /uploads/{imageId}` (§9.4). Caller must own the image. Refused
@@ -215,9 +215,8 @@ pub async fn patch_upload(
 /// (`docs/design/engagement.md` §1.5, `docs/design/api.md` §8.2). If the
 /// caller's *draft* still lists it, the id is dropped from the draft first
 /// (a stale tab or older PWA that didn't save the draft without it). Then
-/// deletes the S3 objects, the CDN copies and the row
-/// (`docs/design/media.md` §8.0). Idempotent: an already-deleted image is a
-/// no-op success.
+/// deletes the S3 objects and the row (`docs/design/media.md` §8.0).
+/// Idempotent: an already-deleted image is a no-op success.
 pub async fn delete_upload(
     state: &AppState,
     caller: &UserId,
@@ -300,66 +299,6 @@ async fn release_from_my_response(
     Err(ApiError::internal("your draft kept changing; try again"))
 }
 
-/// The caller's signed CloudFront cookie values, plus the `Set-Cookie`
-/// headers to emit (empty when `MEDIA_COOKIE_DOMAIN` is unset).
-#[derive(Debug)]
-pub struct MediaCookie {
-    pub body: MediaCookieResponse,
-    pub set_cookie_headers: Vec<String>,
-}
-
-/// `GET /media-cookie` (§9.5, `docs/design/media.md` §4.3).
-pub async fn get_media_cookie(
-    state: &AppState,
-    caller: &UserId,
-    group_id: &GroupId,
-) -> Result<MediaCookie, ApiError> {
-    auth::require_membership(&state.repo, caller, group_id, false).await?;
-
-    let resource = format!(
-        "{}/img/{}/*",
-        state.cdn_base_url.trim_end_matches('/'),
-        group_id
-    );
-    let expires_at = Utc::now() + Duration::hours(1);
-    let policy = cloudfront::policy_json(&resource, expires_at.timestamp());
-
-    let key = state.signing_key().await?;
-    let signature = cloudfront::sign_policy(key, policy.as_bytes()).map_err(|e| {
-        tracing::error!(error = ?e, "failed to sign cloudfront policy");
-        ApiError::internal("failed to sign cloudfront policy")
-    })?;
-
-    let policy_b64 = cloudfront::modified_base64_encode(policy.as_bytes());
-    let signature_b64 = cloudfront::modified_base64_encode(&signature);
-
-    let mut set_cookie_headers = Vec::new();
-    if !state.media_cookie_domain.is_empty() {
-        let path = format!("/img/{group_id}/");
-        let domain = &state.media_cookie_domain;
-        set_cookie_headers.push(format!(
-            "CloudFront-Policy={policy_b64}; Domain={domain}; Path={path}; Max-Age=3600; HttpOnly; Secure; SameSite=None"
-        ));
-        set_cookie_headers.push(format!(
-            "CloudFront-Signature={signature_b64}; Domain={domain}; Path={path}; Max-Age=3600; HttpOnly; Secure; SameSite=None"
-        ));
-        set_cookie_headers.push(format!(
-            "CloudFront-Key-Pair-Id={}; Domain={domain}; Path={path}; Max-Age=3600; HttpOnly; Secure; SameSite=None",
-            state.cdn_key_pair_id
-        ));
-    }
-
-    Ok(MediaCookie {
-        body: MediaCookieResponse {
-            policy: policy_b64,
-            signature: signature_b64,
-            key_pair_id: state.cdn_key_pair_id.clone(),
-            expires_at,
-        },
-        set_cookie_headers,
-    })
-}
-
 /// `POST /avatars` (§9.7). No group/membership check — avatars cross group
 /// boundaries by design (`docs/design/media.md` §11).
 pub async fn create_avatar(
@@ -417,7 +356,7 @@ pub async fn get_avatar(
 ) -> Result<AvatarMediaResponse, ApiError> {
     let avatar = load_avatar(state, caller, avatar_id).await?;
     let avatar_url = if avatar.status == MediaStatus::Ready {
-        state.avatar_url(&avatar.avatar_id)
+        Some(state.media_urls.avatar_url(&avatar.avatar_id).await?)
     } else {
         None
     };
@@ -425,7 +364,7 @@ pub async fn get_avatar(
 }
 
 /// `DELETE /avatars/{avatarId}` (§9.7). Unlinks it from `User.avatar_media_id`
-/// if it's the current one, then deletes its S3 objects, CDN copies and row
+/// if it's the current one, then deletes its S3 objects and row
 /// (`docs/design/media.md` §11.4). Unlinking first means a failed delete never
 /// leaves the profile pointing at a half-deleted avatar. Idempotent: the
 /// lookup is under the caller's own partition, so an already-deleted avatar
@@ -507,17 +446,13 @@ fn require_owner(caller: &UserId, image: &ImageMedia) -> Result<(), ApiError> {
     }
 }
 
-fn to_image_response(state: &AppState, image: ImageMedia) -> ImageMediaResponse {
-    let (display_url, thumb_url) = if image.status == MediaStatus::Ready {
-        (
-            image
-                .display_key
-                .as_deref()
-                .and_then(|k| state.image_url(k)),
-            image.thumb_key.as_deref().and_then(|k| state.image_url(k)),
-        )
-    } else {
-        (None, None)
+async fn to_image_response(
+    state: &AppState,
+    image: ImageMedia,
+) -> Result<ImageMediaResponse, ApiError> {
+    let (display_url, thumb_url) = match state.media_urls.ready_image_urls(&image).await? {
+        Some(urls) => (Some(urls.display_url), Some(urls.thumb_url)),
+        None => (None, None),
     };
-    ImageMediaResponse::new(image, display_url, thumb_url)
+    Ok(ImageMediaResponse::new(image, display_url, thumb_url))
 }

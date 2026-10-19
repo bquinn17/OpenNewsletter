@@ -27,8 +27,8 @@ export default defineConfig(({ mode }) => ({
         description: "Monthly newsletters with friends",
         start_url: "/",
         display: "standalone",
-        background_color: "#FBF6EE",
-        theme_color: "#FBF6EE",
+        background_color: "#E4EAFF",
+        theme_color: "#E4EAFF",
         icons: [
           { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
@@ -42,7 +42,7 @@ export default defineConfig(({ mode }) => ({
       },
       injectManifest: {
         // The precache manifest only needs the build's own hashed assets —
-        // CDN images and API responses are handled (or deliberately not
+        // media images and API responses are handled (or deliberately not
         // handled, D11) by the SW's own runtime routes.
         globPatterns: ["**/*.{js,css,html,svg}"],
       },
@@ -70,7 +70,7 @@ export default defineConfig(({ mode }) => ({
     env: {
       VITE_USE_MOCKS: "false",
       VITE_API_BASE_URL: "https://api.test.invalid",
-      VITE_CDN_BASE_URL: "https://cdn.test.invalid",
+      VITE_MEDIA_BASE_URL: "https://media.test.invalid",
       VITE_COGNITO_USER_POOL_ID: "us-east-1_TEST",
       VITE_COGNITO_CLIENT_ID: "test-client-id",
       VITE_COGNITO_BOOTSTRAP_CLIENT_ID: "test-bootstrap-client-id",

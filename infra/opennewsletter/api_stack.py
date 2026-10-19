@@ -63,7 +63,6 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("media", "PATCH", "/uploads/{imageId}"),
     ("media", "DELETE", "/uploads/{imageId}"),
     ("media", "POST", "/uploads/{imageId}/complete"),
-    ("media", "GET", "/media-cookie"),
     ("media", "POST", "/avatars"),
     ("media", "GET", "/avatars/{avatarId}"),
     ("media", "DELETE", "/avatars/{avatarId}"),
@@ -146,10 +145,6 @@ class ApiStack(cdk.Stack):
         media_originals_bucket: s3.Bucket,
         media_processed_bucket: s3.Bucket,
         avatars_originals_bucket: s3.Bucket,
-        avatars_processed_bucket: s3.Bucket,
-        cdn_domain: str,
-        cdn_key_pair_id: str,
-        cdn_distribution_id: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -168,36 +163,13 @@ class ApiStack(cdk.Stack):
             if config.env == "dev"
             else cdk.RemovalPolicy.RETAIN
         )
-
-        # Dev has no custom domains (`docs/development/environments.md` §2), so media
-        # URLs use the distribution's own `*.cloudfront.net` domain there.
-        if config.env == "dev":
-            cdn_base_url = f"https://{cdn_domain}"
-        else:
-            cdn_base_url = f"https://cdn.{config.domain}"
-
-        # Real media deletion (`docs/design/infrastructure.md` §6.2, D8): the
-        # Lambdas that delete media get `s3:DeleteObject` on exactly the key
-        # prefixes they delete from, plus `cloudfront:CreateInvalidation` on this
-        # one distribution. The id is a construct reference onto
-        # MediaPersistentStack, like the buckets, so it adds no new stack edge.
-        distribution_arn = self.format_arn(
-            service="cloudfront",
-            region="",
-            resource="distribution",
-            resource_name=cdn_distribution_id,
-        )
-        invalidate_cdn = iam.PolicyStatement(
-            actions=["cloudfront:CreateInvalidation"],
-            resources=[distribution_arn],
-        )
         media_delete_env = {
             "MEDIA_ORIGINALS_BUCKET": media_originals_bucket.bucket_name,
             "PROCESSED_BUCKET": media_processed_bucket.bucket_name,
         }
         avatar_delete_env = {
             "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
-            "AVATARS_PROCESSED_BUCKET": avatars_processed_bucket.bucket_name,
+            "PROCESSED_BUCKET": media_processed_bucket.bucket_name,
         }
 
         # Plain `s3:DeleteObject` rather than `grant_delete`, whose
@@ -215,8 +187,20 @@ class ApiStack(cdk.Stack):
             resources=[
                 # `docs/design/media.md` §11 key layout.
                 avatars_originals_bucket.arn_for_objects("uploads/*"),
-                avatars_processed_bucket.arn_for_objects("avatar/*"),
+                media_processed_bucket.arn_for_objects("avatar/*"),
             ],
+        )
+        # Image URLs are presigned GETs, which carry the signer's permissions
+        # (`docs/design/media.md` §4.1), so each Lambda that returns image or
+        # avatar URLs can read exactly the prefix it signs.
+        media_urls_env = {"PROCESSED_BUCKET": media_processed_bucket.bucket_name}
+        read_images = iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[media_processed_bucket.arn_for_objects("img/*")],
+        )
+        read_avatars = iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[media_processed_bucket.arn_for_objects("avatar/*")],
         )
 
         self.invites_fn = self._handler_lambda(
@@ -229,33 +213,32 @@ class ApiStack(cdk.Stack):
             binary_name="groups-api",
             description="Config, profile, group and member routes",
             extra_environment={
-                "CDN_BASE_URL": cdn_base_url,
                 "VAPID_PUBLIC_KEY": secret_ref(
                     config.app_secret_arn, APP_SECRET_VAPID_PUBLIC_KEY
                 ),
                 # Old-avatar cleanup on `PATCH /me`.
                 **avatar_delete_env,
-                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
+                **media_urls_env,
             },
         )
+        self.groups_fn.add_to_role_policy(read_avatars)
         self.groups_fn.add_to_role_policy(delete_avatars)
-        self.groups_fn.add_to_role_policy(invalidate_cdn)
         self.newsletters_fn = self._handler_lambda(
             "Newsletters",
             binary_name="newsletters-api",
             description="Newsletter list + detail",
-            extra_environment={
-                "CDN_BASE_URL": cdn_base_url,
-            },
+            extra_environment=media_urls_env,
         )
+        # Answer and comment images, plus asker and comment-author avatars.
+        self.newsletters_fn.add_to_role_policy(read_images)
+        self.newsletters_fn.add_to_role_policy(read_avatars)
         self.questions_fn = self._handler_lambda(
             "Questions",
             binary_name="questions-api",
             description="Candidate question CRUD + votes",
-            extra_environment={
-                "CDN_BASE_URL": cdn_base_url,
-            },
+            extra_environment=media_urls_env,
         )
+        self.questions_fn.add_to_role_policy(read_avatars)
         self.responses_fn = self._handler_lambda(
             "Responses",
             binary_name="responses-api",
@@ -267,40 +250,31 @@ class ApiStack(cdk.Stack):
             binary_name="engagement-api",
             description="Comments + reactions",
             extra_environment={
-                "CDN_BASE_URL": cdn_base_url,
                 # Comment-image release on soft-delete/replace.
                 **media_delete_env,
-                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
+                **media_urls_env,
             },
         )
+        self.engagement_fn.add_to_role_policy(read_images)
         self.engagement_fn.add_to_role_policy(delete_media)
-        self.engagement_fn.add_to_role_policy(invalidate_cdn)
         self.media_fn = self._handler_lambda(
             "Media",
             binary_name="media-api",
-            description="Uploads, avatars, media cookie",
+            description="Uploads and avatars",
             memory_size=512,
             extra_environment={
                 **media_delete_env,
                 **avatar_delete_env,
-                "CDN_BASE_URL": cdn_base_url,
-                "CDN_KEY_PAIR_ID": cdn_key_pair_id,
-                "CDN_DISTRIBUTION_ID": cdn_distribution_id,
-                # The signing key is its `cdn_signing_private_key` JSON key.
-                "APP_SECRET_ARN": config.app_secret_arn,
-                "MEDIA_COOKIE_DOMAIN": (
-                    f".{config.domain}" if config.env != "dev" else ""
-                ),
             },
         )
         # Presigning a PUT needs s3:PutObject on the signer's role.
         media_originals_bucket.grant_put(self.media_fn)
         avatars_originals_bucket.grant_put(self.media_fn)
+        self.media_fn.add_to_role_policy(read_images)
+        self.media_fn.add_to_role_policy(read_avatars)
         # `DELETE /uploads/{id}` and `DELETE /avatars/{id}`.
         self.media_fn.add_to_role_policy(delete_media)
         self.media_fn.add_to_role_policy(delete_avatars)
-        self.media_fn.add_to_role_policy(invalidate_cdn)
-        self.media_fn.add_to_role_policy(_read_app_secret(config))
 
         self.push_fn = self._handler_lambda(
             "Push",
@@ -350,7 +324,6 @@ class ApiStack(cdk.Stack):
                 ],
                 allow_headers=["Authorization", "Content-Type", "x-correlation-id"],
                 expose_headers=["x-correlation-id"],
-                allow_credentials=True,
                 max_age=cdk.Duration.seconds(600),
             ),
         )

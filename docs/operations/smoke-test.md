@@ -68,13 +68,15 @@ aws lambda invoke --function-name OpenNewsletter-CycleTick-$ENV \
 - [ ] As B, open the newsletter → answer a question. Type a few lines and attach an image. Wait for the thumbnail, then reload. The draft and the image are still there.
 - [ ] Publish the answer, and answer any poll question.
 - [ ] Fast-forward to publication (same curl as step 5). The response shows `open → published`, and a new `voting` cycle with `from: null`.
-- [ ] Open the published edition. B's answer and image render, and the image loads from the CDN origin.
-- [ ] **CDN CORS** ([`infrastructure.md` §5.2](../design/infrastructure.md#52-cloudfront-distribution-mediapersistentstack)). `CdnImage` and `Avatar` load in CORS mode, so if CloudFront's CORS policy is wrong, *every* CDN image and avatar fails to load, not just offline caching. In DevTools → Network, pick the image request and check:
-  - its response has `Access-Control-Allow-Origin` set to this app's exact origin, never `*`
-  - it has `Access-Control-Allow-Credentials: true`
+- [ ] Open the published edition. B's answer and image render, loaded from a presigned S3 URL ([`media.md` §4](../design/media.md#4-serving-presigned-s3-gets)).
+- [ ] **Media serving** ([`infrastructure.md` §5.2](../design/infrastructure.md#52-image-serving)). `MediaImage` and `Avatar` load in CORS mode, so if the processed bucket's CORS policy is wrong, *every* image and avatar fails to load, not just offline caching. In DevTools → Network, pick the image request and check:
+  - the URL's host is the processed bucket's S3 endpoint, and the request returns `200` with `Access-Control-Allow-Origin` set to this app's exact origin, never `*`, and no `Access-Control-Allow-Credentials` header (the signature is in the URL, so there are no credentials to send)
+  - pasting the same URL with its query string (`?X-Amz-...`) stripped returns `403` — confirms the bucket really is private and the signature is doing the work
   - the Console shows no "blocked by CORS policy" errors
 
-  Then, under Application → Cache Storage → `cdn-images`, the image has an entry. A broken image here is a CORS failure. Check that `MediaCorsPolicy` is attached to both distribution behaviors, and that its origins match the SPA's origin exactly (scheme, host, port, no trailing slash). The quickest way to get images back is a frontend-only rollback that removes `crossOrigin` from `CdnImage` and `Avatar`.
+  Then, under Application → Cache Storage → `media-images`, the image has an entry (avatars go in `media-avatars`). A broken image here is a CORS failure. Check that the processed bucket's CORS rule includes the SPA's origin exactly (scheme, host, port, no trailing slash). The quickest way to get images back is a frontend-only rollback that removes `crossOrigin` from `MediaImage` and `Avatar`.
+- [ ] **Original cleanup.** In the S3 console, the media-originals bucket's `uploads/` prefix no longer has an object for the image just uploaded — `lambda-image-process` deletes it once the row is `ready` ([`media.md` §5.1](../design/media.md#51-trigger-configuration)).
+- [ ] **Delete 403s immediately.** Copy the image's `displayUrl`. Delete the image from the response editor (or `DELETE /uploads/{id}` directly), then request the copied URL again: it now returns `403` — there's no invalidation delay to wait out ([`media.md` §8.0](../design/media.md#80-explicit-deletion)).
 - [ ] As A, comment on B's answer, then edit the comment. As B, reload: the edited comment shows.
 - [ ] React with 👍. Toggle it off, then react with 👨‍👩‍👧‍👦. The counts update and survive a reload.
 

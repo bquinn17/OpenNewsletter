@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { initial } from "../../utils/avatar";
+import { useMediaRetry } from "./useMediaRetry";
 
 interface Props {
   name: string;
@@ -19,14 +20,24 @@ const sizes: Record<NonNullable<Props["size"]>, string> = {
   xl: "w-16 h-16 text-2xl rounded-3xl",
 };
 
+/**
+ * A member/user avatar: the presigned S3 URL as-is (`docs/design/media.md` §4.4) in CORS mode
+ * (matching `MediaImage`), with a colored-initials fallback when there's no `url` yet or the
+ * image fails to load twice in a row.
+ */
 export function Avatar({ name, colorClassName, url, size = "md", className, ringed }: Props) {
-  if (url) {
+  const { attempt, failed, handleError } = useMediaRetry(url);
+
+  if (url && !failed) {
     return (
-      // CORS mode, matching `CdnImage`: avatar URLs are CDN `/avatar/*` paths.
       <img
+        key={attempt}
         src={url}
-        crossOrigin="use-credentials"
+        crossOrigin="anonymous"
+        loading="lazy"
+        decoding="async"
         alt={name}
+        onError={handleError}
         className={clsx(
           "select-none rounded-full object-cover",
           sizes[size],

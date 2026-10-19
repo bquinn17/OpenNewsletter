@@ -69,23 +69,23 @@ A full read-through of the design after the hardening milestone turned up twelve
 
 **Decision.** Use one Secrets Manager secret per environment (`opennewsletter/{env}`). Create alarms in prod only and stay within the 10 free alarm metrics. Keep one account-wide $5 budget in `CiStack`. Put DynamoDB on the AWS-owned key.
 
-**Why.** As first built, the stacks would have cost about $8–9 a month, nearly all of it fixed charges that didn't depend on usage: four secrets per environment ($3.20) and about 30 alarm metrics per environment (about $5).
+**Why.** As first built, the stacks would have cost about $7–8 a month, nearly all of it fixed charges that didn't depend on usage: three secrets per environment ($2.40) and about 30 alarm metrics per environment (about $5).
 
 **Where.** [`infrastructure.md` §12](design/infrastructure.md#12-cost-expectations), the combined secret in [`operator-setup.md` §7](operations/operator-setup.md#7-combine-credentials-into-one-secrets-manager-secret-per-env).
 
 <a id="d8"></a>
 ### D8 — Media deletes are real
 
-**Decision.** Deleting an image or avatar removes the S3 objects, invalidates the exact CloudFront paths and deletes the row. Buckets aren't versioned. The UI warns that the delete is permanent.
+**Decision.** Deleting an image or avatar removes the S3 objects and deletes the row. Buckets aren't versioned. The UI warns that the delete is permanent. A deleted object's presigned URLs 403 immediately ([presigned S3 media](#presigned-s3-media)).
 
-**Why.** A member who deletes a photo expects it gone, not hidden. Invalidations use exact paths because CloudFront allows only 15 wildcard invalidations in progress per distribution, and a burst of deletes would hit that cap.
+**Why.** A member who deletes a photo expects it gone, not hidden.
 
 **Where.** [`media.md` §8.0](design/media.md#80-explicit-deletion), [`api.md` §9.4](design/api.md#94-delete-uploadsimageid).
 
 <a id="d9"></a>
 ### D9 — Shared-device privacy is accepted as-is
 
-**Decision.** On a shared device, some local state can outlive logout: the draft mirror and cached CDN images. This is accepted.
+**Decision.** On a shared device, some local state can outlive logout: the draft mirror and the service worker's cached images. This is accepted.
 
 **Why.** The risk predates D1, and D1 doesn't make it materially worse. The service worker never caches API responses, so another user can't be served one person's data offline.
 
@@ -142,11 +142,6 @@ A 422's `fieldErrors[]` entries carry one plain field name each, and the reason 
 
 The pull-request `cdk diff` job runs the branch's own code, so its role assumes no CDK bootstrap role and can only read stack templates. Every `uses:` in the workflows is pinned to a full commit SHA, and Dependabot bumps them in one weekly PR. See [`testing-and-ci.md` §6](development/testing-and-ci.md#6-github-actions-workflows) and [`.github/workflows/README.md`](../.github/workflows/README.md).
 
-<a id="credentialed-cdn-cors"></a>
-### CDN images load with credentialed CORS (2026-10-11)
-
-CloudFront sends credentialed CORS headers for the app's origins on `/img/*` and `/avatar/*`, and images load with `crossorigin="use-credentials"`. The service worker then sees real response statuses and can cache images for offline reading. A wrong CORS policy breaks every image, so the CORS check in [`smoke-test.md` §6](operations/smoke-test.md#6-draft-publish-comment-react-dev-on-prod-during-a-real-open-cycle) runs after deploys. See [`infrastructure.md` §5.2](design/infrastructure.md#52-cloudfront-distribution-mediapersistentstack), [`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy).
-
 <a id="membership-cache"></a>
 ### Up to 60 seconds of stale access after removal is accepted (2026-10-11)
 
@@ -156,6 +151,27 @@ Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SE
 ### Home shows one group, and there is no bottom tab bar (2026-10-14)
 
 Home lists only the group picked in the header's group switcher, rather than a section per membership under a switcher that didn't affect it. The mobile `BottomNav` is gone: its tabs duplicated Home's edition rows and the header (logo, avatar menu → Settings), and it covered RespondPage's own bottom bar. See [`frontend.md` §4.1](design/frontend.md#41-shell) and [§7.1](design/frontend.md#71-homepage-).
+
+<a id="presigned-s3-media"></a>
+### Images are served from private S3 by presigned URL (2026-10-14)
+
+API responses carry short-lived S3 presigned GET URLs for every image and avatar, signed by the handler's own Lambda role after its usual membership check. No signing key is stored anywhere. The processed variants of images and avatars share one bucket. Images load in CORS mode (`crossorigin="anonymous"`) so the service worker sees real response statuses, and it caches by object path, so a fresh signature doesn't mean a fresh download and published editions work offline.
+
+**Why.** It keeps membership-based isolation (a public bucket wouldn't) without a long-lived credential (an IAM-user signing key would add one), and it's the presigning mechanism uploads already use. URLs arrive inline with the data, so an image needs no separate auth request before it loads. A CDN isn't an option: this AWS account can't create CloudFront resources, and S3's free egress covers this scale. See [`media.md` §4](design/media.md#4-serving-presigned-s3-gets) and [§6.1](design/media.md#61-why-presigned-s3-decision-record), [`infrastructure.md` §5](design/infrastructure.md#5-mediapersistentstack-and-mediapipelinestack).
+
+<a id="originals-deleted-on-success"></a>
+### Originals are deleted once processed (2026-10-14)
+
+`lambda-image-process` deletes each uploaded original as soon as the row is `ready`, or terminally `failed`. A 7-day lifecycle rule on `uploads/` catches anything left behind. This answers the open question of whether to keep originals.
+
+**Why.** Originals were the only media storage that grew without bound, and they kept uploaded EXIF/GPS metadata that the re-encoded variants don't carry. The cost is that variants can't be regenerated at new sizes from full-size uploads. See [`media.md` §5.1](design/media.md#51-trigger-configuration) and [§8.1](design/media.md#81-orphan-originals).
+
+<a id="avatars-cached-90-days"></a>
+### Avatars are cached for 90 days (2026-10-18)
+
+A device keeps an avatar for 90 days: the service worker's `media-avatars` cache expires entries then, and the processed object's `Cache-Control` matches. Images stay at 30 days in the service worker. Changing an avatar (photo or colour) refetches every query that shows member avatars.
+
+**Why.** Avatars appear on almost every screen and change rarely, and an avatar's bytes never change under its key: a new avatar gets a new `avatarId`, so a new path that misses every cache. The cost is that a replaced or deleted avatar can stay in a device's cache for up to 90 days, though nothing references its path any more ([D8](#d8)'s accepted residual copies). See [`media.md` §11.3](design/media.md#113-serving).
 
 ---
 
@@ -167,7 +183,7 @@ A performance, cost and security review before the first production deploy. Thes
 - **Current-cycle lookups read three rows.** `find_voting_cycle` and `find_open_cycle` read only a group's three newest `NL#` rows. This relies on `yyyymm` cycle ids and on a group gaining one successor cycle at a time. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
 - **The published edition reads in four concurrent waves**, not one round of reads per answer, so its latency doesn't grow with group size. See [`api.md` §5.2](design/api.md#52-get-groupsgroupidnewsletterscycleid).
 - **Group defaults come from code.** `GET /config` serves group defaults from `shared::config::default_group_settings`. The hand-copied `CONFIG_JSON` environment variable is gone, after it drifted once. See [`infrastructure.md` §6.4](design/infrastructure.md#64-group-default-config-json).
-- **Processed-image buckets skip Intelligent-Tiering.** Their objects are below the 128 KB minimum, so transitions would cost money and save nothing. The originals buckets keep it. See [`infrastructure.md` §5.1](design/infrastructure.md#51-s3-buckets-mediapersistentstack).
+- **Processed-image buckets skip Intelligent-Tiering.** Their objects are below the 128 KB minimum, so transitions would cost money and save nothing. Originals don't live long enough to tier either ([originals are deleted once processed](#originals-deleted-on-success)). See [`infrastructure.md` §5.1](design/infrastructure.md#51-s3-buckets-mediapersistentstack).
 
 ---
 

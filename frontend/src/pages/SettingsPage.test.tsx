@@ -109,7 +109,7 @@ describe("SettingsPage avatar upload", () => {
       mimeType: "image/png",
       status: "ready",
       bytes: 100,
-      avatarUrl: "https://cdn.test.invalid/avatar/av1/display.webp",
+      avatarUrl: "https://media.test.invalid/avatar/av1/display.webp",
       errorMessage: null,
       uploadedAt: "2026-01-01T00:00:00Z",
       processedAt: "2026-01-01T00:00:01Z",
@@ -117,7 +117,7 @@ describe("SettingsPage avatar upload", () => {
     vi.mocked(api.patchMe).mockResolvedValue({
       ...baseUser(),
       avatarMediaId: "av1",
-      avatarUrl: "https://cdn.test.invalid/avatar/av1/display.webp",
+      avatarUrl: "https://media.test.invalid/avatar/av1/display.webp",
     });
 
     renderSettings();
@@ -153,7 +153,7 @@ describe("SettingsPage avatar delete confirms (D8)", () => {
   const withAvatar = () => ({
     ...baseUser(),
     avatarMediaId: "av-old",
-    avatarUrl: "https://cdn.test.invalid/avatar/av-old/display.webp",
+    avatarUrl: "https://media.test.invalid/avatar/av-old/display.webp",
   });
 
   beforeEach(() => {

@@ -25,7 +25,7 @@ How each subsystem works. Sections are numbered and cited from code.
 | [`auth.md`](design/auth.md) | Cognito sign-in, invite redemption, the bootstrap admin, tenant isolation |
 | [`lifecycle.md`](design/lifecycle.md) | The cycle state machine and the tick that drives it |
 | [`notifications.md`](design/notifications.md) | Web Push: subscriptions, preferences, fan-outs, deadline reminders |
-| [`media.md`](design/media.md) | Image uploads, the processing pipeline, CDN signing, deletion, avatars |
+| [`media.md`](design/media.md) | Image uploads, the processing pipeline, presigned S3 serving, deletion, avatars |
 | [`engagement.md`](design/engagement.md) | Comments, reactions and polls |
 | [`archival.md`](design/archival.md) | Cold storage for old editions. Designed, not built |
 

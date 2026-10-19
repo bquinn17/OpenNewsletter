@@ -1,8 +1,8 @@
 # Media uploads and image pipeline
 
-How response, comment and avatar images move from a user's browser to S3, get resized into display/thumb variants, and get served back through CloudFront. Read this before changing anything under `lambda-media`, `lambda-image-process`, or the media-delete helper. The constants in §1 and `backend/crates/shared/src/config.rs` are the source of truth for limits; the code in `backend/crates/lambda-image-process/src/process.rs` is the source of truth for the resize/encode algorithm.
+How response, comment and avatar images move from a user's browser to S3, get resized into display/thumb variants, and get served back as presigned S3 URLs. Read this before changing anything under `lambda-media`, `lambda-image-process`, `media-urls`, or the media-delete helper. The constants in §1 and `backend/crates/shared/src/config.rs` are the source of truth for limits; the code in `backend/crates/lambda-image-process/src/process.rs` is the source of truth for the resize/encode algorithm.
 
-Users can attach up to 10 images per text response. Uploads go directly from browser to S3 via pre-signed URLs (Lambda is never on the upload data path). A subsequent S3 trigger generates two derived variants (thumb + display) and marks the image ready. Reads happen via CloudFront with signed cookies scoped per group.
+Users can attach up to 10 images per text response. Uploads go directly from browser to S3 via pre-signed URLs (Lambda is never on the upload data path). A subsequent S3 trigger generates two derived variants (thumb + display), marks the image ready and deletes the original. Reads go straight to a private S3 bucket: every API response that carries an image hands out short-lived presigned GET URLs, and the service worker caches the bytes by path (§6.1 says why).
 
 ---
 
@@ -21,11 +21,11 @@ These constants live in `backend/crates/shared/src/config.rs` so all Lambdas agr
 
 ## 2. S3 buckets and key layout
 
-Two buckets, both private (defined in [`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)):
+Two buckets for response and comment images, both private (defined in [`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)). Avatars add a third, their own originals bucket (§11.1); their processed variant shares the processed bucket below.
 
 ### 2.1 `opennewsletter-media-originals-{env}-{accountId}`
 
-Originals as uploaded.
+Originals as uploaded. An original lives only until processing finishes: `lambda-image-process` deletes it once the row is `ready` or terminally `failed` (§5.2), and a lifecycle rule expires anything left under `uploads/` after 7 days (§8.1).
 
 ```
 uploads/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}.{ext}
@@ -35,16 +35,17 @@ Example: `uploads/01HXG.../202605/01HX.../01HX.../01HXJ.....jpg`
 
 ### 2.2 `opennewsletter-media-processed-{env}-{accountId}`
 
-Derived images served via CloudFront.
+Derived images, served by presigned GET (§4). The only bucket the browser reads from.
 
 ```
 img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/display.webp
 img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/thumb.webp
+avatar/{avatarId}/display.webp
 ```
 
 (GIFs use `.gif` extensions instead of `.webp` for both variants.)
 
-The `groupId` prefix is meaningful: it's the boundary of CloudFront-signed-cookie access (§6).
+Avatars live here too, under `avatar/` (§11.1). IAM grants are scoped by these two prefixes, so a Lambda that only shows avatars can't sign image URLs.
 
 ---
 
@@ -77,6 +78,7 @@ Sequence:
      │                              │                           │                            │
      │                              │                           │ 8. Update ImageMedia       │
      │                              │                           │    status=ready            │
+     │                              │                           │    + delete original       │
      │                              │                           │                            │
      │ 9. poll GET /uploads/{id}    │                           │                            │
      │    until status=ready        │                           │                            │
@@ -129,49 +131,44 @@ If the page is closed mid-upload, the partial S3 object is cleaned up by the buc
 
 ---
 
-## 4. CloudFront serving
+## 4. Serving: presigned S3 GETs
 
-### 4.1 Distribution config
+The processed bucket is private, and the browser reads each object with an S3 presigned GET URL that the API minted for it ([§6.1](#61-why-presigned-s3-decision-record) says why). Those URLs aren't fetched from a separate endpoint; they're the values of the image fields in ordinary API responses:
 
-Recap from [`infrastructure.md` §5.2](infrastructure.md#52-cloudfront-distribution-mediapersistentstack):
-- One distribution; default behavior maps `/img/*` to the processed bucket via OAC.
-- Trusted KeyGroup with one CloudFront public key: RSA 2048, its own pair per env ([`auth.md` §10](auth.md#10-identity-provider-setup-design-relevant-facts)). CloudFront's signed-cookie/URL scheme requires an RSA key — the `sign_policy` call in §4.3 can't use an ECDSA key.
-- Custom domain: `cdn.opennewsletter.example.com`.
-- An image delete invalidates the deleted paths so a cached edge copy doesn't keep serving it after the row and originals are gone — mechanics in §8.0.
+- `displayUrl` / `thumbUrl` on `PublishedImageResponse`, `CommentImageResponse` and `ImageMediaResponse` (the last is `null` until the image is `ready`)
+- `avatarUrl` on `UserResponse`, `MemberResponse`, `AskedBy` and `AvatarMediaResponse` (`null` when there's no avatar)
 
-### 4.2 Signed-cookie scope
+Every handler that returns one of these has already checked that the caller may see it: group membership for anything group-scoped ([`auth.md` §11](auth.md#11-tenant-authorization-helper)), ownership for the caller's own uploads and avatar. That check is the tenant boundary. A presigned URL is just its proof, scoped to one object and an hour.
 
-We use **signed cookies** (not signed URLs) so the SPA can request many images without each URL needing pre-signing.
+### 4.1 Bucket access and CORS
 
-The cookie's policy restricts to a single resource pattern — but we want the cookie to span all groups the caller is a member of. Two options:
+- Block Public Access stays fully on. Nothing grants anonymous reads, and S3 doesn't bill for the 403s a request without a valid signature gets from outside the account.
+- A presigned URL carries the signer's permissions, so each signing Lambda's role gets `s3:GetObject` on just the prefixes it serves: `img/*` for `lambda-media`, `lambda-newsletters` and `lambda-engagement`; `avatar/*` for `lambda-media`, `lambda-groups`, `lambda-newsletters` and `lambda-questions` ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)).
+- Bucket CORS allows `GET` and `HEAD` from the SPA's origin (plus `http://localhost:5173` in dev). No credentials: the signature is in the query string. The SPA loads images in CORS mode so its service worker sees real statuses (§4.4).
 
-- **Option A**: One cookie per group, scoped to `https://cdn.opennewsletter.example.com/img/{groupId}/*`. The SPA fetches a fresh cookie when the user switches groups.
-- **Option B**: One cookie scoped to `https://cdn.opennewsletter.example.com/img/*`, granting access to ALL groups. Simpler but lets a member exfiltrate URLs from groups they're not in (if they can guess paths).
+### 4.2 URL lifetime and signing window
 
-**Decision: Option A.** The SPA calls `GET /media-cookie?groupId=...` whenever it switches groups (and on initial load). Cookie lifetime: 1 hour. Auto-refresh 5 minutes before expiry.
+- **TTL:** `MEDIA_URL_TTL_SECONDS` (1 h, `backend/crates/shared/src/config.rs`). A leaked URL exposes one object for at most that long.
+- **Signing window:** the presign start time (`X-Amz-Date`) is floored to `MEDIA_URL_SIGN_WINDOW_SECONDS` (5 min), and the expiry counts from that floored time. A refetch from the same Lambda container inside one window returns byte-identical URLs, so React doesn't swap `<img src>` and the browser doesn't re-request anything. A URL therefore lives between 55 and 60 minutes.
+- **Early expiry:** URLs are signed with the Lambda's own role credentials, and S3 stops honouring a presigned URL when the credentials that signed it expire, whatever its `X-Amz-Expires` says. Lambda role sessions typically last 1–12 hours, so a URL signed late in a container's life can die early. The SPA's one-retry refresh (§4.4) covers this; it's the same path as an ordinary expired URL.
+- Only `host` is signed (`X-Amz-SignedHeaders=host`), because a browser `<img>` sends nothing else. The `media-urls` S3 client sets request checksum calculation and response checksum validation to `WhenRequired` so the SDK doesn't sign an `x-amz-checksum-mode` header the browser would never send; a unit test pins this.
 
-### 4.3 `GET /media-cookie` implementation
+### 4.3 The `media-urls` crate
 
-Request/response shape is [`api.md` §9.5](api.md#95-get-media-cookie). The handler (`get_media_cookie` in `backend/crates/lambda-media/src/handlers.rs`) requires membership in `groupId`, builds the CloudFront custom policy scoped to `/img/{groupId}/*` with a 1-hour expiry, and signs it via the pure helpers in `backend/crates/lambda-media/src/cloudfront.rs`: `policy_json` for the exact (whitespace-free, field-order-fixed) policy string, `sign_policy` for the RSA PKCS#1 v1.5 signature over its SHA-1 digest, and `modified_base64_encode` for CloudFront's modified base64 (`+`→`-`, `=`→`_`, `/`→`~`). The signing key PEM comes from Secrets Manager and accepts either PKCS#1 or PKCS#8 form. `Set-Cookie` is emitted only when `MEDIA_COOKIE_DOMAIN` is configured (prod); dev returns the JSON body alone (§4.5).
+`backend/crates/media-urls` is the one place image URLs are built. `MediaUrls::from_env` reads `PROCESSED_BUCKET`; `image_url(key)` signs a processed image key and `avatar_url(avatar_id)` signs `avatar/{avatarId}/display.webp`. `ready_image_urls(image)` signs both variants of an image row, or returns `None` until it's `ready`, and `optional_avatar_url` takes a user's optional avatar ID. Both are `async`, call the SDK's `get_object().presigned(..)` (local computation, no network round trip) and map a failure to a 500 like `presign_put` does (§3.2). Each Lambda that returns image fields holds one `MediaUrls` in its `AppState`.
+
+If image hosting ever changes (a different bucket, or something in front of it), this crate and `MediaPersistentStack` are the only seams that would change. The API fields, the markdown `image:{id}` indirection (§7) and the SW cache don't care where a URL points.
 
 ### 4.4 SPA usage
 
-Before rendering any image from a given group:
+- `MediaImage` (`components/ui/MediaImage.tsx`) and `Avatar` render the URL as-is: `crossorigin="anonymous"`, `loading="lazy"`, `decoding="async"`, with `width`/`height` when the response has them so lazy loading doesn't shift the layout. The API reports the original's dimensions, so a thumb gets them scaled down by `utils/media.ts#thumbSize`. There's no auth step before rendering.
+- **Refresh on expiry:** on the first load error for an image path, `MediaImage` awaits its `onExpired` callback, or by default `utils/media.ts#refreshMediaUrls()`, which refetches the active queries flagged `MEDIA_URLS_META` (the ones whose data carries media URLs; one in flight, at most once per 10 s) so they come back with fresh URLs. It does nothing while `navigator.onLine` is false: offline, the error is the network's, and every refetch would fail with its own toast. It then remounts the `<img>` once. A second failure for the same path shows a placeholder the same size as the image; `Avatar` falls back to the initials instead. Both share this policy through `components/ui/useMediaRetry.ts`. `ImageUploader` passes its own `onExpired` that re-GETs the upload, because its URLs live in component state rather than the query cache.
+- **Caching:** the service worker serves the processed bucket's `/img/*` (cache `media-images`) and `/avatar/*` (cache `media-avatars`) `CacheFirst`, keyed by origin plus path with the query string dropped (`swHelpers.mediaCacheKey`), so a new signature for the same object is a cache hit. Each device downloads an image once per 30 days and an avatar once per 90 (§11.3), and published newsletters work offline ([`frontend.md` §5.2](frontend.md#52-service-worker--caching-strategy)).
+- **CSP:** `img-src` lists the processed bucket's origin (`VITE_MEDIA_BASE_URL`); `connect-src` lists the two originals buckets' origins for the upload `PUT`s (`VITE_UPLOAD_ORIGINS`) ([`frontend.md` §12.1](frontend.md#121-content-security-policy)).
 
-```ts
-await api.media.ensureCookie(groupId);
-// proceeds; <img src="..."> requests will include the cookie automatically
-```
+### 4.5 Local development and mocks
 
-Cookies are first-party from the browser's perspective because `cdn.opennewsletter.example.com` shares a registrable domain with the SPA. The fetch must be made with `credentials: "include"` (handled in `api/client.ts`).
-
-### 4.5 Dev environments: signed query params instead of cookies
-
-The cookie scheme requires the SPA, API, and CDN to share a registrable domain. In `dev` there are no custom domains ([`environments.md` §2](../development/environments.md#2-environments)) — the API is an `execute-api.amazonaws.com` URL and the CDN a `cloudfront.net` URL — so the browser can neither receive the `Set-Cookie` for the CDN's domain nor send cookies to it.
-
-Dev therefore uses **CloudFront signed URLs built from the same values**: `GET /media-cookie` already returns `{ policy, signature, keyPairId }` in its JSON body, and CloudFront accepts exactly those as query parameters (`?Policy=...&Signature=...&Key-Pair-Id=...`). A helper `utils/media.ts#withMediaAuth(url)` appends them to every image URL when `env.appEnv === "dev"` and is a pass-through in prod (where cookies do the work). Same signing code server-side, same key group, same per-group tenant isolation — only the transport differs.
-
-Trade-off: query-stringed URLs churn the service worker's `CacheFirst` image cache when the signature refreshes hourly. Acceptable — dev doesn't need offline-cache fidelity.
+Dev and prod serve media the same way. `make fe` (Vite `--mode dev`) talks to the deployed dev stack and gets real presigned URLs: `scripts/write_frontend_env.py` writes `VITE_MEDIA_BASE_URL` and `VITE_UPLOAD_ORIGINS` from `MediaPersistentStack`'s outputs, and the dev buckets' CORS also allows `http://localhost:5173` (§4.1). Plain `npm run dev`, Vitest and the Playwright mock suite run against the in-memory mock transport (`frontend/src/api/mockTransport.ts`) and never touch S3: a ready image or avatar gets an inline data URL. `.env.e2e` sets placeholder `https://` media and upload origins so the built CSP has real origins to assert on ([`environments.md` §7](../development/environments.md#7-frontend-pointing-at-dev)).
 
 ---
 
@@ -181,17 +178,19 @@ Trade-off: query-stringed URLs churn the service worker's `CacheFirst` image cac
 
 S3 event: `s3:ObjectCreated:*` filtered to `prefix: uploads/`, on both the media-originals and avatars-originals buckets. S3 invokes the Lambda once per object (no batching configurable on direct S3→Lambda notifications).
 
-Environment: `TABLE_NAME`, `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (to tell the two sources apart), `PROCESSED_BUCKET`, `AVATARS_PROCESSED_BUCKET`.
+Environment: `TABLE_NAME`, `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (to tell the two sources apart), `PROCESSED_BUCKET` (images under `img/`, avatars under `avatar/`).
 
 Implementation notes:
 - The ready/failed updates are conditioned on `status = pending`. A lost condition means another invocation already finished, so it is logged and skipped, not retried.
-- Size and decode failures are terminal and recorded on the row (`error_message` = `IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED`). Transient S3/DynamoDB errors return `Err` so Lambda's async retry runs.
+- Size and decode failures are terminal and recorded on the row (`error_message` = `IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED`), and both delete the original, best effort as on the `ready` path below. Transient S3/DynamoDB errors return `Err` so Lambda's async retry runs.
+- **An original that's already gone is skipped, not an error.** S3 notifications are at-least-once, so a duplicate delivery can see the row still `pending` and then find that the first invocation has since finished and deleted the original. The S3 `NotFound`/`NoSuchKey` on its read is logged at INFO and the invocation returns `Ok`.
+- **The original is deleted once the row is `ready`.** Right after the conditional ready update succeeds, the handler deletes the original from its originals bucket. This is best effort: a failure is logged at ERROR and the invocation still returns `Ok`, because a retry would find the row no longer `pending` and skip it. The 7-day lifecycle expiry (§8.1) removes whatever a failed delete leaves. When the ready update loses its condition (another invocation finished, or the image was deleted mid-processing), the original is left to whoever won. Keeping no originals is an owner decision (2026-10-14): storage stays flat, and uploaded EXIF/GPS metadata doesn't outlive processing (the variants are re-encoded from pixels and carry none). The trade-off is that variants can't be regenerated at new sizes from the full-size upload.
 - Variants are never upscaled. Recorded `width`/`height` are the original's after EXIF orientation.
-- Cache-Control on writes: `public, max-age=5184000, immutable` (60 days, never more than two months) for `img/*`, `public, max-age=86400, immutable` for `avatar/*`.
+- Cache-Control on writes: `private, max-age=5184000, immutable` (60 days, never more than two months) for `img/*`, `private, max-age=7776000, immutable` (90 days, §11.3) for `avatar/*`. `private` because these are per-viewer authenticated reads that no shared cache should keep. The browser's HTTP cache keys on the full presigned URL; the service worker's cache (§4.4) is what makes reloads free.
 
 ### 5.2 Algorithm (Rust)
 
-Implementation: `backend/crates/lambda-image-process/src/handler.rs` wires S3 to the row (per record: parse the key into `groupId`/`cycleId`/`questionId`/`userId`/`imageId`, skip if the row isn't still `pending`, download, hand the bytes to `process.rs`, upload the two returned variants, mark the row `ready` with their keys and the oriented dimensions). `process.rs` is the pure image logic (no AWS, unit-tested in `process/tests.rs`):
+Implementation: `backend/crates/lambda-image-process/src/handler.rs` wires S3 to the row (per record: parse the key into `groupId`/`cycleId`/`questionId`/`userId`/`imageId`, skip if the row isn't still `pending`, download, hand the bytes to `process.rs`, upload the two returned variants, mark the row `ready` with their keys and the oriented dimensions, then delete the original, §5.1). `process.rs` is the pure image logic (no AWS, unit-tested in `process/tests.rs`):
 
 - Sniffs the format from the bytes, never trusts the extension.
 - Before allocating pixels, enforces the decode budget (§9 table) — refuses a header wider/taller than `MAX_IMAGE_EDGE_PX` or a decode that would exceed `MAX_DECODED_IMAGE_BYTES`.
@@ -208,27 +207,35 @@ If the encode fails for any reason, set `status = "failed"` with an error messag
 ### 5.4 Permissions
 
 The Lambda's role:
-- `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete purges oversized uploads)
-- `s3:PutObject` on both processed buckets
+- `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete removes each original after processing, §5.1)
+- `s3:PutObject` on the processed bucket's `img/*` and `avatar/*`, plus `s3:DeleteObject` there for variants written for a row deleted mid-processing (§8.0)
 - `dynamodb:GetItem` + `dynamodb:UpdateItem` on the table
 
 Memory: 1024 MB (image processing is CPU-bound; arm64 Lambda's 1024 MB gives a full vCPU). Timeout 60s. Largest expected image ~15MB; processing in well under 10s typical.
 
 ---
 
-## 6. CloudFront cache and tenant isolation summary
+## 6. Cache and tenant isolation summary
 
-- Distribution serves only the processed bucket via OAC.
-- Cache is **shared** across users — keyed by URL only (no `Vary` on cookies).
-- Access is gated by **trusted signers**: viewer must present valid signed cookies for the path requested.
-- A user's cookie is scoped to one group at a time; the SPA refreshes when switching.
-- Worst case: a member of group A guesses an image URL belonging to group B. They lack cookies for group B's path → CloudFront returns 403. Tenant boundary preserved.
+- The processed bucket is private. The only way to read an object is a presigned URL, and the only way to get one is an API response from a handler that has already checked membership (or ownership) for it (§4).
+- A presigned URL is scoped to one object for at most an hour (§4.2). A member of group A who guesses a group B image key can't sign it; the same URL without a valid signature gets S3's 403.
+- There is no shared edge cache. Caching is per device: the service worker's `media-images` and `media-avatars` caches, keyed by object path (§4.4), plus the browser's HTTP cache for an unchanged URL.
+- Removing a member stops new URLs within the membership-cache TTL ([`decisions.md`](../decisions.md#membership-cache)). URLs already handed out keep working until they expire, and copies already in that device's caches stay. Both are accepted.
 
-### 6.1 Why CloudFront (decision record)
+### 6.1 Why presigned S3 (decision record)
 
-**Decision: CloudFront + signed cookies**, over two alternatives. A public S3 bucket with unguessable keys is radically simpler (static URLs, no signing, perfect browser/SW cache) but abandons the membership-based tenant isolation the rest of the system enforces — a leaked URL works forever. Private S3 with per-image SigV4 presigned GETs preserves tenant isolation but pushes signing into every handler that returns image URLs, and signed URLs change per request, breaking the SW `CacheFirst` strategy in [`frontend.md` §5.2](frontend.md#52-service-worker--caching-strategy).
+**Decision (2026-10-14): private S3 plus presigned GET URLs signed by each Lambda's own role, minted inline in API responses.**
 
-Cost is effectively a wash at our scale: CloudFront egress ($0.085/GB, PriceClass_100) is actually slightly *cheaper* than S3 direct egress ($0.09/GB), and dropping CloudFront would only save ~$0.40/mo (one Secrets Manager secret for the signing keypair). The deciding, non-cost benefits are an edge cache for repeated reads of published newsletters, and stable URLs that the markdown renderer's `image:{imageId}` resolution and the SW cache both depend on.
+Options weighed:
+
+- **Public-read bucket with unguessable keys.** Simplest, with perfect caching, but it drops membership-based isolation: a leaked URL works for anyone until the image is deleted. Rejected.
+- **Presigned with a dedicated IAM user's long-lived access key.** URLs could last up to 7 days and be stable across Lambdas, but it adds a long-lived credential to store and rotate by hand. Rejected: the service worker cache already makes URL churn cheap.
+- **A CDN in front of the bucket.** This AWS account can't create CloudFront resources, and at this scale an edge cache would add a signing key and a cookie or URL-signing flow for no visible speedup. Not pursued.
+- **Presigned with the Lambda role (chosen).** No secrets and no new infrastructure, and it's the mechanism uploads already use (§3.2). Its cost is URL churn, absorbed by the SW cache key and the signing window, plus early expiry when role credentials expire first, absorbed by the one-retry refresh (§4.2, §4.4).
+
+Because URLs arrive inline with the data, an image renders on the first paint with no separate auth request, a delete takes effect the moment the object is gone (§8.0), and dev and prod serve identically (§4.5).
+
+S3 GETs are $0.0004 per 1,000, and egress is covered by AWS's 100 GB/month always-free data transfer out ([`infrastructure.md` §12](infrastructure.md#12-cost-expectations)). Without an edge cache, the first view of each image on each device is a round trip to us-east-1. The variants are small (WebP, ≤1200 px) and lazy-loaded, so that's acceptable.
 
 ---
 
@@ -239,12 +246,12 @@ Stored format: `![alt text](image:{imageId})`.
 Server-side: nothing. The `body` is stored verbatim.
 
 Render-side (`utils/markdown.tsx`):
-- There's no remark plugin. `MarkdownBody` overrides react-markdown's `img` renderer: an `image:{id}` src is looked up in an `images` table the parent passes in (`PublishedAnswerResponse.images`, or the editor's live uploads) and rendered with `CdnImage`. An unknown ID renders nothing.
+- There's no remark plugin. `MarkdownBody` overrides react-markdown's `img` renderer: an `image:{id}` src is looked up in an `images` table the parent passes in (`PublishedAnswerResponse.images`, or the editor's live uploads) and rendered with `MediaImage`. An unknown ID renders nothing.
 - `image:` must pass both `react-markdown`'s `urlTransform` and the `rehype-sanitize` schema. See [`frontend.md` §9](frontend.md#9-renderers).
 - Any other image URL renders as a link, never an `<img>`.
 - `ImageGallery` shows an answer's images that the body doesn't reference inline.
 
-This indirection means we can change the CDN host (or rotate signed cookies) without rewriting stored markdown.
+This indirection means URLs can change (re-signed every request window, or a different host entirely) without rewriting stored markdown.
 
 ---
 
@@ -254,23 +261,23 @@ This indirection means we can change the CDN host (or rotate signed cookies) wit
 
 `DELETE /uploads/{imageId}` (owner only; `IMAGE_IN_USE` guards per [`api.md` §9.4](api.md#94-delete-uploadsimageid)) deletes for real, via one shared helper: the `media-delete` library crate (`backend/crates/media-delete` — not `shared`, because `shared` can't depend on `persistence` and the helper deletes the row). Before the sequence, `DELETE /uploads` drops the image's ID from the caller's draft if the draft still lists it (conditional single-item write; [`api.md` §9.4](api.md#94-delete-uploadsimageid)), so a draft never keeps pointing at a deleted image. The sequence, run in this order, with each step idempotent so a retry after a failure redoes it safely:
 
-1. Delete the original S3 object, then each processed variant (display, thumb) the row has a key for. A row with no processed key (still `pending`/`failed`) was never served, so there's nothing to delete or invalidate there.
-2. CloudFront invalidation for the exact processed paths the row had — never a `/*` wildcard, which CloudFront caps at 15 in progress per distribution against 3,000 exact paths (the first 1,000 paths/month are free).
+1. Delete the original S3 object. It's usually gone already (§5.1); deleting a missing object succeeds.
+2. Delete each processed variant (display, thumb) the row has a key for. A row with no processed key (still `pending`/`failed`) was never served, so there's no variant to delete. Once a variant is gone, every outstanding presigned URL for it gets a 403.
 3. Delete the `ImageMedia` row, conditioned on it still having the `status` this call read (`attribute_not_exists(pk) OR status = :read`).
 
-Any S3 delete or invalidation failure returns 500 and leaves the row in place. A repeat `DELETE` of an already-gone row returns 204 (idempotent — nothing left to leak). `ImageMedia.error_message` is never written as `"DELETED"` for a removed image; the row itself is deleted instead.
+Any S3 delete failure returns 500 and leaves the row in place. A repeat `DELETE` of an already-gone row returns 204 (idempotent — nothing left to leak). `ImageMedia.error_message` is never written as `"DELETED"` for a removed image; the row itself is deleted instead.
 
 **Processing finishing mid-delete.** If `lambda-image-process` marks a `pending` row `ready` between this call's read and its row-delete, it wrote variants this call's read didn't know about, so the row-delete's status condition fails. The helper rereads the row and runs the delete again with the fresh processed keys — a row leaves `pending` only once, so this happens at most once. If the row delete lands first instead, image-process's own `status = pending` update fails on the now-missing row, and it deletes the variants it just wrote (§5.2). Avatars work the same way.
 
-`lambda-media`, `lambda-engagement` and `lambda-groups` each get `s3:DeleteObject` on the relevant buckets/prefixes and `cloudfront:CreateInvalidation` on the distribution ([`infrastructure.md`](infrastructure.md)).
+`lambda-media`, `lambda-engagement` and `lambda-groups` each get `s3:DeleteObject` on the relevant buckets/prefixes ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)).
 
 Callers: the response editor's "remove image" ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)/§8.4), a comment's image on comment soft-delete or image removal/replacement ([`engagement.md` §1.1](engagement.md#11-shape)/§1.4/§4.3 — best effort, failure logged at ERROR), and avatar removal/replacement (§11.4 below).
 
-**No bucket versioning** on any media or avatar bucket (with it, a delete would only add a delete marker and the object would survive). Residual copies we can't purge are accepted: a device's service-worker image cache (≤30 days, [`frontend.md` §5.2](frontend.md#52-service-worker--caching-strategy)) and ordinary browser caches, plus DynamoDB PITR in prod, which keeps the deleted *row* (metadata only, no image bytes) for 35 days.
+**No bucket versioning** on any media or avatar bucket (with it, a delete would only add a delete marker and the object would survive). Residual copies we can't purge are accepted: a device's service-worker cache (≤30 days for images, ≤90 for avatars, [`frontend.md` §5.2](frontend.md#52-service-worker--caching-strategy)) and ordinary browser caches, plus DynamoDB PITR in prod, which keeps the deleted *row* (metadata only, no image bytes) for 35 days.
 
 ### 8.1 Orphan originals
 
-**Not built.** A janitor Lambda that hard-deletes originals once their `ImageMedia` row has sat `failed` or `pending` for more than 24h (e.g. a closed tab mid-upload, or a failed trigger) would close this gap. For now the only automatic cleanup on originals is the bucket lifecycle's multipart-abort (§3.3); storage cost for a few orphan files is trivial, so this is accepted as-is.
+Covered by the originals buckets' lifecycle: every object under `uploads/` expires after 7 days. Normally `lambda-image-process` has already deleted it (§5.1); the rule catches the rest, such as a failed best-effort delete, an upload whose trigger never ran, or a retried upload's abandoned first attempt (§9). No janitor Lambda is needed. The `pending`/`failed` `ImageMedia` rows those leave behind are metadata only and stay.
 
 ### 8.2 Detached uploads
 
@@ -278,7 +285,7 @@ If a user uploads but never references the image in a published response, it rem
 
 ### 8.3 Lifecycle transitions
 
-Both buckets transition to `INTELLIGENT_TIERING` after 30 days (configured in CDK). At scale, this halves storage cost.
+None. Originals expire after 7 days (§8.1), so there's nothing old enough to tier, and processed variants are mostly under the 128 KB floor below which Intelligent-Tiering never moves an object. The only other rule on every bucket aborts incomplete multipart uploads after 1 day.
 
 ---
 
@@ -291,7 +298,7 @@ Both buckets transition to `INTELLIGENT_TIERING` after 30 days (configured in CD
 | Image too large | Caught client-side first; if bypassed, `lambda-image-process` marks the row `failed` and deletes the original (§3.2). SPA polling sees `failed` and shows the error. |
 | Encoder failure | `lambda-image-process` sets `status=failed`. SPA polling sees `failed`, shows error with re-upload button. |
 | Decode budget exceeded | Before allocating pixels, `lambda-image-process` refuses a header wider or taller than `MAX_IMAGE_EDGE_PX` (16384) or decoding to more than `MAX_DECODED_IMAGE_BYTES` (256 MB). GIFs are streamed one frame at a time and capped at `MAX_GIF_FRAMES` (300) and `MAX_GIF_TOTAL_PIXELS` (100 M). Over budget is handled like "image too large": `IMAGE_TOO_LARGE`, and the original is deleted. Without it, a small, highly compressed upload could run the 1024 MB Lambda out of memory and leave its row `pending` forever. |
-| CloudFront cookie expired during a long browse session | `<img>` request → 403 → SPA's image error handler refreshes cookie and retries. |
+| Presigned image URL expired (long browse session, or the signing Lambda's credentials expired first, §4.2) | `<img>` gets a 403. `MediaImage`/`Avatar` refresh once: refetch the active queries (or the upload, in the editor) for fresh URLs, then remount. A second failure shows a placeholder, or initials for an avatar (§4.4). |
 | Delete removes the S3 objects but fails before the row delete | `DELETE /uploads/{id}` returns 500; the `ImageMedia` row is kept so a retry can finish (the S3 deletes themselves are idempotent — a missing object is not an error, §8.0). |
 
 ---
@@ -306,9 +313,10 @@ General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). Ima
 4. Image with EXIF orientation is rotated correctly in output (the `image` crate's `image::imageops::orient_from_exif` step): `backend/crates/lambda-image-process/src/process/tests.rs::exif_orientation_6_swaps_recorded_width_and_height`.
 5. A 16 MB object landed in the originals bucket is marked `failed` by `lambda-image-process` and the original is deleted (size-cap enforcement per §3.2): `backend/crates/lambda-image-process/tests/handler.rs::an_oversized_object_is_marked_failed_and_the_original_is_deleted`.
 6. SVG upload is rejected at the validation step (not in allowed MIME list): `backend/crates/lambda-media/tests/uploads.rs::svg_mime_type_is_rejected_as_bad_type`.
-7. CloudFront signed cookies for group A do not allow access to group B images: `backend/crates/lambda-media/tests/media_cookie.rs::a_group_a_cookie_does_not_scope_to_a_group_b_url`.
+7. Image URLs are presigned for the processed bucket, sign only `host`, expire after `MEDIA_URL_TTL_SECONDS`, and are identical within one signing window (§4.2): unit tests in `backend/crates/media-urls/src/lib.rs`. Group isolation is the handlers' membership checks (each Lambda's non-member tests); no URL for another group's image is ever minted.
 8. The 10-image cap is enforced (11th `POST /uploads` returns `IMAGE_LIMIT_EXCEEDED`): `backend/crates/lambda-media/tests/uploads.rs::eleventh_response_upload_hits_the_image_cap`.
-9. `DELETE /uploads/{id}` removes the original, both processed variants and the row, and issues a CloudFront invalidation; a repeat `DELETE` is idempotent and returns 204 (§8.0): `backend/crates/lambda-media/tests/uploads.rs::delete_removes_the_objects_invalidates_the_cdn_and_deletes_the_row`, `::deleting_an_already_deleted_image_succeeds_and_touches_nothing`.
+9. `DELETE /uploads/{id}` removes the original, both processed variants and the row; a repeat `DELETE` is idempotent and returns 204; an S3 delete failure is a 500 that keeps the row (§8.0): `backend/crates/lambda-media/tests/uploads.rs::delete_removes_the_objects_and_deletes_the_row`, `::deleting_an_already_deleted_image_succeeds_and_touches_nothing`, `::a_failed_s3_delete_is_a_500_and_keeps_the_row`.
+10. The original is deleted once the row is `ready` (image and avatar), on decode failure as on oversize, and a failed original delete still leaves the row `ready` (§5.1): `backend/crates/lambda-image-process/tests/handler.rs::a_pending_image_becomes_ready_with_both_variants_uploaded`, `::an_avatar_happy_path_produces_a_256_square_webp`, `::garbage_bytes_are_marked_failed_with_decode_failed_and_the_original_is_deleted`, `::a_failed_original_delete_still_leaves_the_row_ready_and_returns_ok`.
 
 ---
 
@@ -318,10 +326,10 @@ Avatars are uploaded via a dedicated, simpler pipeline because they need to cros
 
 ### 11.1 Buckets and keys
 
-A pair of buckets, structured like §2 but with avatar-specific prefixes:
+Avatars have their own originals bucket, so `lambda-image-process` can tell an avatar upload from an image upload by its source bucket (§11.2). Their processed variant lives in the shared processed bucket (§2.2):
 
 - `opennewsletter-avatars-originals-{env}-{accountId}` — `uploads/{userId}/{avatarId}.{ext}`
-- `opennewsletter-avatars-processed-{env}-{accountId}` — `avatar/{avatarId}/display.webp`
+- `opennewsletter-media-processed-{env}-{accountId}` — `avatar/{avatarId}/display.webp`
 
 Constraints:
 - Allowed MIME: `image/jpeg`, `image/png`, `image/webp` (no GIF — animated avatars aren't worth the encoder complexity in v1).
@@ -333,17 +341,15 @@ Constraints:
 Same shape as the per-question pipeline:
 1. SPA calls `POST /avatars` → receives presigned PUT URL + `avatarId`.
 2. SPA PUTs binary directly to S3 (originals bucket).
-3. `lambda-image-process` (same Lambda) receives the S3 event and branches on the source **bucket** (media-originals → response image, avatars-originals → avatar; both buckets use the `uploads/` key prefix internally), produces the 256×256 WebP, updates the `AvatarMedia` row to `status=ready`.
+3. `lambda-image-process` (same Lambda) receives the S3 event and branches on the source **bucket** (media-originals → response image, avatars-originals → avatar; both buckets use the `uploads/` key prefix internally), produces the 256×256 WebP, updates the `AvatarMedia` row to `status=ready` and deletes the original (§5.1).
 4. SPA polls `GET /avatars/{avatarId}` until `ready`, then `PATCH /me` with `avatarMediaId`.
 
 ### 11.3 Serving
 
-A second CloudFront **behavior** (not a second distribution) on the same `cdn.{domain}` host:
-- Path pattern: `/avatar/*` → processed-avatars bucket via OAC.
-- **No trusted KeyGroup** — avatars are not signed. Tenant isolation is unnecessary: an avatar URL leak grants someone the ability to render a 256×256 image of a user, which is identical to seeing them in any group they share with the leaker.
-- The `avatarId` is a UUIDv7, unguessable in practice.
-- Cache-control: `public, max-age=86400, immutable`. Changing avatars produces a new `avatarId`, so cached entries never collide.
+The same way as images (§4): `avatarUrl` fields carry a presigned GET for `avatar/{avatarId}/display.webp`, signed by `media-urls` (`MediaUrls::avatar_url`). Avatars are signed too, even though a leaked avatar shows no more than any shared group does: signing costs nothing extra and means the bucket needs no public path at all.
+- Cached for 90 days (owner decision 2026-10-18): `Cache-Control: private, max-age=7776000, immutable`, and the service worker's `media-avatars` cache expires entries after 90 days. That's longer than images because an avatar's bytes never change under its key. Changing avatars produces a new `avatarId`, so a new path, and the new photo misses every cache.
+- The new path only reaches other views once their data refetches. After an avatar change (photo or colour), `useUpdateProfile` invalidates every query flagged `MEDIA_URLS_META` (§4.4), which includes every query that shows member avatars: `me`, the group's members, candidates and the newsletter. Other members' devices pick it up on their next refetch, within each query's `staleTime`.
 
 ### 11.4 Cleanup
 
-`DELETE /avatars/{id}`, avatar replacement (`PATCH /me` with a new `avatarMediaId`) and clearing (`PATCH /me` with `avatarMediaId: null`) delete the old avatar's original and processed objects, invalidate `/avatar/{avatarId}/display.webp`, and delete the `AvatarMedia` row — the same shared-helper mechanics as §8.0. The UI goes through a `ConfirmDialog` warning the delete is permanent ([`frontend.md` §7.6](frontend.md#76-settingspage)). No bucket versioning on the avatars buckets either, so there's no delete-marker fallback; the accepted residual copies are the same two as §8.0 (SW/browser image cache, prod PITR on the row).
+`DELETE /avatars/{id}`, avatar replacement (`PATCH /me` with a new `avatarMediaId`) and clearing (`PATCH /me` with `avatarMediaId: null`) delete the old avatar's original and processed objects and the `AvatarMedia` row — the same shared-helper mechanics as §8.0. The UI goes through a `ConfirmDialog` warning the delete is permanent ([`frontend.md` §7.6](frontend.md#76-settingspage)). No bucket versioning on the avatar originals or processed bucket either, so there's no delete-marker fallback; the accepted residual copies are the same two as §8.0 (SW/browser image cache, prod PITR on the row).

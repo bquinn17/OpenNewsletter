@@ -2,7 +2,7 @@ export type AppEnv = "dev" | "prod";
 
 type Env = {
   apiBaseUrl: string;
-  cdnBaseUrl: string;
+  mediaBaseUrl: string;
   cognitoUserPoolId: string;
   cognitoClientId: string;
   /**
@@ -47,7 +47,7 @@ export function buildEnv(raw: RawEnv): Env {
 
   return {
     apiBaseUrl: required(raw.VITE_API_BASE_URL, "VITE_API_BASE_URL"),
-    cdnBaseUrl: required(raw.VITE_CDN_BASE_URL, "VITE_CDN_BASE_URL"),
+    mediaBaseUrl: required(raw.VITE_MEDIA_BASE_URL, "VITE_MEDIA_BASE_URL"),
     cognitoUserPoolId: required(raw.VITE_COGNITO_USER_POOL_ID, "VITE_COGNITO_USER_POOL_ID"),
     cognitoClientId: required(raw.VITE_COGNITO_CLIENT_ID, "VITE_COGNITO_CLIENT_ID"),
     cognitoBootstrapClientId,

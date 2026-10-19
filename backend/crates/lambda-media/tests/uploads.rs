@@ -446,7 +446,7 @@ async fn patch_upload_rejects_an_overlong_caption() {
 }
 
 #[tokio::test]
-async fn delete_removes_the_objects_invalidates_the_cdn_and_deletes_the_row() {
+async fn delete_removes_the_objects_and_deletes_the_row() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gdelok", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
@@ -477,13 +477,6 @@ async fn delete_removes_the_objects_invalidates_the_cdn_and_deletes_the_row() {
             ),
         ]
     );
-    assert_eq!(
-        fakes.cdn.invalidations().await,
-        vec![vec![
-            "/img/gdelok/202606/q1/u1/img-1/display.webp".to_owned(),
-            "/img/gdelok/202606/q1/u1/img-1/thumb.webp".to_owned(),
-        ]]
-    );
     let err = handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
         .await
         .expect_err("the row is gone");
@@ -509,7 +502,6 @@ async fn deleting_an_already_deleted_image_succeeds_and_touches_nothing() {
         .expect("a repeat delete is a no-op success");
 
     assert_eq!(fakes.store.deleted().await.len(), 3);
-    assert_eq!(fakes.cdn.invalidations().await.len(), 1);
 }
 
 #[tokio::test]
@@ -527,28 +519,6 @@ async fn a_failed_s3_delete_is_a_500_and_keeps_the_row() {
     let err = handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
         .await
         .expect_err("an S3 failure fails the delete");
-
-    assert_eq!(err.code, ApiErrorCode::Internal);
-    handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
-        .await
-        .expect("the row is kept for a retry");
-}
-
-#[tokio::test]
-async fn a_failed_invalidation_is_a_500_and_keeps_the_row() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("gdelcdnfail", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    let image = common::seed_ready_image(&repo, "gdelcdnfail", "202606", "q1", "img-1", "u1").await;
-    let (state, fakes) = common::test_state_with_fakes(repo);
-    fakes.cdn.set_failing(true);
-    let group_id = GroupId::new("gdelcdnfail");
-    let cycle_id = CycleId::new("202606");
-    let caller = UserId::new("u1");
-
-    let err = handlers::delete_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
-        .await
-        .expect_err("an invalidation failure fails the delete");
 
     assert_eq!(err.code, ApiErrorCode::Internal);
     handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image.image_id)
@@ -759,19 +729,27 @@ async fn ready_image_exposes_display_and_thumb_urls() {
         .await
         .unwrap();
     // Flip the row to ready with display/thumb keys, as the image-process
-    // Lambda would, and confirm the URLs resolve through `CDN_BASE_URL`.
+    // Lambda would, and confirm the URLs presign against the processed bucket.
     mark_ready_with_keys(&state.repo, &group_id, &cycle_id, &image_id).await;
 
     let ready = handlers::get_upload(&state, &caller, &group_id, &cycle_id, &image_id)
         .await
         .unwrap();
-    assert_eq!(
-        ready.display_url,
-        Some("https://cdn.example.com/img/gurls/202606/q1/u1/img-1/display.webp".into())
+    let display_url = ready.display_url.expect("ready image has a display url");
+    let thumb_url = ready.thumb_url.expect("ready image has a thumb url");
+    assert!(
+        display_url.starts_with(&format!(
+            "https://{}.s3.us-east-1.amazonaws.com/img/gurls/202606/q1/u1/img-1/display.webp?",
+            common::MEDIA_PROCESSED
+        )),
+        "{display_url}"
     );
-    assert_eq!(
-        ready.thumb_url,
-        Some("https://cdn.example.com/img/gurls/202606/q1/u1/img-1/thumb.webp".into())
+    assert!(
+        thumb_url.starts_with(&format!(
+            "https://{}.s3.us-east-1.amazonaws.com/img/gurls/202606/q1/u1/img-1/thumb.webp?",
+            common::MEDIA_PROCESSED
+        )),
+        "{thumb_url}"
     );
 }
 
@@ -781,26 +759,22 @@ async fn mark_ready_with_keys(
     cycle_id: &CycleId,
     image_id: &ImageId,
 ) {
-    use aws_sdk_dynamodb::types::AttributeValue;
-    use persistence::keys::{attr, image_pk, image_sk};
+    use persistence::media_status::{mark_image_ready, ImageReady, UpdateOutcome};
 
-    repo.client
-        .update_item()
-        .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
-        .key(attr::SK, AttributeValue::S(image_sk(image_id)))
-        .update_expression("SET #status = :ready, display_key = :dk, thumb_key = :tk")
-        .expression_attribute_names("#status", "status")
-        .expression_attribute_values(":ready", AttributeValue::S("ready".into()))
-        .expression_attribute_values(
-            ":dk",
-            AttributeValue::S("img/gurls/202606/q1/u1/img-1/display.webp".into()),
-        )
-        .expression_attribute_values(
-            ":tk",
-            AttributeValue::S("img/gurls/202606/q1/u1/img-1/thumb.webp".into()),
-        )
-        .send()
-        .await
-        .unwrap();
+    let outcome = mark_image_ready(
+        repo,
+        &ImageReady {
+            group_id,
+            cycle_id,
+            image_id,
+            width: 1200,
+            height: 800,
+            display_key: "img/gurls/202606/q1/u1/img-1/display.webp",
+            thumb_key: "img/gurls/202606/q1/u1/img-1/thumb.webp",
+            processed_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, UpdateOutcome::Updated);
 }

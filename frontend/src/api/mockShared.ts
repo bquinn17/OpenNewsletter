@@ -12,7 +12,7 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export const CALLER_ID = "u_quinn";
 
 // 1x1 transparent PNG, duplicated from `mockTransport.ts`'s own copy (not
-// exported there) — stands in for a real CDN asset so published/draft images
+// exported there) — stands in for a real presigned S3 asset so published/draft images
 // render without any network request in mock mode.
 export const MOCK_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";

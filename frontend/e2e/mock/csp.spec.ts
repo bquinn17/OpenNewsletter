@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
  * (`docs/design/frontend.md` §12.1, decided M13).
  */
 test.describe("Content-Security-Policy meta tag", () => {
-  test("is present exactly once, with the CDN origin in img-src and a locked-down script-src", async ({
+  test("is present exactly once, with the media origin in img-src, the upload origin in connect-src, and a locked-down script-src", async ({
     page,
   }) => {
     await page.goto("/");
@@ -31,8 +31,10 @@ test.describe("Content-Security-Policy meta tag", () => {
         }),
     );
 
-    // `.env.e2e`'s VITE_CDN_BASE_URL, reduced to its origin.
-    expect(directives.get("img-src")).toContain("https://cdn.e2e.opennewsletter.test");
+    // `.env.e2e`'s VITE_MEDIA_BASE_URL, reduced to its origin.
+    expect(directives.get("img-src")).toContain("https://media.e2e.opennewsletter.test");
+    // `.env.e2e`'s VITE_UPLOAD_ORIGINS, reduced to its origin — the presigned upload PUT target.
+    expect(directives.get("connect-src")).toContain("https://uploads.e2e.opennewsletter.test");
     expect(directives.get("script-src")).toEqual(["'self'"]);
   });
 });
