@@ -283,15 +283,6 @@ function handlePatchUpload(imageId: string, body: unknown): S["ImageMediaRespons
   return { ...row };
 }
 
-function handleGetMediaCookie(groupId: string): S["MediaCookieResponse"] {
-  return {
-    policy: `mock-policy-${groupId}`,
-    signature: `mock-signature-${groupId}`,
-    keyPairId: "MOCKKEYPAIR",
-    expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-  };
-}
-
 function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
   // Trusted internal shape — the only caller is our own typed `api.media.createAvatar`.
   const request = body as S["CreateAvatarRequest"];
@@ -390,11 +381,6 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
     segments[2] === "complete"
   ) {
     return handleGetUpload(decodeURIComponent(segments[1]), false);
-  }
-  if (method === "GET" && rawPath === "/media-cookie") {
-    const groupId = query.get("groupId");
-    if (!groupId) fail(422, "VALIDATION_FAILED", "groupId is required");
-    return handleGetMediaCookie(groupId);
   }
   if (method === "POST" && rawPath === "/avatars") return handleCreateAvatar(body);
   if (method === "GET" && segments.length === 2 && segments[0] === "avatars") {

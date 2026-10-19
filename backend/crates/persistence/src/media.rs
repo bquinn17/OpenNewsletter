@@ -220,8 +220,7 @@ pub async fn set_image_caption(
 }
 
 /// Deletes an `ImageMedia` row (`docs/design/api.md` §9.4). Called by the
-/// `media-delete` helper only after the image's S3 objects and CDN copies are
-/// gone. Deleting an absent row succeeds, so a retry is harmless.
+/// `media-delete` helper only after the image's S3 objects are gone. Deleting an absent row succeeds, so a retry is harmless.
 ///
 /// Conditioned on the row still having the `status` the caller read. The
 /// caller chose which processed objects to delete from that read, so if

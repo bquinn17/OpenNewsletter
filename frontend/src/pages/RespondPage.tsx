@@ -15,6 +15,7 @@ import { cacheSavedResponse, useResponseEditor } from "../components/responses/u
 import { MarkdownBody } from "../utils/markdown";
 import { useToasts } from "../state/toast";
 import { formatInZone, shortCountdown } from "../utils/dates";
+import { MEDIA_URLS_META } from "../utils/media";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -57,7 +58,7 @@ export function RespondPage() {
 
 function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader title="Loading…" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="space-y-3 px-5 pt-6">
         <div className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
@@ -78,7 +79,7 @@ function ErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader title="Question" eyebrow="Couldn't load" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">😬</div>
@@ -96,7 +97,7 @@ function ErrorState({
 
 function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader title="Question" eyebrow="Not found" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🔍</div>
@@ -135,6 +136,7 @@ function imagesQuery(groupId: string, cycleId: string, ids: string[]) {
     },
     enabled: ids.length > 0,
     staleTime: Infinity,
+    meta: MEDIA_URLS_META,
   };
 }
 
@@ -263,7 +265,7 @@ function QuestionBody({
   }
 
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader
         eyebrow={`Question · ${question.kind === "poll" ? "poll" : "question"}`}
         title={question.prompt}
@@ -306,12 +308,7 @@ function QuestionBody({
         isPublished && !showEditor ? (
           <div className="mt-4 px-5">
             <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
-              <MarkdownBody
-                body={editor.body}
-                images={viewImages}
-                groupId={groupId}
-                className="mt-1"
-              />
+              <MarkdownBody body={editor.body} images={viewImages} className="mt-1" />
               <button
                 type="button"
                 onClick={() => setShowEditor(true)}

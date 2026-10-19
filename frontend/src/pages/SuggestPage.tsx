@@ -9,7 +9,7 @@ export function SuggestPage() {
   const pushToast = useToasts((s) => s.push);
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader
         eyebrow="For next month"
         title="Suggest a question"

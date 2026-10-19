@@ -40,7 +40,6 @@ async function rawFetch<T>(
   body: unknown,
   idToken: string | null,
   signal: AbortSignal | undefined,
-  credentials: RequestCredentials | undefined,
 ): Promise<T> {
   const headers: Record<string, string> = { "x-correlation-id": newCorrelationId() };
   if (idToken) headers.Authorization = `Bearer ${idToken}`;
@@ -53,7 +52,6 @@ async function rawFetch<T>(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
-      credentials,
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
@@ -76,7 +74,6 @@ export async function apiFetch<T>(
     method?: Method;
     body?: unknown;
     signal?: AbortSignal;
-    credentials?: RequestCredentials;
   },
 ): Promise<T> {
   const method = init?.method ?? "GET";
@@ -89,14 +86,7 @@ export async function apiFetch<T>(
   const user = manager ? await manager.getUser() : null;
 
   try {
-    return await rawFetch<T>(
-      path,
-      method,
-      init?.body,
-      user?.id_token ?? null,
-      init?.signal,
-      init?.credentials,
-    );
+    return await rawFetch<T>(path, method, init?.body, user?.id_token ?? null, init?.signal);
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 401 || !manager) throw error;
 
@@ -105,14 +95,7 @@ export async function apiFetch<T>(
       await manager.removeUser();
       throw error;
     }
-    return await rawFetch<T>(
-      path,
-      method,
-      init?.body,
-      renewed.id_token,
-      init?.signal,
-      init?.credentials,
-    );
+    return await rawFetch<T>(path, method, init?.body, renewed.id_token, init?.signal);
   }
 }
 
@@ -283,11 +266,6 @@ export const api = {
     deleteUpload: (imageId: string, groupId: string, cycleId: string): Promise<void> =>
       apiFetch(`/uploads/${encodeURIComponent(imageId)}?${mediaQuery(groupId, cycleId)}`, {
         method: "DELETE",
-      }),
-
-    getMediaCookie: (groupId: string): Promise<S["MediaCookieResponse"]> =>
-      apiFetch(`/media-cookie?groupId=${encodeURIComponent(groupId)}`, {
-        credentials: "include",
       }),
 
     createAvatar: (body: S["CreateAvatarRequest"]): Promise<S["CreateAvatarResponse"]> =>

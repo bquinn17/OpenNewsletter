@@ -1,14 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ApiError } from "../../api/client";
 import { useAddComment, useDeleteComment, useEditComment } from "../../api/mutations";
 import { useConfig, useGroup, useMembership } from "../../api/queries";
 import type { components } from "../../types/api";
 import { avatarColorClass } from "../../utils/avatarColor";
 import { formatInZone, formatRelative } from "../../utils/dates";
-import { ensureCookie } from "../../utils/media";
+import { thumbSize } from "../../utils/media";
 import { MarkdownBody } from "../../utils/markdown";
 import { Avatar } from "../ui/Avatar";
-import { CdnImage } from "../ui/CdnImage";
+import { MediaImage } from "../ui/MediaImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ImageUploader, type UploaderImage } from "../responses/ImageUploader";
 import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
@@ -49,10 +49,6 @@ export function CommentList({
   const { data: group } = useGroup(groupId);
   const isAdmin = membership?.role === "admin";
   const callerId = config?.userId ?? null;
-
-  useEffect(() => {
-    if (comments.some((c) => c.image)) void ensureCookie(groupId);
-  }, [comments, groupId]);
 
   const visible = expanded ? comments : comments.slice(-COLLAPSED_COUNT);
   const hiddenCount = comments.length - visible.length;
@@ -259,10 +255,10 @@ function CommentRow({
               />
               {comment.image && !imageRemoved ? (
                 <div className="mt-2 flex items-center gap-2">
-                  <CdnImage
+                  <MediaImage
                     src={comment.image.thumbUrl}
-                    groupId={groupId}
                     alt=""
+                    {...thumbSize(comment.image.width, comment.image.height)}
                     className="h-16 w-16 rounded-xl object-cover"
                   />
                   <button
@@ -315,7 +311,6 @@ function CommentRow({
               <MarkdownBody
                 body={comment.body}
                 images={[]}
-                groupId={groupId}
                 allowImages={false}
                 className="mt-0.5"
               />
@@ -326,10 +321,10 @@ function CommentRow({
                   rel="noopener noreferrer"
                   className="mt-1.5 block"
                 >
-                  <CdnImage
+                  <MediaImage
                     src={comment.image.thumbUrl}
-                    groupId={groupId}
                     alt={comment.image.caption ?? ""}
+                    {...thumbSize(comment.image.width, comment.image.height)}
                     className="max-h-48 rounded-xl object-cover"
                   />
                 </a>

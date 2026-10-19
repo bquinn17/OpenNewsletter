@@ -53,11 +53,6 @@ vi.mock("../responses/ImageUploader", async () => {
   };
 });
 
-vi.mock("../../utils/media", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../utils/media")>();
-  return { ...actual, ensureCookie: vi.fn().mockResolvedValue(undefined) };
-});
-
 const signedIn: AuthValue = {
   status: "authenticated",
   user: { sub: "sub-1", email: "quinn@example.com", name: "Quinn" },
@@ -250,8 +245,8 @@ describe("CommentList", () => {
       body: "",
       image: {
         imageId: "img-old",
-        thumbUrl: "https://cdn.example.com/thumb.webp",
-        displayUrl: "https://cdn.example.com/display.webp",
+        thumbUrl: "https://media.example.com/thumb.webp",
+        displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
         caption: null,
@@ -292,8 +287,8 @@ describe("CommentList", () => {
       body: "Text",
       image: {
         imageId: "img-old",
-        thumbUrl: "https://cdn.example.com/thumb.webp",
-        displayUrl: "https://cdn.example.com/display.webp",
+        thumbUrl: "https://media.example.com/thumb.webp",
+        displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
         caption: null,
@@ -327,8 +322,8 @@ describe("CommentList", () => {
       body: "Text",
       image: {
         imageId: "img-old",
-        thumbUrl: "https://cdn.example.com/thumb.webp",
-        displayUrl: "https://cdn.example.com/display.webp",
+        thumbUrl: "https://media.example.com/thumb.webp",
+        displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
         caption: null,
@@ -358,8 +353,8 @@ describe("CommentList", () => {
       body: "Old",
       image: {
         imageId: "img-old",
-        thumbUrl: "https://cdn.example.com/thumb.webp",
-        displayUrl: "https://cdn.example.com/display.webp",
+        thumbUrl: "https://media.example.com/thumb.webp",
+        displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
         caption: null,
@@ -392,8 +387,8 @@ describe("CommentList", () => {
       body: "With a photo",
       image: {
         imageId: "img-old",
-        thumbUrl: "https://cdn.example.com/thumb.webp",
-        displayUrl: "https://cdn.example.com/display.webp",
+        thumbUrl: "https://media.example.com/thumb.webp",
+        displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
         caption: null,

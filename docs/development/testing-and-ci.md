@@ -63,8 +63,8 @@ cargo test -p lambda-questions --test lifecycle   # one suite
 - Cognito has two app clients in `dev` (`frontend` + `admin-bootstrap`) and one in `prod`.
 - Each Lambda role's IAM policy matches the documented least-privilege scope ([`infrastructure.md` §10](../design/infrastructure.md#10-iam-least-privilege-summary)).
 - Every API route has the JWT authorizer: there are zero public routes.
-- DynamoDB keys, TTL attribute and both GSIs; CloudFront KeyGroup attached; S3 Block Public Access fully on.
-- Both CloudFront signing public keys are distinct RSA-2048 keys (`test_cf_signing_keys.py`).
+- DynamoDB keys, TTL attribute and both GSIs; S3 Block Public Access fully on for all three media buckets ([`decisions.md`](../decisions.md#presigned-s3-media)).
+- Each media-signing Lambda's `s3:GetObject` grant is scoped to the right prefix (`img/*`, `avatar/*`, or both) on the processed bucket, never the whole bucket ([`infrastructure.md` §6.2](../design/infrastructure.md#62-lambda-functions-request-handlers)).
 
 ---
 
@@ -194,7 +194,7 @@ Not enforced in CI, and only partly measured. `frontend-ci.yml` runs `npm run te
 
 ## 10. Fixtures
 
-`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code. `lambda-media` loads a throwaway signing key from `tests/fixtures/test_signing_key.pem` (explicitly un-ignored in `.gitignore`). Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
+`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code. Media-URL signing (`media-urls`) needs no fixture key — it presigns with whatever AWS credentials the test/DynamoDB-Local harness already has, the same as any other S3 call. Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
 
 ---
 

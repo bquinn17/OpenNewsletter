@@ -42,7 +42,7 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
     )
     .await;
 
-    let (state, store, cdn) = common::test_state_with_fakes(repo);
+    let (state, store) = common::test_state_with_fakes(repo);
     let group_id = GroupId::new("gcmt1");
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
@@ -67,10 +67,10 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
     assert_eq!(created.body, "Nice answer!");
     let image = created.image.expect("image hydrated");
     assert_eq!(image.image_id, image_id);
-    assert_eq!(
-        image.display_url,
-        "https://cdn.example.com/processed/img-1/display.webp"
-    );
+    assert!(image.display_url.starts_with(&format!(
+        "https://{}.s3.us-east-1.amazonaws.com/processed/img-1/display.webp?",
+        common::MEDIA_PROCESSED
+    )));
     assert!(created.deleted_at.is_none());
     assert!(created.edited_at.is_none());
 
@@ -130,7 +130,7 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
     assert_eq!(placeholder.body, "");
     assert!(placeholder.image.is_none());
 
-    // The released image is permanently deleted: objects, CDN copies, row.
+    // The released image is permanently deleted: objects, then row.
     assert_eq!(
         store.deleted().await,
         vec![
@@ -147,13 +147,6 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
                 "processed/img-1/thumb.webp".to_owned()
             ),
         ]
-    );
-    assert_eq!(
-        cdn.invalidations().await,
-        vec![vec![
-            "/processed/img-1/display.webp".to_owned(),
-            "/processed/img-1/thumb.webp".to_owned(),
-        ]]
     );
     assert_eq!(
         common::find_image(&state.repo, "gcmt1", "202606", &image_id).await,
@@ -427,7 +420,7 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
     )
     .await;
 
-    let (state, store, _cdn) = common::test_state_with_fakes(repo);
+    let (state, store) = common::test_state_with_fakes(repo);
     let caller = domain::UserId::new("u1");
     let group_id = GroupId::new("gcmt6");
     let cycle_id = CycleId::new("202606");

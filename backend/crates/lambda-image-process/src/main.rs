@@ -21,8 +21,6 @@ async fn main() -> Result<(), Error> {
     let avatars_originals = std::env::var("AVATARS_ORIGINALS_BUCKET")
         .map_err(|_| "AVATARS_ORIGINALS_BUCKET is not set")?;
     let processed = std::env::var("PROCESSED_BUCKET").map_err(|_| "PROCESSED_BUCKET is not set")?;
-    let avatars_processed = std::env::var("AVATARS_PROCESSED_BUCKET")
-        .map_err(|_| "AVATARS_PROCESSED_BUCKET is not set")?;
 
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
@@ -31,7 +29,6 @@ async fn main() -> Result<(), Error> {
             media_originals,
             avatars_originals,
             processed,
-            avatars_processed,
         },
     });
 

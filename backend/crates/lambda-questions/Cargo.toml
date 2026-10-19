@@ -16,6 +16,7 @@ path = "src/main.rs"
 domain = { path = "../domain" }
 persistence = { path = "../persistence" }
 shared = { path = "../shared" }
+media-urls = { path = "../media-urls" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 chrono.workspace = true
@@ -33,6 +34,7 @@ chrono-tz.workspace = true
 pretty_assertions.workspace = true
 cycle_tick = { path = "../lambda-cycle-tick", package = "lambda-cycle-tick" }
 persistence = { path = "../persistence", features = ["test-utils"] }
+media-urls = { path = "../media-urls", features = ["test-utils"] }
 testcontainers.workspace = true
 testcontainers-modules.workspace = true
 serde_dynamo.workspace = true

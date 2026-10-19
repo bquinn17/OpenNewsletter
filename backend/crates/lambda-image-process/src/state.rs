@@ -4,18 +4,16 @@ use crate::storage::ObjectStore;
 use persistence::Repo;
 use std::sync::Arc;
 
-/// The four buckets this Lambda is wired to
-/// (`docs/design/infrastructure.md` §5.3). `media_originals`/
-/// `avatars_originals` are read from the env even though CDK's §5.3 listing
-/// doesn't name them, because branching on the triggering bucket's name is
-/// how a single Lambda tells a response/comment image apart from an avatar
-/// (`docs/design/media.md` §11.2) — see the README for the contradiction
-/// this surfaced.
+/// The three buckets this Lambda is wired to
+/// (`docs/design/infrastructure.md` §5.3): two originals buckets (so a
+/// response/comment image's original can be told apart from an avatar's —
+/// `docs/design/media.md` §11.2, see the README for the contradiction this
+/// surfaced) and the one processed bucket both write their variants into
+/// (they need the same lifecycle and CORS rules, so one bucket serves both).
 pub struct Buckets {
     pub media_originals: String,
     pub avatars_originals: String,
     pub processed: String,
-    pub avatars_processed: String,
 }
 
 pub struct AppState {

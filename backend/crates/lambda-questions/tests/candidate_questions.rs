@@ -21,7 +21,7 @@ use ::questions::state::AppState;
 fn state(repo: persistence::Repo) -> AppState {
     AppState {
         repo,
-        cdn_base_url: String::new(),
+        media_urls: media_urls::MediaUrls::for_tests("test-processed"),
     }
 }
 

@@ -1,10 +1,10 @@
-import { useEffect, useMemo } from "react";
+import { createContext, useContext, useMemo, type ComponentProps } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema, type Options as Schema } from "rehype-sanitize";
 import clsx from "clsx";
-import { CdnImage } from "../components/ui/CdnImage";
-import { ensureCookie } from "./media";
+import { MediaImage } from "../components/ui/MediaImage";
+import { thumbSize } from "./media";
 
 /**
  * Allows `image:{imageId}` tokens (`docs/design/media.md` §7) through the
@@ -52,12 +52,13 @@ export type MarkdownImage = {
   imageId: string;
   displayUrl: string | null;
   thumbUrl: string | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 type Props = {
   body: string;
   images: MarkdownImage[];
-  groupId: string;
   className?: string;
   /**
    * When `false` (comments — `docs/design/engagement.md` §1.3/§5), `image:{id}` tokens
@@ -66,72 +67,108 @@ type Props = {
    * `image:` token path.
    */
   allowImages?: boolean;
+  /**
+   * Per-image refresh for an expired presigned URL, keyed by `imageId` — passed down to each
+   * rendered `MediaImage`'s `onExpired`. Omit it when `images` comes from a react-query cache
+   * (the default, global `refreshMediaUrls`, already reaches it); `ResponseEditor`'s preview
+   * passes one because its images live in the uploader's local state instead.
+   */
+  onImageExpired?: (imageId: string) => Promise<unknown> | void;
 };
+
+type ImageRendering = {
+  byId: Map<string, MarkdownImage>;
+  allowImages: boolean;
+  onImageExpired?: (imageId: string) => Promise<unknown> | void;
+};
+
+const ImageRenderingContext = createContext<ImageRendering>({ byId: new Map(), allowImages: true });
+
+function MarkdownLink({ href, children }: ComponentProps<"a">) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-grape underline">
+      {children}
+    </a>
+  );
+}
+
+function MarkdownImg({ src, alt }: ComponentProps<"img">) {
+  const { byId, allowImages, onImageExpired } = useContext(ImageRenderingContext);
+  if (!src) return null;
+  // Only uploaded images render inline. A remote image would be blocked
+  // by the CSP's `img-src` (`docs/design/frontend.md` §12.1) and would leak readers' IPs to
+  // its host, so it degrades to a link.
+  if (!src.startsWith("image:")) {
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer" className="text-grape underline">
+        {alt || src}
+      </a>
+    );
+  }
+  if (!allowImages) return null;
+  const image = byId.get(src.slice("image:".length));
+  if (!image) return null;
+  if (!image.displayUrl) {
+    return (
+      <span
+        role="img"
+        aria-label={alt || "Image uploading"}
+        className="ph-img inline-block h-40 w-full rounded-xl align-top"
+      />
+    );
+  }
+  return (
+    <MediaImage
+      src={image.thumbUrl ?? image.displayUrl}
+      alt={alt ?? ""}
+      {...thumbSize(image.width, image.height)}
+      className="rounded-xl"
+      onExpired={onImageExpired ? () => onImageExpired(image.imageId) : undefined}
+    />
+  );
+}
+
+/**
+ * Module-level, so `ReactMarkdown` gets the same component types on every render. Rebuilt per
+ * render, `img` would be a new type each time and React would remount every `MediaImage`,
+ * wiping its retry state (`docs/design/media.md` §4.4). The per-render data reaches
+ * `MarkdownImg` through `ImageRenderingContext` instead.
+ */
+const components: Components = { a: MarkdownLink, img: MarkdownImg };
 
 /**
  * Renders a response/answer body as sanitized markdown, resolving
- * `image:{id}` tokens against `images` into `<CdnImage>`s. An id with no
+ * `image:{id}` tokens against `images` into `<MediaImage>`s. An id with no
  * match (not yet uploaded, or removed) renders nothing.
  */
-export function MarkdownBody({ body, images, groupId, className, allowImages = true }: Props) {
-  const byId = useMemo(() => new Map(images.map((image) => [image.imageId, image])), [images]);
-  const hasReadyImage = images.some((image) => image.displayUrl);
-
-  useEffect(() => {
-    if (hasReadyImage) void ensureCookie(groupId);
-  }, [groupId, hasReadyImage]);
-
-  const components: Components = {
-    a: ({ href, children }) => (
-      <a href={href} target="_blank" rel="noopener noreferrer" className="text-grape underline">
-        {children}
-      </a>
-    ),
-    img: ({ src, alt }) => {
-      if (!src) return null;
-      // Only uploaded images render inline. A remote image would be blocked
-      // by the CSP's `img-src` (`docs/design/frontend.md` §12.1) and would leak readers' IPs to
-      // its host, so it degrades to a link.
-      if (!src.startsWith("image:")) {
-        return (
-          <a href={src} target="_blank" rel="noopener noreferrer" className="text-grape underline">
-            {alt || src}
-          </a>
-        );
-      }
-      if (!allowImages) return null;
-      const image = byId.get(src.slice("image:".length));
-      if (!image) return null;
-      if (!image.displayUrl) {
-        return (
-          <span
-            role="img"
-            aria-label={alt || "Image uploading"}
-            className="ph-img inline-block h-40 w-full rounded-xl align-top"
-          />
-        );
-      }
-      return (
-        <CdnImage
-          src={image.thumbUrl ?? image.displayUrl}
-          groupId={groupId}
-          alt={alt ?? ""}
-          className="rounded-xl"
-        />
-      );
-    },
-  };
+export function MarkdownBody({
+  body,
+  images,
+  className,
+  allowImages = true,
+  onImageExpired,
+}: Props) {
+  const rendering = useMemo(
+    () => ({
+      byId: new Map(images.map((image) => [image.imageId, image])),
+      allowImages,
+      onImageExpired,
+    }),
+    [images, allowImages, onImageExpired],
+  );
 
   return (
     <div className={clsx("prose prose-sm max-w-none text-[15px] leading-relaxed", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeSanitize, markdownSanitizeSchema]]}
-        urlTransform={urlTransform}
-        components={components}
-      >
-        {body}
-      </ReactMarkdown>
+      <ImageRenderingContext.Provider value={rendering}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[[rehypeSanitize, markdownSanitizeSchema]]}
+          urlTransform={urlTransform}
+          components={components}
+        >
+          {body}
+        </ReactMarkdown>
+      </ImageRenderingContext.Provider>
     </div>
   );
 }

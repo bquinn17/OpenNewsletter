@@ -54,7 +54,7 @@ export function GroupAdminPage() {
 
   if (group.isError || !group.data) {
     return (
-      <div className="bg-cream pb-12">
+      <div className="pb-12">
         <PageHeader eyebrow="Admin" title="Couldn't load" back="/settings" />
         <div className="px-5 pt-8 text-center">
           <div className="mb-3 text-5xl">😬</div>
@@ -71,7 +71,7 @@ export function GroupAdminPage() {
   }
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader eyebrow="Admin" title={group.data.name} back="/settings" />
       <div
         role="tablist"

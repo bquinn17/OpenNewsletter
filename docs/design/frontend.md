@@ -58,12 +58,12 @@ frontend/
 │   │   └── inviteStash.ts            # sessionStorage fallback for the invite code
 │   ├── routes/                       # RequireMembership, RequireGroupAdmin, useConfirmedAccess
 │   ├── pwa/
-│   │   ├── sw.ts                     # injectManifest service worker (precache, CDN image cache, push)
+│   │   ├── sw.ts                     # injectManifest service worker (precache, media image cache, push)
 │   │   ├── swHelpers.ts              # pure push/notificationclick helpers
 │   │   └── pushSetup.ts              # subscribe + send to backend
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
 │   ├── components/
-│   │   ├── ui/                       # Avatar, Button, CdnImage, ConfirmDialog, Pill, Spinner, Toast, useDismissableMenu
+│   │   ├── ui/                       # Avatar, Button, MediaImage, ConfirmDialog, Pill, Spinner, Toast, useDismissableMenu
 │   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader
 │   │   ├── home/                     # GroupEditions, EditionRow
 │   │   ├── join/JoinForm.tsx
@@ -188,8 +188,8 @@ Fonts: Plus Jakarta Sans and Fraunces from Google Fonts (§12.1). Body 16px, lin
   description: "Monthly newsletters with friends",
   start_url: "/",
   display: "standalone",
-  background_color: "#FBF6EE",
-  theme_color: "#FBF6EE",
+  background_color: "#E4EAFF",
+  theme_color: "#E4EAFF",
   icons: [
     { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
     { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
@@ -204,7 +204,7 @@ Workbox config (via plugin):
 
 - **Precache**: Vite-built static assets (JS/CSS/HTML).
 - **Runtime caches**:
-  - CDN images (`https://cdn.opennewsletter.example.com/img/*` and `/avatar/*`): `CacheFirst` with `expiration: { maxEntries: 200, maxAgeSeconds: 30 days }`. The signed-cookie URL has the same path regardless of viewer, which makes caching effective. Variant by `Vary: Cookie` not enabled (cookies are auth, not content) so all requests for the same path share one entry. (In dev, image URLs carry signed query params instead of cookies — [`media.md` §4.5](media.md#45-dev-environments-signed-query-params-instead-of-cookies) — so the cache key strips `Policy`/`Signature`/`Key-Pair-Id`/`Expires` (`swHelpers.stripMediaAuthParams`), or entries would churn every hourly re-sign.) **CORS mode:** `CdnImage` and `Avatar` render `crossorigin="use-credentials"`, and CloudFront answers with credentialed CORS for the SPA's origins ([`infrastructure.md` §5.2](infrastructure.md#52-cloudfront-distribution-mediapersistentstack)). A plain cross-origin `<img>` gives the service worker an opaque status-0 response, which `CacheFirst` won't store, and which would pin a 403 if it did. In CORS mode it sees the real status, so only 200s are cached. Every CDN `<img>` must use the same mode: a copy cached in one mode fails a request made in the other.
+  - Media images, cache name `media-images`: matches the media origin's `/img/*` paths ([`media.md` §4.4](media.md#44-spa-usage)). `CacheFirst`, 200-only, `expiration: { maxEntries: 200, maxAgeSeconds: 30 days }`. Avatars (`/avatar/*`) get the same route in their own cache, `media-avatars`, with `maxAgeSeconds: 90 days` ([`media.md` §11.3](media.md#113-serving)). The origin is the processed S3 bucket (`VITE_MEDIA_BASE_URL`, §13), and the URL is a presigned GET whose query string changes every signing window, so the cache key is origin + path with the query stripped (`swHelpers.mediaCacheKey`), or entries would churn on every re-sign even though the underlying object hasn't changed. **CORS mode:** `MediaImage` and `Avatar` render `crossorigin="anonymous"` (the signature lives in the URL, so no credentials are needed), and the processed bucket answers with plain (non-credentialed) CORS for the SPA's origins ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)). A plain cross-origin `<img>` gives the service worker an opaque status-0 response, which `CacheFirst` won't store, and which would pin a 403 if it did. In CORS mode it sees the real status, so only 200s are cached. Every media `<img>` must use the same mode: a copy cached in one mode fails a request made in the other.
   - **API GETs are not cached.** Authenticated API responses in Cache Storage would be keyed by URL, not by user, and would outlive logout — a second user on a shared device could be served the first user's data offline. The SW does not touch API requests at all (so `/config` and tokens are network-only by construction). Revisit with per-user cache names cleared on logout if offline reads are wanted.
 - **Update activation:** the SW activates a new version promptly rather than waiting for every tab to close, because backend and frontend promote together from one SHA ([D6](../decisions.md#d6)) and an installed PWA needs to pick up the matching frontend quickly. `VitePWA` runs with `registerType: "autoUpdate"` (or explicit `skipWaiting()` + `clients.claim()` in `sw.ts`), and `registerSW({ immediate: true })` in `main.tsx` (§14.2) checks for updates on load. A client picks up the new version on its next load/navigation, not mid-session. (As built, §14.2 below.)
 
@@ -311,7 +311,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - Banner showing time-until-deadline (group TZ).
 - After publish, page becomes read-only with an "Edit" toggle that reopens editor (until cycle close).
 - Notes:
-  - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID, then calls `DELETE /uploads/{id}` behind a permanent-delete `ConfirmDialog` ("This permanently deletes the image. It can't be recovered." — [`media.md` §4.1](media.md#41-distribution-config)/§8.0/§9/§11.4), after the draft without it saves.
+  - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID, then calls `DELETE /uploads/{id}` behind a permanent-delete `ConfirmDialog` ("This permanently deletes the image. It can't be recovered." — [`media.md` §8.0](media.md#80-explicit-deletion)/§9/§11.4), after the draft without it saves.
   - Publish is disabled while the body is blank with no images, or while an upload is in flight.
   - Editing a published answer autosaves with `publish: false` (publishing is sticky server-side), and the editor says so.
   - A poll selection change on a published poll answer saves immediately.
@@ -408,7 +408,7 @@ If authenticated: call `POST /invites/redeem` with the code (once, even under St
 
 ### 8.4 Image uploads in editor
 
-See [`media.md` §3](media.md#3-upload-flow-browser--s3) for the upload protocol. The editor inserts an image-token into the markdown body (`![](image:01HX...)`) and tracks the imageId in `imageMediaIds`. The renderer (`utils/markdown.tsx`, `MarkdownBody`) renders these tokens as `CdnImage`s once the image is `ready` ([`media.md` §7](media.md#7-image-references-in-markdown)). Removing an image also calls `DELETE /uploads/{id}` (real deletion, [`media.md` §8.0](media.md#80-explicit-deletion)) behind a `ConfirmDialog`, after the draft without it saves (§7.3 above).
+See [`media.md` §3](media.md#3-upload-flow-browser--s3) for the upload protocol. The editor inserts an image-token into the markdown body (`![](image:01HX...)`) and tracks the imageId in `imageMediaIds`. The renderer (`utils/markdown.tsx`, `MarkdownBody`) renders these tokens as `MediaImage`s once the image is `ready` ([`media.md` §7](media.md#7-image-references-in-markdown)). Removing an image also calls `DELETE /uploads/{id}` (real deletion, [`media.md` §8.0](media.md#80-explicit-deletion)) behind a `ConfirmDialog`, after the draft without it saves (§7.3 above).
 
 ---
 
@@ -473,8 +473,8 @@ Policy shape (origins substituted at build time):
   default-src 'self';
   script-src 'self';
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-  img-src 'self' data: blob: {cdnBaseUrl};
-  connect-src 'self' {apiBaseUrl} {cdnBaseUrl}
+  img-src 'self' data: blob: {mediaBaseUrl};
+  connect-src 'self' {apiBaseUrl} {uploadOrigins}
     https://cognito-idp.us-east-1.amazonaws.com https://{cognitoHostedDomain};
   font-src 'self' https://fonts.gstatic.com;
   base-uri 'self';
@@ -486,10 +486,11 @@ Policy shape (origins substituted at build time):
 Notes:
 - `style-src 'unsafe-inline'` is required by Vite-injected styles; accepted trade-off.
 - `blob:`/`data:` in `img-src` cover local previews of not-yet-uploaded images.
+- `{mediaBaseUrl}` is the one processed-bucket origin every presigned image/avatar URL resolves to ([`media.md` §4.4](media.md#44-spa-usage)). `{uploadOrigins}` in `connect-src` is `VITE_UPLOAD_ORIGINS` (§13) — the two originals buckets' endpoints that `uploadToS3` `PUT`s against directly, space-separated.
 - `worker-src`/`manifest-src 'self'` cover the service worker and the PWA manifest.
 - Google Fonts origins (`fonts.googleapis.com`/`fonts.gstatic.com`) are needed because `index.html` loads Plus Jakarta Sans and Fraunces from Google. Self-hosting would drop the third-party origins and work offline, at the cost of adding font packages and `woff2` globs to the precache — not done.
 - `frame-ancestors` cannot be expressed in a meta CSP — clickjacking protection is out of scope on a GitHub Pages host.
-- A Playwright "no CSP violations" test ([`testing-and-ci.md`](../development/testing-and-ci.md)) asserts the meta tag is present and that `img-src` includes the CDN origin.
+- A Playwright "no CSP violations" test ([`testing-and-ci.md`](../development/testing-and-ci.md)) asserts the meta tag is present and that `img-src` includes the media origin and `connect-src` includes both upload origins.
 
 ---
 
@@ -500,7 +501,8 @@ Notes:
 ```ts
 export const env = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL,
-  cdnBaseUrl: import.meta.env.VITE_CDN_BASE_URL,
+  mediaBaseUrl: import.meta.env.VITE_MEDIA_BASE_URL,                    // the processed bucket's origin
+  uploadOrigins: import.meta.env.VITE_UPLOAD_ORIGINS,                   // space-separated; the two originals buckets' upload endpoints
   cognitoUserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,         // us-east-1_xxxxx
   cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID,              // public frontend client
   cognitoBootstrapClientId: import.meta.env.VITE_COGNITO_BOOTSTRAP_CLIENT_ID, // admin-bootstrap client (dev login only)

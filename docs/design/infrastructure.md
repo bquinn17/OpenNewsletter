@@ -12,7 +12,7 @@ Region: **us-east-1**. Account: single personal AWS account for both `dev` and `
 |---|---|---|
 | `DataStack` | DynamoDB table + GSIs | — |
 | `AuthStack` | Cognito user pool, IdPs, hosted UI domain | — |
-| `MediaPersistentStack` | S3 buckets (originals + processed), CloudFront distribution, KeyGroup | `DataStack` |
+| `MediaPersistentStack` | S3 buckets (originals + processed), read by presigned URL (§5.2) | `DataStack` |
 | `MediaPipelineStack` | `lambda-image-process` and its S3 event subscription | `DataStack`, `MediaPersistentStack` |
 | `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack`, `NotificationsStack` |
 | `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack` |
@@ -46,7 +46,7 @@ class EnvConfig:
     github_repo: str                  # "owner/repo" slug CiStack's GitHub OIDC trust conditions match
 ```
 
-Provider OAuth credentials, VAPID keys, and the CloudFront signing key are pre-populated in AWS Secrets Manager out-of-band (not in CDK), as JSON keys inside the one per-env secret `opennewsletter/{env}` referenced by `app_secret_arn` (§7.1, §12). `config.py` only stores the ARN.
+Provider OAuth credentials and VAPID keys are pre-populated in AWS Secrets Manager out-of-band (not in CDK), as JSON keys inside the one per-env secret `opennewsletter/{env}` referenced by `app_secret_arn` (§7.1, §12). `config.py` only stores the ARN.
 
 ---
 
@@ -146,55 +146,40 @@ Two app clients on the same user pool:
 
 ## 5. `MediaPersistentStack` and `MediaPipelineStack`
 
-The media resources are split across two stacks so that `dev` can recreate the image-processing pipeline freely without touching the slow-to-rebuild S3 + CloudFront infrastructure. See [`environments.md` §3](../development/environments.md#3-stack-lifetime-tiers) for the rationale.
+The media resources are split across two stacks so that `dev` can recreate the image-processing pipeline freely without touching the buckets that hold data. See [`environments.md` §3](../development/environments.md#3-stack-lifetime-tiers) for the rationale.
 
-- **`MediaPersistentStack`** — §5.1, §5.2: S3 buckets, CloudFront distribution, KeyGroup. Long-lived in dev (CloudFront takes 15–30 min to delete).
+- **`MediaPersistentStack`** — §5.1, §5.2: the three S3 buckets. Long-lived in dev because the buckets hold user uploads.
 - **`MediaPipelineStack`** — §5.3: `lambda-image-process` and its S3 event subscription. Volatile; recreated freely.
 
 In `prod` the split is structural-only; both stacks deploy together and behave identically to a combined stack.
 
 ### 5.1 S3 buckets (`MediaPersistentStack`)
 
-Two buckets, both private (Block Public Access fully on):
+Three buckets, all private (Block Public Access fully on):
 
 - **`opennewsletter-media-originals-{env}-{accountId}`**
   - Versioning: disabled in both envs. Real delete ([D8](../decisions.md#d8), [`api.md` §9.4](api.md#94-delete-uploadsimageid)) only works cleanly without versioning: a delete on a versioned bucket just adds a delete marker and leaves the object recoverable, which defeats the point of a user-initiated permanent delete.
   - Lifecycle:
     - Abort incomplete multipart uploads after 1 day
-    - Transition to `INTELLIGENT_TIERING` after 30 days
+    - Expire objects under prefix `uploads/` after 7 days — a safety net for an original `lambda-image-process` should already have deleted on success, on decode failure, or on oversize (§5.3; [`media.md` §5.1](media.md#51-trigger-configuration)). No Intelligent-Tiering transition: originals don't live long enough to tier.
   - CORS: allow `PUT` and `POST` from `https://{config.domain}` and `http://localhost:5173` in dev. Allowed headers: `*`, because the presign decides which headers are signed (e.g. `x-amz-checksum-sha256`, [`media.md` §3.2](media.md#32-presign)). Expose: `ETag`.
   - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes `lambda-image-process`.
   - Encryption: SSE-S3.
 
-- **`opennewsletter-media-processed-{env}-{accountId}`**
-  - No versioning.
-  - Lifecycle: abort incomplete multipart uploads after 1 day only. No Intelligent-Tiering transition: the WebP display/thumb variants are mostly under the 128 KB floor below which Intelligent-Tiering never moves an object to a cheaper tier, so each per-object transition fee would buy nothing. The same goes for avatars-processed below.
-  - Read access only via CloudFront origin access control (OAC).
-
-Two more buckets for the **avatar pipeline** ([`media.md` §11](media.md#11-avatars-separate-pipeline) — avatars cross group boundaries, so they don't share the media buckets' group-scoped key layout or signing):
-
-- **`opennewsletter-avatars-originals-{env}-{accountId}`**
-  - Same CORS, lifecycle, and encryption settings as media originals; no versioning.
+- **`opennewsletter-avatars-originals-{env}-{accountId}`** — avatars cross group boundaries, so they don't share the media bucket's group-scoped key layout ([`media.md` §11](media.md#11-avatars-separate-pipeline)).
+  - Same CORS, lifecycle (including the 7-day `uploads/` expiry), and encryption settings as media originals; no versioning.
   - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes the same `lambda-image-process` (wired in `MediaPipelineStack`).
-- **`opennewsletter-avatars-processed-{env}-{accountId}`**
-  - No versioning. Lifecycle: abort incomplete multipart uploads only (no Intelligent-Tiering, as for media-processed). Read access only via the CloudFront `/avatar/*` behavior (§5.2) — no key group.
 
-### 5.2 CloudFront distribution (`MediaPersistentStack`)
+- **`opennewsletter-media-processed-{env}-{accountId}`** — one bucket for both pipelines: response images under `img/...` and avatars under `avatar/{avatarId}/display.webp`. (One bucket rather than one per pipeline: their processed objects need the same lifecycle and CORS rules, and the frontend gets a single media origin.)
+  - No versioning. Lifecycle: abort incomplete multipart uploads after 1 day only. No Intelligent-Tiering transition: the WebP display/thumb variants are mostly under the 128 KB floor below which Intelligent-Tiering never moves an object to a cheaper tier, so each per-object transition fee would buy nothing.
+  - Private; nothing reads it anonymously (§5.2). CORS: allow `GET, HEAD` from `https://{config.domain}` and `http://localhost:5173` in dev, so the browser can load a presigned URL as an `<img crossorigin="anonymous">` ([`frontend.md`](frontend.md)).
+  - Read access is per-Lambda IAM, not a bucket policy: each handler that signs a GET URL ([`media.md` §4.3](media.md#43-the-media-urls-crate)) gets `s3:GetObject` scoped to the one prefix it serves — §6.2 below.
 
-- **Origins**:
-  - `processed` bucket via OAC (default origin)
-  - `originals` bucket via OAC (only used by signed-URL fetch in admin mode — defer)
-- **Default behavior**:
-  - Path pattern: `/img/*` → maps to `processed` bucket via origin path `/`
-  - Allowed methods: `GET, HEAD`
-  - Viewer protocol: redirect-to-HTTPS
-  - Cache policy: `CachingOptimized` (managed)
-  - **Trusted key groups**: a `KeyGroup` containing one CloudFront public key — **RSA 2048**, its own pair per env, read from `infra/keys/cf-signing.pub.pem` (dev) or `infra/keys/cf-signing-prod.pub.pem` (prod); private key in the env's app secret ([`auth.md` §10](auth.md#10-identity-provider-setup-design-relevant-facts)) → enables **signed cookies** for tenant isolation. See [`media.md` §6](media.md#6-cloudfront-cache-and-tenant-isolation-summary). (In dev the same key group is used but the SPA presents the signature as signed-URL query params — [`media.md` §4.5](media.md#45-dev-environments-signed-query-params-instead-of-cookies).)
-- **Avatar behavior**: path pattern `/avatar/*` → `avatars-processed` bucket via OAC. `GET, HEAD`, `CachingOptimized`, **no trusted key group** — avatars are unsigned by design ([`media.md` §11.3](media.md#113-serving)).
-- **CORS**: both behaviors attach one `ResponseHeadersPolicy`: `Access-Control-Allow-Credentials: true`, `GET, HEAD`, origin override, and an explicit origin list (the SPA's `https://{domain}`, plus `http://localhost:5173` in dev; never `*`, which credentialed CORS forbids). The SPA loads CDN images in CORS mode so its service worker can cache them ([`frontend.md` §5.2](frontend.md#52-service-worker--caching-strategy)). The policy must deploy before a frontend that sets `crossorigin`, or images fail to load. `deploy.yml`'s backend-then-frontend order guarantees that.
-- **Price class**: `PriceClass_100` (NA + EU only) for cost.
-- **Domain alias**: `cdn.{config.domain}` in prod. None in dev, which uses the raw `*.cloudfront.net` domain ([`environments.md` §2](../development/environments.md#2-environments)).
-- **Certificate**: ACM cert in `us-east-1` (created in `FrontendStack`).
+### 5.2 Image serving
+
+The processed bucket (§5.1) is private, and every handler that returns an image or avatar URL signs an S3 GET presigned URL against it directly, using its own Lambda execution role, after the membership check the handler already does for that route. That check is the tenant boundary. The bucket's CORS is what lets the browser load those presigned URLs as CORS-mode `<img>` elements. §6.2 below has the per-Lambda signing grants.
+
+See [`decisions.md`](../decisions.md#presigned-s3-media) for the owner decision and [`media.md` §4](media.md#4-serving-presigned-s3-gets) for the full mechanics: URL lifetime, the `media-urls` crate, SPA refresh-on-expiry, and why presigned S3 over the alternatives.
 
 ### 5.3 `lambda-image-process` (Rust, `MediaPipelineStack`)
 
@@ -205,24 +190,22 @@ Two more buckets for the **avatar pipeline** ([`media.md` §11](media.md#11-avat
 - **Environment**:
   - `TABLE_NAME`
   - `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (the handler compares the event's bucket against these)
-  - `PROCESSED_BUCKET`
-  - `AVATARS_PROCESSED_BUCKET`
+  - `PROCESSED_BUCKET` (the one combined bucket, §5.1)
 - **IAM**:
-  - `s3:GetObject` + `s3:DeleteObject` on both originals buckets (delete purges oversized uploads — [`media.md` §3.2](media.md#32-presign))
-  - `s3:PutObject` on processed bucket (prefix `img/*`) and avatars-processed bucket (prefix `avatar/*`)
+  - `s3:GetObject` + `s3:DeleteObject` on both originals buckets — delete purges oversized uploads and decode failures ([`media.md` §3.2](media.md#32-presign)), and the original on a successful process, right after its row is marked `ready` (best effort; logged at `ERROR` on failure, not retried — [`media.md` §5.1](media.md#51-trigger-configuration))
+  - `s3:PutObject` on the processed bucket, prefixes `img/*` and `avatar/*`
   - `dynamodb:GetItem` + `dynamodb:UpdateItem` on table (read the row's status, then mark it `ready`/`failed` and store dimensions)
 - Logic detailed in [`media.md` §5](media.md#5-lambda-image-process-s3-trigger).
 
 ### 5.4 Outputs
 
 - `originals_bucket_name`, `originals_bucket_arn`
-- `processed_bucket_name`, `processed_bucket_arn`
-- `avatars_originals_bucket_name`, `avatars_processed_bucket_name`
-- `cloudfront_distribution_id`
-- `cloudfront_domain` (the alias)
-- `cloudfront_key_group_id`
+- `processed_bucket_name`, `processed_bucket_arn` (the one combined bucket, §5.1)
+- `avatars_originals_bucket_name`
+- `MediaBaseUrl` — `https://{processed-bucket}.s3.us-east-1.amazonaws.com`, the host every presigned URL resolves to ([`media.md` §4](media.md#4-serving-presigned-s3-gets)). `scripts/write_frontend_env.py` writes it into the frontend build as `VITE_MEDIA_BASE_URL`.
+- `UploadOrigins` — the two originals buckets' virtual-hosted-style S3 endpoints, space-separated, written into the frontend build as `VITE_UPLOAD_ORIGINS` for CSP `connect-src` ([`frontend.md` §12.1](frontend.md#121-content-security-policy)).
 
-The CloudFront signing private key has no dedicated output — it's the `cdn_signing_private_key` JSON key inside the per-env `app_secret_arn` secret (§7.1, §12), which `lambda-media` reads directly rather than via a `MediaPersistentStack` output.
+Nothing media-related lives in the app secret (§7.1, §12): presigned URLs are signed with each handler's own Lambda execution-role credentials ([`media.md` §4.3](media.md#43-the-media-urls-crate)), not a stored key.
 
 ---
 
@@ -236,6 +219,7 @@ The CloudFront signing private key has no dedicated output — it's the `cdn_sig
   - Allow methods: `GET, POST, PUT, PATCH, DELETE, OPTIONS`
   - Allow headers: `Authorization, Content-Type, x-correlation-id`
   - Expose headers: `x-correlation-id`
+  - Allow credentials: **false** — no route sets or needs a cross-origin cookie; the API authenticates with the `Authorization` header, and media with presigned URLs ([`media.md` §4](media.md#4-serving-presigned-s3-gets)).
   - Max age: 600
 - **Custom domain**: `{api_domain}` with ACM cert from `FrontendStack`
 - **Default authorizer**: `HttpJwtAuthorizer` against the Cognito user pool (issuer URL `https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}`). In `dev`, audience: `[frontend_client_id, bootstrap_client_id]` — the `admin-bootstrap` client is included so password-auth tokens from `/admin/bootstrap-login` and `scripts/bootstrap_admin.py` pass the same authorizer ([`environments.md` §6](../development/environments.md#6-cognito-strategy-in-dev)). In `prod`, audience: `[frontend_client_id]` only, since `admin-bootstrap` doesn't exist there (§4.3).
@@ -251,15 +235,17 @@ The route column below is a **summary only** — [`api.md` §13](api.md#13-per-r
 | Lambda | Route summary | DynamoDB | S3 | Other |
 |---|---|---|---|---|
 | `lambda-invites` | invite create / list / revoke / redeem; also compiles the `PreSignUp` trigger binary | RW | — | — |
-| `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | `s3:DeleteObject` on avatar originals + processed (old-avatar cleanup on `PATCH /me`, [D8](../decisions.md#d8)); `cloudfront:CreateInvalidation` on the distribution (`/avatar/*`) | — |
-| `lambda-newsletters` | newsletter list + detail | R | — | — |
-| `lambda-questions` | candidate list/create + votes, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | — | — |
+| `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | `s3:DeleteObject` on avatar originals + processed (old-avatar cleanup on `PATCH /me`, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefix `avatar/*` (signs `avatarUrl` on `UserResponse`/`MemberResponse` — [`media.md` §4.3](media.md#43-the-media-urls-crate)) | — |
+| `lambda-newsletters` | newsletter list + detail | R | `s3:GetObject` on processed bucket, prefixes `img/*` and `avatar/*` (signs `PublishedImageResponse` and `askedBy.avatarUrl`) | — |
+| `lambda-questions` | candidate list/create + votes, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | `s3:GetObject` on processed bucket, prefix `avatar/*` (signs `askedBy.avatarUrl`) | — |
 | `lambda-responses` | my-response get/list/put (drafts, publish, poll votes) | RW | — | — |
-| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | `s3:DeleteObject` on media originals + processed (comment-image release on soft-delete/replace, [D8](../decisions.md#d8)); `cloudfront:CreateInvalidation` on the distribution (`/img/*`) | — |
-| `lambda-media` | uploads presign/status/caption/delete, `GET /media-cookie`, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; CloudFront signing; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /avatars`, [D8](../decisions.md#d8)); `cloudfront:CreateInvalidation` on the distribution | Secrets:GetSecretValue on the app secret (signing key) |
-| `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas ([`notifications.md` §6](notifications.md#6-cycle-open-fan-out)) | RW | — | Secrets:GetSecretValue on the app secret (VAPID keys) |
+| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | `s3:DeleteObject` on media originals + processed (comment-image release on soft-delete/replace, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefix `img/*` (signs `CommentImageResponse`) | — |
+| `lambda-media` | uploads presign/status/caption/delete, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /avatars`, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefixes `img/*` and `avatar/*` (signs `ImageMediaResponse`/`AvatarMediaResponse`) | — |
+| `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas ([`notifications.md` §6](notifications.md#6-cycle-open-fan-out)) | RW | — | Secrets:GetSecretValue on the app secret (VAPID keys) — the only Lambda that reads the app secret |
 
-**Real media deletion** ([D8](../decisions.md#d8); [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7). A shared helper — the `media-delete` library crate (`backend/crates/media-delete`; not `shared`, which can't depend on `persistence` and so can't delete the row) — deletes an image's S3 objects, invalidates its CloudFront path, then deletes the `ImageMedia`/`AvatarMedia` row. The three IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes and the one CloudFront distribution each Lambda actually deletes from; no Lambda gets a blanket `cloudfront:CreateInvalidation` across the whole account.
+**Real media deletion** ([D8](../decisions.md#d8); [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7). A shared helper — the `media-delete` library crate (`backend/crates/media-delete`; not `shared`, which can't depend on `persistence` and so can't delete the row) — deletes an image's S3 objects (original, then both processed variants), then deletes the `ImageMedia`/`AvatarMedia` row. Once an object is gone, its presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). The IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes each Lambda actually deletes from.
+
+**Media-URL signing** ([`media.md` §4.3](media.md#43-the-media-urls-crate)). A second shared library crate, `backend/crates/media-urls`, wraps the presigning call every handler listed above uses to turn a stored S3 key into a GET URL, after that handler's usual membership check. Each Lambda's `s3:GetObject` grant is scoped to the one or two prefixes (`img/*`, `avatar/*`) its routes actually return URLs for — no Lambda gets a blanket grant across the whole processed bucket.
 
 The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, [`api.md` §11a](api.md#11a-dev-only-endpoints)) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
@@ -267,10 +253,10 @@ The `PreSignUp` trigger binary is compiled from `lambda-invites` but its CDK `Fu
 
 All Lambdas share:
 - Env: `TABLE_NAME`, `RUST_LOG=info`, `ENV={env}`, `API_BASE_URL` (used to build the absolute RFC-7807 `type` URI)
-- `lambda-groups` additionally gets `CDN_BASE_URL` (avatar URLs) and `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference against the `vapid_public_key` JSON key of the app secret, echoed by `GET /config` per §7.1)
-- `CDN_BASE_URL` goes to every Lambda that builds media URLs: `lambda-groups`, `-newsletters`, `-questions` and `-media`. It is `https://cdn.{domain}` in prod and `https://{distribution domain}.cloudfront.net` in dev, which has no custom domains.
-- `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET`, `CDN_KEY_PAIR_ID` (the CloudFront public key's ID), `APP_SECRET_ARN` (the signing key is the `cdn_signing_private_key` JSON key within it) and `MEDIA_COOKIE_DOMAIN` (`.{domain}` in prod, empty in dev, where no `Set-Cookie` is sent — [`media.md` §4.5](media.md#45-dev-environments-signed-query-params-instead-of-cookies))
-- The HTTP API's CORS sets `allowCredentials: true`, because the SPA calls `GET /media-cookie` with `credentials: "include"`
+- `lambda-groups` additionally gets `VAPID_PUBLIC_KEY` (a Secrets Manager dynamic reference against the `vapid_public_key` JSON key of the app secret, echoed by `GET /config` per §7.1)
+- `PROCESSED_BUCKET` goes to every Lambda that signs a media URL: `lambda-groups`, `-newsletters`, `-questions`, `-engagement` and `-media` (§6.2's table; which prefix each one may sign is IAM, not env config). `MEDIA_URL_TTL_SECONDS` (1 h) and `MEDIA_URL_SIGN_WINDOW_SECONDS` (5 min) are compile-time constants from `shared::config`, not env vars.
+- `lambda-media` additionally gets `MEDIA_ORIGINALS_BUCKET`, `AVATARS_ORIGINALS_BUCKET` (for the upload presigns).
+- The HTTP API's CORS does **not** set `allowCredentials` (§6.1).
 - IAM (baseline): write access to its own log group only
 - DynamoDB IAM: scoped to `arn:aws:dynamodb:...:table/OpenNewsletter-{env}` and the two GSIs
 
@@ -318,7 +304,7 @@ The defaults for newly-created groups, served as `groupDefaults` on `GET /config
 
 ### 7.1 VAPID secret
 
-VAPID keys don't get a dedicated secret. They're three JSON keys — `vapid_public_key`, `vapid_private_key`, `vapid_subject` — inside the single per-env Secrets Manager secret `opennewsletter/{env}` (§12), alongside `google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`, and `cdn_signing_private_key`. Its ARN is `app_secret_arn` in `config.py` (§2).
+VAPID keys don't get a dedicated secret. They're three JSON keys — `vapid_public_key`, `vapid_private_key`, `vapid_subject` — inside the single per-env Secrets Manager secret `opennewsletter/{env}` (§12), alongside `google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`. Its ARN is `app_secret_arn` in `config.py` (§2).
 
 - Generated out-of-band by `scripts/generate_vapid_keys.py` and merged into the one secret manually before first deploy.
 - Public key exposed to the frontend via the `GET /config` endpoint (in `lambda-groups`).
@@ -352,14 +338,13 @@ The frontend itself ships to GitHub Pages — CDK doesn't host it. This stack ma
 
 ### 8.1 ACM certs
 
-- One cert in `us-east-1` covering `{config.domain}`, `cdn.{config.domain}`, `{api_domain}`, with DNS validation.
+- One cert in `us-east-1` covering `{config.domain}`, `{api_domain}`, with DNS validation.
 - If `hosted_zone_id` is set, validation records auto-created via Route53. Else, output the validation CNAMEs and stop — operator finishes DNS manually.
 
 ### 8.2 Route53 (only if `hosted_zone_id` is set)
 
 - A `CNAME` for `{config.domain}` pointing to `{githubuser}.github.io`. Note GitHub Pages also requires apex-A records — operator must add per GitHub docs if using apex.
 - An `A`-alias for `{api_domain}` pointing to the HTTP API custom domain.
-- An `A`-alias for `cdn.{config.domain}` pointing to the CloudFront distribution.
 
 ### 8.3 If DNS is external
 
@@ -375,7 +360,7 @@ A single CloudWatch dashboard `OpenNewsletter-{env}` with widgets for:
 - HTTP API 4xx/5xx rates and p50/p95/p99 latency per route
 - Per-Lambda invocation count, error rate, duration p95, throttles
 - DynamoDB consumed RCU/WCU, throttles, conditional check failures
-- CloudFront request count + 4xx/5xx
+- S3 storage: `BucketSizeBytes` and `NumberOfObjects` per media bucket (daily, free)
 - Web Push delivery success/failure (custom metric emitted by `lambda-notify-tick` and `lambda-push`)
 
 ### 9.2 Alarms
@@ -408,6 +393,8 @@ DynamoDB IAM patterns:
 - Read-only Lambdas (`lambda-newsletters`): `Query`, `GetItem`, `BatchGetItem` on table + GSIs.
 - Write Lambdas: add `PutItem`, `UpdateItem`, `DeleteItem`, `TransactWriteItems`.
 - Tick Lambdas need `Query` on GSI2 ([`data-model.md` §9](data-model.md#9-why-gsi2-status--time)). No `Scan` anywhere.
+
+S3 IAM patterns (§5.2): each media-signing Lambda gets `s3:GetObject` on the processed bucket scoped to exactly the prefix(es) its routes return URLs for (`img/*`, `avatar/*`, or both — §6.2's table); each delete-capable Lambda additionally gets `s3:DeleteObject` on the specific originals/processed prefixes it deletes from. No Lambda gets a bucket-wide or account-wide S3 grant.
 
 ---
 
@@ -443,8 +430,8 @@ Target ≈ $1–2/mo at ~30 monthly active users, prod + dev in one account:
 | DynamoDB on-demand + storage (+ PITR prod) | < $0.30 |
 | Lambda | $0 (always-free tier) |
 | HTTP API ($1/M req after the 12-month free tier) | < $0.10 |
-| S3 (a few GB) | < $0.25 |
-| CloudFront (always-free 1 TB + 10M req) | $0 |
+| S3 storage (a few GB; originals are deleted once processed, §5.3) | < $0.25 |
+| S3 GET requests + egress (§5.2: $0.0004/1k GETs; egress free under AWS's 100 GB/mo always-free data transfer out, then ~$0.09/GB) | < $0.10 |
 | Cognito (free tier) | $0 |
 | EventBridge scheduled rules | $0 |
 | **Total** | **≈ $1–2/mo** |
@@ -453,6 +440,7 @@ Domain registration and DNS stay with the registrar (Namecheap) rather than Rout
 
 This depends on: one Secrets Manager secret per env, `opennewsletter/{env}` (§2, §7.1); alarms in prod only, ≤10 alarm metrics (§9.2), with dev keeping its dashboard but no alarms; one account-wide AWS Budget at $5/mo in `CiStack`, not per-env (§9.2a); and DynamoDB on the AWS-owned key rather than the AWS-managed `aws/dynamodb` KMS key (§3.1). [`environments.md` §12](../development/environments.md#12-cost-expectations) covers the dev-only slice of this total (≈ $0.40–1/mo).
 
-**At scale.** The table above is for ~30 users. Most of it stays near zero as groups grow: Lambda and DynamoDB scale with requests and remain cents to low dollars, and CloudFront's always-free 1 TB covers image egress well into the thousands of users. Two lines grow instead:
+**At scale.** The table above is for ~30 users. Most of it stays near zero as groups grow: Lambda and DynamoDB scale with requests and remain cents to low dollars, and S3's always-free 100 GB/mo data-transfer-out tier covers image egress for a while, growing at ~$0.09/GB past that (the service worker's image cache means each device only fetches a given image once — [`media.md` §6](media.md#6-cache-and-tenant-isolation-summary)). One line still grows:
 - **Cognito**: free up to 10,000 monthly active users, then billed per MAU at a rate set by the user pool's feature plan (Lite is the cheapest; check the pool's plan and current pricing before crossing 10k).
-- **S3 originals**: originals are kept after processing — only an oversized upload or a user delete removes one ([`media.md` §3.2](media.md#32-presign), §8) — so storage grows by roughly 100 MB per active group per month of phone photos. Intelligent-Tiering on the originals buckets (§5.1) moves untouched objects to cheaper tiers, so this stays small, but it never stops growing. Whether to keep originals at all is an open owner question — tracked in [`PROGRESS.md`](../../plans/PROGRESS.md).
+
+S3 originals don't accumulate: `lambda-image-process` deletes the original right after marking its row `ready` (best effort — §5.3), as it does on decode failure or oversize. The 7-day `uploads/` lifecycle expiry on both originals buckets (§5.1) is a safety net for whatever that delete missed — see [`decisions.md`](../decisions.md#originals-deleted-on-success).

@@ -10,8 +10,8 @@ use domain::api::{
 };
 use domain::{
     ApiError, ApiErrorCode, CandidateQuestion, Comment, CycleId, GroupId, GroupMembership, ImageId,
-    ImageMedia, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, PollOptionId,
-    QuestionId, QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
+    ImageMedia, LockedQuestion, Newsletter, NewsletterStatus, PollOptionId, QuestionId,
+    QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
 };
 use futures::future::try_join_all;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -151,13 +151,11 @@ async fn voting_detail(
         .collect();
     let profiles = load_profiles(state, &submitter_ids).await?;
 
-    let candidates: Vec<CandidateItemResponse> = pool
-        .into_iter()
-        .map(|c| {
-            let voted_by_me = voted_ids.contains(&c.question_id);
-            candidate_item(state, caller, is_admin, &profiles, c, voted_by_me)
-        })
-        .collect();
+    let mut candidates = Vec::with_capacity(pool.len());
+    for c in pool {
+        let voted_by_me = voted_ids.contains(&c.question_id);
+        candidates.push(candidate_item(state, caller, is_admin, &profiles, c, voted_by_me).await?);
+    }
 
     Ok(NewsletterDetailResponse::Voting { candidates })
 }
@@ -195,34 +193,32 @@ async fn open_detail(
     )
     .await?;
 
-    let questions_out = locked
-        .into_iter()
-        .map(|lq| {
-            let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles);
-            let poll_options = poll_option_responses(&lq.poll_options);
-            let my_response = by_question
-                .remove(&lq.question_id)
-                .map(|r| MyResponseSummary {
-                    response_id: r.response_id,
-                    status: r.status,
-                    body: r.body,
-                    image_media_ids: r.image_media_ids,
-                    poll_option_id: r.poll_option_id,
-                    updated_at: r.updated_at,
-                    published_at: r.published_at,
-                });
-            OpenQuestionResponse {
-                question_id: lq.question_id,
-                kind: lq.kind,
-                prompt: lq.prompt,
-                display_order: lq.display_order,
-                asked_by,
-                is_anonymous: lq.is_anonymous,
-                poll_options,
-                my_response,
-            }
-        })
-        .collect();
+    let mut questions_out = Vec::with_capacity(locked.len());
+    for lq in locked {
+        let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
+        let poll_options = poll_option_responses(&lq.poll_options);
+        let my_response = by_question
+            .remove(&lq.question_id)
+            .map(|r| MyResponseSummary {
+                response_id: r.response_id,
+                status: r.status,
+                body: r.body,
+                image_media_ids: r.image_media_ids,
+                poll_option_id: r.poll_option_id,
+                updated_at: r.updated_at,
+                published_at: r.published_at,
+            });
+        questions_out.push(OpenQuestionResponse {
+            question_id: lq.question_id,
+            kind: lq.kind,
+            prompt: lq.prompt,
+            display_order: lq.display_order,
+            asked_by,
+            is_anonymous: lq.is_anonymous,
+            poll_options,
+            my_response,
+        });
+    }
 
     Ok(NewsletterDetailResponse::Open {
         cycle_id: nl.cycle_id.clone(),
@@ -287,18 +283,21 @@ async fn published_detail(
     let is_admin = membership.role == Role::Admin;
     let mut questions_out = Vec::with_capacity(locked.len());
     for (lq, answers) in locked.into_iter().zip(answers_per_question) {
-        let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles);
+        let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
         let question = match lq.kind {
-            QuestionKind::Text => published_text_question(
-                state,
-                caller,
-                lq,
-                asked_by,
-                answers,
-                &engagement,
-                &profiles,
-                &images,
-            )?,
+            QuestionKind::Text => {
+                published_text_question(
+                    state,
+                    caller,
+                    lq,
+                    asked_by,
+                    answers,
+                    &engagement,
+                    &profiles,
+                    &images,
+                )
+                .await?
+            }
             QuestionKind::Poll => published_poll_question(caller, lq, asked_by, answers),
         };
         questions_out.push(question);
@@ -313,7 +312,7 @@ async fn published_detail(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn published_text_question(
+async fn published_text_question(
     state: &AppState,
     caller: &UserId,
     lq: LockedQuestion,
@@ -332,24 +331,29 @@ fn published_text_question(
             .get(&(lq.question_id.clone(), r.user_id.clone()))
             .map(|(c, r)| (c.as_slice(), r.as_slice()))
             .unwrap_or_default();
-        let comments = comments
-            .iter()
-            .map(|c| comment_response(state, profiles, images, c))
-            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut comments_out = Vec::with_capacity(comments.len());
+        for c in comments {
+            comments_out.push(comment_response(state, profiles, images, c).await?);
+        }
+
+        let mut images_out = Vec::new();
+        for id in &r.image_media_ids {
+            if let Some(img) = images.get(id) {
+                if let Some(published) = published_image(state, img).await? {
+                    images_out.push(published);
+                }
+            }
+        }
 
         answers_out.push(PublishedAnswerResponse {
             response_id: r.response_id,
             user_id: r.user_id,
             display_name: author.display_name.clone(),
             body: r.body,
-            images: r
-                .image_media_ids
-                .iter()
-                .filter_map(|id| images.get(id))
-                .filter_map(|img| published_image(state, img))
-                .collect(),
+            images: images_out,
             published_at: r.published_at.unwrap_or(r.updated_at),
-            comments,
+            comments: comments_out,
             reaction_groups: domain::engagement::group_reactions(reactions, caller),
         });
     }
@@ -504,41 +508,27 @@ async fn load_images(
         })
 }
 
-/// The display/thumb pair for an image, or `None` until it's `ready` with
-/// both variants and dimensions recorded.
-fn ready_variants(state: &AppState, img: &ImageMedia) -> Option<(String, String, u32, u32)> {
-    if img.status != MediaStatus::Ready {
-        return None;
-    }
-    let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
-        (&img.display_key, &img.thumb_key, img.width, img.height)
-    else {
-        return None;
+async fn published_image(
+    state: &AppState,
+    img: &ImageMedia,
+) -> Result<Option<PublishedImageResponse>, ApiError> {
+    let Some(urls) = state.media_urls.ready_image_urls(img).await? else {
+        return Ok(None);
     };
-    Some((
-        state.image_url(display_key)?,
-        state.image_url(thumb_key)?,
-        width,
-        height,
-    ))
-}
-
-fn published_image(state: &AppState, img: &ImageMedia) -> Option<PublishedImageResponse> {
-    let (display_url, thumb_url, width, height) = ready_variants(state, img)?;
-    Some(PublishedImageResponse {
+    Ok(Some(PublishedImageResponse {
         image_id: img.image_id.clone(),
-        display_url,
-        thumb_url,
-        width,
-        height,
-    })
+        display_url: urls.display_url,
+        thumb_url: urls.thumb_url,
+        width: urls.width,
+        height: urls.height,
+    }))
 }
 
 /// Builds the wire `CommentResponse` for one comment row, including a
 /// soft-deleted one as a `[deleted]` placeholder (`docs/design/engagement.md` §1.1,
 /// decided M10 — soft-deleted comments are returned here too, not filtered).
 /// The attached image is hydrated only while it's `ready`.
-fn comment_response(
+async fn comment_response(
     state: &AppState,
     profiles: &HashMap<UserId, User>,
     images: &HashMap<ImageId, ImageMedia>,
@@ -548,22 +538,28 @@ fn comment_response(
         .get(&comment.author_user_id)
         .ok_or_else(|| ApiError::internal("comment references a missing user profile"))?;
     let is_deleted = comment.deleted_at.is_some();
-    let image = comment
+    let attached = comment
         .image_media_id
         .as_ref()
         .filter(|_| !is_deleted)
-        .and_then(|id| images.get(id))
-        .and_then(|img| {
-            let (display_url, thumb_url, width, height) = ready_variants(state, img)?;
-            Some(CommentImageResponse {
-                image_id: img.image_id.clone(),
-                display_url,
-                thumb_url,
-                width,
-                height,
-                caption: img.caption.clone(),
-            })
-        });
+        .and_then(|id| images.get(id));
+    let image = match attached {
+        Some(img) => {
+            state
+                .media_urls
+                .ready_image_urls(img)
+                .await?
+                .map(|urls| CommentImageResponse {
+                    image_id: img.image_id.clone(),
+                    display_url: urls.display_url,
+                    thumb_url: urls.thumb_url,
+                    width: urls.width,
+                    height: urls.height,
+                    caption: img.caption.clone(),
+                })
+        }
+        None => None,
+    };
 
     Ok(CommentResponse {
         comment_id: comment.comment_id.clone(),
@@ -594,22 +590,25 @@ fn poll_option_responses(
     })
 }
 
-fn candidate_item(
+async fn candidate_item(
     state: &AppState,
     caller: &UserId,
     is_admin: bool,
     profiles: &HashMap<UserId, User>,
     candidate: CandidateQuestion,
     voted_by_me: bool,
-) -> CandidateItemResponse {
+) -> Result<CandidateItemResponse, ApiError> {
     let visible = !candidate.is_anonymous || is_admin || candidate.submitted_by == *caller;
-    let asked_by = visible
+    let asked_by = match visible
         .then(|| profiles.get(&candidate.submitted_by))
         .flatten()
-        .map(|user| to_asked_by(state, user));
+    {
+        Some(user) => Some(to_asked_by(state, user).await?),
+        None => None,
+    };
     let poll_options = poll_option_responses(&candidate.poll_options);
 
-    CandidateItemResponse {
+    Ok(CandidateItemResponse {
         question_id: candidate.question_id,
         kind: candidate.kind,
         prompt: candidate.prompt,
@@ -619,33 +618,35 @@ fn candidate_item(
         vote_count: candidate.vote_count,
         voted_by_me,
         submitted_at: candidate.submitted_at,
-    }
+    })
 }
 
-fn locked_asked_by(
+async fn locked_asked_by(
     state: &AppState,
     caller: &UserId,
     is_admin: bool,
     lq: &LockedQuestion,
     profiles: &HashMap<UserId, User>,
-) -> Option<AskedBy> {
+) -> Result<Option<AskedBy>, ApiError> {
     let visible = !lq.is_anonymous || is_admin || lq.submitted_by == *caller;
     if !visible {
-        return None;
+        return Ok(None);
     }
-    profiles
-        .get(&lq.submitted_by)
-        .map(|user| to_asked_by(state, user))
+    match profiles.get(&lq.submitted_by) {
+        Some(user) => Ok(Some(to_asked_by(state, user).await?)),
+        None => Ok(None),
+    }
 }
 
-fn to_asked_by(state: &AppState, user: &User) -> AskedBy {
-    AskedBy {
+async fn to_asked_by(state: &AppState, user: &User) -> Result<AskedBy, ApiError> {
+    let avatar_url = state
+        .media_urls
+        .optional_avatar_url(user.avatar_media_id.as_ref())
+        .await?;
+    Ok(AskedBy {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
         avatar_color: user.avatar_color.clone(),
-        avatar_url: user
-            .avatar_media_id
-            .as_ref()
-            .and_then(|id| state.avatar_url(id)),
-    }
+        avatar_url,
+    })
 }

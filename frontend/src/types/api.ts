@@ -381,7 +381,7 @@ export interface paths {
         get: operations["getUpload"];
         put?: never;
         post?: never;
-        /** Permanently delete an image: its original and processed S3 objects, a CloudFront invalidation of its path, then its row (`docs/design/api.md` §9.4). Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. Idempotent: an image that is already gone returns 204. If the S3 or CloudFront step fails, returns 500 and keeps the row so a retry can finish. */
+        /** Permanently delete an image: its original and processed S3 objects, then its row (`docs/design/api.md` §9.4). Caller must own the image. Refused with `IMAGE_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` image) a live comment has it attached. Idempotent: an image that is already gone returns 204. If an S3 delete fails, returns 500 and keeps the row so a retry can finish. */
         delete: operations["deleteUpload"];
         options?: never;
         head?: never;
@@ -400,23 +400,6 @@ export interface paths {
         put?: never;
         /** Optional convenience the client may call after its PUT (`docs/design/api.md` §9.2). Processing is driven by the S3 trigger, so this returns the same body as `GET /uploads/{imageId}`. Caller must be a member of `groupId`. */
         post: operations["completeUpload"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media-cookie": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for one hour (`docs/design/api.md` §9.5, `docs/design/media.md` §4). When the Lambda has a cookie domain configured (prod) the response also carries three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`, `CloudFront-Key-Pair-Id`); the client must call this with `credentials: "include"`. Dev has no shared registrable domain, so the SPA appends the body values as signed-URL query parameters instead (`docs/design/media.md` §4.5). Caller must be a member of `groupId`. */
-        get: operations["getMediaCookie"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -451,7 +434,7 @@ export interface paths {
         get: operations["getAvatar"];
         put?: never;
         post?: never;
-        /** Permanently delete one of the caller's avatars: its original and processed S3 objects, a CloudFront invalidation of `/avatar/{avatarId}/*`, then its row (`docs/design/api.md` §9.7). If it is the caller's current `avatarMediaId`, that is cleared to `null` first. Idempotent: the lookup is under the caller's own user, so an avatar that is already gone (or isn't theirs) returns 204 and touches nothing. If the S3 or CloudFront step fails, returns 500 and keeps the row. */
+        /** Permanently delete one of the caller's avatars: its original and processed S3 objects, then its row (`docs/design/api.md` §9.7). If it is the caller's current `avatarMediaId`, that is cleared to `null` first. Idempotent: the lookup is under the caller's own user, so an avatar that is already gone (or isn't theirs) returns 204 and touches nothing. If an S3 delete fails, returns 500 and keeps the row. */
         delete: operations["deleteAvatar"];
         options?: never;
         head?: never;
@@ -623,7 +606,7 @@ export interface components {
          * @description Preset group gradient palette slugs. Mirrored in `backend/crates/shared/src/config.rs::GRADIENT_SLUGS` and the frontend palette table; the contract test asserts the two stay identical.
          * @enum {string}
          */
-        GradientSlug: "grape-sky" | "ember-rose" | "forest-mint" | "ocean-dusk" | "citrus-blush" | "slate-lilac";
+        GradientSlug: "grape-sky" | "ember-rose" | "forest-mint" | "ocean-dusk" | "citrus-blush" | "slate-lilac" | "lavender-blush";
         /**
          * @description Fallback avatar colour slugs. Mirrored in `backend/crates/shared/src/config.rs::AVATAR_COLOR_SLUGS` and the frontend palette table; the contract test asserts the two stay identical.
          * @enum {string}
@@ -1054,9 +1037,9 @@ export interface components {
             width: number | null;
             height: number | null;
             caption: string | null;
-            /** @description Absolute CloudFront URL; null until `status=ready`. */
+            /** @description Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`. */
             displayUrl: string | null;
-            /** @description Absolute CloudFront URL; null until `status=ready`. */
+            /** @description Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`. */
             thumbUrl: string | null;
             /** @description Set when `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED`. A deleted image has no row, so `DELETED` is no longer returned. */
             errorMessage: string | null;
@@ -1068,15 +1051,6 @@ export interface components {
         PatchUploadRequest: {
             /** @description `null` or an all-whitespace string clears the caption. */
             caption: string | null;
-        };
-        MediaCookieResponse: {
-            /** @description CloudFront-modified base64 of the custom policy JSON. */
-            policy: string;
-            /** @description CloudFront-modified base64 RSA-SHA1 signature of the policy. */
-            signature: string;
-            keyPairId: string;
-            /** Format: date-time */
-            expiresAt: string;
         };
         CreateAvatarRequest: {
             mimeType: components["schemas"]["AvatarMimeType"];
@@ -1098,7 +1072,7 @@ export interface components {
             mimeType: components["schemas"]["AvatarMimeType"];
             status: components["schemas"]["MediaStatus"];
             bytes: number;
-            /** @description Absolute unsigned CloudFront URL; null until `status=ready`. */
+            /** @description Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`. */
             avatarUrl: string | null;
             errorMessage: string | null;
             /** Format: date-time */
@@ -2518,8 +2492,8 @@ export interface operations {
                      *       "body": "Same — the switchbacks are brutal.",
                      *       "image": {
                      *         "imageId": "018f2b6b-6c1b-7c3a-9d4e-ad1e2f3a4b5c",
-                     *         "displayUrl": "https://cdn.opennewsletter.example.com/img/g/202606/display.webp",
-                     *         "thumbUrl": "https://cdn.opennewsletter.example.com/img/g/202606/thumb.webp",
+                     *         "displayUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
+                     *         "thumbUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *         "width": 1200,
                      *         "height": 800,
                      *         "caption": null
@@ -2876,8 +2850,8 @@ export interface operations {
                      *       "width": 4032,
                      *       "height": 3024,
                      *       "caption": null,
-                     *       "displayUrl": "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp",
-                     *       "thumbUrl": "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp",
+                     *       "displayUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
+                     *       "thumbUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "errorMessage": null,
                      *       "uploadedAt": "2026-06-02T10:00:00Z",
                      *       "processedAt": "2026-06-02T10:00:04Z"
@@ -3039,39 +3013,6 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    getMediaCookie: {
-        parameters: {
-            query: {
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
-                groupId: components["parameters"]["GroupIdQuery"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The signed policy. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "policy": "eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4ub3Blbm5ld3NsZXR0ZXIuZXhhbXBsZS5jb20vaW1nLzAxOGYyYjZiLyoifV19",
-                     *       "signature": "Nql641NHEUkUaXQHZINK1FZ~SYeUSoBJMxjdgqrzIdzV2gyEXPDNv0pYdWJkflDKJ3xIu7lbwRpSkG98NBlgPi4ZJpRRnVX4kXAJK6tdNx6FucDB7OVqzcxkxHsGFd8VCG1BkC-Afh9~lOCMIYHIaiOB6~TF-ZFfi5a4FE9cDZ_",
-                     *       "keyPairId": "K2JCJMDEHXQW5F",
-                     *       "expiresAt": "2026-06-02T11:00:00Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["MediaCookieResponse"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            422: components["responses"]["ValidationFailed"];
-        };
-    };
     createAvatar: {
         parameters: {
             query?: never;
@@ -3139,7 +3080,7 @@ export interface operations {
                      *       "mimeType": "image/png",
                      *       "status": "ready",
                      *       "bytes": 204800,
-                     *       "avatarUrl": "https://cdn.opennewsletter.example.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp",
+                     *       "avatarUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "errorMessage": null,
                      *       "uploadedAt": "2026-06-02T10:00:00Z",
                      *       "processedAt": "2026-06-02T10:00:01Z"

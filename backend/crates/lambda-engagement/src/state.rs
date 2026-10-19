@@ -4,29 +4,13 @@
 //! identically.
 
 use media_delete::MediaDeleter;
+use media_urls::MediaUrls;
 use persistence::Repo;
 
 pub struct AppState {
     pub repo: Repo,
-    /// CloudFront origin, e.g. `https://cdn.example.com`. Empty (and
-    /// [`AppState::image_url`] returns `None`) until infra wires
-    /// `CDN_BASE_URL` for this Lambda.
-    pub cdn_base_url: String,
+    /// Presigned S3 GET URLs for image/avatar fields (`docs/design/media.md` §4.3).
+    pub media_urls: MediaUrls,
     /// Deletes an image a comment releases (`docs/design/engagement.md` §1.1).
     pub image_deleter: MediaDeleter,
-}
-
-impl AppState {
-    /// Absolute CloudFront URL for a processed image's S3 key — mirrors
-    /// `lambda-newsletters::state::AppState::image_url`.
-    pub fn image_url(&self, key: &str) -> Option<String> {
-        if self.cdn_base_url.is_empty() {
-            return None;
-        }
-        Some(format!(
-            "{}/{}",
-            self.cdn_base_url.trim_end_matches('/'),
-            key.trim_start_matches('/')
-        ))
-    }
 }

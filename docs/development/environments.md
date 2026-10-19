@@ -1,6 +1,6 @@
 # Dev environments & local testing
 
-For a contributor setting up a machine, running the suites locally, or resetting the shared `dev` AWS stack. It defines where code runs, where state lives, and how to reset it. The guiding principle is **high-fidelity AWS over local emulation** — instead of maintaining a parallel local stack of mocks for DynamoDB, S3, Cognito, EventBridge, and CloudFront, the project commits to a real-but-disposable AWS development environment. Local execution is reserved for fast unit tests.
+For a contributor setting up a machine, running the suites locally, or resetting the shared `dev` AWS stack. It defines where code runs, where state lives, and how to reset it. The guiding principle is **high-fidelity AWS over local emulation** — instead of maintaining a parallel local stack of mocks for DynamoDB, S3, Cognito, and EventBridge, the project commits to a real-but-disposable AWS development environment. Local execution is reserved for fast unit tests.
 
 This page and [`testing-and-ci.md`](testing-and-ci.md) split the same territory two ways: this one is the **developer experience** (how you work day to day, and how to stand up or reset the `dev` stack); that one is **what gets tested and how CI runs it**. Where a command or detail could live in either, it lives here and that page links to it, or vice versa — follow the links rather than expecting duplication. When this page and the infra code disagree, the code (`infra/opennewsletter/*.py`, `backend/crates/shared/src/config.rs`) wins; file an issue against this page.
 
@@ -52,8 +52,6 @@ node --version
 (cd backend && export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1)
 ```
 
-**Fresh-clone gotcha**: `.gitignore`'s `*.pem` rule would otherwise also swallow the committed `infra/keys/cf-signing.pub.pem` placeholder, leaving a fresh clone with no signing key, so `cdk synth` and every `infra/tests/test_stacks.py` test that builds `MediaPersistentStack` (directly or via `ApiStack`) fail with `FileNotFoundError`, along with `test_cf_signing_keys.py`. A `!infra/keys/*.pub.pem` exception plus a committed placeholder key prevents this — don't remove that exception.
-
 ### 0.2 Windows / WSL2 (Ubuntu 20.04)
 
 This is the machine the repo was originally built on. Docker runs rootless under WSL2 on a non-default socket, and the stock compiler has a known incompatibility with one dependency.
@@ -91,7 +89,7 @@ node --version
 
 **Goals**
 - Inner-loop iteration in seconds, not minutes, for the common case (data reset, Lambda code change).
-- Behavior in dev matches behavior in prod — same DynamoDB, same Cognito JWT shape, same S3 presigned URLs, same CloudFront signing, same EventBridge fan-out.
+- Behavior in dev matches behavior in prod — same DynamoDB, same Cognito JWT shape, same S3 presigned URLs (uploads *and* media reads, [`decisions.md`](../decisions.md#presigned-s3-media)), same EventBridge fan-out.
 - Wiping and recreating a dev environment is cheap and routine.
 - No second implementation of any AWS interaction to maintain.
 
@@ -105,13 +103,13 @@ node --version
 
 | Env | Purpose | Lifetime | Auth | URL |
 |---|---|---|---|---|
-| `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints for actual traffic (`ROOT_DOMAIN`/`API_DOMAIN` only register `dev.{domain}` on the shared ACM cert/CloudFront alias — see decision below) |
+| `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints for actual traffic (`ROOT_DOMAIN`/`API_DOMAIN` only register `dev.{domain}` on the shared ACM cert — see decision below) |
 | `ci-pr-{n}` | *Not built* — per-PR ephemeral stack for E2E (§11) | Spun up per PR, torn down on merge/close | Reuses `dev` Cognito user pool | Raw AWS endpoints |
 | `prod` | The real thing | Permanent | Federated IdPs only | Custom domains (bare apex) |
 
 `dev` is shared today because the project is solo. To split into per-developer stacks later, change the env suffix from `dev` to `dev-{username}` in `--context env=...` and the rest of CDK falls into place.
 
-**Decision (2026-10-13) — dev uses a subdomain, not raw endpoints, for its `ROOT_DOMAIN`/`API_DOMAIN`.** `config.py` has no local dev/prod split for these — it always reads the unprefixed `.env.local` names, regardless of `--context env=`. `MediaPersistentStack` attaches `domain_names=[f"cdn.{config.domain}"]` to its CloudFront distribution unconditionally (unlike `ApiStack`'s custom domain, which is correctly gated on `config.env != "dev"`). The first local `cdk deploy --context env=dev` had `.env.local`'s `ROOT_DOMAIN` set to the real apex (`betterloop.site`), so it created a real ACM cert and CloudFront alias for `cdn.betterloop.site`/`api.betterloop.site` on the **dev** distribution — and an alias can only be attached to one enabled distribution account-wide, so prod's later deploy of the same alias would conflict. Fix: `.env.local`'s `ROOT_DOMAIN`/`API_DOMAIN` are `dev.betterloop.site`/`api.dev.betterloop.site` (own ACM validation CNAMEs, see `plans/PROGRESS.md` B5); prod's real values live only in `PROD_ROOT_DOMAIN`/`PROD_API_DOMAIN` (local reference) and the unprefixed GitHub repo variables (CI only, never read locally). `ApiStack`'s `config.env != "dev"` gate means dev's `api.dev.betterloop.site` never actually gets a working API Gateway mapping — same as before, dev traffic still goes over the raw `execute-api.amazonaws.com`/`cloudfront.net` endpoints (`api_stack.py`'s `cdn_base_url`/`api_endpoint` branches are unchanged). The subdomain is registered on the cert/alias only so dev stops squatting on prod's name; it is not a live, routable hostname. `MediaPersistentStack`'s missing dev-gate is not itself fixed — not needed once the aliases no longer collide, but worth closing later for consistency with `ApiStack`.
+**Decision (2026-10-13) — dev uses a subdomain, not raw endpoints, for its `ROOT_DOMAIN`/`API_DOMAIN`.** `config.py` has no local dev/prod split for these — it always reads the unprefixed `.env.local` names, regardless of `--context env=`. `FrontendStack`'s ACM cert covers `{config.domain}` and `{api_domain}` in every env, so a dev deploy with `.env.local`'s `ROOT_DOMAIN` set to the real apex (`betterloop.site`) would put prod's hostnames on the dev cert. Instead, `.env.local`'s `ROOT_DOMAIN`/`API_DOMAIN` are `dev.betterloop.site`/`api.dev.betterloop.site` (own ACM validation CNAMEs, see `plans/PROGRESS.md` B5); prod's real values live only in `PROD_ROOT_DOMAIN`/`PROD_API_DOMAIN` (local reference) and the unprefixed GitHub repo variables (CI only, never read locally). `ApiStack`'s `config.env != "dev"` gate means dev's `api.dev.betterloop.site` never gets a working API Gateway mapping; dev traffic goes over the raw `execute-api.amazonaws.com` endpoint (`api_stack.py`'s `api_endpoint` branch). The subdomain is registered on the cert only so dev stays off prod's names; it is not a live, routable hostname.
 
 ---
 
@@ -121,10 +119,10 @@ The stacks in [`infrastructure.md`](../design/infrastructure.md) are grouped her
 
 | Tier | Stacks | Why |
 |---|---|---|
-| **Persistent** | `AuthStack`, `MediaPersistentStack` (S3 originals/processed buckets + CloudFront distribution + KeyGroup), `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. CloudFront distributions take 15–30 min to delete. ACM/Route53 churn is just noise. |
+| **Persistent** | `AuthStack`, `MediaPersistentStack` (the three S3 buckets, [`infrastructure.md` §5.1](../design/infrastructure.md#51-s3-buckets-mediapersistentstack)), `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. The buckets hold user uploads — destroying them loses data, not just time — so they stay even though recreating them is otherwise fast. ACM/Route53 churn is just noise. |
 | **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `MediaPipelineStack` (`lambda-image-process` and its S3 event subscription) | Pure code/config — fast to recreate, no out-of-band registration. |
 
-Media's resources are split across those two stacks along exactly this line: everything slow or manual to recreate (buckets, the distribution, the key group) lives in `MediaPersistentStack`; the processing Lambda and its event wiring, which are pure code/config, live in `MediaPipelineStack`.
+Media's resources are split across those two stacks along exactly this line: the buckets, which hold data and are slow or risky to lose, live in `MediaPersistentStack`; the processing Lambda and its event wiring, which are pure code/config, live in `MediaPipelineStack`.
 
 ---
 
@@ -178,7 +176,8 @@ Vite reads a `.env.dev` file populated by `cdk deploy` outputs:
 
 ```
 VITE_API_BASE_URL=https://abcd1234.execute-api.us-east-1.amazonaws.com
-VITE_CDN_BASE_URL=https://d1234.cloudfront.net
+VITE_MEDIA_BASE_URL=https://opennewsletter-media-processed-dev-123456789012.s3.us-east-1.amazonaws.com
+VITE_UPLOAD_ORIGINS=https://opennewsletter-media-originals-dev-123456789012.s3.us-east-1.amazonaws.com https://opennewsletter-avatars-originals-dev-123456789012.s3.us-east-1.amazonaws.com
 VITE_COGNITO_USER_POOL_ID=us-east-1_xxxxx
 VITE_COGNITO_CLIENT_ID=xxxxx
 VITE_COGNITO_BOOTSTRAP_CLIENT_ID=yyyyy
@@ -187,7 +186,7 @@ VITE_ENV=dev
 
 A small post-deploy script (`scripts/write_frontend_env.py`) reads `cdk.out/dev-outputs.json` and writes `frontend/.env.dev`. CORS in [`infrastructure.md` §6.1](../design/infrastructure.md#61-http-api-apigatewayv2) already allows `http://localhost:5173`.
 
-**Images in dev**: with no shared registrable domain, CloudFront signed *cookies* can't flow — the SPA appends the equivalent signed-URL query params (from the `GET /media-cookie` JSON body) to each image URL instead. See [`media.md` §4.5](../design/media.md#45-dev-environments-signed-query-params-instead-of-cookies). Same signing key group, same tenant isolation; only the transport differs.
+**Images in dev**: identical to prod. Every image and avatar URL is an S3 presigned GET minted inline by the handler that returns it, and the dev buckets' CORS also allows `http://localhost:5173`. See [`media.md` §4](../design/media.md#4-serving-presigned-s3-gets) and [§4.5](../design/media.md#45-local-development-and-mocks).
 
 Daily commands:
 

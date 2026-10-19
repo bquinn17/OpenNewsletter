@@ -271,15 +271,16 @@ pub async fn patch_member(
         })?
         .ok_or_else(|| ApiError::not_found("member profile not found"))?;
 
+    let avatar_url = state
+        .media_urls
+        .optional_avatar_url(user.avatar_media_id.as_ref())
+        .await?;
     Ok(MemberResponse {
         user_id: user.user_id,
         display_name: user.display_name,
         role: request.role,
         avatar_color: user.avatar_color,
-        avatar_url: user
-            .avatar_media_id
-            .as_ref()
-            .and_then(|id| state.avatar_url(id)),
+        avatar_url,
         joined_at: membership.joined_at,
         editions_answered: membership.editions_answered,
     })
@@ -369,22 +370,24 @@ async fn hydrate_members(
             ApiError::internal("failed to load member profiles")
         })?;
 
-    Ok(memberships
-        .into_iter()
-        .filter_map(|membership| {
-            let user = profiles.get(&membership.user_id)?;
-            Some(MemberResponse {
-                user_id: membership.user_id,
-                display_name: user.display_name.clone(),
-                role: membership.role,
-                avatar_color: user.avatar_color.clone(),
-                avatar_url: user
-                    .avatar_media_id
-                    .as_ref()
-                    .and_then(|id| state.avatar_url(id)),
-                joined_at: membership.joined_at,
-                editions_answered: membership.editions_answered,
-            })
-        })
-        .collect())
+    let mut out = Vec::with_capacity(memberships.len());
+    for membership in memberships {
+        let Some(user) = profiles.get(&membership.user_id) else {
+            continue;
+        };
+        let avatar_url = state
+            .media_urls
+            .optional_avatar_url(user.avatar_media_id.as_ref())
+            .await?;
+        out.push(MemberResponse {
+            user_id: membership.user_id,
+            display_name: user.display_name.clone(),
+            role: membership.role,
+            avatar_color: user.avatar_color.clone(),
+            avatar_url,
+            joined_at: membership.joined_at,
+            editions_answered: membership.editions_answered,
+        });
+    }
+    Ok(out)
 }

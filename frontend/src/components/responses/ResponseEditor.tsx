@@ -74,6 +74,8 @@ export function ResponseEditor({
       altText: i.caption ?? "",
       thumbUrl: i.thumbUrl,
       displayUrl: i.displayUrl,
+      width: i.width,
+      height: i.height,
     })),
   );
 
@@ -83,7 +85,31 @@ export function ResponseEditor({
     imageId: i.imageId,
     displayUrl: i.displayUrl,
     thumbUrl: i.thumbUrl,
+    width: i.width,
+    height: i.height,
   }));
+
+  /**
+   * `onImageExpired` for the preview's `MarkdownBody` (`docs/design/media.md` §4.4): these images
+   * live in `liveImages`, mirrored from the uploader's own state, not a react-query cache, so the
+   * global `refreshMediaUrls` wouldn't reach them.
+   */
+  async function refreshPreviewImage(imageId: string): Promise<void> {
+    const fresh = await api.media.getUpload(imageId, groupId, cycleId);
+    setLiveImages((prev) =>
+      prev.map((image) =>
+        image.imageId === imageId
+          ? {
+              ...image,
+              thumbUrl: fresh.thumbUrl,
+              displayUrl: fresh.displayUrl,
+              width: fresh.width,
+              height: fresh.height,
+            }
+          : image,
+      ),
+    );
+  }
 
   function handleUploaderChange(images: UploaderImage[]) {
     setLiveImages(images);
@@ -139,7 +165,11 @@ export function ResponseEditor({
         {preview ? (
           <div className="min-h-[200px] px-4 py-4">
             {body.trim() ? (
-              <MarkdownBody body={body} images={previewImages} groupId={groupId} />
+              <MarkdownBody
+                body={body}
+                images={previewImages}
+                onImageExpired={refreshPreviewImage}
+              />
             ) : (
               <p className="italic text-inkmuted">Nothing to preview yet.</p>
             )}

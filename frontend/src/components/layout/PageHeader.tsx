@@ -15,7 +15,7 @@ export function PageHeader({ eyebrow, title, rightSlot, back, className }: Props
   return (
     <div
       className={clsx(
-        "sticky top-0 z-30 border-b border-line bg-cream/85 backdrop-blur",
+        "sticky top-0 z-30 border-b border-line bg-lavender/85 backdrop-blur",
         className,
       )}
     >

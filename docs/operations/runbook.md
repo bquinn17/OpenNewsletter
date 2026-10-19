@@ -38,7 +38,7 @@ All `make` targets that call CDK already activate it automatically.
 
 ### Operator setup per environment
 
-Before any deploy, [`operator-setup.md`](operator-setup.md) walks through the domain, the Cognito hosted-UI prefix, the Google/Facebook OAuth apps, VAPID keys, the CloudFront signing keypair, and the combined `opennewsletter/{env}` Secrets Manager secret they all land in — plus the alarm contact email and, for prod, the bootstrap admin's email. **`.env.local` must hold every ARN/ID it produces before running `make deploy-dev`.**
+Before any deploy, [`operator-setup.md`](operator-setup.md) walks through the domain, the Cognito hosted-UI prefix, the Google/Facebook OAuth apps, VAPID keys, and the combined `opennewsletter/{env}` Secrets Manager secret they all land in — plus the alarm contact email and, for prod, the bootstrap admin's email. **`.env.local` must hold every ARN/ID it produces before running `make deploy-dev`.**
 
 ---
 
@@ -85,7 +85,7 @@ make deploy-dev
 
 This builds every Lambda, runs `scripts/check_lambda_binaries.sh`, deploys all stacks (`cdk deploy --context env=dev --all`), and writes `frontend/.env.dev` from the stack outputs via `scripts/write_frontend_env.py`.
 
-First deploy typically takes 10–20 minutes (CloudFront distribution creation dominates).
+First deploy typically takes 10–20 minutes (Cognito user pool and ACM cert validation dominate).
 
 ### Seed fixture data (M3.5 gate)
 
@@ -233,23 +233,13 @@ Follow [`smoke-test.md`](smoke-test.md). All steps must pass clean.
 
 ### Repeat the one-time setup for prod
 
-Create **one** combined secret, `opennewsletter/prod`, with the same keys as `opennewsletter/dev` (`google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`, `vapid_public_key`, `vapid_private_key`, `vapid_subject`, `cdn_signing_private_key` — no Apple keys; Google and Facebook only) — see [`operator-setup.md`](operator-setup.md) for the exact shape and the `jq` recipe.
+Create **one** combined secret, `opennewsletter/prod`, with the same keys as `opennewsletter/dev` (`google_client_id`, `google_client_secret`, `facebook_app_id`, `facebook_app_secret`, `vapid_public_key`, `vapid_private_key`, `vapid_subject` — no Apple keys; Google and Facebook only) — see [`operator-setup.md`](operator-setup.md) for the exact shape and the `jq` recipe. If `opennewsletter/prod` already exists, write the full key set into it with `aws secretsmanager put-secret-value` instead of `create-secret`.
 
 Update the Cognito redirect URIs on Google/Facebook to include the prod Cognito domain.
 
-Generate a **fresh** RSA-2048 CloudFront signing keypair for prod (never share the dev private key), and put it in the combined secret under `cdn_signing_private_key`. `MediaPersistentStack` reads `infra/keys/cf-signing-prod.pub.pem` for prod, so prod synth fails until it exists:
-
-```sh
-openssl genrsa -out cf-signing-prod.key 2048
-openssl rsa -pubout -in cf-signing-prod.key -out infra/keys/cf-signing-prod.pub.pem
-# merge into the opennewsletter/prod secret with put-secret-value rather than
-# creating a new one — see operator-setup.md for the jq recipe
-rm cf-signing-prod.key
-```
-
-If `opennewsletter/prod` already exists holding only `cdn_signing_private_key` (tracked in [`PROGRESS.md`](../../plans/PROGRESS.md) B5), merge the other keys into it with `put-secret-value` rather than creating a new secret, and skip the key-generation block above unless you're rotating the key.
-
 Set `BOOTSTRAP_ADMIN_EMAIL` in the prod `.env.local`/config to the email the prod admin will sign in with ([D5](../decisions.md#d5)) — see "Bootstrap the production admin" below.
+
+Set the GitHub secrets `VITE_MEDIA_BASE_URL` and `VITE_UPLOAD_ORIGINS` ([`operator-setup.md` §6](operator-setup.md#6-frontend-media-origins)), and once `MediaPersistentStack-prod` has deployed, check them against its `MediaBaseUrl` and `UploadOrigins` outputs.
 
 ### Deploy prod stacks
 
@@ -261,17 +251,18 @@ source .venv/bin/activate
 cdk deploy --context env=prod --all --require-approval broadening
 ```
 
-First prod deploy will take 20–30 minutes (CloudFront + ACM cert validation).
+First prod deploy will take 20–30 minutes (ACM cert validation and Cognito dominate).
 
 ### Swing DNS
 
-After deploy, CDK outputs `FrontendStack-prod.AcmCertValidationCname` (if Route53 is not enabled) and `FrontendStack-prod.CloudFrontDomain`. Point your DNS:
+After deploy, CDK outputs `FrontendStack-prod.AcmCertValidationCname` (if Route53 is not enabled). Point your DNS:
 
 ```
-opennewsletter.example.com   CNAME   <cloudfront-id>.cloudfront.net
-cdn.opennewsletter.example.com  CNAME  <cloudfront-id>.cloudfront.net
+opennewsletter.example.com   CNAME   <githubuser>.github.io
 api.opennewsletter.example.com  CNAME  <apigw-id>.execute-api.us-east-1.amazonaws.com
 ```
+
+(Media needs no DNS record: the SPA reads `VITE_MEDIA_BASE_URL`, the processed bucket's own S3 endpoint, directly.)
 
 ### Bootstrap the production admin
 

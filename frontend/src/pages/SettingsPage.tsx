@@ -243,7 +243,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="You" back="/" />
 
       <div className="px-5 pt-5">

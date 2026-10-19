@@ -3,7 +3,9 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string;
-  readonly VITE_CDN_BASE_URL: string;
+  readonly VITE_MEDIA_BASE_URL: string;
+  /** Space-separated list of upload origins (the two originals buckets). Build-time only — read by `cspPlugin`, not `env.ts`. */
+  readonly VITE_UPLOAD_ORIGINS?: string;
   readonly VITE_COGNITO_USER_POOL_ID: string;
   readonly VITE_COGNITO_CLIENT_ID: string;
   /** Dev only (D5): prod has no `admin-bootstrap` client. */
