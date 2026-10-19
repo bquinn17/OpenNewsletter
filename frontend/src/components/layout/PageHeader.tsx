@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { phaseStyle, type EditionPhase } from "../../utils/phase";
 
 interface Props {
   eyebrow?: string;
@@ -8,14 +9,17 @@ interface Props {
   rightSlot?: ReactNode;
   back?: string | true;
   className?: string;
+  /** Tints the bar with an edition's phase color; pages outside an edition stay lavender. */
+  phase?: EditionPhase;
 }
 
-export function PageHeader({ eyebrow, title, rightSlot, back, className }: Props) {
+export function PageHeader({ eyebrow, title, rightSlot, back, className, phase }: Props) {
   const navigate = useNavigate();
   return (
     <div
       className={clsx(
-        "sticky top-0 z-30 border-b border-line bg-lavender/85 backdrop-blur",
+        "sticky top-0 z-30 border-b border-ink/5 backdrop-blur",
+        phase ? phaseStyle(phase).header : "bg-lavender/85",
         className,
       )}
     >

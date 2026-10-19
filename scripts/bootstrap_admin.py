@@ -184,7 +184,9 @@ def boto3_session() -> Any:
     try:
         import boto3
     except ImportError:
-        sys.exit("boto3 not installed. Run: pip install boto3")
+        sys.exit(
+            "boto3 not installed. Run: infra/.venv/bin/pip install -r scripts/requirements.txt"
+        )
     return boto3.Session()
 
 

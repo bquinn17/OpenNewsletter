@@ -36,9 +36,9 @@ A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `py
    ```
 5. infra venv:
    ```bash
-   cd infra && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
+   cd infra && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt -r ../scripts/requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
    ```
-   The `typeguard~=2.13.3` pin (chosen for older Python compat, see `requirements.txt`) works fine on 3.12. The CDK CLI itself runs via `npx aws-cdk@2`, fetched on first use; the committed wrapper `infra/bin/cdk` does exactly that, and the symlink above puts it on `PATH` as `cdk` whenever the venv is active (the `Makefile` relies on this). **Don't install it globally** (see below for why). `cdk.json` runs `python3 app.py`, so **activate the venv first** (`source infra/.venv/bin/activate`); otherwise macOS's system `python3` is used and synth fails with `No module named 'aws_cdk'`.
+   The venv also holds the operator scripts' packages (`scripts/requirements.txt`: `boto3`, `py-vapid`); `make seed` runs from it. The `typeguard~=2.13.3` pin (chosen for older Python compat, see `requirements.txt`) works fine on 3.12. The CDK CLI itself runs via `npx aws-cdk@2`, fetched on first use; the committed wrapper `infra/bin/cdk` does exactly that, and the symlink above puts it on `PATH` as `cdk` whenever the venv is active (the `Makefile` relies on this). **Don't install it globally** (see below for why). `cdk.json` runs `python3 app.py`, so **activate the venv first** (`source infra/.venv/bin/activate`); otherwise macOS's system `python3` is used and synth fails with `No module named 'aws_cdk'`.
 
    **Spell it `npx aws-cdk@2`, not `npx cdk`.** With a global `cdk` installed (e.g. Homebrew's `aws-cdk` at `/opt/homebrew/bin/cdk`), `npx cdk` resolves to that binary and runs it with `/opt/homebrew/bin` prepended to `PATH`, ahead of the activated venv. Homebrew's `python3` then runs `app.py` and fails with the same `No module named 'aws_cdk'`, even though the venv is fine.
 6. The Apple clang toolchain means the gcc-9/`aws-lc-sys` release-build failure that hits WSL2 (§0.2, blocker B6 in `plans/PROGRESS.md`) does not apply here — nothing to do for it.
@@ -70,7 +70,7 @@ This is the machine the repo was originally built on. Docker runs rootless under
 4. `cargo-lambda`: `cargo install cargo-lambda`.
 5. infra venv: the system `python3` (Ubuntu 20.04 ships 3.8, which is what the `typeguard~=2.13.3` pin was originally chosen for):
    ```bash
-   cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
+   cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r ../scripts/requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
    ```
 6. Node: install per `.nvmrc` (Node 24) via `nvm`: `nvm install && nvm alias default 24`.
 

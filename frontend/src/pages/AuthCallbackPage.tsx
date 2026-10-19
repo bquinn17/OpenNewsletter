@@ -47,7 +47,8 @@ export function AuthCallbackPage(): JSX.Element {
           navigate(state.returnTo ?? "/", { replace: true });
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error("Sign-in callback failed", error);
         if (!cancelled) setFailed(true);
       });
     return () => {

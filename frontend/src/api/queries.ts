@@ -32,7 +32,14 @@ export function useConfig() {
 }
 
 export function useMe() {
-  return useQuery({ queryKey: queryKeys.me, queryFn: api.getMe, meta: MEDIA_URLS_META });
+  // `GET /me` 401s until the caller redeems an invite; `/config` says whether they have.
+  const { data: config } = useConfig();
+  return useQuery({
+    queryKey: queryKeys.me,
+    queryFn: api.getMe,
+    meta: MEDIA_URLS_META,
+    enabled: !!config?.userId,
+  });
 }
 
 export function useGroup(groupId: string | undefined) {

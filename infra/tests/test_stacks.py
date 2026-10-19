@@ -799,6 +799,14 @@ def test_stage_has_access_logging(api_template: assertions.Template) -> None:
     )
 
 
+def test_access_log_format_reads_no_request_headers(
+    api_template: assertions.Template,
+) -> None:
+    # HTTP APIs reject header context variables in access logs at deploy time; synth passes.
+    for stage in api_template.find_resources("AWS::ApiGatewayV2::Stage").values():
+        assert ".header." not in stage["Properties"]["AccessLogSettings"]["Format"]
+
+
 def test_dev_has_no_custom_domain(api_template: assertions.Template) -> None:
     api_template.resource_count_is("AWS::ApiGatewayV2::DomainName", 0)
 

@@ -6,7 +6,7 @@ First time on a new machine, use a venv rather than a bare `pip install` — on 
 
 Common commands:
 
-- `pip install -r requirements.txt`
+- `pip install -r requirements.txt -r ../scripts/requirements.txt` (the second file is for `scripts/`, such as `make seed`)
 - `cdk synth --context env=dev`
 - `cdk deploy --context env=dev <StackName>`
 - `pytest tests/`

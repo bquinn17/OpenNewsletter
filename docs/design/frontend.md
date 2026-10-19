@@ -189,7 +189,7 @@ Fonts: Plus Jakarta Sans and Fraunces from Google Fonts (§12.1). Body 16px, lin
   start_url: "/",
   display: "standalone",
   background_color: "#E4EAFF",
-  theme_color: "#E4EAFF",
+  theme_color: "#F4F5F9",
   icons: [
     { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
     { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
@@ -285,7 +285,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 ### 7.1 HomePage `/`
 
 - Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
-- Renders the open cycle, then the voting cycle (both exist at once during the response window, [`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)), then the latest published, then up to 3 more past editions.
+- Renders editions newest first, in labeled sections (empty ones are hidden): **Taking suggestions** (the voting cycle), **Awaiting responses** (the open cycle), **This month's edition** (published, and its month is the current month in the group's timezone, via `utils/dates.ts#isCurrentCycleMonth`), **Past editions** (up to the 3 most recent published editions from earlier months). Open and voting cycles exist at once during the response window ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)).
 - Empty state when no memberships: "You haven't joined a group yet — paste your invite code below" with a `<JoinForm/>`.
 
 ### 7.2 NewsletterPage `/g/:g/n/:c`
@@ -356,6 +356,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - **My devices**: push subscriptions with delete buttons + "send test push" action.
 - **Your groups**: each group exposes Manage (admins) / View / **Leave**. Leaving the only group where you're the only admin is blocked (server returns `LAST_ADMIN`).
 - Session controls (sign out).
+- **Before an invite is redeemed** (`GET /config` returns `userId: null`) there is no User row, so `GET /me` would 401. The page redirects to Home, which shows the join form, and `useMe` stays disabled until `/config` has a `userId`. Sign-out stays reachable from the avatar menu.
 
 ### 7.7 GroupAdminPage
 
@@ -589,6 +590,7 @@ Several pieces of display state live entirely in the frontend rather than on the
 - **"Hype check" banner** — not built; tracked in [`PROGRESS.md`](../../plans/PROGRESS.md). Would be computed from per-user draft counts in the open-newsletter payload. Sketch: a `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` helper would return either a string or `null` (suppress when there's nothing motivating to say).
 - **`helperText` under recurring questions** (Photo Wall / On Your Mind / Check It Out) — not built; tracked in [`PROGRESS.md`](../../plans/PROGRESS.md). Would be a hard-coded map keyed by prompt slug in `utils/recurring.ts`. The API knows nothing about recurring questions — they're just regular questions that the frontend would recognize by prompt and decorate accordingly.
 - **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-violet-500 to-sky-400`): derived from `Group.gradient` / `MembershipSummary.gradient` (a slug like `grape-sky`) via the frontend palette table in `utils/gradient.ts`. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` ([`api.md` §4.3](api.md#43-patch-groupsgroupid)) — the frontend table must cover exactly that set.
+- **Edition phase color**: derived from `NewsletterSummary.status` / `NewsletterDetailResponse.status` via `utils/phase.ts#phaseStyle`. Voting is grape, open is coral, published is mint. It tints the date tile and phase label on each Home edition row, and the `PageHeader` background on pages inside an edition (upcoming/suggest for voting; the edition and respond pages for open; the edition page for published). Pages outside an edition keep the default lavender header.
 - **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table, covering exactly the eight slugs enumerated in [`api.md` §2.3](api.md#23-patch-me).
 
 These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the OpenAPI spec). They live as computed values in component state or as the return type of utility functions.

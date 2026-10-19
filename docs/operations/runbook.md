@@ -28,7 +28,7 @@ cdk bootstrap aws://ACCOUNT_ID/us-east-1
 
 ### Infra Python venv
 
-The venv at `infra/.venv` is ready. Activate it before running any `cdk` or Python infra script:
+The venv at `infra/.venv` holds both `infra/requirements.txt` and `scripts/requirements.txt`. Activate it before running any `cdk` command or Python script in `scripts/`:
 
 ```sh
 source infra/.venv/bin/activate

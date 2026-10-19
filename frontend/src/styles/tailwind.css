@@ -9,7 +9,7 @@
     height: 100%;
   }
   body {
-    @apply bg-lavender font-sans text-ink antialiased;
+    @apply bg-white font-sans text-ink antialiased;
   }
   ::selection {
     background: #181821;
@@ -19,8 +19,7 @@
 
 @layer components {
   .canvas-bg {
-    background: linear-gradient(135deg, theme("colors.lavender") 0%, theme("colors.blush") 100%);
-    background-attachment: fixed;
+    background: #fff;
   }
   .app-container {
     width: 100%;

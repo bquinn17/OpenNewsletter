@@ -52,7 +52,7 @@ export function CandidatesPage() {
   if (candidates.isLoading || newsletters.isLoading) {
     return (
       <div className="pb-12">
-        <PageHeader title="Loading…" eyebrow="Upcoming" back="/" />
+        <PageHeader title="Loading…" eyebrow="Upcoming" back="/" phase="voting" />
         <div className="space-y-3 px-5 pt-6">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-24 animate-pulse rounded-3xl border border-line bg-white" />
@@ -70,7 +70,7 @@ export function CandidatesPage() {
   if (candidates.isError && !cycleNotVoting) {
     return (
       <div className="pb-12">
-        <PageHeader title="Upcoming" eyebrow="Couldn't load" back="/" />
+        <PageHeader title="Upcoming" eyebrow="Couldn't load" back="/" phase="voting" />
         <div className="px-5 pt-8 text-center">
           <div className="mb-3 text-5xl">😬</div>
           <p className="font-semibold text-ink">
@@ -95,6 +95,7 @@ export function CandidatesPage() {
         eyebrow={`${membership?.groupName ?? "Group"} · upcoming`}
         title="Suggested questions"
         back="/"
+        phase="voting"
         rightSlot={
           <Link
             to={`/g/${groupId}/upcoming/suggest`}

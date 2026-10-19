@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import clsx from "clsx";
@@ -233,6 +233,9 @@ export function SettingsPage() {
       api.media.deleteAvatar(oldAvatarId).catch(() => undefined);
     }
   }
+
+  // No profile exists before an invite is redeemed; Home shows the join form.
+  if (config && !config.userId) return <Navigate to="/" replace />;
 
   if (!me || !config) {
     return (

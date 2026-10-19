@@ -23,7 +23,7 @@ deploy-dev: build-lambdas ## Build Lambdas, deploy all stacks to dev, write fron
 	python3 scripts/write_frontend_env.py --env dev
 
 seed: ## Reset DynamoDB + S3 and recreate fixture data (keeps Cognito users)
-	python3 scripts/seed_dev_data.py --env dev
+	. infra/.venv/bin/activate && python scripts/seed_dev_data.py --env dev
 
 redeploy-volatile: ## Destroy + redeploy volatile stacks (Data, Pipeline, Monitoring)
 	cd infra && . .venv/bin/activate && \

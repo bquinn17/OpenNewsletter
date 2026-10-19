@@ -14,6 +14,7 @@ export function SuggestPage() {
         eyebrow="For next month"
         title="Suggest a question"
         back={`/g/${groupId}/upcoming`}
+        phase="voting"
       />
 
       <SuggestQuestionForm
