@@ -34,7 +34,9 @@ try:
     import boto3
     from botocore.exceptions import ClientError
 except ImportError:
-    sys.exit("boto3 not installed. Run: pip install boto3")
+    sys.exit(
+        "boto3 not installed. Run: infra/.venv/bin/pip install -r scripts/requirements.txt"
+    )
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -216,6 +218,7 @@ def write_fixture(
             "pk": f"COGNITO_SUB#{cognito_sub}",
             "sk": "USER_ID",
             "entity": "CognitoSubLookup",
+            "cognito_sub": cognito_sub,
             "user_id": user_id,
         },
         # --- User profile (AP1) ---

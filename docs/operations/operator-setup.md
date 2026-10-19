@@ -59,7 +59,7 @@ Meta for Developers → Create App → Add Facebook Login product.
 ## 5. VAPID keys for Web Push
 
 ```sh
-pip install py-vapid
+source infra/.venv/bin/activate   # py-vapid comes from scripts/requirements.txt
 python scripts/generate_vapid_keys.py --subject mailto:you@example.com --out vapid.json
 ```
 

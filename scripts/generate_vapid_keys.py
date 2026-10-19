@@ -43,7 +43,8 @@ def main() -> int:
         from py_vapid.utils import b64urlencode, num_to_bytes
     except ImportError:
         print(
-            "ERROR: py-vapid not installed. Run: pip install py-vapid",
+            "ERROR: py-vapid not installed. "
+            "Run: infra/.venv/bin/pip install -r scripts/requirements.txt",
             file=sys.stderr,
         )
         return 1

@@ -55,6 +55,21 @@ export function cycleLabels(responseOpenAt: string, timezone: string): CycleLabe
   return { monthLabel, yearLabel };
 }
 
+/** Whether a cycle (by `responseOpenAt`) falls in the same calendar month as `now`, in the group's timezone. */
+export function isCurrentCycleMonth(
+  responseOpenAt: string,
+  timezone: string,
+  now: Date = new Date(),
+): boolean {
+  // en-CA formats as "2026-10", so the strings compare directly.
+  const yearMonth = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    timeZone: timezone,
+  });
+  return yearMonth.format(new Date(responseOpenAt)) === yearMonth.format(now);
+}
+
 /**
  * Formats an instant in the group's IANA timezone (M9: every date shown on a
  * group page is in the group's zone, not the viewer's). `options` defaults to

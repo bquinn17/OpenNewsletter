@@ -51,7 +51,10 @@ function stubPushEnvironment(opts: {
   const registration = { pushManager: { getSubscription, subscribe } };
   vi.stubGlobal("navigator", {
     ...globalThis.navigator,
-    serviceWorker: { ready: Promise.resolve(registration) },
+    serviceWorker: {
+      ready: Promise.resolve(registration),
+      getRegistration: vi.fn().mockResolvedValue(registration),
+    },
     userAgent: "test-agent",
   });
 
@@ -214,6 +217,16 @@ describe("disablePush", () => {
     await disablePush();
 
     expect(mockedApi.push.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it("returns at once when no service worker is registered (vite dev)", async () => {
+    const { registration } = stubPushEnvironment({});
+    // `ready` would never settle with no SW registered.
+    navigator.serviceWorker.getRegistration = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator.serviceWorker, "ready", { value: new Promise(() => {}) });
+
+    await expect(disablePush()).resolves.toBeUndefined();
+    expect(registration.pushManager.getSubscription).not.toHaveBeenCalled();
   });
 
   it("posts /push/unsubscribe then unsubscribes the local subscription", async () => {

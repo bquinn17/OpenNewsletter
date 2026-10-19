@@ -472,7 +472,6 @@ class ApiStack(cdk.Stack):
             format=json.dumps(
                 {
                     "requestId": "$context.requestId",
-                    "correlationId": "$context.requestHeaderOverride.header.x-correlation-id",
                     "ip": "$context.identity.sourceIp",
                     "requestTime": "$context.requestTime",
                     "httpMethod": "$context.httpMethod",

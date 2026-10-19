@@ -165,6 +165,7 @@ function OpenLayout({
         title={`${monthLabel} ${yearLabel}`}
         back="/"
         rightSlot={<Pill tone="coral">{shortCountdown(data.responseCloseAt)}</Pill>}
+        phase="open"
       />
 
       <div className="px-5 pt-5">
@@ -286,6 +287,7 @@ function PublishedLayout({
         title={`${monthLabel} ${yearLabel}`}
         back="/"
         rightSlot={<Pill tone="ink">Published</Pill>}
+        phase="published"
       />
 
       <div className="flex items-center justify-between px-5 pt-5 text-sm text-inkmuted">

@@ -271,6 +271,7 @@ function QuestionBody({
         title={question.prompt}
         back={`/g/${groupId}/n/${cycleId}`}
         rightSlot={<Pill tone="coral">{shortCountdown(responseCloseAt)}</Pill>}
+        phase="open"
       />
 
       <div className="px-5 pt-5">
