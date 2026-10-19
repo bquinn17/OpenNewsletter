@@ -220,7 +220,7 @@ The frontend renews in `auth/renewSession.ts`, shortly before expiry (`accessTok
 
 ## 8. Logout
 
-`logout()` in `auth/AuthProvider.tsx` ([D1](../decisions.md#d1)):
+`logout()` in `auth/AuthProvider.tsx` ([D1](../decisions.md#d1)) shows a full-screen "Signing out…" overlay as soon as it's called, since the steps below end in network round trips and a cross-origin redirect. Then it:
 1. Removes the stored user from `localStorage` (was `sessionStorage`; see §7).
 2. Clears React Query cache.
 3. Clears Zustand persisted stores.

@@ -136,7 +136,7 @@ Three reset levels, used for different scenarios:
 | **Warm** — volatile stacks | `make redeploy-volatile` | ~3–5 min | After schema, IAM, env-var, or Lambda config changes |
 | **Cold** — full teardown | `make reset-all` | ~15–30 min | Rare; major architectural changes |
 
-Optimizing for hot reset is what makes this strategy pleasant. `scripts/seed_dev_data.py` is idempotent and destructive: it scans + batch-deletes the DynamoDB table, empties S3 prefixes, and writes a small deterministic fixture (one group, the bootstrap admin as sole member, one `voting` cycle ready to accept question suggestions). It then prints sign-in credentials for the seeded admin.
+Optimizing for hot reset is what makes this strategy pleasant. `scripts/seed_dev_data.py` is idempotent and destructive: it scans + batch-deletes the DynamoDB table, empties S3 prefixes, and writes a small deterministic fixture (one group, the bootstrap admin as sole member, one `voting` cycle ready to accept question suggestions). It then prints sign-in credentials for the seeded admin. The admin's password is reset on every run, to a fresh random 20-character one unless `--admin-password` is given.
 
 The seed only bootstraps the admin. Additional users are added by exercising the real invite-and-signup flow against the `dev` stack (`POST /admin/invites` → redeem URL → federated sign-in). This keeps the fixture small and means manual testing of multi-user scenarios uses the same code path as production.
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { stashInvite, takeStashedInvite } from "../auth/inviteStash";
@@ -37,6 +37,7 @@ export function JoinPage() {
   const pushToast = useToasts((s) => s.push);
   const redeem = useRedeemInvite();
   const attemptedCode = useRef<string | null>(null);
+  const [redeemError, setRedeemError] = useState<{ code: string; error: unknown } | null>(null);
   const stashedForCode = useRef<string | null>(null);
 
   // Logged out with a code in the URL: stash it and kick off login. Guarded
@@ -48,18 +49,23 @@ export function JoinPage() {
     void login({ returnTo: `/join?code=${encodeURIComponent(code)}`, invite: code });
   }, [code, status, login]);
 
-  // Logged in with a code in the URL: redeem exactly once per code.
+  // Logged in with a code in the URL: redeem exactly once per code. The outcome
+  // comes from the returned promise, not `redeem`'s observer state: StrictMode's
+  // simulated unmount detaches the observer from the in-flight mutation, so
+  // `redeem.isError` never flips and the page would spin forever.
   useEffect(() => {
     if (!code || status !== "authenticated" || attemptedCode.current === code) return;
     attemptedCode.current = code;
-    redeem.mutate(code, {
-      onSuccess: (result) => {
+    redeem.mutateAsync(code).then(
+      (result) => {
+        if (attemptedCode.current !== code) return;
         takeStashedInvite();
         setCurrentGroup(result.groupId);
         pushToast(`Welcome to ${result.groupName}`, "success");
         navigate(`/g/${result.groupId}/upcoming`, { replace: true });
       },
-    });
+      (error: unknown) => setRedeemError({ code, error }),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- redeem/pushToast/etc. are stable across the guarded, once-per-code call
   }, [code, status]);
 
@@ -75,12 +81,13 @@ export function JoinPage() {
     );
   }
 
-  if (redeem.isError) {
+  // Keyed by code so a fresh code typed into the form below shows the spinner.
+  if (redeemError?.code === code) {
     return (
       <div className="px-5 py-10">
         <h1 className="font-display text-2xl font-bold">Couldn&apos;t join</h1>
         <p role="alert" aria-live="polite" className="mt-2 text-coral">
-          {messageForError(redeem.error)}
+          {messageForError(redeemError.error)}
         </p>
         <div className="mt-5 rounded-3xl border border-line bg-white p-5 shadow-soft">
           <JoinForm />

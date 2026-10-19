@@ -41,7 +41,9 @@ export function AppShell() {
   return (
     <div className="canvas-bg min-h-screen">
       <div className="app-container">
-        <header className="sticky top-0 z-30 border-b border-ink/5 bg-mist/90 backdrop-blur">
+        {/* A page's sticky PageHeader shares z-30 and comes later, so it paints over
+            this bar; lift the bar while one of its menus is open so the menu isn't hidden. */}
+        <header className="sticky top-0 z-30 border-b border-ink/5 bg-mist/90 backdrop-blur has-[[role=menu]]:z-40">
           <div className="flex h-14 items-center justify-between gap-3 px-4">
             <div className="flex min-w-0 items-center gap-2">
               <Link

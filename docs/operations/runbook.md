@@ -93,7 +93,7 @@ First deploy typically takes 10–20 minutes (Cognito user pool and ACM cert val
 make seed
 ```
 
-Prints sign-in credentials for the bootstrap admin. Note the email and password.
+Prints sign-in credentials for the bootstrap admin. Note the email and password: the password is a new random one on every run, so an earlier run's password stops working.
 
 ### Verify the frontend (M3.5 gate)
 
