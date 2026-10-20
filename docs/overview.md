@@ -21,7 +21,7 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 
 - **Idle backend.** Unauthenticated traffic never reaches Lambda. The static frontend is served by GitHub Pages on a custom domain; only after Cognito issues a JWT does the frontend call API Gateway.
 - **Single repo, IaC-first.** The frontend, backend, infrastructure, and operational scripts all live in one repo. The CDK app is the source of truth for AWS resources.
-- **Cheap by default.** DynamoDB on-demand, Lambda + HTTP API, CloudFront cache in front of S3, no always-on compute, no NAT gateway. See [`infrastructure.md`](design/infrastructure.md) for the cost model.
+- **Cheap by default.** DynamoDB on-demand, Lambda + HTTP API, private S3 served by presigned GET, no always-on compute, no NAT gateway. See [`infrastructure.md`](design/infrastructure.md) for the cost model.
 - **Single-table DynamoDB.** All durable application state lives in one table (`OpenNewsletter`) with two GSIs. Multi-tenancy is enforced through partition-key prefixes — see [`data-model.md`](design/data-model.md).
 - **Strict tenant isolation in code.** Every Lambda handler resolves the caller's group memberships from the JWT claims and the membership table, then refuses any request whose path/body group ID is not in that set.
 - **Best-judgment defaults.** Wherever the design picks a number (autosave debounce, image dimensions, vote counts, etc.), the value is a constant in `backend/crates/shared/src/config.rs`, so it changes in one place.
@@ -38,7 +38,7 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 | API | Amazon API Gateway HTTP API with Cognito JWT authorizer |
 | Compute | AWS Lambda, Rust (`provided.al2023` runtime via `cargo-lambda`) |
 | Data | Amazon DynamoDB single-table design, on-demand billing |
-| Media | Amazon S3 (originals + processed) behind CloudFront with signed cookies |
+| Media | Amazon S3 (originals + processed), private; served by presigned GET URLs minted by each Lambda ([`decisions.md`](decisions.md#presigned-s3-media)) |
 | Notifications | Web Push sent directly from Lambda (own RFC 8291/8292 implementation, [`notifications.md` §10](design/notifications.md#10-web-push-delivery-details-rust)); VAPID keys in the per-env Secrets Manager secret |
 | Scheduling | Amazon EventBridge scheduler rules (cycle tick + notification tick Lambdas) |
 | IaC | AWS CDK in Python |
@@ -58,14 +58,15 @@ OpenNewsletter/
 │   │   ├── domain/                 # entities, errors, ports (no IO)
 │   │   ├── persistence/            # DynamoDB single-table adapter
 │   │   ├── shared/                 # config constants, HTTP/claims helpers, telemetry, cycle time math
-│   │   ├── media-delete/           # S3 + CloudFront + row deletion shared by media callers
+│   │   ├── media-delete/           # S3 object + row deletion shared by media callers
+│   │   ├── media-urls/             # presigned S3 GET URL signing shared by media callers
 │   │   ├── lambda-invites/         # invite create/list/revoke/redeem + PreSignUp trigger
 │   │   ├── lambda-groups/          # /config, /me, groups, members
 │   │   ├── lambda-newsletters/     # newsletter list + detail
 │   │   ├── lambda-questions/       # candidate questions: suggest, vote, list, admin delete
 │   │   ├── lambda-responses/       # drafts, publish, poll votes
 │   │   ├── lambda-engagement/      # comments + reactions
-│   │   ├── lambda-media/           # uploads (presign), media cookie, avatars
+│   │   ├── lambda-media/           # uploads (presign), avatars
 │   │   ├── lambda-push/            # push routes + cycle-open/publication fan-out
 │   │   ├── lambda-image-process/   # S3 ObjectCreated trigger
 │   │   ├── lambda-cycle-tick/      # EventBridge: open/close/publish cycles
@@ -81,7 +82,7 @@ OpenNewsletter/
 │   │   ├── config.py               # env-specific settings (dev/prod)
 │   │   ├── data_stack.py           # DynamoDB
 │   │   ├── auth_stack.py           # Cognito user pool + IdPs + domain
-│   │   ├── media_persistent_stack.py  # S3 buckets + CloudFront (stable)
+│   │   ├── media_persistent_stack.py  # S3 buckets (stable)
 │   │   ├── media_pipeline_stack.py    # image-process Lambda + S3 events (volatile)
 │   │   ├── api_stack.py            # HTTP API, all request Lambdas, routes
 │   │   ├── lambda_assets.py        # locates cargo-lambda build output for CDK assets
@@ -156,7 +157,7 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — stack suffix `-dev`. **No custom domains**: raw AWS endpoints (`*.execute-api…`, `*.cloudfront.net`), per [`environments.md` §2](development/environments.md#2-environments). Seeded via `make seed`.
+- `dev` — stack suffix `-dev`. **No custom domains**: raw AWS endpoints (`*.execute-api…`; media is served from S3 bucket endpoints in every env, [`decisions.md`](decisions.md#presigned-s3-media)), per [`environments.md` §2](development/environments.md#2-environments). Seeded via `make seed`.
 - `prod` — stack suffix `-prod`, custom domains, the only environment with a hosted frontend and alarms.
 
 Both live in one personal AWS account; stronger account-level isolation is out of scope for v1.

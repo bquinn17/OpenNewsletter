@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -19,21 +20,25 @@ const signedIn: AuthValue = {
   logout: vi.fn(),
 };
 
+// StrictMode, as in `main.tsx`: its simulated unmount/remount is what once
+// left the page spinning after a failed redeem.
 function renderJoin(auth: AuthValue, queryClient = new QueryClient()) {
   return render(
-    <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider value={auth}>
-        <MemoryRouter initialEntries={["/join?code=ABCD-EFGH"]}>
-          <Routes>
-            <Route path="/" element={<div>Home page</div>} />
-            <Route path="/join" element={<JoinPage />} />
-            <Route path="/g/:groupId" element={<RequireMembership />}>
-              <Route path="upcoming" element={<div>Upcoming for new group</div>} />
-            </Route>
-          </Routes>
-        </MemoryRouter>
-      </AuthContext.Provider>
-    </QueryClientProvider>,
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={auth}>
+          <MemoryRouter initialEntries={["/join?code=ABCD-EFGH"]}>
+            <Routes>
+              <Route path="/" element={<div>Home page</div>} />
+              <Route path="/join" element={<JoinPage />} />
+              <Route path="/g/:groupId" element={<RequireMembership />}>
+                <Route path="upcoming" element={<div>Upcoming for new group</div>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>
+    </StrictMode>,
   );
 }
 
@@ -87,6 +92,15 @@ describe("JoinPage", () => {
     renderJoin(signedIn);
 
     expect(await screen.findByText(/That invite has expired/)).toBeInTheDocument();
+  });
+
+  it("explains an already-used invite", async () => {
+    vi.mocked(api.redeemInvite).mockRejectedValue(new ApiError(409, "INVITE_CONSUMED", null));
+
+    renderJoin(signedIn);
+
+    expect(await screen.findByText("That invite has already been used.")).toBeInTheDocument();
+    expect(api.redeemInvite).toHaveBeenCalledTimes(1);
   });
 
   it("explains an invite bound to a different email (D5)", async () => {

@@ -17,6 +17,7 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     api: {
       getGroup: vi.fn(),
+      getConfig: vi.fn(),
       getMe: vi.fn(),
       createInvite: vi.fn(),
       listInvites: vi.fn(),
@@ -109,6 +110,14 @@ function renderPage(
 }
 
 beforeEach(() => {
+  vi.mocked(api.getConfig).mockResolvedValue({
+    userId: ME.userId,
+    email: ME.email,
+    displayName: ME.displayName,
+    vapidPublicKey: "",
+    groupDefaults: {},
+    memberships: [],
+  });
   vi.mocked(api.getMe).mockResolvedValue(ME);
   vi.mocked(api.getGroup).mockResolvedValue(baseGroup());
   vi.mocked(api.listInvites).mockResolvedValue({ items: [], nextCursor: null });

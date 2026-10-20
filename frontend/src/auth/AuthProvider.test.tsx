@@ -164,4 +164,22 @@ describe("logout (docs/design/auth.md §8)", () => {
     await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
     expect(localStorage.getItem(storageKey())).toBeNull();
   });
+
+  it("shows a signing-out overlay while the network steps are still in flight", async () => {
+    await userManager!.storeUser(makeUser(env.cognitoClientId));
+    let finishRevoke: (r: Response) => void = () => undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => (finishRevoke = resolve)),
+    );
+
+    renderProvider();
+    await screen.findByText("status:authenticated");
+    act(() => screen.getByRole("button", { name: "Sign out" }).click());
+
+    expect(screen.getByRole("status")).toHaveTextContent("Signing out…");
+    expect(assign).not.toHaveBeenCalled();
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    finishRevoke(new Response(null, { status: 200 }));
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+  });
 });

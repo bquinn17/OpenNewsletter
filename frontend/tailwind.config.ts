@@ -6,6 +6,15 @@ const config: Config = {
     extend: {
       colors: {
         cream: "#FBF6EE",
+        lavender: "#E4EAFF",
+        blush: "#FBE1E6",
+        mist: "#F4F5F9",
+        // Edition phase tints (`utils/phase.ts`): pastel versions of grape, coral, mint.
+        phase: {
+          voting: "#ECE6FF",
+          open: "#FFE3E7",
+          published: "#D8F5EA",
+        },
         surface: "#FFFFFF",
         ink: "#181821",
         inkmuted: "#6F6E7C",

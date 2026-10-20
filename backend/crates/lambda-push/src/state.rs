@@ -25,7 +25,7 @@ pub struct AppState {
 }
 
 /// The VAPID part of the app secret's JSON. The secret holds other keys
-/// too (OAuth credentials, the CDN signing key); serde ignores them.
+/// too (OAuth credentials); serde ignores them.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct VapidSecret {
     pub vapid_public_key: String,
@@ -99,7 +99,7 @@ impl AppState {
     }
 
     /// Escape hatch for tests: inject a keypair directly so they never need
-    /// a Secrets Manager call (mirrors `lambda-media::state::AppState::set_signing_key_for_test`).
+    /// a Secrets Manager call.
     /// A no-op if the keys have already been loaded.
     pub fn set_vapid_keys_for_test(&self, keys: VapidKeys) {
         let _ = self.vapid.set(keys);
@@ -114,7 +114,6 @@ mod tests {
     fn vapid_keys_are_read_from_the_app_secret_ignoring_other_keys() {
         let raw = r#"{
             "google_client_id": "g",
-            "cdn_signing_private_key": "-----BEGIN PRIVATE KEY-----",
             "vapid_public_key": "pub",
             "vapid_private_key": "priv",
             "vapid_subject": "mailto:ops@example.com"

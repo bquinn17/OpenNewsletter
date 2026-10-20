@@ -11,37 +11,6 @@ feature-depth = 1
 # This section is considered when running `cargo deny check advisories`.
 [advisories]
 ignore = [
-    # No fix exists in the `rsa` crate itself (patched = [] upstream); the
-    # RustCrypto team's own tracking issue is still open. `lambda-media`
-    # uses `rsa::Pkcs1v15Sign` once per `GET /media-cookie` call to sign
-    # CloudFront cookies (`docs/design/media.md` §4.3) — the exploit needs an
-    # attacker who can observe fine-grained timing of that signing call over
-    # the network to attempt RSA key recovery. Mitigated, not fixed: since
-    # M13 `cloudfront::sign_policy` signs with `sign_with_rng`, so the key
-    # operation is blinded, and the timing is observed only through API
-    # Gateway + Lambda jitter. Track upstream (RustCrypto/RSA#680/#702) and
-    # drop this ignore when a fixed `rsa` ships.
-    { id = "RUSTSEC-2023-0071", reason = "rsa crate has no fix available upstream (patched = []); used by lambda-media for CloudFront cookie signing — blinded via sign_with_rng since M13" },
-
-    # aws-smithy-http-client pins a legacy hyper-rustls 0.24 / rustls 0.21 /
-    # rustls-webpki 0.101 branch alongside the current one; `cargo update`
-    # cannot move it (0 compatible versions in that branch). These three are
-    # all in rustls-webpki's X.509 name-constraint handling and a CRL-parsing
-    # panic — reachable only after a CA has already mis-issued a certificate,
-    # not by a normal network attacker. Fixing requires an upstream
-    # aws-config/aws-smithy-http-client bump (or a feature flag drop), out of
-    # scope for this hardening pass; re-check on the next AWS SDK bump.
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 has no compatible fix; pinned transitively by aws-smithy-http-client's legacy rustls 0.21 branch — see deny.toml comment" },
-    { id = "RUSTSEC-2026-0099", reason = "same legacy rustls-webpki 0.101.7 branch as RUSTSEC-2026-0098" },
-    { id = "RUSTSEC-2026-0104", reason = "same legacy rustls-webpki 0.101.7 branch as RUSTSEC-2026-0098" },
-
-    # Same legacy-branch situation as above, this time in `h2`: the fixed
-    # 0.4.x line was already bumped (see Cargo.lock), but an old h2 0.3.27 is
-    # also pinned, reached only through `bollard` (the Docker client behind
-    # `testcontainers`, a dev-dependency used solely to run DynamoDB Local in
-    # tests) — never part of a deployed Lambda.
-    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 has no compatible fix; reached only via bollard/testcontainers (dev-only, DynamoDB Local test harness)" },
-
     # Dev-only: both reached via `bollard`, the Docker client `testcontainers`
     # uses to start DynamoDB Local for integration tests. Neither ships in a
     # Lambda artifact. `tokio-tar`'s flaw is in parsing attacker-supplied tar

@@ -1,7 +1,7 @@
 """MediaPipelineStack — lambda-image-process and its S3 event subscription.
 
 This stack is deliberately volatile: destroy and redeploy it freely without
-touching the slow-to-rebuild CloudFront distribution in MediaPersistentStack.
+touching the media buckets (and the images in them) in MediaPersistentStack.
 
 The Lambda code is a shell stub at M3; the real Rust implementation lands in M8.
 """
@@ -34,7 +34,6 @@ class MediaPipelineStack(cdk.Stack):
         originals_bucket: s3.Bucket,
         processed_bucket: s3.Bucket,
         avatars_originals_bucket: s3.Bucket,
-        avatars_processed_bucket: s3.Bucket,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, id, **kwargs)
@@ -66,7 +65,6 @@ class MediaPipelineStack(cdk.Stack):
                 "MEDIA_ORIGINALS_BUCKET": originals_bucket.bucket_name,
                 "AVATARS_ORIGINALS_BUCKET": avatars_originals_bucket.bucket_name,
                 "PROCESSED_BUCKET": processed_bucket.bucket_name,
-                "AVATARS_PROCESSED_BUCKET": avatars_processed_bucket.bucket_name,
                 "RUST_LOG": "info",
                 "ENV": config.env,
             },
@@ -84,7 +82,6 @@ class MediaPipelineStack(cdk.Stack):
         processed_bucket.grant_put(self.image_process_fn)
         avatars_originals_bucket.grant_read(self.image_process_fn)
         avatars_originals_bucket.grant_delete(self.image_process_fn)
-        avatars_processed_bucket.grant_put(self.image_process_fn)
         # Removes the variants it just wrote when the row was deleted
         # mid-processing (`docs/design/media.md` §8.0). Plain `s3:DeleteObject`
         # on the processed prefixes, as in ApiStack, rather than `grant_delete`.
@@ -93,7 +90,7 @@ class MediaPipelineStack(cdk.Stack):
                 actions=["s3:DeleteObject"],
                 resources=[
                     processed_bucket.arn_for_objects("img/*"),
-                    avatars_processed_bucket.arn_for_objects("avatar/*"),
+                    processed_bucket.arn_for_objects("avatar/*"),
                 ],
             )
         )

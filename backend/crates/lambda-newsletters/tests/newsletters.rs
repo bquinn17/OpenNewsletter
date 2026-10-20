@@ -14,10 +14,13 @@ use newsletters::state::AppState;
 use persistence::{engagement, newsletters as nl_repo, questions};
 use pretty_assertions::assert_eq;
 
+/// Bucket name the test state's `MediaUrls` presigns against.
+const PROCESSED: &str = "test-processed";
+
 fn state(repo: persistence::Repo) -> AppState {
     AppState {
         repo,
-        cdn_base_url: String::new(),
+        media_urls: media_urls::MediaUrls::for_tests(PROCESSED),
     }
 }
 
@@ -573,7 +576,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
 
     let state = AppState {
         repo,
-        cdn_base_url: "https://cdn.test".into(),
+        media_urls: media_urls::MediaUrls::for_tests(PROCESSED),
     };
     let detail = handlers::get_newsletter_detail(
         &state,
@@ -600,7 +603,9 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
         vec!["img-b", "img-a"],
         "request order, pending skipped"
     );
-    assert!(u2.images[0].display_url.starts_with("https://cdn.test/"));
+    assert!(u2.images[0]
+        .display_url
+        .starts_with(&format!("https://{PROCESSED}.s3.us-east-1.amazonaws.com/")));
 
     assert_eq!(u2.comments.len(), 2);
     let live = &u2.comments[0];

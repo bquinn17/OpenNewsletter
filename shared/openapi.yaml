@@ -43,7 +43,7 @@ tags:
   - name: engagement
     description: Comment and reaction routes (`docs/design/api.md` §8).
   - name: media
-    description: Upload, avatar and signed-cookie routes (`docs/design/api.md` §9).
+    description: Upload and avatar routes (`docs/design/api.md` §9).
   - name: push
     description: Web Push subscription, test and preference routes (`docs/design/api.md` §10).
   - name: health
@@ -927,8 +927,8 @@ paths:
                 body: "Same — the switchbacks are brutal."
                 image:
                   imageId: "018f2b6b-6c1b-7c3a-9d4e-ad1e2f3a4b5c"
-                  displayUrl: "https://cdn.opennewsletter.example.com/img/g/202606/display.webp"
-                  thumbUrl: "https://cdn.opennewsletter.example.com/img/g/202606/thumb.webp"
+                  displayUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
+                  thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                   width: 1200
                   height: 800
                   caption: null
@@ -1216,8 +1216,8 @@ paths:
                 width: 4032
                 height: 3024
                 caption: null
-                displayUrl: "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp"
-                thumbUrl: "https://cdn.opennewsletter.example.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp"
+                displayUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
+                thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 errorMessage: null
                 uploadedAt: "2026-06-02T10:00:00Z"
                 processedAt: "2026-06-02T10:00:04Z"
@@ -1278,14 +1278,12 @@ paths:
       operationId: deleteUpload
       tags: [media]
       summary: >
-        Permanently delete an image: its original and processed S3 objects, a
-        CloudFront invalidation of its path, then its row
-        (`docs/design/api.md` §9.4). Caller must own the image. Refused with
+        Permanently delete an image: its original and processed S3 objects,
+        then its row (`docs/design/api.md` §9.4). Caller must own the image. Refused with
         `IMAGE_IN_USE` when the caller's published answer still references it,
         or (for a `purpose: "comment"` image) a live comment has it attached.
-        Idempotent: an image that is already gone returns 204. If the S3 or
-        CloudFront step fails, returns 500 and keeps the row so a retry can
-        finish.
+        Idempotent: an image that is already gone returns 204. If an S3
+        delete fails, returns 500 and keeps the row so a retry can finish.
       parameters:
         - $ref: "#/components/parameters/ImageIdPath"
         - $ref: "#/components/parameters/GroupIdQuery"
@@ -1340,38 +1338,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-
-  /media-cookie:
-    get:
-      operationId: getMediaCookie
-      tags: [media]
-      summary: >
-        CloudFront signed-cookie values scoped to `/img/{groupId}/*`, valid for
-        one hour (`docs/design/api.md` §9.5, `docs/design/media.md` §4). When the
-        Lambda has a cookie domain configured (prod) the response also carries
-        three `Set-Cookie` headers (`CloudFront-Policy`, `CloudFront-Signature`,
-        `CloudFront-Key-Pair-Id`); the client must call this with
-        `credentials: "include"`. Dev has no shared registrable domain, so the
-        SPA appends the body values as signed-URL query parameters instead
-        (`docs/design/media.md` §4.5). Caller must be a member of `groupId`.
-      parameters:
-        - $ref: "#/components/parameters/GroupIdQuery"
-      responses:
-        "200":
-          description: The signed policy.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MediaCookieResponse"
-              example:
-                policy: "eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4ub3Blbm5ld3NsZXR0ZXIuZXhhbXBsZS5jb20vaW1nLzAxOGYyYjZiLyoifV19"
-                signature: "Nql641NHEUkUaXQHZINK1FZ~SYeUSoBJMxjdgqrzIdzV2gyEXPDNv0pYdWJkflDKJ3xIu7lbwRpSkG98NBlgPi4ZJpRRnVX4kXAJK6tdNx6FucDB7OVqzcxkxHsGFd8VCG1BkC-Afh9~lOCMIYHIaiOB6~TF-ZFfi5a4FE9cDZ_"
-                keyPairId: "K2JCJMDEHXQW5F"
-                expiresAt: "2026-06-02T11:00:00Z"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
 
   /avatars:
     post:
@@ -1432,7 +1398,7 @@ paths:
                 mimeType: "image/png"
                 status: "ready"
                 bytes: 204800
-                avatarUrl: "https://cdn.opennewsletter.example.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp"
+                avatarUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 errorMessage: null
                 uploadedAt: "2026-06-02T10:00:00Z"
                 processedAt: "2026-06-02T10:00:01Z"
@@ -1443,13 +1409,11 @@ paths:
       tags: [media]
       summary: >
         Permanently delete one of the caller's avatars: its original and
-        processed S3 objects, a CloudFront invalidation of
-        `/avatar/{avatarId}/*`, then its row (`docs/design/api.md` §9.7). If it
+        processed S3 objects, then its row (`docs/design/api.md` §9.7). If it
         is the caller's current `avatarMediaId`, that is cleared to `null`
         first. Idempotent: the lookup is under the caller's own user, so an
         avatar that is already gone (or isn't theirs) returns 204 and touches
-        nothing. If the S3 or CloudFront step fails, returns 500 and keeps the
-        row.
+        nothing. If an S3 delete fails, returns 500 and keeps the row.
       parameters:
         - $ref: "#/components/parameters/AvatarIdPath"
       responses:
@@ -2030,6 +1994,7 @@ components:
         - ocean-dusk
         - citrus-blush
         - slate-lilac
+        - lavender-blush
 
     AvatarColorSlug:
       type: string
@@ -3068,10 +3033,10 @@ components:
           type: [string, "null"]
         displayUrl:
           type: [string, "null"]
-          description: Absolute CloudFront URL; null until `status=ready`.
+          description: Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`.
         thumbUrl:
           type: [string, "null"]
-          description: Absolute CloudFront URL; null until `status=ready`.
+          description: Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`.
         errorMessage:
           type: [string, "null"]
           description: >
@@ -3093,22 +3058,6 @@ components:
           type: [string, "null"]
           maxLength: 140
           description: "`null` or an all-whitespace string clears the caption."
-
-    MediaCookieResponse:
-      type: object
-      required: [policy, signature, keyPairId, expiresAt]
-      properties:
-        policy:
-          type: string
-          description: CloudFront-modified base64 of the custom policy JSON.
-        signature:
-          type: string
-          description: CloudFront-modified base64 RSA-SHA1 signature of the policy.
-        keyPairId:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
 
     CreateAvatarRequest:
       type: object
@@ -3155,7 +3104,7 @@ components:
           type: integer
         avatarUrl:
           type: [string, "null"]
-          description: Absolute unsigned CloudFront URL; null until `status=ready`.
+          description: Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`.
         errorMessage:
           type: [string, "null"]
         uploadedAt:

@@ -724,25 +724,15 @@ async fn hydrate_comment_image(
     else {
         return Ok(None);
     };
-    if img.status != MediaStatus::Ready {
-        return Ok(None);
-    }
-    let (Some(display_key), Some(thumb_key), Some(width), Some(height)) =
-        (img.display_key, img.thumb_key, img.width, img.height)
-    else {
-        return Ok(None);
-    };
-    let (Some(display_url), Some(thumb_url)) =
-        (state.image_url(&display_key), state.image_url(&thumb_key))
-    else {
+    let Some(urls) = state.media_urls.ready_image_urls(&img).await? else {
         return Ok(None);
     };
     Ok(Some(CommentImageResponse {
         image_id: img.image_id,
-        display_url,
-        thumb_url,
-        width,
-        height,
+        display_url: urls.display_url,
+        thumb_url: urls.thumb_url,
+        width: urls.width,
+        height: urls.height,
         caption: img.caption,
     }))
 }

@@ -1,79 +1,64 @@
-import { api } from "../api/client";
-import { env } from "../env";
+import type { QueryClient } from "@tanstack/react-query";
+import { queryClient } from "../api/queryClient";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
-type MediaCookie = S["MediaCookieResponse"];
 
-const REFRESH_BEFORE_EXPIRY_MS = 5 * 60_000;
+const REFRESH_THROTTLE_MS = 10_000;
 
-type CacheEntry = {
-  cookie: MediaCookie | null;
-  inFlight: Promise<MediaCookie> | null;
-};
+/** Mirrors `THUMB_LONG_EDGE_PX` in `backend/crates/shared/src/config.rs` (`docs/design/media.md` §1). */
+const THUMB_LONG_EDGE_PX = 400;
 
-const cache = new Map<string, CacheEntry>();
-
-function entryFor(groupId: string): CacheEntry {
-  let entry = cache.get(groupId);
-  if (!entry) {
-    entry = { cookie: null, inFlight: null };
-    cache.set(groupId, entry);
-  }
-  return entry;
-}
-
-function isFresh(cookie: MediaCookie): boolean {
-  return new Date(cookie.expiresAt).getTime() - REFRESH_BEFORE_EXPIRY_MS > Date.now();
-}
-
-/** Fetches (and caches per group) the CloudFront signed-cookie values, per `docs/design/media.md` §4.4. No-op in mock mode. */
-export async function ensureCookie(groupId: string): Promise<void> {
-  if (env.useMocks) return;
-
-  const entry = entryFor(groupId);
-  if (entry.cookie && isFresh(entry.cookie)) return;
-
-  if (!entry.inFlight) {
-    entry.inFlight = api.media.getMediaCookie(groupId).finally(() => {
-      entry.inFlight = null;
-    });
-  }
-  entry.cookie = await entry.inFlight;
+/**
+ * The thumb variant's size, from the original's `width`/`height` that the API reports. The
+ * pipeline scales the long edge down to `THUMB_LONG_EDGE_PX`, never up (`docs/design/media.md`
+ * §5.2). Passing the original's size to a thumb `<img>` would stretch it to its container.
+ */
+export function thumbSize(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): { width?: number; height?: number } {
+  if (!width || !height) return {};
+  const scale = Math.min(1, THUMB_LONG_EDGE_PX / Math.max(width, height));
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
 /**
- * Appends CloudFront signed-URL query params in dev (`docs/design/media.md` §4.5); pass-through in
- * prod (cookies do the work there) and for any URL this group has no cached cookie for yet
- * (including `/avatar/*`, which is never signed).
+ * `meta` for every query whose data carries presigned media URLs (`avatarUrl`, `displayUrl`,
+ * `thumbUrl`), so `invalidateMediaQueries` can find them (`docs/design/media.md` §4.4).
  */
-export function withMediaAuth(url: string): string {
-  if (env.appEnv !== "dev") return url;
+export const MEDIA_URLS_META = { mediaUrls: true };
 
-  const prefix = `${env.cdnBaseUrl}/img/`;
-  if (!url.startsWith(prefix)) return url;
-
-  const groupId = url.slice(prefix.length).split("/")[0];
-  const cookie = groupId ? cache.get(groupId)?.cookie : null;
-  if (!cookie) return url;
-
-  const separator = url.includes("?") ? "&" : "?";
-  return (
-    `${url}${separator}Policy=${encodeURIComponent(cookie.policy)}` +
-    `&Signature=${encodeURIComponent(cookie.signature)}` +
-    `&Key-Pair-Id=${encodeURIComponent(cookie.keyPairId)}`
-  );
+/** Invalidates the queries flagged with `MEDIA_URLS_META`, refetching the active ones. */
+export function invalidateMediaQueries(client: QueryClient): Promise<void> {
+  return client.invalidateQueries({
+    predicate: (query) => query.meta?.mediaUrls === true,
+    refetchType: "active",
+  });
 }
 
-/** Forces a cookie refetch for `groupId`, ignoring freshness — the `<img>` `onError` retry path. */
-export async function refreshMediaAuth(groupId: string): Promise<void> {
-  if (env.useMocks) return;
-  entryFor(groupId).cookie = null;
-  await ensureCookie(groupId);
-}
+let lastRefreshAt = 0;
+let inFlight: Promise<void> | null = null;
 
-export function resetMediaAuthCache(): void {
-  cache.clear();
+/**
+ * Recovers from an expired S3 presigned media URL (`docs/design/media.md` §4.2/§4.4): refetches
+ * the active queries that carry media URLs, so they come back with fresh ones. Concurrent callers
+ * share one in-flight refresh, and a call within 10s of the last one resolves immediately without
+ * re-invalidating — a burst of `<img onError>`s from the same stale batch of URLs shouldn't each
+ * trigger their own refetch.
+ */
+export function refreshMediaUrls(): Promise<void> {
+  // Offline, the load failed on the network rather than on an expired signature, and every
+  // refetch would fail too, each with its own error toast.
+  if (navigator.onLine === false) return Promise.resolve();
+  if (inFlight) return inFlight;
+  if (Date.now() - lastRefreshAt < REFRESH_THROTTLE_MS) return Promise.resolve();
+
+  lastRefreshAt = Date.now();
+  inFlight = invalidateMediaQueries(queryClient).finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
 }
 
 /** Standard-base64 SHA-256 of `file`, or `undefined` when `crypto.subtle` isn't available. */

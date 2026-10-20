@@ -55,15 +55,11 @@ def media_templates(
 ) -> tuple[assertions.Template, assertions.Template]:
     app = cdk.App()
     data_stack = DataStack(app, "TestDataStack2", config=dev_config, env=AWS_ENV)
-    frontend_stack = FrontendStack(
-        app, "TestFrontendStack", config=dev_config, env=AWS_ENV
-    )
     persistent_stack = MediaPersistentStack(
         app,
         "TestMediaPersistentStack",
         config=dev_config,
         table=data_stack.table,
-        certificate=frontend_stack.certificate,
         env=AWS_ENV,
     )
     pipeline_stack = MediaPipelineStack(
@@ -74,7 +70,6 @@ def media_templates(
         originals_bucket=persistent_stack.originals_bucket,
         processed_bucket=persistent_stack.processed_bucket,
         avatars_originals_bucket=persistent_stack.avatars_originals_bucket,
-        avatars_processed_bucket=persistent_stack.avatars_processed_bucket,
         env=AWS_ENV,
     )
     return (
@@ -215,52 +210,10 @@ def test_s3_bucket_count(
     media_templates: tuple[assertions.Template, assertions.Template],
 ) -> None:
     persistent, _ = media_templates
-    # originals + processed buckets (plus auto-delete custom resource bucket may add more,
-    # but the two named buckets must exist)
+    # Media originals, avatar originals, and the one processed bucket that
+    # holds both img/* and avatar/* (`docs/design/media.md` §2).
     resources = persistent.find_resources("AWS::S3::Bucket")
-    assert len(resources) >= 2
-
-
-def test_cloudfront_distribution_exists(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    persistent.resource_count_is("AWS::CloudFront::Distribution", 1)
-
-
-def test_cloudfront_has_key_group(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    persistent.resource_count_is("AWS::CloudFront::KeyGroup", 1)
-
-
-def test_cloudfront_distribution_references_key_group(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    resources = persistent.find_resources("AWS::CloudFront::Distribution")
-    assert len(resources) == 1
-    dist = next(iter(resources.values()))
-    behaviors = dist["Properties"]["DistributionConfig"]["DefaultCacheBehavior"]
-    assert "TrustedKeyGroups" in behaviors
-    assert len(behaviors["TrustedKeyGroups"]) == 1
-
-
-def test_cloudfront_redirect_to_https(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    persistent.has_resource_properties(
-        "AWS::CloudFront::Distribution",
-        {
-            "DistributionConfig": {
-                "DefaultCacheBehavior": {
-                    "ViewerProtocolPolicy": "redirect-to-https",
-                }
-            }
-        },
-    )
+    assert len(resources) == 3
 
 
 def _bucket_lifecycle_rules(
@@ -268,7 +221,7 @@ def _bucket_lifecycle_rules(
 ) -> list[dict[str, Any]]:
     """Lifecycle rules for the one bucket whose logical ID starts with
     `logical_id_prefix` (CDK suffixes a hash, e.g. `ProcessedBucketDE59930C`).
-    A plain prefix match is unambiguous here: none of the four bucket
+    A plain prefix match is unambiguous here: none of the three bucket
     construct IDs is itself a prefix of another."""
     resources = persistent.find_resources("AWS::S3::Bucket")
     matches = [v for k, v in resources.items() if k.startswith(logical_id_prefix)]
@@ -288,19 +241,85 @@ def test_processed_buckets_have_no_intelligent_tiering_transition(
     # under the 128 KB floor where Intelligent-Tiering ever pays for itself,
     # so the transition would be pure per-object cost for no benefit.
     persistent, _ = media_templates
-    for prefix in ("ProcessedBucket", "AvatarsProcessedBucket"):
+    for prefix in ("ProcessedBucket",):
         rules = _bucket_lifecycle_rules(persistent, prefix)
         assert all("Transitions" not in rule for rule in rules)
 
 
-def test_originals_buckets_still_transition_to_intelligent_tiering(
+def test_originals_buckets_expire_uploads_after_7_days(
     media_templates: tuple[assertions.Template, assertions.Template],
 ) -> None:
     persistent, _ = media_templates
     for prefix in ("OriginalsBucket", "AvatarsOriginalsBucket"):
         rules = _bucket_lifecycle_rules(persistent, prefix)
-        transitions = [t for rule in rules for t in rule.get("Transitions", [])]
-        assert any(t["StorageClass"] == "INTELLIGENT_TIERING" for t in transitions)
+        expiration_rules = [
+            r
+            for r in rules
+            if r.get("Prefix") == "uploads/" and "ExpirationInDays" in r
+        ]
+        assert len(expiration_rules) == 1
+        assert expiration_rules[0]["ExpirationInDays"] == 7
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_processed_bucket_allows_cors_reads_from_the_app_origin_only(
+    env: str,
+) -> None:
+    # Images load with `crossorigin="anonymous"` so the service worker can
+    # cache them (`docs/design/media.md` §4.1); localhost only in dev.
+    config = load_config(env)
+    buckets = _media_persistent_template(env).find_resources("AWS::S3::Bucket")
+    (processed,) = [v for k, v in buckets.items() if k.startswith("ProcessedBucket")]
+    expected_origins = [f"https://{config.domain}"]
+    if env == "dev":
+        expected_origins.append("http://localhost:5173")
+    assert processed["Properties"]["CorsConfiguration"]["CorsRules"] == [
+        {"AllowedMethods": ["GET", "HEAD"], "AllowedOrigins": expected_origins}
+    ]
+
+
+def test_media_outputs_name_the_s3_origins_the_spa_needs(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # The SPA's CSP must match the presigned URL host exactly, so the
+    # outputs use the regional virtual-hosted form the S3 SDK signs.
+    persistent, _ = media_templates
+    outputs = persistent.find_outputs("*")
+    media_base_url = json.dumps(outputs["MediaBaseUrl"]["Value"])
+    assert "ProcessedBucket" in media_base_url
+    assert ".s3.us-east-1." in media_base_url
+    upload_origins = json.dumps(outputs["UploadOrigins"]["Value"])
+    assert '"OriginalsBucket' in upload_origins
+    assert '"AvatarsOriginalsBucket' in upload_origins
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_media_persistent_stack_has_no_cloudfront(env: str) -> None:
+    # AWS won't let this account create CloudFront resources
+    # (`docs/design/media.md` §6.1).
+    rendered = json.dumps(_media_persistent_template(env).to_json())
+    assert "AWS::CloudFront::" not in rendered
+
+
+def test_api_stacks_reference_no_cloudfront(
+    api_template: assertions.Template, prod_api_template: assertions.Template
+) -> None:
+    for template in (api_template, prod_api_template):
+        rendered = json.dumps(template.to_json())
+        assert "AWS::CloudFront::" not in rendered
+        assert "cloudfront:" not in rendered
+
+
+def test_certificate_covers_the_app_and_api_domains_only(dev_config: EnvConfig) -> None:
+    app = cdk.App()
+    stack = FrontendStack(app, "TestFrontendStackSans", config=dev_config, env=AWS_ENV)
+    certificates = assertions.Template.from_stack(stack).find_resources(
+        "AWS::CertificateManager::Certificate"
+    )
+    (certificate,) = certificates.values()
+    names = [certificate["Properties"]["DomainName"]]
+    names += certificate["Properties"].get("SubjectAlternativeNames", [])
+    assert sorted(names) == sorted([dev_config.domain, dev_config.api_domain])
 
 
 # ---------------------------------------------------------------------------
@@ -373,32 +392,6 @@ def test_avatar_originals_bucket_has_cors(
     assert "CorsConfiguration" in bucket["Properties"]
 
 
-def test_cloudfront_has_avatar_behavior(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    resources = persistent.find_resources("AWS::CloudFront::Distribution")
-    assert len(resources) == 1
-    dist = next(iter(resources.values()))
-    behaviors = dist["Properties"]["DistributionConfig"].get("CacheBehaviors", [])
-    # Avatar behavior should be in CacheBehaviors (not DefaultCacheBehavior)
-    avatar_behaviors = [b for b in behaviors if "/avatar/*" in b.get("PathPattern", "")]
-    assert len(avatar_behaviors) == 1
-
-
-def test_avatar_behavior_has_no_trusted_key_group(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    resources = persistent.find_resources("AWS::CloudFront::Distribution")
-    dist = next(iter(resources.values()))
-    behaviors = dist["Properties"]["DistributionConfig"].get("CacheBehaviors", [])
-    avatar_behaviors = [b for b in behaviors if "/avatar/*" in b.get("PathPattern", "")]
-    avatar_behavior = avatar_behaviors[0]
-    # Should not have TrustedKeyGroups
-    assert "TrustedKeyGroups" not in avatar_behavior
-
-
 def test_image_process_has_avatar_bucket_env_vars(
     media_templates: tuple[assertions.Template, assertions.Template],
 ) -> None:
@@ -411,8 +404,8 @@ def test_image_process_has_avatar_bucket_env_vars(
                 "Variables": assertions.Match.object_like(
                     {
                         "AVATARS_ORIGINALS_BUCKET": assertions.Match.any_value(),
-                        "AVATARS_PROCESSED_BUCKET": assertions.Match.any_value(),
                         "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "PROCESSED_BUCKET": assertions.Match.any_value(),
                     }
                 )
             },
@@ -462,7 +455,6 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         "TestMediaPersistentStack3",
         config=dev_config,
         table=data_stack.table,
-        certificate=frontend_stack.certificate,
         env=AWS_ENV,
     )
     notifications_stack = NotificationsStack(
@@ -486,10 +478,6 @@ def api_template(dev_config: EnvConfig) -> assertions.Template:
         media_originals_bucket=media_persistent_stack.originals_bucket,
         media_processed_bucket=media_persistent_stack.processed_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
-        avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
-        cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
-        cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
-        cdn_distribution_id=media_persistent_stack.distribution_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -507,7 +495,6 @@ def prod_api_template() -> assertions.Template:
         "ProdMediaPersistentStack",
         config=config,
         table=data_stack.table,
-        certificate=frontend_stack.certificate,
         env=AWS_ENV,
     )
     notifications_stack = NotificationsStack(
@@ -531,10 +518,6 @@ def prod_api_template() -> assertions.Template:
         media_originals_bucket=media_persistent_stack.originals_bucket,
         media_processed_bucket=media_persistent_stack.processed_bucket,
         avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
-        avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
-        cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
-        cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
-        cdn_distribution_id=media_persistent_stack.distribution_id,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -555,7 +538,6 @@ def test_http_api_cors_allows_the_dev_origin(api_template: assertions.Template) 
                 "AllowOrigins": assertions.Match.array_with(["http://localhost:5173"]),
                 "AllowHeaders": assertions.Match.array_with(["x-correlation-id"]),
                 "ExposeHeaders": ["x-correlation-id"],
-                "AllowCredentials": True,
                 "MaxAge": 600,
             }
         },
@@ -636,7 +618,6 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "PATCH /uploads/{imageId}",
         "DELETE /uploads/{imageId}",
         "POST /uploads/{imageId}/complete",
-        "GET /media-cookie",
         "POST /avatars",
         "GET /avatars/{avatarId}",
         "DELETE /avatars/{avatarId}",
@@ -733,84 +714,7 @@ def test_media_lambda_has_required_env_vars(
                         "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
                         "PROCESSED_BUCKET": assertions.Match.any_value(),
                         "AVATARS_ORIGINALS_BUCKET": assertions.Match.any_value(),
-                        "AVATARS_PROCESSED_BUCKET": assertions.Match.any_value(),
-                        "CDN_BASE_URL": assertions.Match.any_value(),
-                        "CDN_KEY_PAIR_ID": assertions.Match.any_value(),
-                        "CDN_DISTRIBUTION_ID": assertions.Match.any_value(),
-                        "APP_SECRET_ARN": assertions.Match.any_value(),
-                        "MEDIA_COOKIE_DOMAIN": "",
                     }
-                )
-            },
-        },
-    )
-
-
-def test_media_lambda_cookie_domain_is_prod_form_in_prod(
-    prod_api_template: assertions.Template,
-) -> None:
-    prod_api_template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "FunctionName": assertions.Match.string_like_regexp(
-                r"OpenNewsletter-Media-prod"
-            ),
-            "Environment": {
-                "Variables": assertions.Match.object_like(
-                    {
-                        "MEDIA_COOKIE_DOMAIN": assertions.Match.string_like_regexp(
-                            r"\..*"
-                        ),
-                    }
-                )
-            },
-        },
-    )
-
-
-def test_media_lambda_cdn_base_url_is_set_in_dev(
-    api_template: assertions.Template,
-) -> None:
-    # In dev, CDN_BASE_URL should be set from the distribution domain
-    api_template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "FunctionName": "OpenNewsletter-Media-dev",
-            "Environment": {
-                "Variables": assertions.Match.object_like(
-                    {"CDN_BASE_URL": assertions.Match.any_value()}
-                )
-            },
-        },
-    )
-
-
-def test_groups_lambda_receives_cdn_base_url(
-    api_template: assertions.Template,
-) -> None:
-    api_template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "FunctionName": "OpenNewsletter-Groups-dev",
-            "Environment": {
-                "Variables": assertions.Match.object_like(
-                    {"CDN_BASE_URL": assertions.Match.any_value()}
-                )
-            },
-        },
-    )
-
-
-def test_engagement_lambda_receives_cdn_base_url(
-    api_template: assertions.Template,
-) -> None:
-    api_template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "FunctionName": "OpenNewsletter-Engagement-dev",
-            "Environment": {
-                "Variables": assertions.Match.object_like(
-                    {"CDN_BASE_URL": assertions.Match.any_value()}
                 )
             },
         },
@@ -893,6 +797,14 @@ def test_stage_has_access_logging(api_template: assertions.Template) -> None:
         "AWS::ApiGatewayV2::Stage",
         {"AccessLogSettings": assertions.Match.any_value()},
     )
+
+
+def test_access_log_format_reads_no_request_headers(
+    api_template: assertions.Template,
+) -> None:
+    # HTTP APIs reject header context variables in access logs at deploy time; synth passes.
+    for stage in api_template.find_resources("AWS::ApiGatewayV2::Stage").values():
+        assert ".header." not in stage["Properties"]["AccessLogSettings"]["Format"]
 
 
 def test_dev_has_no_custom_domain(api_template: assertions.Template) -> None:
@@ -1235,15 +1147,11 @@ def _media_persistent_template(env: str) -> assertions.Template:
     app = cdk.App()
     config = load_config(env)
     data_stack = DataStack(app, "MediaDataStack", config=config, env=AWS_ENV)
-    frontend_stack = FrontendStack(
-        app, "MediaFrontendStack", config=config, env=AWS_ENV
-    )
     stack = MediaPersistentStack(
         app,
         "MediaPersistentStackOnly",
         config=config,
         table=data_stack.table,
-        certificate=frontend_stack.certificate,
         env=AWS_ENV,
     )
     return assertions.Template.from_stack(stack)
@@ -1264,16 +1172,9 @@ def test_dynamodb_table_uses_the_aws_owned_key(
 def test_no_media_bucket_is_versioned(env: str) -> None:
     # A real delete must not leave the object behind a delete marker (`docs/design/infrastructure.md` §5.1).
     buckets = _media_persistent_template(env).find_resources("AWS::S3::Bucket")
-    assert len(buckets) == 4
+    assert len(buckets) == 3
     for bucket in buckets.values():
         assert "VersioningConfiguration" not in bucket["Properties"]
-
-
-def test_media_persistent_stack_no_longer_outputs_a_signing_secret_arn(
-    media_templates: tuple[assertions.Template, assertions.Template],
-) -> None:
-    persistent, _ = media_templates
-    assert "CloudFrontSigningKeySecretArn" not in persistent.find_outputs("*")
 
 
 def test_google_idp_maps_email_verified(auth_template: assertions.Template) -> None:
@@ -1348,7 +1249,6 @@ def test_groups_vapid_public_key_comes_from_the_app_secret(
 
 _OLD_SECRET_NAMES = (
     "VAPID_SECRET_ARN",
-    "CDN_SIGNING_SECRET_ARN",
     "GOOGLE_OAUTH_SECRET_ARN",
     "FACEBOOK_OAUTH_SECRET_ARN",
 )
@@ -1361,7 +1261,6 @@ def test_config_has_one_app_secret_field() -> None:
         "google_oauth_secret_arn",
         "facebook_oauth_secret_arn",
         "vapid_secret_arn",
-        "cdn_signing_secret_arn",
     }
 
 
@@ -1422,7 +1321,6 @@ def _bucket_and_prefix(resource: Any) -> tuple[str, str]:
     rendered = str(reference)
     for fragment, bucket in (
         ("AvatarsOriginalsBucket", "avatars-originals"),
-        ("AvatarsProcessedBucket", "avatars-processed"),
         ("OriginalsBucket", "media-originals"),
         ("ProcessedBucket", "media-processed"),
     ):
@@ -1446,7 +1344,7 @@ def _delete_targets(
 _MEDIA_DELETE = {("media-originals", "/uploads/*"), ("media-processed", "/img/*")}
 _AVATAR_DELETE = {
     ("avatars-originals", "/uploads/*"),
-    ("avatars-processed", "/avatar/*"),
+    ("media-processed", "/avatar/*"),
 }
 
 
@@ -1469,6 +1367,43 @@ def test_s3_delete_is_scoped_per_lambda(
     assert _delete_targets(api_template, f"OpenNewsletter-{name}-dev") == expected
 
 
+def _get_targets(
+    template: assertions.Template, function_name: str
+) -> set[tuple[str, str]]:
+    targets: set[tuple[str, str]] = set()
+    for statement in _statements_with(template, function_name, "s3:GetObject"):
+        assert statement["Action"] == "s3:GetObject"
+        resources = statement["Resource"]
+        for resource in resources if isinstance(resources, list) else [resources]:
+            targets.add(_bucket_and_prefix(resource))
+    return targets
+
+
+_READ_IMAGES = {("media-processed", "/img/*")}
+_READ_AVATARS = {("media-processed", "/avatar/*")}
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Media", _READ_IMAGES | _READ_AVATARS),
+        ("Newsletters", _READ_IMAGES | _READ_AVATARS),
+        ("Engagement", _READ_IMAGES),
+        ("Groups", _READ_AVATARS),
+        ("Questions", _READ_AVATARS),
+        ("Invites", set()),
+        ("Responses", set()),
+        ("Push", set()),
+    ],
+)
+def test_s3_get_is_scoped_to_the_prefixes_each_lambda_signs(
+    api_template: assertions.Template, name: str, expected: set[tuple[str, str]]
+) -> None:
+    # A presigned GET carries the signer's permissions (`docs/design/media.md`
+    # §4.1): each Lambda can read exactly the prefixes whose URLs it returns.
+    assert _get_targets(api_template, f"OpenNewsletter-{name}-dev") == expected
+
+
 def test_image_process_can_delete_processed_variants(
     media_templates: tuple[assertions.Template, assertions.Template],
 ) -> None:
@@ -1477,38 +1412,8 @@ def test_image_process_can_delete_processed_variants(
     _, pipeline = media_templates
     assert _delete_targets(pipeline, "OpenNewsletter-ImageProcess-dev") == {
         ("media-processed", "/img/*"),
-        ("avatars-processed", "/avatar/*"),
+        ("media-processed", "/avatar/*"),
     }
-
-
-@pytest.mark.parametrize(
-    ("name", "allowed"),
-    [
-        ("Media", True),
-        ("Engagement", True),
-        ("Groups", True),
-        ("Invites", False),
-        ("Newsletters", False),
-        ("Questions", False),
-        ("Responses", False),
-        ("Push", False),
-    ],
-)
-def test_cloudfront_invalidation_is_scoped_to_the_one_distribution(
-    api_template: assertions.Template, name: str, allowed: bool
-) -> None:
-    statements = _statements_with(
-        api_template, f"OpenNewsletter-{name}-dev", "cloudfront:CreateInvalidation"
-    )
-    if not allowed:
-        assert statements == []
-        return
-    (statement,) = statements
-    rendered = json.dumps(statement["Resource"])
-    assert statement["Resource"] != "*"
-    assert ":cloudfront::" in rendered
-    assert ":distribution/" in rendered
-    assert "Distribution" in rendered  # the MediaPersistentStack distribution ref
 
 
 @pytest.mark.parametrize(
@@ -1520,20 +1425,17 @@ def test_cloudfront_invalidation_is_scoped_to_the_one_distribution(
                 "MEDIA_ORIGINALS_BUCKET",
                 "PROCESSED_BUCKET",
                 "AVATARS_ORIGINALS_BUCKET",
-                "AVATARS_PROCESSED_BUCKET",
-                "CDN_DISTRIBUTION_ID",
             },
         ),
         (
             "Engagement",
-            {"MEDIA_ORIGINALS_BUCKET", "PROCESSED_BUCKET", "CDN_DISTRIBUTION_ID"},
+            {"MEDIA_ORIGINALS_BUCKET", "PROCESSED_BUCKET"},
         ),
         (
             "Groups",
             {
                 "AVATARS_ORIGINALS_BUCKET",
-                "AVATARS_PROCESSED_BUCKET",
-                "CDN_DISTRIBUTION_ID",
+                "PROCESSED_BUCKET",
             },
         ),
     ],
@@ -1552,7 +1454,6 @@ def test_media_delete_env_vars(
         "MEDIA_ORIGINALS_BUCKET",
         "PROCESSED_BUCKET",
         "AVATARS_ORIGINALS_BUCKET",
-        "AVATARS_PROCESSED_BUCKET",
     }
     assert set(variables) & delete_buckets == expected_keys & delete_buckets
 
@@ -1560,8 +1461,8 @@ def test_media_delete_env_vars(
 @pytest.mark.parametrize(
     ("name", "allowed"),
     [
-        ("Media", True),
         ("Push", True),
+        ("Media", False),
         ("Groups", False),
         ("Invites", False),
         ("Newsletters", False),
@@ -1570,7 +1471,7 @@ def test_media_delete_env_vars(
         ("Engagement", False),
     ],
 )
-def test_app_secret_read_is_limited_to_media_and_push(
+def test_app_secret_read_is_limited_to_push(
     api_template: assertions.Template, name: str, allowed: bool
 ) -> None:
     function_name = f"OpenNewsletter-{name}-dev"
@@ -1606,22 +1507,3 @@ def test_notify_tick_reads_the_app_secret_and_cycle_tick_does_not(
         )
         == []
     )
-
-
-def test_cdn_behaviors_send_credentialed_cors_for_the_app_origin_only() -> None:
-    # The SPA loads CDN images with `crossorigin`, so both behaviors need CORS,
-    # and credentialed CORS can't use `*`. Without it every image fails to load.
-    template = _media_persistent_template("dev")
-    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
-    ((policy_id, policy),) = policies.items()
-    cors = policy["Properties"]["ResponseHeadersPolicyConfig"]["CorsConfig"]
-    assert cors["AccessControlAllowCredentials"] is True
-    assert cors["OriginOverride"] is True
-    origins = cors["AccessControlAllowOrigins"]["Items"]
-    assert "*" not in origins
-    assert "http://localhost:5173" in origins
-
-    (dist,) = template.find_resources("AWS::CloudFront::Distribution").values()
-    config = dist["Properties"]["DistributionConfig"]
-    for behavior in [config["DefaultCacheBehavior"], *config["CacheBehaviors"]]:
-        assert behavior["ResponseHeadersPolicyId"] == {"Ref": policy_id}

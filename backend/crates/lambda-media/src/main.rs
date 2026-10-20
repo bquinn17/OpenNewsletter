@@ -1,9 +1,10 @@
-//! `lambda-media` — upload, avatar, and CloudFront signed-cookie routes
+//! `lambda-media` — upload, avatar and delete routes
 //! (`docs/design/api.md` §9).
 
 use lambda_http::{service_fn, Error};
 use media::{router, state::AppState};
 use media_delete::MediaDeleter;
+use media_urls::MediaUrls;
 use persistence::Repo;
 use std::sync::Arc;
 
@@ -25,21 +26,17 @@ async fn main() -> Result<(), Error> {
     let s3 = aws_sdk_s3::Client::from_conf(s3_config);
     let image_deleter =
         MediaDeleter::from_env(&aws_config, "MEDIA_ORIGINALS_BUCKET", "PROCESSED_BUCKET")?;
-    let avatar_deleter = image_deleter
-        .with_buckets_from_env("AVATARS_ORIGINALS_BUCKET", "AVATARS_PROCESSED_BUCKET")?;
+    let avatar_deleter =
+        image_deleter.with_buckets_from_env("AVATARS_ORIGINALS_BUCKET", "PROCESSED_BUCKET")?;
     let media_originals_bucket = image_deleter.originals_bucket.clone();
     let avatars_originals_bucket = avatar_deleter.originals_bucket.clone();
 
     let state = Arc::new(AppState::new(
         Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
         s3,
-        aws_sdk_secretsmanager::Client::new(&aws_config),
         media_originals_bucket,
         avatars_originals_bucket,
-        std::env::var("CDN_BASE_URL").unwrap_or_default(),
-        std::env::var("CDN_KEY_PAIR_ID").unwrap_or_default(),
-        std::env::var("APP_SECRET_ARN").unwrap_or_default(),
-        std::env::var("MEDIA_COOKIE_DOMAIN").unwrap_or_default(),
+        MediaUrls::from_env(&aws_config)?,
         image_deleter,
         avatar_deleter,
     ));

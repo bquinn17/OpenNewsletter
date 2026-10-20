@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { api, ApiError } from "../../api/client";
 import type { components } from "../../types/api";
-import { ensureCookie, pollMediaStatus, sha256Base64 } from "../../utils/media";
+import { pollMediaStatus, sha256Base64, thumbSize } from "../../utils/media";
 import { uploadToS3 } from "../../utils/uploadToS3";
 import { useToasts } from "../../state/toast";
 import { Spinner } from "../ui/Spinner";
-import { CdnImage } from "../ui/CdnImage";
+import { MediaImage } from "../ui/MediaImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
 
@@ -24,6 +24,8 @@ type PendingImage = {
   progress: number;
   thumbUrl: string | null;
   displayUrl: string | null;
+  width: number | null;
+  height: number | null;
   altText: string;
   error: string | null;
 };
@@ -34,6 +36,8 @@ export type UploaderImage = {
   altText: string;
   thumbUrl: string | null;
   displayUrl: string | null;
+  width: number | null;
+  height: number | null;
 };
 
 type Props = {
@@ -98,6 +102,8 @@ function toUploaderImage(image: PendingImage): UploaderImage {
     altText: image.altText,
     thumbUrl: image.thumbUrl,
     displayUrl: image.displayUrl,
+    width: image.width,
+    height: image.height,
   };
 }
 
@@ -120,6 +126,8 @@ export function ImageUploader({
       progress: row.status === "ready" ? 1 : 0,
       thumbUrl: row.thumbUrl,
       displayUrl: row.displayUrl,
+      width: row.width,
+      height: row.height,
       altText: row.caption ?? "",
       error: row.status === "failed" ? friendlyError(row.errorMessage, maxImages) : null,
     })),
@@ -185,17 +193,32 @@ export function ImageUploader({
     });
   }
 
+  /**
+   * `onExpired` for a ready image's `MediaImage` (`docs/design/media.md` §4.4): its URLs live in
+   * this component's own state, not the react-query cache the global `refreshMediaUrls` reaches,
+   * so a fresh presigned URL means re-fetching this one upload directly.
+   */
+  async function refreshImage(imageId: string): Promise<void> {
+    const fresh = await api.media.getUpload(imageId, groupId, cycleId);
+    updateImage(imageId, {
+      thumbUrl: fresh.thumbUrl,
+      displayUrl: fresh.displayUrl,
+      width: fresh.width,
+      height: fresh.height,
+    });
+  }
+
   function beginPolling(imageId: string) {
     const cancel = pollMediaStatus(() => api.media.getUpload(imageId, groupId, cycleId), {
       onReady: (data) => {
         pollCancelRef.current.delete(imageId);
-        void ensureCookie(groupId).then(() => {
-          updateImage(imageId, {
-            status: "ready",
-            progress: 1,
-            thumbUrl: data.thumbUrl,
-            displayUrl: data.displayUrl,
-          });
+        updateImage(imageId, {
+          status: "ready",
+          progress: 1,
+          thumbUrl: data.thumbUrl,
+          displayUrl: data.displayUrl,
+          width: data.width,
+          height: data.height,
         });
       },
       onFailed: (errorMessage) => {
@@ -224,6 +247,8 @@ export function ImageUploader({
         progress: 0,
         thumbUrl: null,
         displayUrl: null,
+        width: null,
+        height: null,
         altText: "",
         error: null,
       },
@@ -428,11 +453,12 @@ export function ImageUploader({
             >
               <div className="relative">
                 {image.status === "ready" && image.thumbUrl ? (
-                  <CdnImage
+                  <MediaImage
                     src={image.thumbUrl}
-                    groupId={groupId}
                     alt={image.altText || "Uploaded image"}
+                    {...thumbSize(image.width, image.height)}
                     className="h-24 w-full rounded-xl object-cover"
+                    onExpired={() => refreshImage(image.imageId)}
                   />
                 ) : (
                   <div

@@ -164,24 +164,6 @@ describe("api.media", () => {
     expect(url).toContain("cycleId=202606");
     expect(requestInit.method).toBe("DELETE");
   });
-
-  it("calls getMediaCookie with credentials: include", async () => {
-    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValue(
-      jsonResponse(200, {
-        policy: "p",
-        signature: "s",
-        keyPairId: "k",
-        expiresAt: "2026-01-01T00:00:00Z",
-      }),
-    );
-
-    await api.media.getMediaCookie("g1");
-
-    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/media-cookie?groupId=g1");
-    expect(requestInit.credentials).toBe("include");
-  });
 });
 
 describe("api.engagement", () => {

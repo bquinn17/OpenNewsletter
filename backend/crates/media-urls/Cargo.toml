@@ -1,0 +1,31 @@
+[package]
+name = "media-urls"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Presigned S3 GET URLs for every image/avatar field the API serves
+# (`docs/design/media.md` §4.3). A crate of its own, mirroring `media-delete`,
+# so the five Lambdas that hydrate image/avatar URLs share one implementation
+# instead of five copies of the same `format!`.
+
+[lib]
+name = "media_urls"
+path = "src/lib.rs"
+
+[features]
+# A `MediaUrls` built over static test credentials, for other crates'
+# integration tests (`persistence`'s `test-utils` feature is the model).
+test-utils = []
+
+[dependencies]
+domain = { path = "../domain" }
+shared = { path = "../shared" }
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tokio.workspace = true

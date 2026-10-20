@@ -1,8 +1,7 @@
 //! Real deletion of an uploaded image or avatar (`docs/design/media.md`
-//! §8.0, §11.4; `docs/design/api.md` §9.4, §9.7): the S3 objects first, then
-//! a CloudFront invalidation, then the DynamoDB row. Any S3 or invalidation
-//! failure returns an error and leaves the row, so a retry redoes the steps,
-//! all of which are idempotent.
+//! §8.0, §11.4; `docs/design/api.md` §9.4, §9.7): the S3 objects, then the
+//! DynamoDB row. Any S3 failure returns an error and leaves the row, so a
+//! retry redoes the steps, all of which are idempotent.
 //!
 //! Used by `lambda-media` (`DELETE /uploads`, `DELETE /avatars`),
 //! `lambda-engagement` (a comment releasing its image) and `lambda-groups`
@@ -11,7 +10,7 @@
 mod clients;
 pub mod fakes;
 
-pub use clients::{CloudFrontInvalidator, S3ObjectStore};
+pub use clients::S3ObjectStore;
 
 use async_trait::async_trait;
 use domain::{AvatarMedia, ImageMedia};
@@ -23,21 +22,12 @@ use std::sync::Arc;
 pub struct ObjectStoreError(pub String);
 
 #[derive(Debug, thiserror::Error)]
-#[error("cdn invalidation error: {0}")]
-pub struct InvalidationError(pub String);
-
-#[derive(Debug, thiserror::Error)]
 pub enum MediaDeleteError {
     #[error("failed to delete s3://{bucket}/{key}: {source}")]
     Object {
         bucket: String,
         key: String,
         source: ObjectStoreError,
-    },
-    #[error("failed to invalidate {path}: {source}")]
-    Invalidation {
-        path: String,
-        source: InvalidationError,
     },
     #[error("failed to delete the media row: {0}")]
     Row(#[from] RepoError),
@@ -52,20 +42,13 @@ pub trait MediaObjectStore: Send + Sync {
     async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), ObjectStoreError>;
 }
 
-#[allow(clippy::double_must_use)]
-#[async_trait]
-pub trait CdnInvalidator: Send + Sync {
-    /// Invalidate `paths` (each starting with `/`, optionally ending in `*`).
-    async fn invalidate(&self, paths: &[String]) -> Result<(), InvalidationError>;
-}
-
-/// Everything needed to delete one kind of media: the shared clients plus
+/// Everything needed to delete one kind of media: the shared client plus
 /// the originals/processed bucket pair it lives in (images and avatars use
-/// different buckets).
+/// different originals buckets but the same processed bucket —
+/// `docs/design/media.md` §4.1).
 #[derive(Clone)]
 pub struct MediaDeleter {
     pub store: Arc<dyn MediaObjectStore>,
-    pub cdn: Arc<dyn CdnInvalidator>,
     pub originals_bucket: String,
     pub processed_bucket: String,
 }
@@ -76,8 +59,7 @@ pub struct MediaDeleter {
 pub struct MissingEnvVar(pub String);
 
 impl MediaDeleter {
-    /// The real S3 and CloudFront clients, invalidating `CDN_DISTRIBUTION_ID`,
-    /// for the bucket pair named by the two env vars.
+    /// The real S3 client, for the bucket pair named by the two env vars.
     pub fn from_env(
         aws_config: &aws_config::SdkConfig,
         originals_bucket_var: &str,
@@ -85,16 +67,12 @@ impl MediaDeleter {
     ) -> Result<Self, MissingEnvVar> {
         Ok(Self {
             store: Arc::new(S3ObjectStore::new(aws_sdk_s3::Client::new(aws_config))),
-            cdn: Arc::new(CloudFrontInvalidator::new(
-                aws_sdk_cloudfront::Client::new(aws_config),
-                env_var("CDN_DISTRIBUTION_ID")?,
-            )),
             originals_bucket: env_var(originals_bucket_var)?,
             processed_bucket: env_var(processed_bucket_var)?,
         })
     }
 
-    /// The same clients for another bucket pair (`lambda-media` deletes both
+    /// The same client for another bucket pair (`lambda-media` deletes both
     /// images and avatars).
     pub fn with_buckets_from_env(
         &self,
@@ -103,7 +81,6 @@ impl MediaDeleter {
     ) -> Result<Self, MissingEnvVar> {
         Ok(Self {
             store: Arc::clone(&self.store),
-            cdn: Arc::clone(&self.cdn),
             originals_bucket: env_var(originals_bucket_var)?,
             processed_bucket: env_var(processed_bucket_var)?,
         })
@@ -114,8 +91,8 @@ fn env_var(name: &str) -> Result<String, MissingEnvVar> {
     std::env::var(name).map_err(|_| MissingEnvVar(name.to_owned()))
 }
 
-/// Delete an image's original, display and thumb objects, invalidate the
-/// display and thumb paths, then delete its `ImageMedia` row.
+/// Delete an image's original, display and thumb objects, then delete its
+/// `ImageMedia` row.
 ///
 /// `image` is the caller's read of the row. If processing finishes before the
 /// row delete, it has written processed objects that read didn't list, so the
@@ -161,9 +138,9 @@ pub async fn delete_image_media(
     Ok(())
 }
 
-/// Delete an avatar's original and display objects, invalidate the display
-/// path, then delete its `AvatarMedia` row. Rereads and goes again on a
-/// status change, as [`delete_image_media`] does.
+/// Delete an avatar's original and display objects, then delete its
+/// `AvatarMedia` row. Rereads and goes again on a status change, as
+/// [`delete_image_media`] does.
 pub async fn delete_avatar_media(
     repo: &Repo,
     deleter: &MediaDeleter,
@@ -195,12 +172,9 @@ pub async fn delete_avatar_media(
 /// `ready`/`failed` transition a row can make.
 const MAX_DELETE_ATTEMPTS: u32 = 2;
 
-/// The S3 and CDN half of a delete. Each processed key is invalidated by its
-/// exact path. A wildcard would also work, but CloudFront allows only 15
-/// wildcard invalidations in progress per distribution, against 3,000 exact
-/// paths, and a burst of deletes would hit that cap. A row with no processed
-/// key (still pending, or failed) was never served, so there is nothing to
-/// invalidate.
+/// The S3 half of a delete: the original, then each processed variant the
+/// row has a key for. A row with no processed key (still `pending`/`failed`)
+/// was never served, so there's nothing else to delete.
 async fn delete_objects(
     deleter: &MediaDeleter,
     original_key: &str,
@@ -209,21 +183,6 @@ async fn delete_objects(
     delete_object(deleter, &deleter.originals_bucket, original_key).await?;
     for key in processed_keys.iter().flatten() {
         delete_object(deleter, &deleter.processed_bucket, key).await?;
-    }
-    let paths: Vec<String> = processed_keys
-        .iter()
-        .flatten()
-        .map(|key| invalidation_path(key))
-        .collect();
-    if !paths.is_empty() {
-        deleter
-            .cdn
-            .invalidate(&paths)
-            .await
-            .map_err(|source| MediaDeleteError::Invalidation {
-                path: paths.join(", "),
-                source,
-            })?;
     }
     Ok(())
 }
@@ -242,32 +201,4 @@ async fn delete_object(
             key: key.to_owned(),
             source,
         })
-}
-
-/// `img/g/c/q/u/i/display.webp` → `/img/g/c/q/u/i/display.webp`. Processed
-/// keys are laid out to match the CDN paths they're served at
-/// (`docs/design/media.md` §4).
-fn invalidation_path(processed_key: &str) -> String {
-    format!("/{}", processed_key.trim_start_matches('/'))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_image_key_invalidates_its_exact_path() {
-        assert_eq!(
-            invalidation_path("img/g1/202606/q1/u1/i1/display.webp"),
-            "/img/g1/202606/q1/u1/i1/display.webp"
-        );
-    }
-
-    #[test]
-    fn an_avatar_key_invalidates_its_exact_path() {
-        assert_eq!(
-            invalidation_path("avatar/av1/display.webp"),
-            "/avatar/av1/display.webp"
-        );
-    }
 }

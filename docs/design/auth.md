@@ -220,7 +220,7 @@ The frontend renews in `auth/renewSession.ts`, shortly before expiry (`accessTok
 
 ## 8. Logout
 
-`logout()` in `auth/AuthProvider.tsx` ([D1](../decisions.md#d1)):
+`logout()` in `auth/AuthProvider.tsx` ([D1](../decisions.md#d1)) shows a full-screen "Signing out…" overlay as soon as it's called, since the steps below end in network round trips and a cross-origin redirect. Then it:
 1. Removes the stored user from `localStorage` (was `sessionStorage`; see §7).
 2. Clears React Query cache.
 3. Clears Zustand persisted stores.
@@ -292,12 +292,11 @@ Once the bootstrap admin exists (dev: the password account; prod: the Google-fed
 
 ## 10. Identity provider setup: design-relevant facts
 
-Outside of CDK, a human operator registers Google and Facebook as IdPs, generates VAPID keys, generates a CloudFront signing keypair, and sets `BOOTSTRAP_ADMIN_EMAIL` for prod (§9.1a). The step-by-step procedure, exact commands and redirect URIs are in [`operator-setup.md`](../operations/operator-setup.md); this section keeps only the facts that shape the design:
+Outside of CDK, a human operator registers Google and Facebook as IdPs, generates VAPID keys, and sets `BOOTSTRAP_ADMIN_EMAIL` for prod (§9.1a). The step-by-step procedure, exact commands and redirect URIs are in [`operator-setup.md`](../operations/operator-setup.md); this section keeps only the facts that shape the design:
 
 - **Redirect URI.** Both IdP apps (Google, Facebook) must list `https://{cognito_domain_prefix}.auth.us-east-1.amazoncognito.com/oauth2/idpresponse` as an allowed redirect — the Cognito hosted UI's callback, not the SPA's own `/auth/callback`.
-- **CloudFront signing key must be RSA 2048.** `lambda-media` signs with RSA-SHA1 only, so an EC key deploys cleanly and then fails every `GET /media-cookie`.
 - **Attribute mapping and why.** `email -> email`, `name -> name` for both IdPs; Google additionally maps `email_verified -> email_verified`. Facebook doesn't supply `email_verified`, which is why a `boundEmail` invite can only be redeemed via Google (§4.2, §9.1a).
-- **One combined secret, not one per credential** ([D7](../decisions.md#d7)). The Google/Facebook OAuth secrets, VAPID keys and CloudFront signing private key all land as JSON keys inside the **one** per-env Secrets Manager secret `opennewsletter/{env}` (`app_secret_arn`, [`infrastructure.md` §2](infrastructure.md#2-configpy)/§7.1/§12), merged with a single `jq` recipe rather than created as separate secrets. `BOOTSTRAP_ADMIN_EMAIL` is a plain config value, not a secret — it's a repo variable in CI and an `.env.local` entry locally (`infra/opennewsletter/config.py`).
+- **One combined secret, not one per credential** ([D7](../decisions.md#d7)). The Google/Facebook OAuth secrets and VAPID keys land as JSON keys inside the **one** per-env Secrets Manager secret `opennewsletter/{env}` (`app_secret_arn`, [`infrastructure.md` §2](infrastructure.md#2-configpy)/§7.1/§12), merged with a single `jq` recipe rather than created as separate secrets. `BOOTSTRAP_ADMIN_EMAIL` is a plain config value, not a secret — it's a repo variable in CI and an `.env.local` entry locally (`infra/opennewsletter/config.py`).
 
 ---
 
@@ -313,8 +312,8 @@ Outside of CDK, a human operator registers Google and Facebook as IdPs, generate
 - **Reusing invites**: prevented by `TransactWriteItems` condition on `status=pending`.
 - **Privilege escalation**: only admins can call admin routes; admins are scoped to one group at a time. The auth helper enforces this on every handler.
 - **JWT confusion**: API Gateway validates audience and issuer. Backend trusts `sub` only.
-- **Token theft via XSS** ([D1](../decisions.md#d1)): tokens live in `localStorage` rather than `sessionStorage` (§7), so an installed PWA stays signed in across launches. XSS could read tokens from either storage equally, so that part of the exposure is unchanged; the difference is lifetime — a stolen refresh token out of `localStorage` stays valid for up to 30 days unless revoked, versus disappearing when the tab closed under a `sessionStorage` scheme. CSP (restricting script/connect/img sources, [`frontend.md` §12.1](frontend.md#121-content-security-policy)) remains the primary mitigation against the XSS that would be needed to read it in the first place. Logout's refresh-token revocation (§8) is the secondary mitigation: it closes the window for a token stolen before logout. Shared-device exposure (a draft mirror or cached CDN images surviving logout) is accepted as-is — a pre-existing risk this doesn't materially worsen ([D9](../decisions.md#d9)).
-- **Replay of CDN cookies**: cookies expire in 1 hour and are scoped to `/img/{groupId}/*`. A leaked cookie grants read access to that group's images for ≤1 hour. Acceptable.
+- **Token theft via XSS** ([D1](../decisions.md#d1)): tokens live in `localStorage` rather than `sessionStorage` (§7), so an installed PWA stays signed in across launches. XSS could read tokens from either storage equally, so that part of the exposure is unchanged; the difference is lifetime — a stolen refresh token out of `localStorage` stays valid for up to 30 days unless revoked, versus disappearing when the tab closed under a `sessionStorage` scheme. CSP (restricting script/connect/img sources, [`frontend.md` §12.1](frontend.md#121-content-security-policy)) remains the primary mitigation against the XSS that would be needed to read it in the first place. Logout's refresh-token revocation (§8) is the secondary mitigation: it closes the window for a token stolen before logout. Shared-device exposure (a draft mirror or cached media images surviving logout) is accepted as-is — a pre-existing risk this doesn't materially worsen ([D9](../decisions.md#d9)).
+- **Leaked presigned media URL**: a presigned S3 GET URL is scoped to one object and expires after `MEDIA_URL_TTL_SECONDS` (1 hour); a URL can also die earlier if the signing Lambda's own role credentials expire first. A leaked URL grants read access to that one image or avatar for at most an hour, never to the group's other images. See [`media.md` §4.2](media.md#42-url-lifetime-and-signing-window)/§6.
 
 ---
 

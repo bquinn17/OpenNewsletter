@@ -79,7 +79,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
 
     let state = AppState {
         repo,
-        cdn_base_url: String::new(),
+        media_urls: media_urls::MediaUrls::for_tests("test-processed"),
     };
     let group_id = GroupId::new("g1");
 

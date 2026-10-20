@@ -36,7 +36,7 @@ cd backend && cargo test --workspace
 
 ```sh
 cd infra && python3.12 -m venv .venv && source .venv/bin/activate \
-  && pip install -r requirements.txt \
+  && pip install -r requirements.txt -r ../scripts/requirements.txt \
   && npx aws-cdk@2 synth --quiet
 ```
 

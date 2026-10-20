@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   activatePromptly,
   buildNotificationOptions,
+  mediaCacheKey,
   parsePushPayload,
   resolveNotificationUrl,
-  stripMediaAuthParams,
   type ActivationScope,
 } from "./swHelpers";
 
@@ -135,21 +135,26 @@ describe("activatePromptly (D6)", () => {
   });
 });
 
-describe("stripMediaAuthParams", () => {
-  it("drops CloudFront's signed-URL params so the cache key survives re-signing", () => {
+describe("mediaCacheKey", () => {
+  it("drops every query param, including the X-Amz-* presign params and x-id", () => {
     expect(
-      stripMediaAuthParams(
-        "https://cdn.example.com/img/g1/c/q/u/i/thumb.webp?Policy=abc&Signature=def&Key-Pair-Id=K1",
+      mediaCacheKey(
+        "https://media.example.com/img/g1/c/q/u/i/thumb.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+          "&X-Amz-Credential=abc&X-Amz-Date=20261014T000000Z&X-Amz-Expires=3600" +
+          "&X-Amz-SignedHeaders=host&X-Amz-Security-Token=tok&X-Amz-Signature=sig&x-id=GetObject",
       ),
-    ).toBe("https://cdn.example.com/img/g1/c/q/u/i/thumb.webp");
+    ).toBe("https://media.example.com/img/g1/c/q/u/i/thumb.webp");
   });
 
-  it("leaves an unsigned URL and unrelated params alone", () => {
-    expect(stripMediaAuthParams("https://cdn.example.com/avatar/a1/display.webp")).toBe(
-      "https://cdn.example.com/avatar/a1/display.webp",
+  it("leaves an unsigned URL alone", () => {
+    expect(mediaCacheKey("https://media.example.com/avatar/a1/display.webp")).toBe(
+      "https://media.example.com/avatar/a1/display.webp",
     );
-    expect(stripMediaAuthParams("https://cdn.example.com/img/x.webp?v=2&Signature=s")).toBe(
-      "https://cdn.example.com/img/x.webp?v=2",
+  });
+
+  it("keeps only the origin and path, dropping any other query param too", () => {
+    expect(mediaCacheKey("https://media.example.com/img/x.webp?v=2")).toBe(
+      "https://media.example.com/img/x.webp",
     );
   });
 });

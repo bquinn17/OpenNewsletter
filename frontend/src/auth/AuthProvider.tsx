@@ -44,6 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   // protected route RequireAuth would answer with `signinRedirect()`, whose
   // redirect can land after (and override) the Cognito `/logout` redirect.
   const loggingOut = useRef(false);
+  // Drives the overlay below: logout ends in a cross-origin redirect after a
+  // few network round trips, so without it a click shows nothing for seconds.
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (env.useMocks || !userManager) return;
@@ -108,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    setSigningOut(true);
     // Best-effort, before tokens are cleared below — never blocks logout.
     await bestEffortDisablePush();
 
@@ -117,7 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       assignLocation("/");
       return;
     }
-    if (!userManager) return;
+    if (!userManager) {
+      setSigningOut(false);
+      return;
+    }
     loggingOut.current = true;
     // `docs/design/auth.md` §8, in order. Read the user first: the refresh token
     // (and which client issued it) is needed for step 4, after step 1 has
@@ -143,5 +150,19 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     [status, user, login, logout],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {signingOut && (
+        <div
+          role="status"
+          className="fixed inset-0 z-50 grid place-items-center bg-white/70 backdrop-blur-sm"
+        >
+          <div className="rounded-2xl border border-line bg-white px-5 py-3 text-sm font-semibold shadow-pop">
+            Signing out…
+          </div>
+        </div>
+      )}
+    </AuthContext.Provider>
+  );
 }

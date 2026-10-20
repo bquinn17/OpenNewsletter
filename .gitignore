@@ -18,10 +18,6 @@ build/
 .env.*
 !.env.example
 *.pem
-!infra/keys/*.pub.pem
-# Throwaway RSA key the lambda-media unit tests sign with (`include_str!` in
-# src/cloudfront.rs). Not used anywhere else.
-!backend/crates/lambda-media/tests/fixtures/test_signing_key.pem
 *.key
 
 # OS / editor

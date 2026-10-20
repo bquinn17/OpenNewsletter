@@ -14,14 +14,12 @@ use std::sync::Arc;
 const MEDIA_ORIGINALS: &str = "media-originals";
 const AVATARS_ORIGINALS: &str = "avatars-originals";
 const PROCESSED: &str = "media-processed";
-const AVATARS_PROCESSED: &str = "avatars-processed";
 
 fn buckets() -> Buckets {
     Buckets {
         media_originals: MEDIA_ORIGINALS.into(),
         avatars_originals: AVATARS_ORIGINALS.into(),
         processed: PROCESSED.into(),
-        avatars_processed: AVATARS_PROCESSED.into(),
     }
 }
 
@@ -75,7 +73,12 @@ async fn a_pending_image_becomes_ready_with_both_variants_uploaded() {
     assert_eq!(display_object.content_type, "image/webp");
     assert_eq!(
         display_object.cache_control,
-        "public, max-age=5184000, immutable"
+        "private, max-age=5184000, immutable"
+    );
+
+    assert!(
+        !fake.contains(MEDIA_ORIGINALS, key).await,
+        "the original is deleted once the row is ready"
     );
 }
 
@@ -114,7 +117,7 @@ async fn an_oversized_object_is_marked_failed_and_the_original_is_deleted() {
 }
 
 #[tokio::test]
-async fn garbage_bytes_are_marked_failed_with_decode_failed_and_the_original_is_kept() {
+async fn garbage_bytes_are_marked_failed_with_decode_failed_and_the_original_is_deleted() {
     let (_c, repo) = common::make_repo().await;
     let fake = Arc::new(FakeStore::new());
     let state = AppState {
@@ -144,7 +147,7 @@ async fn garbage_bytes_are_marked_failed_with_decode_failed_and_the_original_is_
     .unwrap();
     assert_eq!(got.status, MediaStatus::Failed);
     assert_eq!(got.error_message, Some("IMAGE_DECODE_FAILED".to_string()));
-    assert!(fake.contains(MEDIA_ORIGINALS, key).await);
+    assert!(!fake.contains(MEDIA_ORIGINALS, key).await);
 }
 
 #[tokio::test]
@@ -186,11 +189,11 @@ struct DeleteRowDuringUpload {
 
 #[async_trait::async_trait]
 impl ObjectStore for DeleteRowDuringUpload {
-    async fn content_length(&self, bucket: &str, key: &str) -> Result<u64, StoreError> {
+    async fn content_length(&self, bucket: &str, key: &str) -> Result<Option<u64>, StoreError> {
         self.inner.content_length(bucket, key).await
     }
 
-    async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, StoreError> {
+    async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         self.inner.get(bucket, key).await
     }
 
@@ -252,6 +255,141 @@ async fn an_image_deleted_mid_processing_leaves_no_processed_objects() {
     }
 }
 
+/// A store whose `delete` always fails; everything else delegates to a real
+/// `FakeStore`.
+struct FailingDelete {
+    inner: Arc<FakeStore>,
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for FailingDelete {
+    async fn content_length(&self, bucket: &str, key: &str) -> Result<Option<u64>, StoreError> {
+        self.inner.content_length(bucket, key).await
+    }
+
+    async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.inner.get(bucket, key).await
+    }
+
+    async fn put(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        cache_control: &str,
+    ) -> Result<(), StoreError> {
+        self.inner
+            .put(bucket, key, body, content_type, cache_control)
+            .await
+    }
+
+    async fn delete(&self, _bucket: &str, _key: &str) -> Result<(), StoreError> {
+        Err(StoreError("injected failure".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_original_delete_still_leaves_the_row_ready_and_returns_ok() {
+    let (_c, repo) = common::make_repo().await;
+    let fake = Arc::new(FakeStore::new());
+    let state = AppState {
+        repo,
+        store: Arc::new(FailingDelete {
+            inner: fake.clone(),
+        }),
+        buckets: buckets(),
+    };
+
+    let row = common::pending_image("g1", "202606", "img-06", "q1", "u1");
+    media::put_image(&state.repo, &row).await.unwrap();
+    let key = "uploads/g1/202606/q1/u1/img-06.jpg";
+    fake.seed(MEDIA_ORIGINALS, key, jpeg_bytes(100, 100)).await;
+
+    handle_event(&state, common::s3_event(MEDIA_ORIGINALS, key))
+        .await
+        .expect("a failed best-effort original delete must not fail the invocation");
+
+    let got = media::get_image(
+        &state.repo,
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+        &ImageId::new("img-06"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        got.status,
+        MediaStatus::Ready,
+        "the row stays ready even though its original delete failed"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_original_delete_still_leaves_the_row_failed_and_returns_ok() {
+    let (_c, repo) = common::make_repo().await;
+    let fake = Arc::new(FakeStore::new());
+    let state = AppState {
+        repo,
+        store: Arc::new(FailingDelete {
+            inner: fake.clone(),
+        }),
+        buckets: buckets(),
+    };
+
+    let row = common::pending_image("g1", "202606", "img-07", "q1", "u1");
+    media::put_image(&state.repo, &row).await.unwrap();
+    let key = "uploads/g1/202606/q1/u1/img-07.jpg";
+    fake.seed(MEDIA_ORIGINALS, key, b"not an image".to_vec())
+        .await;
+
+    handle_event(&state, common::s3_event(MEDIA_ORIGINALS, key))
+        .await
+        .expect("a failed best-effort original delete must not fail the invocation");
+
+    let got = media::get_image(
+        &state.repo,
+        &GroupId::new("g1"),
+        &CycleId::new("202606"),
+        &ImageId::new("img-07"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(got.status, MediaStatus::Failed);
+}
+
+/// A duplicate S3 delivery (notifications are at-least-once): this invocation
+/// saw the row still `pending`, but another one has since finished it and
+/// deleted the original.
+#[tokio::test]
+async fn a_pending_image_whose_original_is_already_deleted_is_skipped() {
+    let (_c, repo) = common::make_repo().await;
+    let fake = Arc::new(FakeStore::new());
+    let state = AppState {
+        repo,
+        store: fake.clone(),
+        buckets: buckets(),
+    };
+
+    let row = common::pending_image("g1", "202606", "img-08", "q1", "u1");
+    media::put_image(&state.repo, &row).await.unwrap();
+    let key = "uploads/g1/202606/q1/u1/img-08.jpg";
+
+    handle_event(&state, common::s3_event(MEDIA_ORIGINALS, key))
+        .await
+        .expect("a missing original is not a transient error");
+
+    for variant in ["display", "thumb"] {
+        let processed = format!("img/g1/202606/q1/u1/img-08/{variant}.webp");
+        assert!(
+            !fake.contains(PROCESSED, &processed).await,
+            "{processed} written"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_record_from_an_unrecognized_bucket_is_skipped() {
     let (_c, repo) = common::make_repo().await;
@@ -302,11 +440,17 @@ async fn an_avatar_happy_path_produces_a_256_square_webp() {
     let display_key = got.display_key.expect("display key set");
     assert_eq!(display_key, "avatar/av-01/display.webp");
     let stored = fake
-        .get_object(AVATARS_PROCESSED, &display_key)
+        .get_object(PROCESSED, &display_key)
         .await
         .expect("avatar display object present");
     let decoded = image::load_from_memory(&stored.bytes).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (256, 256));
+    assert_eq!(stored.cache_control, "private, max-age=7776000, immutable");
+
+    assert!(
+        !fake.contains(AVATARS_ORIGINALS, key).await,
+        "the original is deleted once the row is ready"
+    );
 }
 
 #[tokio::test]

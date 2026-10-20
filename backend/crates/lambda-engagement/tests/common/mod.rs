@@ -11,7 +11,7 @@ use domain::{
     ResponseId, ResponseStatus, Role, UserId,
 };
 use engagement::state::AppState;
-use media_delete::fakes::{fake_deleter, RecordingInvalidator, RecordingObjectStore};
+use media_delete::fakes::{fake_deleter, RecordingObjectStore};
 use persistence::keys::{
     attr, locked_pk, locked_sk, membership_gsi1pk, membership_gsi1sk, membership_sk,
     response_gsi1pk, response_gsi1sk, response_pk, response_sk, user_pk,
@@ -35,21 +35,15 @@ pub fn test_state(repo: Repo) -> AppState {
     test_state_with_fakes(repo).0
 }
 
-/// An `AppState` whose image deleter records into the returned fakes.
-pub fn test_state_with_fakes(
-    repo: Repo,
-) -> (
-    AppState,
-    Arc<RecordingObjectStore>,
-    Arc<RecordingInvalidator>,
-) {
-    let (image_deleter, store, cdn) = fake_deleter(MEDIA_ORIGINALS, MEDIA_PROCESSED);
+/// An `AppState` whose image deleter records into the returned fake.
+pub fn test_state_with_fakes(repo: Repo) -> (AppState, Arc<RecordingObjectStore>) {
+    let (image_deleter, store) = fake_deleter(MEDIA_ORIGINALS, MEDIA_PROCESSED);
     let state = AppState {
         repo,
-        cdn_base_url: "https://cdn.example.com".into(),
+        media_urls: media_urls::MediaUrls::for_tests(MEDIA_PROCESSED),
         image_deleter,
     };
-    (state, store, cdn)
+    (state, store)
 }
 
 /// The image row, or `None` once it has been deleted.

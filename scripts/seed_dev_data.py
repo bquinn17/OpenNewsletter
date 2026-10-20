@@ -7,7 +7,8 @@ fixture (one group, the bootstrap admin as sole member, one voting cycle).
 
 Cognito users created by the real invite/signup flow survive across seed runs —
 only the admin's Cognito user is managed here (created on first run, reused
-thereafter).
+thereafter). Its password is reset on every run, to a fresh random one unless
+--admin-password is given, and printed at the end.
 
 Usage:
     python3 scripts/seed_dev_data.py [--env dev]
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
+import string
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -34,7 +37,9 @@ try:
     import boto3
     from botocore.exceptions import ClientError
 except ImportError:
-    sys.exit("boto3 not installed. Run: pip install boto3")
+    sys.exit(
+        "boto3 not installed. Run: infra/.venv/bin/pip install -r scripts/requirements.txt"
+    )
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -149,35 +154,53 @@ def clear_bucket(s3_resource: Any, bucket_name: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+# Shell-safe, so the printed CLI command works unquoted; Cognito accepts all four.
+PASSWORD_SYMBOLS = "-_.%"
+
+
+def random_password(length: int = 20) -> str:
+    """A password meeting the dev pool's policy (auth_stack.py): 12+ chars with
+    lowercase, uppercase, a digit and a symbol."""
+    classes = [
+        string.ascii_lowercase,
+        string.ascii_uppercase,
+        string.digits,
+        PASSWORD_SYMBOLS,
+    ]
+    alphabet = "".join(classes)
+    chars = [secrets.choice(c) for c in classes]
+    chars += [secrets.choice(alphabet) for _ in range(length - len(chars))]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
 def ensure_cognito_user(
     cognito: Any, user_pool_id: str, email: str, password: str
 ) -> str:
-    """Idempotently create the bootstrap admin in the Cognito user pool.
+    """Create the bootstrap admin if missing, then set its password.
 
-    Returns the Cognito sub (used to derive the internal user_id).
-    Does NOT reset the password if the user already exists — callers rely on
-    the stable sub to keep DynamoDB rows consistent across seed runs.
+    Returns the Cognito sub (used to derive the internal user_id). An existing
+    user is reused, never recreated, so its sub and the DynamoDB rows derived
+    from it stay stable across seed runs.
     """
     try:
-        resp = cognito.admin_get_user(UserPoolId=user_pool_id, Username=email)
-        sub = next(a["Value"] for a in resp["UserAttributes"] if a["Name"] == "sub")
-        print(f"  Cognito user already exists — {email} (sub={sub[:8]}…)")
-        return sub
+        cognito.admin_get_user(UserPoolId=user_pool_id, Username=email)
+        created = False
     except cognito.exceptions.UserNotFoundException:
-        pass
+        cognito.admin_create_user(
+            UserPoolId=user_pool_id,
+            Username=email,
+            TemporaryPassword=random_password(),
+            MessageAction="SUPPRESS",
+            UserAttributes=[
+                {"Name": "email", "Value": email},
+                {"Name": "email_verified", "Value": "true"},
+                {"Name": "name", "Value": "Dev Admin"},
+            ],
+        )
+        created = True
 
-    # Create the user and immediately set a permanent password to avoid FORCE_CHANGE.
-    cognito.admin_create_user(
-        UserPoolId=user_pool_id,
-        Username=email,
-        TemporaryPassword=f"{password}_tmp",
-        MessageAction="SUPPRESS",
-        UserAttributes=[
-            {"Name": "email", "Value": email},
-            {"Name": "email_verified", "Value": "true"},
-            {"Name": "name", "Value": "Dev Admin"},
-        ],
-    )
+    # Permanent, so the first sign-in doesn't hit FORCE_CHANGE_PASSWORD.
     cognito.admin_set_user_password(
         UserPoolId=user_pool_id,
         Username=email,
@@ -186,7 +209,8 @@ def ensure_cognito_user(
     )
     resp = cognito.admin_get_user(UserPoolId=user_pool_id, Username=email)
     sub = next(a["Value"] for a in resp["UserAttributes"] if a["Name"] == "sub")
-    print(f"  Created Cognito user — {email} (sub={sub[:8]}…)")
+    verb = "Created" if created else "Reset password for existing"
+    print(f"  {verb} Cognito user — {email} (sub={sub[:8]}…)")
     return sub
 
 
@@ -216,6 +240,7 @@ def write_fixture(
             "pk": f"COGNITO_SUB#{cognito_sub}",
             "sk": "USER_ID",
             "entity": "CognitoSubLookup",
+            "cognito_sub": cognito_sub,
             "user_id": user_id,
         },
         # --- User profile (AP1) ---
@@ -311,7 +336,8 @@ def main() -> None:
         "--admin-email", default="dev-admin@example.com", help="Bootstrap admin email"
     )
     parser.add_argument(
-        "--admin-password", default="DevAdmin123!", help="Bootstrap admin password"
+        "--admin-password",
+        help="Bootstrap admin password (default: a fresh random 20-character one)",
     )
     parser.add_argument(
         "--admin-sub",
@@ -324,6 +350,7 @@ def main() -> None:
         help="Time until the response window closes, relative to now (e.g. '5m', '2h', '4d'). Default: 4d",
     )
     args = parser.parse_args()
+    password = args.admin_password or random_password()
 
     outputs = load_outputs(args.env)
     table_name = get_output(outputs, "DataStack", "TableName", args.env)
@@ -367,7 +394,7 @@ def main() -> None:
         print(f"  Using provided sub: {cognito_sub[:8]}…")
     else:
         cognito_sub = ensure_cognito_user(
-            cognito, user_pool_id, args.admin_email, args.admin_password
+            cognito, user_pool_id, args.admin_email, password
         )
 
     print("[5/5] Writing fixture data…")
@@ -404,7 +431,7 @@ def main() -> None:
 
 === Sign-in credentials (bootstrap admin) ===
   Email:     {args.admin_email}
-  Password:  {args.admin_password}
+  Password:  {password if not args.admin_sub else "(unchanged: --admin-sub skips Cognito)"}
 
   Sign in via the /admin/bootstrap-login page (VITE_ENV=dev),
   or use the AWS CLI:
@@ -413,7 +440,7 @@ def main() -> None:
       --user-pool-id {user_pool_id} \\
       --client-id {user_pool_bootstrap_client} \\
       --auth-flow ADMIN_USER_PASSWORD_AUTH \\
-      --auth-parameters USERNAME={args.admin_email},PASSWORD={args.admin_password}
+      --auth-parameters USERNAME={args.admin_email},PASSWORD={password}
 """
     )
 

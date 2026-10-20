@@ -4,7 +4,7 @@ import { buildEnv, type RawEnv } from "./env";
 const devVars: RawEnv = {
   VITE_USE_MOCKS: "false",
   VITE_API_BASE_URL: "https://api.example.com",
-  VITE_CDN_BASE_URL: "https://cdn.example.com",
+  VITE_MEDIA_BASE_URL: "https://media.example.com",
   VITE_COGNITO_USER_POOL_ID: "us-east-1_X",
   VITE_COGNITO_CLIENT_ID: "frontend-client",
   VITE_COGNITO_HOSTED_DOMAIN: "pool.auth.us-east-1.amazoncognito.com",

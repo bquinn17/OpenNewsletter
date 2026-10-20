@@ -19,7 +19,7 @@ push = { path = "../lambda-push", package = "lambda-push" }
 shared = { path = "../shared" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-secretsmanager = "1"
+aws-sdk-secretsmanager.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 futures.workspace = true

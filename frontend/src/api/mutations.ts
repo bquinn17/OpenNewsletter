@@ -2,6 +2,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "./client";
 import { queryKeys } from "./queries";
 import { useCurrentGroup } from "../state/currentGroup";
+import { invalidateMediaQueries } from "../utils/media";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -31,9 +32,15 @@ export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: S["PatchMeRequest"]) => api.patchMe(body),
-    onSuccess: (data) => {
+    onSuccess: (data, body) => {
       qc.setQueryData(queryKeys.me, data);
       qc.invalidateQueries({ queryKey: queryKeys.config });
+      // Members' avatars (photo and colour) appear only in queries that carry media URLs. A new
+      // photo has a new path, so it misses every cache, but only once those queries refetch
+      // (`docs/design/media.md` §11.3).
+      if (body.avatarMediaId !== undefined || body.avatarColor !== undefined) {
+        void invalidateMediaQueries(qc);
+      }
     },
   });
 }

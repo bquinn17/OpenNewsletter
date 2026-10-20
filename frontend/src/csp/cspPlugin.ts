@@ -21,9 +21,10 @@ export function cspPlugin(): Plugin {
     configResolved(config) {
       const env = loadEnv(config.mode, config.envDir, "VITE_");
       policy = buildCspPolicy({
-        cdnBaseUrl: env.VITE_CDN_BASE_URL,
+        mediaBaseUrl: env.VITE_MEDIA_BASE_URL,
         apiBaseUrl: env.VITE_API_BASE_URL,
         cognitoHostedDomain: env.VITE_COGNITO_HOSTED_DOMAIN,
+        uploadOrigins: env.VITE_UPLOAD_ORIGINS,
       });
     },
     transformIndexHtml(html) {

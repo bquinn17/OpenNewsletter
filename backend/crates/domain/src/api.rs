@@ -732,9 +732,11 @@ pub struct ImageMediaResponse {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub caption: Option<String>,
-    /// Absolute CloudFront URL; `null` until `status=ready`.
+    /// Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md`
+    /// §4.2); `null` until `status=ready`.
     pub display_url: Option<String>,
-    /// Absolute CloudFront URL; `null` until `status=ready`.
+    /// Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md`
+    /// §4.2); `null` until `status=ready`.
     pub thumb_url: Option<String>,
     pub error_message: Option<String>,
     pub uploaded_at: DateTime<Utc>,
@@ -774,16 +776,6 @@ pub struct PatchUploadRequest {
     pub caption: Option<String>,
 }
 
-/// `GET /media-cookie` response (§9.5).
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MediaCookieResponse {
-    pub policy: String,
-    pub signature: String,
-    pub key_pair_id: String,
-    pub expires_at: DateTime<Utc>,
-}
-
 /// `POST /avatars` request body (§9.7). `mimeType` is a bare `String` for the
 /// same reason as [`CreateUploadRequest::mime_type`].
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -813,7 +805,8 @@ pub struct AvatarMediaResponse {
     pub mime_type: ImageMimeType,
     pub status: MediaStatus,
     pub bytes: u64,
-    /// Absolute, unsigned CloudFront URL; `null` until `status=ready`.
+    /// Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md`
+    /// §4.2); `null` until `status=ready`.
     pub avatar_url: Option<String>,
     pub error_message: Option<String>,
     pub uploaded_at: DateTime<Utc>,

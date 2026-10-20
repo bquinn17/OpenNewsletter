@@ -111,8 +111,10 @@ export async function ensurePushSubscription(
 export async function disablePush(): Promise<void> {
   if (!isPushSupported()) return;
   try {
-    const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.getSubscription();
+    // Not `serviceWorker.ready`: that never settles when no SW is registered
+    // (e.g. `vite dev`), which held logout for its full timeout.
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager.getSubscription();
     if (!subscription) return;
     try {
       await api.push.unsubscribe({ endpoint: subscription.endpoint });
