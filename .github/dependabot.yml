@@ -1,0 +1,16 @@
+# Keeps the commit-SHA pins in .github/workflows/*.yml current. Each `uses:`
+# is pinned to a full commit SHA with its release as a trailing comment
+# (`@<sha> # v4.4.0`), so a moved or hijacked tag can't change what runs in a
+# job that holds AWS deploy credentials. Dependabot bumps the SHA and the
+# comment together. All bumps arrive grouped in one weekly PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Rust
+target/
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+!infra/keys/*.pub.pem
+# Throwaway RSA key the lambda-media unit tests sign with (`include_str!` in
+# src/cloudfront.rs). Not used anywhere else.
+!backend/crates/lambda-media/tests/fixtures/test_signing_key.pem
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test artifacts
+coverage/
+
+# Project-specific
+sample_newsletter/**

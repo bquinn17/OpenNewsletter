@@ -1,0 +1,121 @@
+# Trigger: pull requests and pushes to main that touch infra/**, scripts/**
+# (infra/tests covers scripts/bootstrap_admin.py) or this workflow file.
+# Purpose: lint/type-check the CDK app and scripts, run the unit tests, and synth (no AWS
+# credentials needed — Lambda assets fall back to a stub when
+# backend/target/lambda/*/bootstrap is missing, see lambda_assets.py). On a
+# pull request, and only once the repo variable AWS_DIFF_ROLE_ARN is set, a
+# second job also posts a read-only `cdk diff` against prod as a PR comment.
+name: infra-ci
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "scripts/**"
+      - ".github/workflows/infra-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "scripts/**"
+      - ".github/workflows/infra-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - run: ruff check . ../scripts
+
+      - run: ruff format --check . ../scripts
+
+      - run: mypy --strict .
+
+      - run: pytest tests/ -q
+
+      # Needed for `npx aws-cdk@2`, not for the Python app itself.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: npx aws-cdk@2 synth --context env=dev --quiet
+
+      - run: npx aws-cdk@2 synth --context env=prod --quiet
+
+  diff:
+    needs: ci
+    if: github.event_name == 'pull_request' && vars.AWS_DIFF_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    # Same EnvConfig inputs as deploy.yml's promote-prod job (the unprefixed
+    # repo variables are prod's). Without them config.py falls back to
+    # placeholder domains/ARNs and every diff shows prod's real values being
+    # replaced. If prod's values live as `production` environment variables
+    # instead, mirror them at repo level too: this job has no environment,
+    # since that would put every PR behind the reviewer gate.
+    env:
+      ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
+      API_DOMAIN: ${{ vars.API_DOMAIN }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
+      COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+      APP_SECRET_ARN: ${{ vars.APP_SECRET_ARN }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+      ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+      GITHUB_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_DIFF_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # The diff role can only read stack templates (ci_stack.py): this job
+      # runs the PR branch's code, so it gets no bootstrap role. No change set,
+      # since creating one needs the deploy role. CDK notes it couldn't assume
+      # the lookup role and falls back to these credentials; that's expected.
+      - name: cdk diff against prod
+        run: |
+          npx aws-cdk@2 diff --context env=prod --no-change-set > diff_output.txt 2>&1 || true
+          # Keep the PR comment body well under GitHub's limit.
+          head -c 60000 diff_output.txt > diff_output.truncated.txt
+
+      - uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        with:
+          header: cdk-diff-prod
+          path: infra/diff_output.truncated.txt
