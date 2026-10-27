@@ -71,6 +71,20 @@ export function buildCspPolicy(vars: CspEnvVars): string {
 }
 
 /**
+ * The CSP inputs a prod build can't ship without, by variable name, when unset or unparseable:
+ * with no media origin `img-src` blocks every image, and with no upload origin `connect-src`
+ * blocks every upload. Only the build reads them (plus the service worker's media routes), so
+ * `cspPlugin` checks them at build time rather than the app at startup (`docs/design/frontend.md`
+ * §13).
+ */
+export function missingProdCspVars(vars: CspEnvVars): string[] {
+  const missing: string[] = [];
+  if (!originOf(vars.mediaBaseUrl)) missing.push("VITE_MEDIA_BASE_URL");
+  if (originsOf(vars.uploadOrigins).length === 0) missing.push("VITE_UPLOAD_ORIGINS");
+  return missing;
+}
+
+/**
  * Matches the charset `<meta>` so the CSP tag can be inserted right after it
  * — kept here (not in `cspPlugin.ts`) so it's exercised by the same
  * Vitest-only module as `buildCspPolicy`, with no `vite` import.

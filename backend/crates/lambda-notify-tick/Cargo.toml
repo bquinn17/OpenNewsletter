@@ -38,4 +38,4 @@ serde_dynamo.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 rand.workspace = true
-p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+p256 = { version = "0.14", features = ["ecdh", "ecdsa"] }

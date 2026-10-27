@@ -40,7 +40,8 @@ export function HomePage() {
 }
 
 function SignedInHome() {
-  const { data: config } = useConfig();
+  const configQuery = useConfig();
+  const config = configQuery.data;
   const memberships = config?.memberships ?? [];
   const currentGroupId = useCurrentGroup((s) => s.currentGroupId);
   // Home shows only the group picked in the header's `GroupSwitcher`
@@ -50,6 +51,28 @@ function SignedInHome() {
   const { data, isLoading, isError } = useNewsletters(current?.groupId);
 
   const greeting = config?.displayName ? `Hey ${config.displayName} 👋` : "Hey there 👋";
+
+  // Without `/config` there's no telling a member from someone yet to join,
+  // so show neither the editions nor the join form until it loads. Offline,
+  // TanStack Query pauses the fetch rather than failing it.
+  if (!config) {
+    if (configQuery.isError || configQuery.fetchStatus === "paused") {
+      return (
+        <div className="px-5 py-10 text-center">
+          <p className="font-semibold text-ink">Couldn&apos;t load your groups.</p>
+          <p className="mt-1 text-sm text-inkmuted">Check your connection and try again.</p>
+          <Button className="mt-5" onClick={() => void configQuery.refetch()}>
+            Try again
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex justify-center py-20">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
 
   if (!current) {
     return (

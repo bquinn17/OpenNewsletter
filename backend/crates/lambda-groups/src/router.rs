@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::{group_routes, me};
-use domain::api::{HealthResponse, MembershipListResponse};
+use domain::api::HealthResponse;
 use domain::{ApiError, GroupId, UserId};
 use lambda_http::http::Method;
 use lambda_http::{Body, Request, RequestExt, Response};
@@ -56,16 +56,6 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
             let user_id = caller(state, req).await?;
             let profile = me::patch_me(state, &user_id, http::parse_body(req)?).await?;
             Ok(http::json_response(200, &profile, &correlation_id))
-        }
-
-        (&Method::GET, ["groups"]) => {
-            let user_id = caller(state, req).await?;
-            let memberships = me::list_memberships(state, &user_id).await?;
-            Ok(http::json_response(
-                200,
-                &MembershipListResponse { memberships },
-                &correlation_id,
-            ))
         }
 
         (&Method::GET, ["groups", group_id]) => {

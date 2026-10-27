@@ -24,6 +24,11 @@ export class ApiError extends Error {
   }
 }
 
+/** The text to show for a failed call: an `ApiError`'s problem `detail`, or else `fallback`. */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? (error.problem?.detail ?? error.message) : fallback;
+}
+
 async function parseProblemBody(response: Response): Promise<ProblemDetails | null> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("json")) return null;
@@ -107,6 +112,16 @@ function myResponsePath(groupId: string, cycleId: string, questionId: string): s
   return `${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}/questions/${encodeURIComponent(questionId)}/my-response`;
 }
 
+/** `?key=value&...` for the defined entries of `params`, or `""` when none are. */
+function queryString(params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value));
+  }
+  const s = query.toString();
+  return s ? `?${s}` : "";
+}
+
 /** `groupId`/`cycleId` query string shared by every `/uploads/{imageId}*` route. */
 function mediaQuery(groupId: string, cycleId: string): string {
   return new URLSearchParams({ groupId, cycleId }).toString();
@@ -133,8 +148,6 @@ export const api = {
   patchMe: (body: S["PatchMeRequest"]): Promise<S["UserResponse"]> =>
     apiFetch("/me", { method: "PATCH", body }),
 
-  listGroups: (): Promise<S["MembershipListResponse"]> => apiFetch("/groups"),
-
   getGroup: (groupId: string): Promise<S["GroupResponse"]> =>
     apiFetch(`/groups/${encodeURIComponent(groupId)}`),
 
@@ -159,16 +172,14 @@ export const api = {
   listNewsletters: (
     groupId: string,
     params?: { status?: S["NewsletterStatus"]; limit?: number; cursor?: string },
-  ): Promise<S["NewsletterListResponse"]> => {
-    const query = new URLSearchParams();
-    if (params?.status) query.set("status", params.status);
-    if (params?.limit !== undefined) query.set("limit", String(params.limit));
-    if (params?.cursor) query.set("cursor", params.cursor);
-    const queryString = query.toString();
-    return apiFetch(
-      `/groups/${encodeURIComponent(groupId)}/newsletters${queryString ? `?${queryString}` : ""}`,
-    );
-  },
+  ): Promise<S["NewsletterListResponse"]> =>
+    apiFetch(
+      `/groups/${encodeURIComponent(groupId)}/newsletters${queryString({
+        status: params?.status,
+        limit: params?.limit,
+        cursor: params?.cursor,
+      })}`,
+    ),
 
   getNewsletter: (groupId: string, cycleId: string): Promise<S["NewsletterDetailResponse"]> =>
     apiFetch(`${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}`),
@@ -176,16 +187,14 @@ export const api = {
   listCandidates: (
     groupId: string,
     params?: { sort?: "top" | "recent"; limit?: number; cursor?: string },
-  ): Promise<S["CandidateListResponse"]> => {
-    const query = new URLSearchParams();
-    if (params?.sort) query.set("sort", params.sort);
-    if (params?.limit !== undefined) query.set("limit", String(params.limit));
-    if (params?.cursor) query.set("cursor", params.cursor);
-    const queryString = query.toString();
-    return apiFetch(
-      `${groupPath(groupId)}/candidate-questions${queryString ? `?${queryString}` : ""}`,
-    );
-  },
+  ): Promise<S["CandidateListResponse"]> =>
+    apiFetch(
+      `${groupPath(groupId)}/candidate-questions${queryString({
+        sort: params?.sort,
+        limit: params?.limit,
+        cursor: params?.cursor,
+      })}`,
+    ),
 
   createCandidate: (
     groupId: string,
@@ -202,15 +211,6 @@ export const api = {
     apiFetch(`${groupPath(groupId)}/candidate-questions/${encodeURIComponent(questionId)}/votes`, {
       method: "DELETE",
     }),
-
-  listMyResponses: (groupId: string, cycleId: string): Promise<S["MyResponsesList"]> =>
-    apiFetch(`${groupPath(groupId)}/newsletters/${encodeURIComponent(cycleId)}/my-responses`),
-
-  getMyResponse: (
-    groupId: string,
-    cycleId: string,
-    questionId: string,
-  ): Promise<S["ResponseDto"]> => apiFetch(myResponsePath(groupId, cycleId, questionId)),
 
   saveMyResponse: (
     groupId: string,
@@ -285,17 +285,13 @@ export const api = {
       questionId: string,
       responseId: string,
       params?: { limit?: number; cursor?: string },
-    ): Promise<S["CommentListResponse"]> => {
-      const query = new URLSearchParams();
-      if (params?.limit !== undefined) query.set("limit", String(params.limit));
-      if (params?.cursor) query.set("cursor", params.cursor);
-      const queryString = query.toString();
-      return apiFetch(
-        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments${
-          queryString ? `?${queryString}` : ""
-        }`,
-      );
-    },
+    ): Promise<S["CommentListResponse"]> =>
+      apiFetch(
+        `${engagementBasePath(groupId, cycleId, questionId, responseId)}/comments${queryString({
+          limit: params?.limit,
+          cursor: params?.cursor,
+        })}`,
+      ),
 
     createComment: (
       groupId: string,

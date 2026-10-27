@@ -149,13 +149,21 @@ describe("GroupAdminPage", () => {
   it("shows the caller's own row with no options menu, but a menu for other members", async () => {
     renderPage();
 
-    // Waits for both `useGroup` and `useMe` to settle — Quinn's own-row menu
+    // Waits for both `useGroup` and `useConfig` to settle — Quinn's own-row menu
     // only disappears once the caller's `userId` is known.
     await screen.findByRole("button", { name: "Options for Sam" });
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Options for Quinn" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "Options for Jordan" })).toBeInTheDocument();
+  });
+
+  it("counts editions answered in the singular for one", async () => {
+    renderPage();
+
+    // Jordan has answered 1 edition, Quinn 5.
+    expect(await screen.findByText("1 edition answered")).toBeInTheDocument();
+    expect(screen.getByText("5 editions answered")).toBeInTheDocument();
   });
 
   it("promotes a member to admin via the row menu", async () => {
@@ -454,6 +462,20 @@ describe("GroupAdminPage", () => {
 
       expect(await screen.findByText(/Can't be below the current 3 members/)).toBeInTheDocument();
       expect(api.patchGroup).not.toHaveBeenCalled();
+    });
+
+    it("names a single current member in the singular when the soft cap is too low", async () => {
+      vi.mocked(api.getGroup).mockResolvedValue(
+        baseGroup({ memberCount: 1, members: baseGroup().members.slice(0, 1) }),
+      );
+      const { user } = await openSettingsTab();
+
+      const cap = screen.getByLabelText("Member soft cap");
+      await user.clear(cap);
+      await user.type(cap, "0");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("Can't be below the current 1 member.")).toBeInTheDocument();
     });
 
     it("renders the server's field error inline on a 422", async () => {

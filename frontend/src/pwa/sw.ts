@@ -73,7 +73,8 @@ registerRoute(
   mediaCacheFirst("media-images", 30 * DAY_SECONDS),
 );
 // Longer for avatars (`docs/design/media.md` §11.3): a new avatar gets a new `avatarId`, so a new
-// path, and a cached path's bytes never change.
+// path, and a cached path's bytes never change. Mirrors `AVATAR_CACHE_MAX_AGE_SECONDS` in
+// `backend/crates/shared/src/config.rs`.
 registerRoute(
   ({ url }) => isMediaPath(url, "/avatar/"),
   mediaCacheFirst("media-avatars", 90 * DAY_SECONDS),

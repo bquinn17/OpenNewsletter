@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { hashKey, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import { queryClient } from "../api/queryClient";
 import type { components } from "../types/api";
 
@@ -13,13 +13,17 @@ const THUMB_LONG_EDGE_PX = 400;
  * The thumb variant's size, from the original's `width`/`height` that the API reports. The
  * pipeline scales the long edge down to `THUMB_LONG_EDGE_PX`, never up (`docs/design/media.md`
  * §5.2). Passing the original's size to a thumb `<img>` would stretch it to its container.
+ *
+ * `maxHeight` scales it down further, for an `<img>` whose CSS caps its height: a fixed `width`
+ * attribute under a capped height would otherwise squash the image, or crop it with `object-cover`.
  */
 export function thumbSize(
   width: number | null | undefined,
   height: number | null | undefined,
+  maxHeight = Infinity,
 ): { width?: number; height?: number } {
   if (!width || !height) return {};
-  const scale = Math.min(1, THUMB_LONG_EDGE_PX / Math.max(width, height));
+  const scale = Math.min(1, THUMB_LONG_EDGE_PX / Math.max(width, height), maxHeight / height);
   return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
@@ -29,10 +33,14 @@ export function thumbSize(
  */
 export const MEDIA_URLS_META = { mediaUrls: true };
 
-/** Invalidates the queries flagged with `MEDIA_URLS_META`, refetching the active ones. */
-export function invalidateMediaQueries(client: QueryClient): Promise<void> {
+/**
+ * Invalidates the queries flagged with `MEDIA_URLS_META`, refetching the active ones. `except`
+ * skips one query, such as one the caller has just written fresh data to with `setQueryData`.
+ */
+export function invalidateMediaQueries(client: QueryClient, except?: QueryKey): Promise<void> {
+  const exceptHash = except ? hashKey(except) : null;
   return client.invalidateQueries({
-    predicate: (query) => query.meta?.mediaUrls === true,
+    predicate: (query) => query.meta?.mediaUrls === true && query.queryHash !== exceptHash,
     refetchType: "active",
   });
 }

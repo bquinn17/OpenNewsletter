@@ -1,14 +1,15 @@
 import type { components } from "../types/api";
 import { isValidEmoji, normalizeEmoji } from "../utils/emoji";
-import { ApiError } from "./client";
 import { findPublishedAnswer } from "./mockNewsletters";
 import {
   CALLER_ID,
   deleteMockImage,
   MOCK_IMAGE_DATA_URL,
   fail,
+  isAdminOf,
   newsletters,
   NO_MOCK_ROUTE,
+  validationFailed,
   type MockRequest,
 } from "./mockShared";
 
@@ -22,23 +23,7 @@ type PublishedAnswer = S["PublishedAnswerResponse"];
  * `GET .../newsletters/{c}` — there's no separate engagement data store.
  */
 
-/** `CALLER_ID` is a group admin only in `g_trail` (mirrors the memberships fixture in `mockTransport.ts`). */
-const ADMIN_GROUP_IDS = new Set(["g_trail"]);
-
 let nextCommentId = 1;
-
-function validationFailed(field: string, message: string): never {
-  const problem: S["ProblemDetails"] = {
-    type: "https://api.opennewsletter.example.com/errors/validation-failed",
-    title: "Validation failed",
-    status: 422,
-    detail: message,
-    code: "VALIDATION_FAILED",
-    correlationId: "mock-correlation-id",
-    fieldErrors: [{ field, code: "INVALID", message }],
-  };
-  throw new ApiError(422, "VALIDATION_FAILED", problem);
-}
 
 function requirePublishedAnswer(
   groupId: string,
@@ -209,7 +194,7 @@ export function mockEngagementRoute(request: MockRequest): unknown {
         const comment = answer.comments.find((c) => c.commentId === commentId);
         if (!comment) fail(404, "NOT_FOUND", `comment ${commentId} not found`);
         if (!comment.deletedAt) {
-          const isAdmin = ADMIN_GROUP_IDS.has(groupId);
+          const isAdmin = isAdminOf(groupId, CALLER_ID);
           if (comment.authorUserId !== CALLER_ID && !isAdmin) {
             fail(403, "FORBIDDEN", "only the author or a group admin can delete this comment");
           }

@@ -16,11 +16,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).parent.parent
 
 
-def load_outputs(env: str) -> dict:
+def load_outputs(env: str) -> dict[str, Any]:
     path = REPO_ROOT / "infra" / "cdk.out" / f"{env}-outputs.json"
     if not path.exists():
         sys.exit(
@@ -28,11 +29,14 @@ def load_outputs(env: str) -> dict:
             "Run 'make deploy-dev' first to deploy stacks and generate the file."
         )
     with path.open() as f:
-        return json.load(f)
+        outputs: dict[str, Any] = json.load(f)
+    return outputs
 
 
-def get(outputs: dict, stack: str, key: str, env: str, fallback: str = "") -> str:
-    return outputs.get(f"{stack}-{env}", {}).get(key, fallback)
+def get(
+    outputs: dict[str, Any], stack: str, key: str, env: str, fallback: str = ""
+) -> str:
+    return str(outputs.get(f"{stack}-{env}", {}).get(key, fallback))
 
 
 def main() -> None:

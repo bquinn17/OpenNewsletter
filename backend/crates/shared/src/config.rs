@@ -72,6 +72,16 @@ pub const THUMB_QUALITY: f32 = 75.0;
 pub const AVATAR_SIZE_PX: u32 = 256;
 pub const AVATAR_QUALITY: f32 = 82.0;
 
+/// `Cache-Control: max-age` on processed image variants: 60 days. Kept at two
+/// months or less so a stale copy can't outlive a fix for long, such as a
+/// header change (`docs/design/media.md` §5.1).
+pub const IMAGE_CACHE_MAX_AGE_SECONDS: u64 = 60 * 86_400;
+/// `Cache-Control: max-age` on processed avatars: 90 days, longer than images
+/// because a changed avatar is a new `avatarId` and so a new key. The service
+/// worker's `media-avatars` expiry (`frontend/src/pwa/sw.ts`) mirrors it
+/// (`docs/design/media.md` §11.3).
+pub const AVATAR_CACHE_MAX_AGE_SECONDS: u64 = 90 * 86_400;
+
 /// `lambda-image-process` decode budget, checked against the header before any
 /// pixel buffer is allocated. A 15 MB upload can declare a canvas that decodes
 /// to gigabytes and kill the 1024 MB Lambda mid-run, which would leave its row

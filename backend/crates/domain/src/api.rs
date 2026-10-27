@@ -174,13 +174,6 @@ pub struct RedeemResponse {
 
 // ===== `docs/design/api.md` §4 — Group routes =====
 
-/// `GET /groups` response (§4.1) — the same join `/config` returns, standalone.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MembershipListResponse {
-    pub memberships: Vec<MembershipSummary>,
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberResponse {
@@ -535,7 +528,7 @@ pub enum NewsletterDetailResponse {
 
 // ===== `docs/design/api.md` §7 — Response routes (drafts + publish) =====
 
-/// A saved response — the full shape, returned by every §7 route (§7.1-§7.3).
+/// A saved response — the full shape, returned by `PUT .../my-response` (§7.3).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseDto {
@@ -572,13 +565,6 @@ impl From<Response> for ResponseDto {
             published_at: r.published_at,
         }
     }
-}
-
-/// `GET /groups/{groupId}/newsletters/{cycleId}/my-responses` response (§7.1).
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MyResponsesList {
-    pub items: Vec<ResponseDto>,
 }
 
 /// `PUT .../my-response` request body (§7.3), tagged by `kind`. Image captions

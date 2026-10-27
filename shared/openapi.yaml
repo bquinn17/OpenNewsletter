@@ -265,28 +265,6 @@ paths:
         "410":
           $ref: "#/components/responses/InviteExpired"
 
-  /groups:
-    get:
-      operationId: listGroups
-      tags: [groups]
-      summary: The caller's memberships (same join `/config` returns).
-      responses:
-        "200":
-          description: The caller's memberships.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MembershipListResponse"
-              example:
-                memberships:
-                  - groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
-                    role: "admin"
-                    groupName: "Trail Crew"
-                    timezone: "America/New_York"
-                    gradient: "grape-sky"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-
   /groups/{groupId}:
     get:
       operationId: getGroup
@@ -719,77 +697,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /groups/{groupId}/newsletters/{cycleId}/my-responses:
-    get:
-      operationId: listMyResponses
-      tags: [responses]
-      summary: The caller's drafts/publishes for this cycle. Caller must be a member.
-      parameters:
-        - $ref: "#/components/parameters/GroupIdPath"
-        - $ref: "#/components/parameters/CycleIdPath"
-      responses:
-        "200":
-          description: The caller's responses in this cycle.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MyResponsesList"
-              example:
-                items:
-                  - responseId: "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a"
-                    userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
-                    questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
-                    groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
-                    cycleId: "202606"
-                    kind: "text"
-                    status: "draft"
-                    body: "Lake 22, hands down."
-                    imageMediaIds: []
-                    updatedAt: "2026-06-02T10:00:00Z"
-                    publishedAt: null
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "410":
-          $ref: "#/components/responses/NewsletterArchived"
-
   /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response:
-    get:
-      operationId: getMyResponse
-      tags: [responses]
-      summary: >
-        The caller's draft/published answer to one question. 404 if none
-        exists yet. Caller must be a member.
-      parameters:
-        - $ref: "#/components/parameters/GroupIdPath"
-        - $ref: "#/components/parameters/CycleIdPath"
-        - $ref: "#/components/parameters/QuestionIdPath"
-      responses:
-        "200":
-          description: The caller's response to this question.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ResponseDto"
-              example:
-                responseId: "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a"
-                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
-                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
-                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
-                cycleId: "202606"
-                kind: "text"
-                status: "draft"
-                body: "Lake 22, hands down."
-                imageMediaIds: []
-                updatedAt: "2026-06-02T10:00:00Z"
-                publishedAt: null
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "410":
-          $ref: "#/components/responses/NewsletterArchived"
     put:
       operationId: saveMyResponse
       tags: [responses]
@@ -2242,15 +2150,6 @@ components:
 
     # ---- §4 Group routes ----
 
-    MembershipListResponse:
-      type: object
-      required: [memberships]
-      properties:
-        memberships:
-          type: array
-          items:
-            $ref: "#/components/schemas/MembershipSummary"
-
     MemberResponse:
       type: object
       required: [userId, displayName, role, avatarColor, avatarUrl, joinedAt, editionsAnswered]
@@ -2883,15 +2782,6 @@ components:
         publishedAt:
           type: [string, "null"]
           format: date-time
-
-    MyResponsesList:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/ResponseDto"
 
     SaveResponseRequest:
       description: >

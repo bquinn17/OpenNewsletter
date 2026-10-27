@@ -604,7 +604,6 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /config",
         "GET /me",
         "PATCH /me",
-        "GET /groups",
         "GET /groups/{groupId}",
         "PATCH /groups/{groupId}",
         "DELETE /groups/{groupId}/members/{userId}",
@@ -628,8 +627,6 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "POST /groups/{groupId}/candidate-questions/{questionId}/votes",
         "DELETE /groups/{groupId}/candidate-questions/{questionId}/votes",
         "DELETE /admin/groups/{groupId}/candidate-questions/{questionId}",
-        "GET /groups/{groupId}/newsletters/{cycleId}/my-responses",
-        "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
         "PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
         "GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
         "POST /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/responses/{responseId}/comments",
@@ -1411,6 +1408,24 @@ def test_image_process_can_delete_processed_variants(
     # it just wrote (`docs/design/media.md` §8.0).
     _, pipeline = media_templates
     assert _delete_targets(pipeline, "OpenNewsletter-ImageProcess-dev") == {
+        ("media-processed", "/img/*"),
+        ("media-processed", "/avatar/*"),
+    }
+
+
+def test_image_process_puts_only_processed_variants(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # It writes `img/*` and `avatar/*` and nothing else (`docs/design/media.md` §5.4).
+    _, pipeline = media_templates
+    targets: set[tuple[str, str]] = set()
+    for statement in _statements_with(
+        pipeline, "OpenNewsletter-ImageProcess-dev", "s3:PutObject"
+    ):
+        resources = statement["Resource"]
+        for resource in resources if isinstance(resources, list) else [resources]:
+            targets.add(_bucket_and_prefix(resource))
+    assert targets == {
         ("media-processed", "/img/*"),
         ("media-processed", "/avatar/*"),
     }

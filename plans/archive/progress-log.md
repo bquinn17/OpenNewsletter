@@ -142,7 +142,7 @@ All paths relative to `infra/`.
   - `join_via_invite_tx` now takes an optional new `User` and writes the `CognitoSubLookup` + `User` rows inside the same transaction (first-ever redemption, [`auth.md` §4.2](../../docs/design/auth.md#42-algorithm)).
   - New: `groups::update_group` (targeted patch, so a concurrent join can't have `member_count` clobbered), `groups::update_membership_role`, `users::update_profile`, `users::get_users_batch` (one `BatchGetItem` for a group's member list).
   - `invites::revoke` is now conditional on `status = pending`, so revoking a consumed invite fails instead of erasing the audit trail.
-- **`lambda-groups`** (binary `groups-api`) — `GET /healthz`, `GET /config`, `GET|PATCH /me`, `GET /groups`, `GET|PATCH /groups/{g}`, `DELETE|PATCH /groups/{g}/members/{u}`. Includes the last-admin guard on both removal and demotion, and full [`api.md` §4.3](../../docs/design/api.md#43-patch-groupsgroupid) validation (IANA timezone via `chrono-tz`, gradient/avatarColor slugs, merged-then-validated cycle settings). 10 unit tests.
+- **`lambda-groups`** (binary `groups-api`) — `GET /healthz`, `GET /config`, `GET|PATCH /me`, `GET|PATCH /groups/{g}`, `DELETE|PATCH /groups/{g}/members/{u}`. Includes the last-admin guard on both removal and demotion, and full [`api.md` §4.3](../../docs/design/api.md#43-patch-groupsgroupid) validation (IANA timezone via `chrono-tz`, gradient/avatarColor slugs, merged-then-validated cycle settings). 10 unit tests.
 - **`lambda-invites`** (binaries `invites-api` + `invites-presignup`) — `POST /admin/invites`, `GET /admin/groups/{g}/invites`, `POST /admin/invites/{code}/revoke`, `POST /invites/redeem`, plus the pass-through `PreSignUp` trigger. 12 unit tests.
 
 ### Infrastructure
@@ -240,7 +240,7 @@ A full consistency pass was made over plan docs `00`–`13` (now in `docs/`) so 
 
 ## M6 detail — what landed (2026-09-27)
 
-- **`lambda-responses`** (binary `responses-api`) — `GET …/my-responses`, `GET|PUT …/questions/{q}/my-response` per [`api.md` §7](../../docs/design/api.md#7-response-routes-drafts--publish). Mirrors the `lambda-questions` layout (lib/router/handlers/state/validation).
+- **`lambda-responses`** (binary `responses-api`) — `PUT …/questions/{q}/my-response` per [`api.md` §7](../../docs/design/api.md#7-response-routes-drafts--publish). Mirrors the `lambda-questions` layout (lib/router/handlers/state/validation).
 - **`persistence::responses::save_response`** replaces `save_draft`/`publish_response_tx`. Every save — draft or publish — is one `TransactWriteItems`: Update the response row + ConditionCheck on the Newsletter (`status = open AND response_close_at > now`) + the `editions_answered` bump on the caller's first publish in the cycle. A lost race maps to 409 `CYCLE_NOT_OPEN`. `persistence::questions::get_locked_question` added.
 - **Decisions (documented in [`api.md` §7.3](../../docs/design/api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response) and [`data-model.md` §4](../../docs/design/data-model.md#4-transactional-invariants) #4):**
   - Publishing is sticky: `publish=false` after a publish updates content but stays `published`, with the original `publishedAt`.
@@ -249,11 +249,11 @@ A full consistency pass was made over plan docs `00`–`13` (now in `docs/`) so 
   - Kind mismatch → `VALIDATION_FAILED`.
   - Image IDs are de-duplicated before the ≤10 check.
   - Saves don't modify `ImageMedia` rows (question linkage is M8).
-- **OpenAPI** — 3 routes + `ResponseDto`/`MyResponsesList`/`SaveResponseRequest` in `shared/openapi.yaml`, `ROUTE_TABLE` rows, `frontend/src/types/api.ts` regenerated.
-- **Infra** — `Responses` Lambda (512 MB) + 3 JWT routes in `ApiStack`, `FUNCTION_responses-api` in the Makefile, CDK test.
-- **Tests** — 22 handler integration tests + 5 validation unit tests (`lambda-responses`), 12 repo tests (`persistence/tests/responses.rs`). They cover:
+- **OpenAPI** — the route + `ResponseDto`/`SaveResponseRequest` in `shared/openapi.yaml`, `ROUTE_TABLE` rows, `frontend/src/types/api.ts` regenerated.
+- **Infra** — `Responses` Lambda (512 MB) + its JWT route in `ApiStack`, `FUNCTION_responses-api` in the Makefile, CDK test.
+- **Tests** — 20 handler integration tests + 5 validation unit tests (`lambda-responses`), 12 repo tests (`persistence/tests/responses.rs`). They cover:
   - saves and publishing:
-    - draft/get
+    - draft save
     - interleaved saves with last-write-wins and a stable ID
     - publish, with one bump only
     - sticky publish
@@ -267,8 +267,6 @@ A full consistency pass was made over plan docs `00`–`13` (now in `docs/`) so 
     - image cap
     - poll option
     - kind mismatch
-    - my-responses scoping
-    - 404
 - **Known limitation:** two *concurrent* first publishes by the same user on different questions can both see zero published rows and double-bump `editionsAnswered`. It is cosmetic (a stats counter) and needs same-user parallel publishes in one instant, so it is accepted for v1.
 
 ---
@@ -472,7 +470,7 @@ The lead read the spec first and laid the shared groundwork, so the two agents n
 Two Sonnet agents then ran in parallel: candidates/suggest, and newsletter/respond. Both hit a rate limit mid-read and were resumed with their context. The lead's review found and fixed two data-loss bugs in the respond flow (below).
 
 ### Shared groundwork (lead)
-- `api/client.ts`: `getNewsletter`, `listCandidates`, `createCandidate`, `castVote`, `withdrawVote`, `listMyResponses`, `getMyResponse`, `saveMyResponse`.
+- `api/client.ts`: `getNewsletter`, `listCandidates`, `createCandidate`, `castVote`, `withdrawVote`, `saveMyResponse`.
 - `api/queries.ts`:
   - `useNewsletter` and `useCandidates(groupId, sort)`
   - `useMembership(groupId)`, which reads the group's timezone and role from `/config`
@@ -655,7 +653,7 @@ The lead settled the spec's gaps (decisions D1–D11, folded into the plan docs)
 - `api/mockPush.ts` in `mockTransport`; the legacy push mocks were removed from `src/mocks/`.
 
 ### Bugs caught in lead review (fixed, with regression tests where testable)
-- **Pre-existing, cross-group: AP15 ignored the group.** `list_my_responses_in_cycle` queries GSI1 `USER#{u}#NL#{cycleId}`, and cycle IDs are calendar months shared by every group. A user in two groups got both groups' responses: `my-responses` and the newsletter list/detail counts over-counted, and publishing in group B after group A in the same month **skipped B's `editions_answered` bump**. It now takes `group_id` and filters. Regressions: `persistence/tests/responses.rs` and `lambda-responses` `first_publish_in_a_second_group_same_month_still_bumps_editions_answered`. M11's reminder "N of total" count would have inherited the same bug.
+- **Pre-existing, cross-group: AP15 ignored the group.** `list_my_responses_in_cycle` queries GSI1 `USER#{u}#NL#{cycleId}`, and cycle IDs are calendar months shared by every group. A user in two groups got both groups' responses: the newsletter list/detail counts over-counted, and publishing in group B after group A in the same month **skipped B's `editions_answered` bump**. It now takes `group_id` and filters. Regressions: `persistence/tests/responses.rs` and `lambda-responses` `first_publish_in_a_second_group_same_month_still_bumps_editions_answered`. M11's reminder "N of total" count would have inherited the same bug.
 - **The RFC 8291 test only round-tripped** through a mirror decryptor sharing the encoder's derivation, which can't catch a spec-level mistake. It now also asserts the exact ciphertext RFC 8291 §5 publishes (it matches).
 - **Padded base64url push keys were rejected.** `keys.p256dh`/`keys.auth` are now accepted with trailing `=` and stored unpadded.
 - **The push failure-rate alarm evaluated over 5 minutes, not 30.** The `MathExpression` overrode its metrics' periods to 300s; `period` is now set on the expression, and a CDK test asserts 1800s.

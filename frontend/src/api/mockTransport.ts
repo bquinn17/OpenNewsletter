@@ -12,6 +12,7 @@ import {
   hasOtherAdmin,
   imageRows,
   isAdminOf,
+  MOCK_IMAGE_DATA_URL,
   newsletters,
   NO_MOCK_ROUTE,
   type Method,
@@ -207,11 +208,6 @@ function handleRedeemInvite(body: unknown): S["RedeemResponse"] {
   return { groupId: NEW_GROUP_ID, groupName: "New Group", role: "member" };
 }
 
-// 1x1 transparent PNG — stands in for a real thumb/display/avatar asset so the
-// uploader can render an <img> without any network request.
-const MOCK_IMAGE_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";
-
 let nextImageId = 1;
 let nextAvatarId = 1;
 const imagePollCounts: Record<string, number> = {};
@@ -342,7 +338,6 @@ export async function mockFetch(method: Method, path: string, body?: unknown): P
   if (method === "GET" && rawPath === "/config") return handleGetConfig();
   if (method === "GET" && rawPath === "/me") return { ...me };
   if (method === "PATCH" && rawPath === "/me") return handlePatchMe(body);
-  if (method === "GET" && rawPath === "/groups") return { memberships: [...memberships] };
   if (method === "GET" && segments.length === 2 && segments[0] === "groups") {
     return handleGetGroup(decodeURIComponent(segments[1]));
   }

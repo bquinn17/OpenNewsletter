@@ -1,38 +1,25 @@
-import { useEffect, useRef, useState } from "react";
-import clsx from "clsx";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../../api/client";
+import { queryKeys, useUploads } from "../../api/queries";
 import type { components } from "../../types/api";
-import { pollMediaStatus, sha256Base64, thumbSize } from "../../utils/media";
+import { pollMediaStatus, sha256Base64 } from "../../utils/media";
 import { uploadToS3 } from "../../utils/uploadToS3";
 import { useToasts } from "../../state/toast";
-import { Spinner } from "../ui/Spinner";
-import { MediaImage } from "../ui/MediaImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
+import { ImageDropzone } from "./ImageDropzone";
+import { ImageUploaderTile } from "./ImageUploaderTile";
+import type { PendingImage } from "./imageUploaderTypes";
 
 type S = components["schemas"];
 
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_BYTES = 15_728_640;
 
-type Status = "uploading" | "processing" | "ready" | "failed";
-
-type PendingImage = {
-  imageId: string;
-  file: File | null;
-  status: Status;
-  progress: number;
-  thumbUrl: string | null;
-  displayUrl: string | null;
-  width: number | null;
-  height: number | null;
-  altText: string;
-  error: string | null;
-};
-
 export type UploaderImage = {
   imageId: string;
-  status: Status;
+  status: PendingImage["status"];
   altText: string;
   thumbUrl: string | null;
   displayUrl: string | null;
@@ -71,6 +58,10 @@ function tempId(): string {
   return `local:${random}`;
 }
 
+function limitMessage(maxImages: number): string {
+  return `You can attach up to ${maxImages} image${maxImages === 1 ? "" : "s"}.`;
+}
+
 function friendlyError(code: string | null | undefined, maxImages: number): string {
   switch (code) {
     case "IMAGE_TOO_LARGE":
@@ -80,7 +71,7 @@ function friendlyError(code: string | null | undefined, maxImages: number): stri
     case "IMAGE_DECODE_FAILED":
       return "Couldn't process that image — try a different file.";
     case "IMAGE_LIMIT_EXCEEDED":
-      return `You can attach up to ${maxImages} images.`;
+      return limitMessage(maxImages);
     case "DELETED":
       return "This image was removed.";
     default:
@@ -89,21 +80,24 @@ function friendlyError(code: string | null | undefined, maxImages: number): stri
 }
 
 function validateFile(file: File, remainingSlots: number, maxImages: number): string | null {
-  if (remainingSlots <= 0) return `You can attach up to ${maxImages} images.`;
+  if (remainingSlots <= 0) return limitMessage(maxImages);
   if (!ALLOWED_MIME_TYPES.has(file.type)) return "That file type isn't supported.";
   if (file.size > MAX_BYTES) return "That image is larger than 15 MB.";
   return null;
 }
 
-function toUploaderImage(image: PendingImage): UploaderImage {
+function toUploaderImage(
+  image: PendingImage,
+  row: S["ImageMediaResponse"] | undefined,
+): UploaderImage {
   return {
     imageId: image.imageId,
     status: image.status,
     altText: image.altText,
-    thumbUrl: image.thumbUrl,
-    displayUrl: image.displayUrl,
-    width: image.width,
-    height: image.height,
+    thumbUrl: row?.thumbUrl ?? null,
+    displayUrl: row?.displayUrl ?? null,
+    width: row?.width ?? null,
+    height: row?.height ?? null,
   };
 }
 
@@ -118,36 +112,46 @@ export function ImageUploader({
   confirmRemove = false,
   onRemove,
 }: Props) {
+  const qc = useQueryClient();
   const [images, setImages] = useState<PendingImage[]>(() =>
     (initialImages ?? []).map((row) => ({
       imageId: row.imageId,
       file: null,
       status: row.status === "pending" ? "processing" : row.status,
       progress: row.status === "ready" ? 1 : 0,
-      thumbUrl: row.thumbUrl,
-      displayUrl: row.displayUrl,
-      width: row.width,
-      height: row.height,
       altText: row.caption ?? "",
       error: row.status === "failed" ? friendlyError(row.errorMessage, maxImages) : null,
     })),
   );
+  const [initialRows] = useState(
+    () => new Map((initialImages ?? []).map((row) => [row.imageId, row])),
+  );
   const [fileErrors, setFileErrors] = useState<string[]>([]);
-  const [dragOver, setDragOver] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<PendingImage | null>(null);
   // Images mid-removal: still listed here, but hidden from `onChange`.
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  // A ready image's URLs live in its `uploadQuery` entry, not here, so the global
+  // `refreshMediaUrls` re-signs them when one expires (`docs/design/media.md` §4.4).
+  const rows = useUploads(
+    groupId,
+    cycleId,
+    images.filter((img) => img.status === "ready").map((img) => img.imageId),
+    initialRows,
+  );
+  const rowsById = useMemo(() => new Map(rows.map((row) => [row.imageId, row])), [rows]);
+
   const pollCancelRef = useRef(new Map<string, () => void>());
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   useEffect(() => {
     onChangeRef.current?.(
-      images.filter((img) => !removingIds.has(img.imageId)).map(toUploaderImage),
+      images
+        .filter((img) => !removingIds.has(img.imageId))
+        .map((img) => toUploaderImage(img, rowsById.get(img.imageId))),
     );
-  }, [images, removingIds]);
+  }, [images, removingIds, rowsById]);
 
   useEffect(() => {
     const cancels = pollCancelRef.current;
@@ -193,33 +197,14 @@ export function ImageUploader({
     });
   }
 
-  /**
-   * `onExpired` for a ready image's `MediaImage` (`docs/design/media.md` §4.4): its URLs live in
-   * this component's own state, not the react-query cache the global `refreshMediaUrls` reaches,
-   * so a fresh presigned URL means re-fetching this one upload directly.
-   */
-  async function refreshImage(imageId: string): Promise<void> {
-    const fresh = await api.media.getUpload(imageId, groupId, cycleId);
-    updateImage(imageId, {
-      thumbUrl: fresh.thumbUrl,
-      displayUrl: fresh.displayUrl,
-      width: fresh.width,
-      height: fresh.height,
-    });
-  }
-
   function beginPolling(imageId: string) {
     const cancel = pollMediaStatus(() => api.media.getUpload(imageId, groupId, cycleId), {
       onReady: (data) => {
         pollCancelRef.current.delete(imageId);
-        updateImage(imageId, {
-          status: "ready",
-          progress: 1,
-          thumbUrl: data.thumbUrl,
-          displayUrl: data.displayUrl,
-          width: data.width,
-          height: data.height,
-        });
+        // Into the cache first, so the `uploadQuery` this image gains as `ready` has its row and
+        // doesn't fetch it again.
+        qc.setQueryData(queryKeys.upload(groupId, cycleId, imageId), data);
+        updateImage(imageId, { status: "ready", progress: 1 });
       },
       onFailed: (errorMessage) => {
         pollCancelRef.current.delete(imageId);
@@ -245,10 +230,6 @@ export function ImageUploader({
         file,
         status: "uploading",
         progress: 0,
-        thumbUrl: null,
-        displayUrl: null,
-        width: null,
-        height: null,
         altText: "",
         error: null,
       },
@@ -383,139 +364,25 @@ export function ImageUploader({
 
   return (
     <div>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label="Add images"
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            inputRef.current?.click();
-          }
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          handleFiles(Array.from(e.dataTransfer.files));
-        }}
-        className={clsx(
-          "flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-cream px-4 py-6 text-center text-sm text-inkmuted transition focus:outline-none focus:ring-2 focus:ring-coral/30",
-          dragOver && "border-grape bg-grape/5",
-        )}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept="image/jpeg,image/png,image/webp,image/gif"
-          className="sr-only"
-          onChange={(e) => {
-            handleFiles(Array.from(e.target.files ?? []));
-            e.target.value = "";
-          }}
-        />
-        <p>
-          Drag photos here, or <span className="font-semibold text-grape">choose files</span>
-        </p>
-        <p className="mt-1 text-xs">
-          {images.length}/{maxImages} images · JPEG, PNG, WebP or GIF · up to 15 MB each
-        </p>
-      </div>
-
-      {fileErrors.length > 0 && (
-        <ul
-          role="alert"
-          aria-live="polite"
-          className="mt-2 space-y-1 text-xs font-semibold text-coral"
-        >
-          {fileErrors.map((message) => (
-            <li key={message}>{message}</li>
-          ))}
-        </ul>
-      )}
+      <ImageDropzone
+        imageCount={images.length}
+        maxImages={maxImages}
+        fileErrors={fileErrors}
+        onFilesSelected={handleFiles}
+      />
 
       {images.length > 0 && (
         <ul aria-label="Attached images" className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {images.map((image) => (
-            <li
+            <ImageUploaderTile
               key={image.imageId}
-              aria-busy={removingIds.has(image.imageId) || undefined}
-              className={clsx(
-                "rounded-2xl border border-line bg-white p-2",
-                removingIds.has(image.imageId) && "opacity-50",
-              )}
-            >
-              <div className="relative">
-                {image.status === "ready" && image.thumbUrl ? (
-                  <MediaImage
-                    src={image.thumbUrl}
-                    alt={image.altText || "Uploaded image"}
-                    {...thumbSize(image.width, image.height)}
-                    className="h-24 w-full rounded-xl object-cover"
-                    onExpired={() => refreshImage(image.imageId)}
-                  />
-                ) : (
-                  <div
-                    className="flex h-24 w-full flex-col items-center justify-center gap-1 rounded-xl bg-cream px-2 text-center text-xs text-inkmuted"
-                    aria-live="polite"
-                  >
-                    {image.status === "failed" ? (
-                      <>
-                        <span className="text-coral">{image.error}</span>
-                        {image.file && (
-                          <button
-                            type="button"
-                            onClick={() => handleRetry(image)}
-                            className="font-semibold text-grape"
-                          >
-                            Retry
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <Spinner size="sm" />
-                        <span>
-                          {image.status === "processing"
-                            ? "Processing…"
-                            : `Uploading ${Math.round(image.progress * 100)}%`}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => requestRemove(image)}
-                  disabled={removingIds.has(image.imageId)}
-                  aria-label={`Remove image ${image.file?.name ?? image.imageId}`}
-                  className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-ink text-xs font-bold text-cream disabled:opacity-50"
-                >
-                  ×
-                </button>
-              </div>
-              {image.status === "ready" && (
-                <div className="mt-2">
-                  <label htmlFor={`alt-${image.imageId}`} className="sr-only">
-                    Describe this image for screen readers
-                  </label>
-                  <input
-                    id={`alt-${image.imageId}`}
-                    type="text"
-                    value={image.altText}
-                    onChange={(e) => handleAltTextChange(image.imageId, e.target.value)}
-                    placeholder="Describe this image"
-                    className="w-full rounded-lg border border-line bg-cream px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-coral/30"
-                  />
-                </div>
-              )}
-            </li>
+              image={image}
+              row={rowsById.get(image.imageId)}
+              removing={removingIds.has(image.imageId)}
+              onRemove={() => requestRemove(image)}
+              onRetry={() => handleRetry(image)}
+              onAltTextChange={(value) => handleAltTextChange(image.imageId, value)}
+            />
           ))}
         </ul>
       )}

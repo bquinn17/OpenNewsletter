@@ -195,8 +195,9 @@ jobs:
 
       # After the deploy, not in "Check prod config": on the first prod run
       # VITE_MEDIA_BASE_URL and VITE_UPLOAD_ORIGINS can only be set once the
-      # deploy above has created MediaPersistentStack. A build without them
-      # still succeeds, but its CSP blocks every upload or the app won't start.
+      # deploy above has created MediaPersistentStack. The prod build itself
+      # also fails without them (cspPlugin); this names every missing secret
+      # at once, before npm ci.
       - name: Check prod frontend build secrets
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}

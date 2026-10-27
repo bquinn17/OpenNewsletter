@@ -450,7 +450,7 @@ The processed avatar lives under the `avatar/*` prefix of the same processed buc
 
 **AP18 + AP19 can be one read.** Comments (`C#`) and reactions (`R#`) share the engagement partition, so `engagement::list_engagement` reads both with one paginated Query of the partition; the published-edition read ([`api.md` §5.2](api.md#52-get-groupsgroupidnewsletterscycleid)) uses it.
 
-**AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: `my-responses`, the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
+**AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
 
 ---
 

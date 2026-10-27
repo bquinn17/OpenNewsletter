@@ -11,12 +11,6 @@ type Props = {
    */
   width?: number;
   height?: number;
-  /**
-   * Called (and awaited) instead of the default `refreshMediaUrls` on the first load error.
-   * `ImageUploader` passes one that re-GETs its upload, because its URLs live in component state
-   * rather than the query cache (`docs/design/media.md` §4.4).
-   */
-  onExpired?: () => Promise<unknown> | void;
 };
 
 /** A transparent `data:` SVG (allowed by the CSP's `img-src`) for the failed placeholder. */
@@ -25,16 +19,17 @@ const PLACEHOLDER_SRC = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
 /**
  * An `<img>` for an S3 presigned-URL media asset (`docs/design/media.md` §4.4). A presigned URL
  * can expire early (the signing Lambda's own role credentials expired first, §4.2), so the first
- * load error for a given image path refreshes — via `onExpired`, or `refreshMediaUrls` by default
- * — and remounts the `<img>` once; a second error for the same path gives up and shows a
- * placeholder instead of retrying forever (`useMediaRetry`).
+ * load error for a given image path refreshes the media queries (`refreshMediaUrls`) and remounts
+ * the `<img>` once; a second error for the same path gives up and shows a placeholder instead of
+ * retrying forever (`useMediaRetry`). Every `src` must come from a query flagged
+ * `MEDIA_URLS_META`, or the refresh can't reach it.
  *
  * Loaded in CORS mode (`crossOrigin="anonymous"`) so the service worker sees the real response
  * status and caches only 200s — every media `<img>` must use the same mode (`Avatar` too), or a
  * cached copy from one mode fails a request made in the other.
  */
-export function MediaImage({ src, alt, className, width, height, onExpired }: Props) {
-  const { attempt, failed, handleError } = useMediaRetry(src, onExpired);
+export function MediaImage({ src, alt, className, width, height }: Props) {
+  const { attempt, failed, handleError } = useMediaRetry(src);
 
   if (failed) {
     // Still an `<img>`, so `width`/`height` and `className` give it the same box as the image.

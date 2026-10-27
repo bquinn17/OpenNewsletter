@@ -19,25 +19,7 @@ describe("MediaImage", () => {
     refreshMediaUrls.mockReset().mockResolvedValue(undefined);
   });
 
-  it("prefers onExpired over the global refresh on the first error, then remounts", async () => {
-    const onExpired = vi.fn().mockResolvedValue(undefined);
-    render(
-      <MediaImage
-        src="https://media.test.invalid/img/g1/thumb.webp"
-        alt="a photo"
-        onExpired={onExpired}
-      />,
-    );
-
-    fireEvent.error(screen.getByAltText("a photo"));
-    await flush();
-
-    expect(onExpired).toHaveBeenCalledTimes(1);
-    expect(refreshMediaUrls).not.toHaveBeenCalled();
-    expect(screen.getByAltText("a photo")).toBeInTheDocument();
-  });
-
-  it("falls back to refreshMediaUrls when no onExpired is given", async () => {
+  it("refreshes the media queries on the first error, then remounts", async () => {
     render(<MediaImage src="https://media.test.invalid/img/g1/thumb.webp" alt="a photo" />);
 
     fireEvent.error(screen.getByAltText("a photo"));
@@ -96,20 +78,55 @@ describe("MediaImage", () => {
     expect(screen.getByAltText("a photo")).toBeInTheDocument();
   });
 
-  it("handles a rejected refresh without an unhandled rejection", async () => {
-    const onExpired = vi.fn().mockRejectedValue(new Error("offline"));
-    render(
-      <MediaImage
-        src="https://media.test.invalid/img/g1/thumb.webp"
-        alt="a photo"
-        onExpired={onExpired}
-      />,
+  it("loads a re-signed URL for the same path once more after giving up, without a refresh", async () => {
+    const { rerender } = render(
+      <MediaImage src="https://media.test.invalid/img/g1/thumb.webp?X-Amz-Date=1" alt="a photo" />,
     );
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    expect(screen.queryByAltText("a photo")).not.toBeInTheDocument();
+
+    rerender(
+      <MediaImage src="https://media.test.invalid/img/g1/thumb.webp?X-Amz-Date=2" alt="a photo" />,
+    );
+    expect(screen.getByAltText("a photo")).toBeInTheDocument();
+
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    expect(screen.queryByAltText("a photo")).not.toBeInTheDocument();
+    expect(refreshMediaUrls).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts over when the browser comes back online", async () => {
+    render(<MediaImage src="https://media.test.invalid/img/g1/thumb.webp" alt="a photo" />);
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    expect(screen.queryByAltText("a photo")).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(screen.getByAltText("a photo")).toBeInTheDocument();
+
+    // A full retry again: the first error refreshes.
+    fireEvent.error(screen.getByAltText("a photo"));
+    await flush();
+    expect(refreshMediaUrls).toHaveBeenCalledTimes(2);
+    expect(screen.getByAltText("a photo")).toBeInTheDocument();
+  });
+
+  it("handles a rejected refresh without an unhandled rejection", async () => {
+    refreshMediaUrls.mockRejectedValue(new Error("offline"));
+    render(<MediaImage src="https://media.test.invalid/img/g1/thumb.webp" alt="a photo" />);
 
     fireEvent.error(screen.getByAltText("a photo"));
     await flush();
 
-    expect(onExpired).toHaveBeenCalledTimes(1);
+    expect(refreshMediaUrls).toHaveBeenCalledTimes(1);
     expect(screen.getByAltText("a photo")).toBeInTheDocument();
   });
 

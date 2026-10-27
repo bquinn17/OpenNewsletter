@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCspPolicy } from "./csp";
+import { buildCspPolicy, missingProdCspVars } from "./csp";
 
 describe("buildCspPolicy", () => {
   it("includes every origin, reduced from a full URL to just its origin", () => {
@@ -76,5 +76,30 @@ describe("buildCspPolicy", () => {
 
     expect(policy.split("; ").length).toBeGreaterThanOrEqual(10);
     expect(policy).not.toMatch(/%VITE/);
+  });
+});
+
+describe("missingProdCspVars", () => {
+  it("names nothing when the media origin and an upload origin are valid URLs", () => {
+    expect(
+      missingProdCspVars({
+        mediaBaseUrl: "https://media.example.com",
+        uploadOrigins: "https://uploads-a.example.com https://uploads-b.example.com",
+      }),
+    ).toEqual([]);
+  });
+
+  it("names each variable that's unset, empty or unparseable", () => {
+    expect(missingProdCspVars({})).toEqual(["VITE_MEDIA_BASE_URL", "VITE_UPLOAD_ORIGINS"]);
+    expect(missingProdCspVars({ mediaBaseUrl: "", uploadOrigins: " " })).toEqual([
+      "VITE_MEDIA_BASE_URL",
+      "VITE_UPLOAD_ORIGINS",
+    ]);
+    expect(
+      missingProdCspVars({
+        mediaBaseUrl: "not a url",
+        uploadOrigins: "https://uploads.example.com",
+      }),
+    ).toEqual(["VITE_MEDIA_BASE_URL"]);
   });
 });

@@ -5,6 +5,7 @@ import { useCandidates, useMembership, useNewsletters, type CandidateSort } from
 import { useToggleVote } from "../api/mutations";
 import { ApiError } from "../api/client";
 import { PageHeader } from "../components/layout/PageHeader";
+import { PageErrorState } from "../components/layout/PageErrorState";
 import { CandidateList } from "../components/candidates/CandidateList";
 import { useToasts } from "../state/toast";
 import { countdownTo, cycleLabels } from "../utils/dates";
@@ -37,8 +38,11 @@ export function CandidatesPage() {
       {
         onError: (error) => {
           if (error instanceof ApiError && error.code === "VOTE_CAP_REACHED") {
+            const cap = candidates.data?.votesPerUserPerCycle ?? 0;
             pushToast(
-              `You've used all ${candidates.data?.votesPerUserPerCycle ?? 0} votes this cycle. Remove one to vote here.`,
+              cap === 1
+                ? "You've used your vote this cycle. Remove it to vote here."
+                : `You've used all ${cap} votes this cycle. Remove one to vote here.`,
               "error",
             );
             return;
@@ -69,23 +73,17 @@ export function CandidatesPage() {
 
   if (candidates.isError && !cycleNotVoting) {
     return (
-      <div className="pb-12">
-        <PageHeader title="Upcoming" eyebrow="Couldn't load" back="/" phase="voting" />
-        <div className="px-5 pt-8 text-center">
-          <div className="mb-3 text-5xl">😬</div>
-          <p className="font-semibold text-ink">
-            {candidates.error instanceof Error
-              ? candidates.error.message
-              : "Couldn't load candidate questions."}
-          </p>
-          <button
-            onClick={() => candidates.refetch()}
-            className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
-          >
-            Try again
-          </button>
-        </div>
-      </div>
+      <PageErrorState
+        title="Upcoming"
+        back="/"
+        phase="voting"
+        message={
+          candidates.error instanceof Error
+            ? candidates.error.message
+            : "Couldn't load candidate questions."
+        }
+        onRetry={() => candidates.refetch()}
+      />
     );
   }
 
@@ -173,7 +171,8 @@ export function CandidatesPage() {
               <div className="flex items-center gap-2 text-xs text-inkmuted">
                 <span>
                   You&apos;ve used {candidates.data.myVoteCount} of{" "}
-                  {candidates.data.votesPerUserPerCycle} votes
+                  {candidates.data.votesPerUserPerCycle} vote
+                  {candidates.data.votesPerUserPerCycle === 1 ? "" : "s"}
                 </span>
                 {candidates.data.myVoteCount > 0 && (
                   <button

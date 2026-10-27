@@ -1,11 +1,14 @@
 import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthValue } from "../auth/useAuth";
 import { RequireMembership } from "../routes/RequireMembership";
 import { api, ApiError } from "../api/client";
+import { useCurrentGroup } from "../state/currentGroup";
+import { useToasts } from "../state/toast";
 import { JoinPage } from "./JoinPage";
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -112,6 +115,63 @@ describe("JoinPage", () => {
         "This invite is for a different email address. Sign in with Google using the invited email.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("retries the same code when the form is submitted again after an error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.redeemInvite)
+      .mockRejectedValueOnce(new ApiError(409, "MEMBER_CAP_REACHED", null))
+      .mockResolvedValueOnce({ groupId: "g_new", groupName: "New", role: "member" });
+    vi.mocked(api.getConfig).mockResolvedValue({
+      userId: "u1",
+      email: "sam@example.com",
+      displayName: "Sam",
+      vapidPublicKey: "",
+      groupDefaults: {},
+      memberships: [{ groupId: "g_new", role: "member", groupName: "New", ...tzGradient }],
+    });
+
+    renderJoin(signedIn);
+    expect(await screen.findByText("That group is full.")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Invite code"), "ABCD-EFGH");
+    await user.click(screen.getByRole("button", { name: "Join" }));
+
+    expect(await screen.findByText("Upcoming for new group")).toBeInTheDocument();
+    expect(api.redeemInvite).toHaveBeenCalledTimes(2);
+  });
+
+  it("still welcomes, but doesn't switch group or navigate, when the user left mid-redeem", async () => {
+    let resolveRedeem!: (value: Awaited<ReturnType<typeof api.redeemInvite>>) => void;
+    vi.mocked(api.redeemInvite).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRedeem = resolve;
+      }),
+    );
+    vi.mocked(api.getConfig).mockResolvedValue({
+      userId: "u1",
+      email: "sam@example.com",
+      displayName: "Sam",
+      vapidPublicKey: "",
+      groupDefaults: {},
+      memberships: [{ groupId: "g_new", role: "member", groupName: "New", ...tzGradient }],
+    });
+    useCurrentGroup.getState().setCurrentGroup("g_old");
+    useToasts.setState({ toasts: [] });
+
+    const { unmount } = renderJoin(signedIn);
+    await waitFor(() => expect(api.redeemInvite).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => {
+      resolveRedeem({ groupId: "g_new", groupName: "New", role: "member" });
+    });
+
+    await waitFor(() =>
+      expect(useToasts.getState().toasts).toContainEqual(
+        expect.objectContaining({ message: "Welcome to New" }),
+      ),
+    );
+    expect(useCurrentGroup.getState().currentGroupId).toBe("g_old");
   });
 
   it("sends a signed-out visitor to login with the invite attached", () => {

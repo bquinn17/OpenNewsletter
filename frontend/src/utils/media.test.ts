@@ -117,4 +117,12 @@ describe("thumbSize", () => {
 
     expect(thumbSize(null, undefined)).toEqual({});
   });
+
+  it("scales down further, keeping the aspect ratio, to fit a height cap", async () => {
+    const { thumbSize } = await import("./media");
+
+    expect(thumbSize(1000, 2000, 192)).toEqual({ width: 96, height: 192 });
+    expect(thumbSize(4032, 3024, 192)).toEqual({ width: 256, height: 192 });
+    expect(thumbSize(300, 100, 192)).toEqual({ width: 300, height: 100 });
+  });
 });

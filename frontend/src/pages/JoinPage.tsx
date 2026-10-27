@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { stashInvite, takeStashedInvite } from "../auth/inviteStash";
 import { useRedeemInvite } from "../api/mutations";
@@ -31,14 +31,30 @@ function messageForError(error: unknown): string {
 export function JoinPage() {
   const [search] = useSearchParams();
   const code = search.get("code");
+  // Each `JoinForm` submit is a new navigation with its own key, even for the
+  // code already in the URL, so keying attempts on it lets the user retry a
+  // code that failed (e.g. once an admin raises the member cap).
+  const { key: attemptKey } = useLocation();
   const { status, login } = useAuth();
   const navigate = useNavigate();
   const setCurrentGroup = useCurrentGroup((s) => s.setCurrentGroup);
   const pushToast = useToasts((s) => s.push);
   const redeem = useRedeemInvite();
-  const attemptedCode = useRef<string | null>(null);
-  const [redeemError, setRedeemError] = useState<{ code: string; error: unknown } | null>(null);
+  const attemptedKey = useRef<string | null>(null);
+  const [redeemError, setRedeemError] = useState<{ attemptKey: string; error: unknown } | null>(
+    null,
+  );
   const stashedForCode = useRef<string | null>(null);
+  // StrictMode's simulated unmount flips this back to `true` on remount; a real
+  // unmount (the user tapped away mid-redeem) leaves it `false`.
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // Logged out with a code in the URL: stash it and kick off login. Guarded
   // per-code so StrictMode's double-invoked effects don't redirect twice.
@@ -49,25 +65,28 @@ export function JoinPage() {
     void login({ returnTo: `/join?code=${encodeURIComponent(code)}`, invite: code });
   }, [code, status, login]);
 
-  // Logged in with a code in the URL: redeem exactly once per code. The outcome
-  // comes from the returned promise, not `redeem`'s observer state: StrictMode's
-  // simulated unmount detaches the observer from the in-flight mutation, so
+  // Logged in with a code in the URL: redeem exactly once per navigation, which
+  // StrictMode's double-invoked effects share. The outcome comes from the
+  // returned promise, not `redeem`'s observer state: StrictMode's simulated
+  // unmount detaches the observer from the in-flight mutation, so
   // `redeem.isError` never flips and the page would spin forever.
   useEffect(() => {
-    if (!code || status !== "authenticated" || attemptedCode.current === code) return;
-    attemptedCode.current = code;
+    if (!code || status !== "authenticated" || attemptedKey.current === attemptKey) return;
+    attemptedKey.current = attemptKey;
     redeem.mutateAsync(code).then(
       (result) => {
-        if (attemptedCode.current !== code) return;
+        if (attemptedKey.current !== attemptKey) return;
         takeStashedInvite();
-        setCurrentGroup(result.groupId);
         pushToast(`Welcome to ${result.groupName}`, "success");
+        // The user has left the page: they're joined, but don't pull them off where they went.
+        if (!mounted.current) return;
+        setCurrentGroup(result.groupId);
         navigate(`/g/${result.groupId}/upcoming`, { replace: true });
       },
-      (error: unknown) => setRedeemError({ code, error }),
+      (error: unknown) => setRedeemError({ attemptKey, error }),
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- redeem/pushToast/etc. are stable across the guarded, once-per-code call
-  }, [code, status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- redeem/pushToast/etc. are stable across the guarded, once-per-navigation call
+  }, [code, status, attemptKey]);
 
   if (!code) {
     return (
@@ -81,8 +100,8 @@ export function JoinPage() {
     );
   }
 
-  // Keyed by code so a fresh code typed into the form below shows the spinner.
-  if (redeemError?.code === code) {
+  // Keyed by attempt so resubmitting the form below, same code or not, shows the spinner.
+  if (redeemError?.attemptKey === attemptKey) {
     return (
       <div className="px-5 py-10">
         <h1 className="font-display text-2xl font-bold">Couldn&apos;t join</h1>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import clsx from "clsx";
 import {
   disablePush,
   ensurePushSubscription,
@@ -140,7 +141,7 @@ export function NotificationsSection({ config }: { config: S["ConfigResponse"] }
         <button
           onClick={() => void handleToggle(!enabled)}
           disabled={toggleBusy || denied}
-          className={`toggle ${enabled ? "on" : ""}`}
+          className={clsx("toggle", enabled && "on")}
           aria-label="Toggle push notifications"
         />
       </div>

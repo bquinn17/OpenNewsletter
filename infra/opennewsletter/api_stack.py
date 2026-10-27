@@ -49,7 +49,6 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("groups", "GET", "/config"),
     ("groups", "GET", "/me"),
     ("groups", "PATCH", "/me"),
-    ("groups", "GET", "/groups"),
     ("groups", "GET", "/groups/{groupId}"),
     ("groups", "PATCH", "/groups/{groupId}"),
     ("groups", "DELETE", "/groups/{groupId}/members/{userId}"),
@@ -73,12 +72,6 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("questions", "POST", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
     ("questions", "DELETE", "/groups/{groupId}/candidate-questions/{questionId}/votes"),
     ("questions", "DELETE", "/admin/groups/{groupId}/candidate-questions/{questionId}"),
-    ("responses", "GET", "/groups/{groupId}/newsletters/{cycleId}/my-responses"),
-    (
-        "responses",
-        "GET",
-        "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response",
-    ),
     (
         "responses",
         "PUT",

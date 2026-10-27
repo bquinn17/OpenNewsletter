@@ -1,0 +1,2 @@
+export const MAX_BODY_CHARS = 2000;
+export const COUNTER_THRESHOLD = MAX_BODY_CHARS - 200;

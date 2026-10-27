@@ -10,7 +10,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, TimeZone, Utc};
 use domain::{GroupId, PushSubscription, UserId};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::elliptic_curve::Generate;
 use persistence::keys::attr;
 use persistence::{test_factories, Repo};
 use push::sender::{PushSender, SendResult};
@@ -54,8 +55,8 @@ fn dummy_secrets_client() -> aws_sdk_secretsmanager::Client {
 }
 
 pub fn make_test_vapid_keys() -> VapidKeys {
-    let secret = p256::SecretKey::random(&mut rand::thread_rng());
-    let public_point = secret.public_key().to_encoded_point(false);
+    let secret = p256::SecretKey::generate();
+    let public_point = secret.public_key().to_sec1_point(false);
     VapidKeys::parse(
         &URL_SAFE_NO_PAD.encode(public_point.as_bytes()),
         &URL_SAFE_NO_PAD.encode(secret.to_bytes()),
@@ -69,8 +70,8 @@ pub fn make_test_vapid_keys() -> VapidKeys {
 /// so `webpush::encrypt` succeeds against it inside `delivery::send_one`
 /// even though the network call itself is faked.
 pub fn make_subscriber_keys() -> (String, String) {
-    let secret = p256::SecretKey::random(&mut rand::thread_rng());
-    let public = secret.public_key().to_encoded_point(false);
+    let secret = p256::SecretKey::generate();
+    let public = secret.public_key().to_sec1_point(false);
     let p256dh = URL_SAFE_NO_PAD.encode(public.as_bytes());
     let mut auth_bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut auth_bytes);

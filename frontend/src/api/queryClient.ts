@@ -1,11 +1,12 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
-import { ApiError } from "./client";
+import { apiErrorMessage } from "./client";
 import { useToasts } from "../state/toast";
 
 function messageFor(error: unknown): string {
-  if (error instanceof ApiError) return error.problem?.detail ?? error.message;
-  if (error instanceof Error && error.message) return error.message;
-  return "Something went wrong.";
+  return apiErrorMessage(
+    error,
+    error instanceof Error && error.message ? error.message : "Something went wrong.",
+  );
 }
 
 /**

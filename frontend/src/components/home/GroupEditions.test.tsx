@@ -108,6 +108,20 @@ describe("GroupEditions", () => {
     expect(screen.getByRole("link", { name: /August 2026/ })).toBeInTheDocument();
   });
 
+  it("counts a published edition's questions in the singular for one", () => {
+    renderEditions([
+      { ...cycle("202609", "published", "09"), questionCount: 1 },
+      cycle("202608", "published", "08"),
+    ]);
+
+    expect(screen.getByRole("link", { name: /September 2026/ })).toHaveTextContent(
+      /1 question · published/,
+    );
+    expect(screen.getByRole("link", { name: /August 2026/ })).toHaveTextContent(
+      /4 questions · published/,
+    );
+  });
+
   it("labels each row with its phase", () => {
     const items = [
       cycle("202610", "voting", "10"),

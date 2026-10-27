@@ -1,6 +1,5 @@
 import type { components } from "../types/api";
-import { ApiError } from "./client";
-import { fail, NO_MOCK_ROUTE, type MockRequest } from "./mockShared";
+import { fail, NO_MOCK_ROUTE, validationFailed, type MockRequest } from "./mockShared";
 
 type S = components["schemas"];
 
@@ -43,19 +42,6 @@ const GROUP_IDS = ["g_trail", "g_game", "g_meeple"];
 let preferences: Record<string, { cycleOpen: boolean; deadlineReminders: boolean }> = {
   g_game: { cycleOpen: false, deadlineReminders: true },
 };
-
-function validationFailed(field: string, message: string): never {
-  const problem: S["ProblemDetails"] = {
-    type: "https://api.opennewsletter.example.com/errors/validation-failed",
-    title: "Validation failed",
-    status: 422,
-    detail: message,
-    code: "VALIDATION_FAILED",
-    correlationId: "mock-correlation-id",
-    fieldErrors: [{ field, code: "INVALID", message }],
-  };
-  throw new ApiError(422, "VALIDATION_FAILED", problem);
-}
 
 /** Deterministic stand-in for the server's `sha256(endpoint)` subscription id. */
 function subscriptionIdFor(endpoint: string): string {

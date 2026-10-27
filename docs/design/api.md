@@ -142,9 +142,9 @@ Last-admin guard: demoting the only admin returns 409 `LAST_ADMIN`. Per-group ni
 
 ## 4. Group routes
 
-### 4.1 `GET /groups`
+### 4.1 The caller's groups
 
-**Lambda**: `lambda-groups`. Returns the same `memberships` array as `/config`. Useful when the SPA refreshes group list without re-fetching everything.
+There is no route that lists only the caller's groups. The list is the `memberships` array of `GET /config` (§2.1), and the SPA refetches `/config` when it changes, such as after redeeming an invite.
 
 ### 4.2 `GET /groups/{groupId}`
 
@@ -267,15 +267,13 @@ There is **no admin curate / promote / override** surface in v1. The cycle tick 
 
 ## 7. Response routes (drafts + publish)
 
-### 7.1 `GET /groups/{groupId}/newsletters/{cycleId}/my-responses`
+### 7.1 Reading the caller's own responses
 
-**Lambda**: `lambda-responses`. **Role**: member. Lists caller's drafts/publishes for the cycle. AP15.
+The only response route is the save (§7.3). The caller reads their own drafts and published answers through the newsletter routes: while the cycle is `open`, each question in `GET /groups/{groupId}/newsletters/{cycleId}` carries `myResponse` (§5.2), and `GET /groups/{groupId}/newsletters` reports `myDraftCount`/`myPublishedCount` per cycle (§5.1). Each save returns the full `ResponseDto`, so the editor never has to re-read what it just wrote.
 
-Response 200: `MyResponsesList` in `shared/openapi.yaml`.
+### 7.2 Images on a draft
 
-### 7.2 `GET /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response`
-
-**Lambda**: `lambda-responses`. AP16. Returns 404 if caller has no draft yet.
+`myResponse.imageMediaIds` lists a draft's images by ID only. To show them, the respond page loads each one with `GET /uploads/{imageId}` (§9.3), which returns its presigned URLs and caption. An image that can't be loaded (for example, one that was deleted) is left out rather than blocking the editor ([`frontend.md` §8](frontend.md#8-drafts--detailed-flow)).
 
 ### 7.3 `PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response`
 
@@ -532,14 +530,14 @@ The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in
 | `POST /admin/invites` | admin of {groupId in body} |
 | `GET /admin/groups/{g}/invites`, `POST /admin/invites/{code}/revoke` | admin |
 | `POST /invites/redeem` | authenticated |
-| `GET /groups`, `GET /groups/{g}` | member |
+| `GET /groups/{g}` | member |
 | `PATCH /groups/{g}` | admin |
 | `DELETE /groups/{g}/members/{u}` | self OR admin |
 | `PATCH /groups/{g}/members/{u}` | admin (role only) |
 | `GET /groups/{g}/newsletters*` | member |
 | `*` candidate-questions GET/POST/votes | member |
 | `DELETE /admin/groups/{g}/candidate-questions/{q}` | admin |
-| `*` my-response routes | member (and self) |
+| `PUT …/my-response` | member (and self) |
 | `*` comments/reactions GET/POST, reactions PUT/DELETE | member |
 | `PATCH` comment | author only |
 | `DELETE` comment | author OR admin |

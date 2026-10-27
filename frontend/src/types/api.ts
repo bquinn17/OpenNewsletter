@@ -107,23 +107,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The caller's memberships (same join `/config` returns). */
-        get: operations["listGroups"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/groups/{groupId}": {
         parameters: {
             query?: never;
@@ -247,23 +230,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/groups/{groupId}/newsletters/{cycleId}/my-responses": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The caller's drafts/publishes for this cycle. Caller must be a member. */
-        get: operations["listMyResponses"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response": {
         parameters: {
             query?: never;
@@ -271,8 +237,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's draft/published answer to one question. 404 if none exists yet. Caller must be a member. */
-        get: operations["getMyResponse"];
+        get?: never;
         /** Save a draft or publish an answer. Last-write-wins on content — no version tokens, no conflict errors. Publishing is sticky: once published, a later `publish=false` save keeps the new content but cannot unpublish (`docs/design/api.md` §7.3). Caller must be a member. */
         put: operations["saveMyResponse"];
         post?: never;
@@ -711,9 +676,6 @@ export interface components {
             groupName: string;
             role: components["schemas"]["Role"];
         };
-        MembershipListResponse: {
-            memberships: components["schemas"]["MembershipSummary"][];
-        };
         MemberResponse: {
             userId: string;
             displayName: string;
@@ -978,9 +940,6 @@ export interface components {
             updatedAt: string;
             /** Format: date-time */
             publishedAt: string | null;
-        };
-        MyResponsesList: {
-            items: components["schemas"]["ResponseDto"][];
         };
         /** @description Tagged by `kind`. Image captions are set separately via `PATCH /uploads/{imageId}` (§9.6), not part of this payload. */
         SaveResponseRequest: {
@@ -1610,40 +1569,6 @@ export interface operations {
             410: components["responses"]["InviteExpired"];
         };
     };
-    listGroups: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The caller's memberships. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "memberships": [
-                     *         {
-                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
-                     *           "role": "admin",
-                     *           "groupName": "Trail Crew",
-                     *           "timezone": "America/New_York",
-                     *           "gradient": "grape-sky"
-                     *         }
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["MembershipListResponse"];
-                };
-            };
-            401: components["responses"]["Unauthenticated"];
-        };
-    };
     getGroup: {
         parameters: {
             query?: never;
@@ -2241,98 +2166,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-        };
-    };
-    listMyResponses: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
-                groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
-                cycleId: components["parameters"]["CycleIdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The caller's responses in this cycle. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "responseId": "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a",
-                     *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
-                     *           "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
-                     *           "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
-                     *           "cycleId": "202606",
-                     *           "kind": "text",
-                     *           "status": "draft",
-                     *           "body": "Lake 22, hands down.",
-                     *           "imageMediaIds": [],
-                     *           "updatedAt": "2026-06-02T10:00:00Z",
-                     *           "publishedAt": null
-                     *         }
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["MyResponsesList"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            410: components["responses"]["NewsletterArchived"];
-        };
-    };
-    getMyResponse: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
-                groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
-                cycleId: components["parameters"]["CycleIdPath"];
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
-                questionId: components["parameters"]["QuestionIdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The caller's response to this question. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "responseId": "018f2b6b-6c1b-7c3a-9d4e-8b9c0d1e2f3a",
-                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
-                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
-                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
-                     *       "cycleId": "202606",
-                     *       "kind": "text",
-                     *       "status": "draft",
-                     *       "body": "Lake 22, hands down.",
-                     *       "imageMediaIds": [],
-                     *       "updatedAt": "2026-06-02T10:00:00Z",
-                     *       "publishedAt": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ResponseDto"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            410: components["responses"]["NewsletterArchived"];
         };
     };
     saveMyResponse: {

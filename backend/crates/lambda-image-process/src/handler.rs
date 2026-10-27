@@ -24,15 +24,13 @@ use crate::state::AppState;
 
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
 const IMAGE_DECODE_FAILED: &str = "IMAGE_DECODE_FAILED";
-/// 60 days. Kept at two months or less so a stale copy can't outlive a fix
-/// for long, such as a header change. `private` because there is no shared
-/// cache in front of the processed bucket to benefit from `public`
-/// (`docs/design/media.md` §5.1).
-const IMAGE_CACHE_CONTROL: &str = "private, max-age=5184000, immutable";
-/// 90 days, matching the service worker's avatar cache. Longer than images
-/// because a changed avatar is a new `avatarId` and so a new key
-/// (`docs/design/media.md` §11.3).
-const AVATAR_CACHE_CONTROL: &str = "private, max-age=7776000, immutable";
+
+/// The `Cache-Control` a processed variant is stored with. `private` because
+/// there is no shared cache in front of the processed bucket to benefit from
+/// `public` (`docs/design/media.md` §5.1).
+fn cache_control(max_age_seconds: u64) -> String {
+    format!("private, max-age={max_age_seconds}, immutable")
+}
 
 /// Processes every record in the event, continuing past a terminal failure
 /// on any individual record. Returns the first transient error encountered
@@ -139,6 +137,7 @@ async fn handle_image_record(
         parsed.image_id,
         variants.thumb.format.extension()
     );
+    let image_cache_control = cache_control(shared::config::IMAGE_CACHE_MAX_AGE_SECONDS);
 
     state
         .store
@@ -147,7 +146,7 @@ async fn handle_image_record(
             &display_key,
             variants.display.bytes,
             variants.display.format.content_type(),
-            IMAGE_CACHE_CONTROL,
+            &image_cache_control,
         )
         .await?;
     state
@@ -157,7 +156,7 @@ async fn handle_image_record(
             &thumb_key,
             variants.thumb.bytes,
             variants.thumb.format.content_type(),
-            IMAGE_CACHE_CONTROL,
+            &image_cache_control,
         )
         .await?;
 
@@ -301,7 +300,7 @@ async fn handle_avatar_record(
             &display_key,
             variant.display.bytes,
             variant.display.format.content_type(),
-            AVATAR_CACHE_CONTROL,
+            &cache_control(shared::config::AVATAR_CACHE_MAX_AGE_SECONDS),
         )
         .await?;
 

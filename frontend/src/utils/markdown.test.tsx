@@ -2,6 +2,13 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MarkdownBody, referencedImageIds, stripImageTokens } from "./markdown";
 
+const { refreshMediaUrls } = vi.hoisted(() => ({ refreshMediaUrls: vi.fn() }));
+
+vi.mock("./media", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./media")>()),
+  refreshMediaUrls,
+}));
+
 describe("MarkdownBody sanitization", () => {
   it("strips script tags", () => {
     render(<MarkdownBody body={"before<script>alert(1)</script>after"} images={[]} />);
@@ -60,7 +67,7 @@ describe("MarkdownBody sanitization", () => {
   });
 
   it("keeps an inline image's retry state when re-rendered with fresh URLs", async () => {
-    const onImageExpired = vi.fn().mockResolvedValue(undefined);
+    refreshMediaUrls.mockResolvedValue(undefined);
     const images = (signature: string) => [
       {
         imageId: "img1",
@@ -69,11 +76,7 @@ describe("MarkdownBody sanitization", () => {
       },
     ];
     const { rerender } = render(
-      <MarkdownBody
-        body="![a photo](image:img1)"
-        images={images("a")}
-        onImageExpired={onImageExpired}
-      />,
+      <MarkdownBody body="![a photo](image:img1)" images={images("a")} />,
     );
 
     fireEvent.error(screen.getByAltText("a photo"));
@@ -81,17 +84,11 @@ describe("MarkdownBody sanitization", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    rerender(
-      <MarkdownBody
-        body="![a photo](image:img1)"
-        images={images("b")}
-        onImageExpired={onImageExpired}
-      />,
-    );
+    rerender(<MarkdownBody body="![a photo](image:img1)" images={images("b")} />);
     fireEvent.error(screen.getByAltText("a photo"));
 
     expect(screen.getByRole("img", { name: "Couldn't load image: a photo" })).toBeInTheDocument();
-    expect(onImageExpired).toHaveBeenCalledTimes(1);
+    expect(refreshMediaUrls).toHaveBeenCalledTimes(1);
   });
 
   it("drops an unknown image token", () => {

@@ -79,7 +79,8 @@ class MediaPipelineStack(cdk.Stack):
         )
         originals_bucket.grant_read(self.image_process_fn)
         originals_bucket.grant_delete(self.image_process_fn)
-        processed_bucket.grant_put(self.image_process_fn)
+        processed_bucket.grant_put(self.image_process_fn, "img/*")
+        processed_bucket.grant_put(self.image_process_fn, "avatar/*")
         avatars_originals_bucket.grant_read(self.image_process_fn)
         avatars_originals_bucket.grant_delete(self.image_process_fn)
         # Removes the variants it just wrote when the row was deleted

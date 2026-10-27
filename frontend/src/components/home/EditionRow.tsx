@@ -26,7 +26,7 @@ export function EditionRow({ groupId, timezone, newsletter }: Props) {
       ? `${shortCountdown(newsletter.responseCloseAt)} left · you've published ${newsletter.myPublishedCount} of ${newsletter.questionCount}`
       : newsletter.status === "voting"
         ? "Suggest and vote on questions for next month"
-        : `${newsletter.questionCount} questions${
+        : `${newsletter.questionCount} question${newsletter.questionCount === 1 ? "" : "s"}${
             newsletter.publishedAt
               ? ` · published ${new Date(newsletter.publishedAt).toLocaleDateString()}`
               : ""

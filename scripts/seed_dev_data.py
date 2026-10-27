@@ -34,8 +34,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 try:
-    import boto3
-    from botocore.exceptions import ClientError
+    import boto3  # type: ignore[import-untyped]
+    from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 except ImportError:
     sys.exit(
         "boto3 not installed. Run: infra/.venv/bin/pip install -r scripts/requirements.txt"
@@ -53,7 +53,8 @@ def load_outputs(env: str) -> dict[str, Any]:
             "--all --outputs-file cdk.out/dev-outputs.json') first."
         )
     with path.open() as f:
-        return json.load(f)
+        outputs: dict[str, Any] = json.load(f)
+    return outputs
 
 
 def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
@@ -61,7 +62,7 @@ def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
     val = outputs.get(full_name, {}).get(key, "")
     if not val:
         sys.exit(f"Missing CDK output {full_name}.{key} — run 'make deploy-dev' first.")
-    return val
+    return str(val)
 
 
 def parse_duration(s: str) -> timedelta:
@@ -208,7 +209,7 @@ def ensure_cognito_user(
         Permanent=True,
     )
     resp = cognito.admin_get_user(UserPoolId=user_pool_id, Username=email)
-    sub = next(a["Value"] for a in resp["UserAttributes"] if a["Name"] == "sub")
+    sub: str = next(a["Value"] for a in resp["UserAttributes"] if a["Name"] == "sub")
     verb = "Created" if created else "Reset password for existing"
     print(f"  {verb} Cognito user — {email} (sub={sub[:8]}…)")
     return sub
@@ -351,6 +352,8 @@ def main() -> None:
     )
     args = parser.parse_args()
     password = args.admin_password or random_password()
+    # With --admin-sub, Cognito is untouched, so `password` was never set on anyone.
+    shown_password = "EXISTING_PASSWORD" if args.admin_sub else password
 
     outputs = load_outputs(args.env)
     table_name = get_output(outputs, "DataStack", "TableName", args.env)
@@ -440,7 +443,7 @@ def main() -> None:
       --user-pool-id {user_pool_id} \\
       --client-id {user_pool_bootstrap_client} \\
       --auth-flow ADMIN_USER_PASSWORD_AUTH \\
-      --auth-parameters USERNAME={args.admin_email},PASSWORD={password}
+      --auth-parameters USERNAME={args.admin_email},PASSWORD={shown_password}
 """
     )
 

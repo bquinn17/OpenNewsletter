@@ -98,7 +98,7 @@ Read: [`auth.md`](../../docs/design/auth.md).
 
 **Deliverables**:
 - `lambda-invites` crate compiled to `bootstrap` binary; supports both API routes (`POST /admin/invites`, `POST /invites/redeem`, `POST /admin/invites/{code}/revoke`, `GET /admin/groups/{g}/invites`) and a `PreSignUp` Cognito trigger (pass-through per §3.3).
-- `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
+- `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
 - **Create `ApiStack`** ([`infrastructure.md` §6](../../docs/design/infrastructure.md#6-apistack) — HTTP API, CORS, JWT authorizer, throttling, access logs; this stack does not exist before M4) and wire both Lambdas' routes into it. The dev-only tick routes stubbed in M3.5 get their API Gateway wiring in M5 when the tick Lambdas land.
 - `scripts/bootstrap_admin.py` per [`auth.md` §9.1](../../docs/design/auth.md#91-scriptsbootstrap_adminpy--dev).
 - The `admin-bootstrap` Cognito app client.

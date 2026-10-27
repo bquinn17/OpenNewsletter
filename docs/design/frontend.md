@@ -64,17 +64,19 @@ frontend/
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
 │   ├── components/
 │   │   ├── ui/                       # Avatar, Button, MediaImage, ConfirmDialog, Pill, Spinner, Toast, useDismissableMenu
-│   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader
+│   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader, PageErrorState
 │   │   ├── home/                     # GroupEditions, EditionRow
 │   │   ├── join/JoinForm.tsx
 │   │   ├── newsletter/               # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
-│   │   │                             # CommentList, ReactionBar, EmojiPickerPopover
+│   │   │                             # CommentList (+ CommentRow, CommentComposer), ReactionBar,
+│   │   │                             # EmojiPickerPopover
 │   │   ├── candidates/               # CandidateList, CandidateCard, SuggestQuestionForm
-│   │   ├── responses/                # ResponseEditor, useResponseEditor, ImageUploader,
-│   │   │                             # DraftStatusBadge, PublishButton
-│   │   ├── settings/NotificationsSection.tsx
+│   │   ├── responses/                # ResponseEditor, useResponseEditor, ImageUploader (+ ImageDropzone,
+│   │   │                             # ImageUploaderTile, useHydratedImages), PollPicker,
+│   │   │                             # usePollResponse, DraftStatusBadge, PublishButton
+│   │   ├── settings/                 # ProfileCard, YourGroupsSection, NotificationsSection
 │   │   ├── pwa/InstallPwaPrompt.tsx
-│   │   └── admin/GroupSettingsForm.tsx   # Members/Invites tabs live in GroupAdminPage
+│   │   └── admin/                    # GroupSettingsForm, useGroupSettingsForm, MembersTab, InvitesTab
 │   ├── pages/
 │   │   ├── HomePage.tsx              # / — the current group's newsletters
 │   │   ├── GroupRedirect.tsx         # /g/{g}
@@ -286,7 +288,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 - Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
 - Renders editions newest first, in labeled sections (empty ones are hidden): **Taking suggestions** (the voting cycle), **Awaiting responses** (the open cycle), **This month's edition** (published, and its month is the current month in the group's timezone, via `utils/dates.ts#isCurrentCycleMonth`), **Past editions** (up to the 3 most recent published editions from earlier months). Open and voting cycles exist at once during the response window ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)).
-- Empty state when no memberships: "You haven't joined a group yet — paste your invite code below" with a `<JoinForm/>`.
+- Empty state when no memberships: "You haven't joined a group yet — paste your invite code below" with a `<JoinForm/>`. It shows only once `/config` has loaded. Until then Home shows a spinner, and if `/config` fails, or is paused offline, it shows "Couldn't load your groups." with **Try again**, so a member never sees the join form.
 
 ### 7.2 NewsletterPage `/g/:g/n/:c`
 
@@ -380,6 +382,10 @@ Notes:
 If unauthenticated: stash the code in sessionStorage (and in the OIDC `state` data via `login()`) and redirect to login. On `/auth/callback`, after token exchange, the SPA pulls the code back out and navigates to `/join?code=…`, which is now authenticated and redeems it — one redemption code path, not two.
 
 If authenticated: call `POST /invites/redeem` with the code (once, even under StrictMode), then follow [`auth.md` §4.5](auth.md#45-spa-wrapper): set `currentGroup` and navigate to `/g/{groupId}/upcoming`.
+
+On an error, the page shows the reason and the join form again. Redemption happens once per navigation (keyed on `location.key`), not once per code, so submitting the form again retries, even with the same code. That covers a failure that has since been fixed, such as an admin raising the member cap.
+
+If the user leaves the page before the redeem resolves, it still completes, and the stashed invite is cleared and the welcome toast shows, but the page doesn't switch `currentGroup` or navigate, so it never pulls them off the page they went to.
 
 ---
 
@@ -502,8 +508,6 @@ Notes:
 ```ts
 export const env = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL,
-  mediaBaseUrl: import.meta.env.VITE_MEDIA_BASE_URL,                    // the processed bucket's origin
-  uploadOrigins: import.meta.env.VITE_UPLOAD_ORIGINS,                   // space-separated; the two originals buckets' upload endpoints
   cognitoUserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,         // us-east-1_xxxxx
   cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID,              // public frontend client
   cognitoBootstrapClientId: import.meta.env.VITE_COGNITO_BOOTSTRAP_CLIENT_ID, // admin-bootstrap client (dev login only)
@@ -517,7 +521,9 @@ export const env = {
 //   `https://cognito-idp.us-east-1.amazonaws.com/${env.cognitoUserPoolId}`
 ```
 
-Plus `useMocks: import.meta.env.VITE_USE_MOCKS === "true"`. When set, `AuthProvider` reports a fake signed-in user and `api/client.ts` dispatches to `api/mockTransport.ts` instead of `fetch`. 
+Plus `useMocks: import.meta.env.VITE_USE_MOCKS === "true"`. When set, `AuthProvider` reports a fake signed-in user and `api/client.ts` dispatches to `api/mockTransport.ts` instead of `fetch`. Outside mock mode, a missing required variable throws when the app starts.
+
+Two build inputs aren't in `env`, because the running app never reads them: `VITE_MEDIA_BASE_URL` (the processed bucket's origin) and `VITE_UPLOAD_ORIGINS` (space-separated, the two originals buckets' upload endpoints). They go into the CSP (§12.1), and the service worker matches its media routes against the media origin (§5.2). A prod build (`VITE_ENV=prod`) without a valid value for either fails in `cspPlugin`, because its CSP would block every image or every upload. Other builds, such as the env-less CI compile check and mock builds, leave a missing origin out of the policy.
 
 Env files:
 - `.env.development` is checked in with `VITE_USE_MOCKS=true` and placeholders, so plain `npm run dev` runs fully offline.

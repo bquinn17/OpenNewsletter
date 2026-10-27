@@ -31,34 +31,6 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
 
     match (req.method(), segments.as_slice()) {
-        (&Method::GET, ["groups", group_id, "newsletters", cycle_id, "my-responses"]) => {
-            let user_id = caller(state, req).await?;
-            let response = handlers::list_my_responses(
-                state,
-                &user_id,
-                &GroupId::new(*group_id),
-                &CycleId::new(*cycle_id),
-            )
-            .await?;
-            Ok(http::json_response(200, &response, &correlation_id))
-        }
-
-        (
-            &Method::GET,
-            ["groups", group_id, "newsletters", cycle_id, "questions", question_id, "my-response"],
-        ) => {
-            let user_id = caller(state, req).await?;
-            let response = handlers::get_my_response(
-                state,
-                &user_id,
-                &GroupId::new(*group_id),
-                &CycleId::new(*cycle_id),
-                &QuestionId::new(*question_id),
-            )
-            .await?;
-            Ok(http::json_response(200, &response, &correlation_id))
-        }
-
         (
             &Method::PUT,
             ["groups", group_id, "newsletters", cycle_id, "questions", question_id, "my-response"],

@@ -11,7 +11,8 @@ use chrono::{DateTime, Duration, Utc};
 use hkdf::Hkdf;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::elliptic_curve::Generate;
 use p256::{PublicKey, SecretKey};
 use rand::RngCore;
 use sha2::Sha256;
@@ -65,7 +66,7 @@ impl VapidKeys {
     fn verify_keypair(&self) -> Result<(), WebPushError> {
         let secret = SecretKey::from_bytes(&self.private_key.into())
             .map_err(|e| WebPushError::InvalidKey(format!("invalid VAPID private key: {e}")))?;
-        let derived = secret.public_key().to_encoded_point(false);
+        let derived = secret.public_key().to_sec1_point(false);
         if derived.as_bytes() != self.public_key {
             return Err(WebPushError::InvalidKey(
                 "VAPID private key does not derive the configured public key".into(),
@@ -145,7 +146,7 @@ pub fn encrypt(
 ) -> Result<Vec<u8>, WebPushError> {
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
-    let as_secret = SecretKey::random(&mut rand::thread_rng());
+    let as_secret = SecretKey::generate();
     encrypt_with(plaintext, p256dh_b64, auth_b64, salt, &as_secret)
 }
 
@@ -169,7 +170,7 @@ fn encrypt_with(
         .decode(auth_b64)
         .map_err(|e| WebPushError::InvalidKey(format!("invalid auth secret: {e}")))?;
 
-    let as_public_point = as_secret.public_key().to_encoded_point(false);
+    let as_public_point = as_secret.public_key().to_sec1_point(false);
     let as_public_bytes = as_public_point.as_bytes();
 
     let shared = p256::ecdh::diffie_hellman(as_secret.to_nonzero_scalar(), ua_public.as_affine());
@@ -274,7 +275,7 @@ mod tests {
         let ciphertext = &body[21 + key_id_len..];
 
         let as_public = PublicKey::from_sec1_bytes(as_public_bytes).expect("valid as public key");
-        let ua_public_bytes = ua_secret.public_key().to_encoded_point(false);
+        let ua_public_bytes = ua_secret.public_key().to_sec1_point(false);
 
         let auth_secret = URL_SAFE_NO_PAD.decode(auth_secret_b64).expect("valid auth");
 
@@ -311,8 +312,8 @@ mod tests {
 
     #[test]
     fn vapid_jwt_verifies_with_the_public_key() {
-        let private = SecretKey::random(&mut rand::thread_rng());
-        let public_point = private.public_key().to_encoded_point(false);
+        let private = SecretKey::generate();
+        let public_point = private.public_key().to_sec1_point(false);
         let keys = VapidKeys::parse(
             &URL_SAFE_NO_PAD.encode(public_point.as_bytes()),
             &URL_SAFE_NO_PAD.encode(private.to_bytes()),
@@ -366,10 +367,8 @@ mod tests {
 
     #[test]
     fn vapid_parse_rejects_a_mismatched_keypair() {
-        let private_a = SecretKey::random(&mut rand::thread_rng());
-        let public_b = SecretKey::random(&mut rand::thread_rng())
-            .public_key()
-            .to_encoded_point(false);
+        let private_a = SecretKey::generate();
+        let public_b = SecretKey::generate().public_key().to_sec1_point(false);
 
         let err = VapidKeys::parse(
             &URL_SAFE_NO_PAD.encode(public_b.as_bytes()),

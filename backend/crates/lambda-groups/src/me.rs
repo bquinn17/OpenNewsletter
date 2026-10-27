@@ -133,13 +133,6 @@ async fn delete_replaced_avatar(state: &AppState, user_id: &UserId, avatar_id: &
     }
 }
 
-pub async fn list_memberships(
-    state: &AppState,
-    user_id: &UserId,
-) -> Result<Vec<MembershipSummary>, ApiError> {
-    membership_summaries(state, user_id).await
-}
-
 async fn load_user(state: &AppState, user_id: &UserId) -> Result<User, ApiError> {
     users::get_user(&state.repo, user_id)
         .await
@@ -150,7 +143,7 @@ async fn load_user(state: &AppState, user_id: &UserId) -> Result<User, ApiError>
         .ok_or_else(|| ApiError::not_found("user profile not found"))
 }
 
-/// The denormalized join `GET /config` and `GET /groups` both return: one query
+/// The denormalized join `GET /config` returns: one query
 /// for the caller's memberships, then one batched read for the group rows.
 async fn membership_summaries(
     state: &AppState,

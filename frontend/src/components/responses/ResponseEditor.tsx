@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import clsx from "clsx";
 import { api } from "../../api/client";
 import type { components } from "../../types/api";
 import { MarkdownBody } from "../../utils/markdown";
@@ -81,6 +82,8 @@ export function ResponseEditor({
 
   const wordCount = body.trim() ? body.trim().split(/\s+/).length : 0;
 
+  // The uploader's `onChange` reads its URLs from each image's `uploadQuery` entry, so a URL
+  // refresh reaches the preview too (`docs/design/media.md` §4.4).
   const previewImages = liveImages.map((i) => ({
     imageId: i.imageId,
     displayUrl: i.displayUrl,
@@ -88,28 +91,6 @@ export function ResponseEditor({
     width: i.width,
     height: i.height,
   }));
-
-  /**
-   * `onImageExpired` for the preview's `MarkdownBody` (`docs/design/media.md` §4.4): these images
-   * live in `liveImages`, mirrored from the uploader's own state, not a react-query cache, so the
-   * global `refreshMediaUrls` wouldn't reach them.
-   */
-  async function refreshPreviewImage(imageId: string): Promise<void> {
-    const fresh = await api.media.getUpload(imageId, groupId, cycleId);
-    setLiveImages((prev) =>
-      prev.map((image) =>
-        image.imageId === imageId
-          ? {
-              ...image,
-              thumbUrl: fresh.thumbUrl,
-              displayUrl: fresh.displayUrl,
-              width: fresh.width,
-              height: fresh.height,
-            }
-          : image,
-      ),
-    );
-  }
 
   function handleUploaderChange(images: UploaderImage[]) {
     setLiveImages(images);
@@ -155,9 +136,10 @@ export function ResponseEditor({
           <button
             type="button"
             onClick={() => setPreview((p) => !p)}
-            className={`rounded-md px-2 py-1 text-xs font-medium ${
-              preview ? "bg-ink text-cream" : "hover:bg-cream"
-            }`}
+            className={clsx(
+              "rounded-md px-2 py-1 text-xs font-medium",
+              preview ? "bg-ink text-cream" : "hover:bg-cream",
+            )}
           >
             {preview ? "Edit" : "Preview"}
           </button>
@@ -165,11 +147,7 @@ export function ResponseEditor({
         {preview ? (
           <div className="min-h-[200px] px-4 py-4">
             {body.trim() ? (
-              <MarkdownBody
-                body={body}
-                images={previewImages}
-                onImageExpired={refreshPreviewImage}
-              />
+              <MarkdownBody body={body} images={previewImages} />
             ) : (
               <p className="italic text-inkmuted">Nothing to preview yet.</p>
             )}

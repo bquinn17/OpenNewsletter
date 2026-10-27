@@ -1,5 +1,4 @@
 import type { components } from "../types/api";
-import { ApiError } from "./client";
 import {
   CALLER_ID,
   fail,
@@ -7,6 +6,7 @@ import {
   hasOtherAdmin,
   newsletters,
   NO_MOCK_ROUTE,
+  validationFailed,
   type MockRequest,
 } from "./mockShared";
 
@@ -42,23 +42,6 @@ interface InviteRow {
 }
 
 let invites: InviteRow[] = [];
-
-function validationFailed(
-  field: string,
-  message: string,
-  code: S["FieldErrorCode"] = "INVALID",
-): never {
-  const problem: S["ProblemDetails"] = {
-    type: "https://api.opennewsletter.example.com/errors/validation-failed",
-    title: "Validation failed",
-    status: 422,
-    detail: message,
-    code: "VALIDATION_FAILED",
-    correlationId: "mock-correlation-id",
-    fieldErrors: [{ field, code, message }],
-  };
-  throw new ApiError(422, "VALIDATION_FAILED", problem);
-}
 
 function requireGroup(groupId: string): S["GroupResponse"] {
   const group = groups[groupId];

@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import type { components } from "../../types/api";
 
 /**
@@ -20,7 +21,7 @@ export function AskedBy({
   const label = askedBy ? `${askedBy.displayName} asked` : isAnonymous ? "Asked anonymously" : null;
   if (!label) return null;
   return (
-    <div className={`text-xs font-bold uppercase tracking-widest text-inkmuted ${className}`}>
+    <div className={clsx("text-xs font-bold uppercase tracking-widest text-inkmuted", className)}>
       {label}
     </div>
   );

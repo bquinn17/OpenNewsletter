@@ -1,11 +1,7 @@
-import { format, formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceToNowStrict } from "date-fns";
 
 export function formatRelative(iso: string): string {
   return formatDistanceToNowStrict(new Date(iso), { addSuffix: true });
-}
-
-export function formatDate(iso: string, fmt = "MMM d"): string {
-  return format(new Date(iso), fmt);
 }
 
 export interface Countdown {

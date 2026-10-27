@@ -41,13 +41,17 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "infra"))
 
-from opennewsletter.config import load_config
+# Resolved through the `sys.path` entry above at runtime. mypy only finds it
+# when run from `infra/`, so the ignore must tolerate being unused there.
+from opennewsletter.config import (  # type: ignore[import-not-found, unused-ignore]
+    load_config,
+)
 
 # Mirrors AVATAR_COLOR_SLUGS + derive_avatar_color in
 # backend/crates/shared/src/config.rs. Both sides must agree so a bootstrapped
@@ -70,7 +74,14 @@ DEFAULT_CYCLE_SETTINGS = {
     "response_window_days": 7,
     "auto_publish": True,
 }
-DEFAULT_NOTIFICATION_SETTINGS = {
+
+
+class NotificationSettings(TypedDict):
+    offsets_hours_before_close: list[int]
+    on_cycle_open: bool
+
+
+DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
     "offsets_hours_before_close": [96, 48, 24],
     "on_cycle_open": True,
 }
@@ -182,7 +193,7 @@ def boto3_session() -> Any:
     # Imported here rather than at module top so the pure item builders below
     # can be unit-tested (infra/tests) without boto3 installed.
     try:
-        import boto3
+        import boto3  # type: ignore[import-untyped]
     except ImportError:
         sys.exit(
             "boto3 not installed. Run: infra/.venv/bin/pip install -r scripts/requirements.txt"

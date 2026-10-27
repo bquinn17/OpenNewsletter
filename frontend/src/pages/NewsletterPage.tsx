@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ApiError } from "../api/client";
 import { useMembership, useNewsletter, useNewsletters } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
+import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
 import { PollWidget } from "../components/newsletter/PollWidget";
@@ -55,7 +56,9 @@ export function NewsletterPage() {
       return <NotFoundState groupId={groupId} />;
     }
     return (
-      <ErrorState
+      <PageErrorState
+        title="Edition"
+        back="/"
         message={error instanceof Error ? error.message : "Couldn't load this edition."}
         onRetry={() => refetch()}
       />
@@ -95,24 +98,6 @@ function LoadingShell() {
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
         ))}
-      </div>
-    </div>
-  );
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="pb-12">
-      <PageHeader title="Edition" eyebrow="Couldn't load" back="/" />
-      <div className="px-5 pt-8 text-center">
-        <div className="mb-3 text-5xl">😬</div>
-        <p className="font-semibold text-ink">{message}</p>
-        <button
-          onClick={onRetry}
-          className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
-        >
-          Try again
-        </button>
       </div>
     </div>
   );

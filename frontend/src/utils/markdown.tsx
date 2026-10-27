@@ -12,7 +12,7 @@ import { thumbSize } from "./media";
  * `<script>`/`<iframe>`/`<style>`, event handlers, and `javascript:` links
  * are rejected by `defaultSchema` already and untouched here.
  */
-export const markdownSanitizeSchema: Schema = {
+const markdownSanitizeSchema: Schema = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
@@ -67,19 +67,11 @@ type Props = {
    * `image:` token path.
    */
   allowImages?: boolean;
-  /**
-   * Per-image refresh for an expired presigned URL, keyed by `imageId` — passed down to each
-   * rendered `MediaImage`'s `onExpired`. Omit it when `images` comes from a react-query cache
-   * (the default, global `refreshMediaUrls`, already reaches it); `ResponseEditor`'s preview
-   * passes one because its images live in the uploader's local state instead.
-   */
-  onImageExpired?: (imageId: string) => Promise<unknown> | void;
 };
 
 type ImageRendering = {
   byId: Map<string, MarkdownImage>;
   allowImages: boolean;
-  onImageExpired?: (imageId: string) => Promise<unknown> | void;
 };
 
 const ImageRenderingContext = createContext<ImageRendering>({ byId: new Map(), allowImages: true });
@@ -93,7 +85,7 @@ function MarkdownLink({ href, children }: ComponentProps<"a">) {
 }
 
 function MarkdownImg({ src, alt }: ComponentProps<"img">) {
-  const { byId, allowImages, onImageExpired } = useContext(ImageRenderingContext);
+  const { byId, allowImages } = useContext(ImageRenderingContext);
   if (!src) return null;
   // Only uploaded images render inline. A remote image would be blocked
   // by the CSP's `img-src` (`docs/design/frontend.md` §12.1) and would leak readers' IPs to
@@ -123,7 +115,6 @@ function MarkdownImg({ src, alt }: ComponentProps<"img">) {
       alt={alt ?? ""}
       {...thumbSize(image.width, image.height)}
       className="rounded-xl"
-      onExpired={onImageExpired ? () => onImageExpired(image.imageId) : undefined}
     />
   );
 }
@@ -141,20 +132,13 @@ const components: Components = { a: MarkdownLink, img: MarkdownImg };
  * `image:{id}` tokens against `images` into `<MediaImage>`s. An id with no
  * match (not yet uploaded, or removed) renders nothing.
  */
-export function MarkdownBody({
-  body,
-  images,
-  className,
-  allowImages = true,
-  onImageExpired,
-}: Props) {
+export function MarkdownBody({ body, images, className, allowImages = true }: Props) {
   const rendering = useMemo(
     () => ({
       byId: new Map(images.map((image) => [image.imageId, image])),
       allowImages,
-      onImageExpired,
     }),
-    [images, allowImages, onImageExpired],
+    [images, allowImages],
   );
 
   return (

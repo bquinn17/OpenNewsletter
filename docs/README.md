@@ -44,6 +44,7 @@ How each subsystem works. Sections are numbered and cited from code.
 | [`operator-setup.md`](operations/operator-setup.md) | One-time setup per environment: domain, OAuth apps, keys, the app secret |
 | [`runbook.md`](operations/runbook.md) | Deploying dev and prod, bootstrapping the first admin, verifying a deploy, day-to-day operations |
 | [`smoke-test.md`](operations/smoke-test.md) | The 15-minute manual check after a deploy |
+| [`frontend-walkthrough.md`](operations/frontend-walkthrough.md) | The full manual pass over every frontend flow, for verification before a release |
 
 ### Reference
 

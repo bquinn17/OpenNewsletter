@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -158,9 +159,10 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
 
       <div className="px-5 pt-5">
         <label
-          className={`block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition ${
-            isAnonymous ? "border-grape/40 bg-grape/5 text-grape" : "border-line bg-white text-ink"
-          }`}
+          className={clsx(
+            "block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition",
+            isAnonymous ? "border-grape/40 bg-grape/5 text-grape" : "border-line bg-white text-ink",
+          )}
         >
           <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
           <div className="flex-1">
@@ -169,14 +171,16 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
               <input type="checkbox" className="peer sr-only" {...register("isAnonymous")} />
               <span
                 aria-hidden
-                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${
-                  isAnonymous ? "bg-grape" : "bg-line"
-                }`}
+                className={clsx(
+                  "relative h-6 w-10 shrink-0 rounded-full transition-colors",
+                  isAnonymous ? "bg-grape" : "bg-line",
+                )}
               >
                 <span
-                  className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                    isAnonymous ? "translate-x-4" : ""
-                  }`}
+                  className={clsx(
+                    "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                    isAnonymous && "translate-x-4",
+                  )}
                 />
               </span>
             </div>
@@ -347,9 +351,10 @@ function KindButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-2xl bg-white p-4 text-left transition ${
-        active ? "border-2 border-coral ring-2 ring-coral/20" : "border border-line"
-      }`}
+      className={clsx(
+        "rounded-2xl bg-white p-4 text-left transition",
+        active ? "border-2 border-coral ring-2 ring-coral/20" : "border border-line",
+      )}
     >
       <div className="mb-1 text-2xl">{icon}</div>
       <div className="font-semibold">{label}</div>
