@@ -43,7 +43,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
-if sys.version_info >= (3, 9):  # noqa: UP036 (ruff assumes 3.9+)
+if sys.version_info >= (3, 9):
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 else:  # the WSL2 venv runs 3.8
     from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError

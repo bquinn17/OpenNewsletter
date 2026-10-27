@@ -1,0 +1,3 @@
+# The scripts also run in the WSL2 venv (Python 3.8), so pin ruff's target there:
+# unpinned, newer ruff versions suggest 3.9+/3.11+ rewrites such as `datetime.UTC`.
+target-version = "py38"
