@@ -1178,3 +1178,21 @@ RUSTSEC-2026-0346 to 0349 (published 2026-10-14) failed `cargo deny check` on tw
 - With those crates gone, four `deny.toml` ignores no longer matched anything and were removed: RUSTSEC-2026-0098, -0099, -0104 (`rustls-webpki` 0.101) and RUSTSEC-2026-0258 (`h2` 0.3).
 
 **Checks.** `cargo deny check` passes (advisories, bans, licenses, sources). `cargo fmt --check`, clippy `--all-targets --all-features -D warnings` and `cargo test --workspace` (498 passed) are clean.
+
+## Dev deploy — what landed (2026-10-18, follow-ups 2026-10-26)
+
+First `make deploy-dev`; all nine stacks are up (last deployed 2026-10-19 02:03 UTC). M3's deploy and M7 are confirmed against dev; the other gates are still to run.
+
+**Bugs found bringing dev up.**
+- **`ApiStack-dev` failed to create.** The access-log format had `correlationId: $context.requestHeaderOverride.header.x-correlation-id`. HTTP APIs don't allow header variables in access logs at all, and only the deploy rejects it: `cdk synth` passes. The field is gone, and a CDK test fails if the format reads a request header. The Lambdas still log `correlation_id`, which is what the Logs Insights query searches.
+- **`make seed` had no Python dependencies.** It ran the system `python3`, which has no `boto3` and which Homebrew won't `pip install` into. New `scripts/requirements.txt` (`boto3[crt]`, `py-vapid`) is installed into `infra/.venv` next to `infra/requirements.txt`, and `make seed` activates that venv. `[crt]` is needed because botocore can't load `aws login` credentials without it. The setup docs and the scripts' "not installed" messages give the install command.
+- **Every request from the seeded admin 500'd** ("failed to resolve caller"). `seed_dev_data.py` wrote the `CognitoSubLookup` item without `cognito_sub`, which the Rust struct requires. `bootstrap_admin.py` already wrote it.
+- **`AuthCallbackPage` swallowed its error**, so a failed first Google sign-in couldn't be diagnosed. It now logs it with `console.error`. The failure didn't recur, so it was most likely a reload of a used callback URL or a stale tab.
+- **Settings 401'd for a user who hadn't redeemed an invite.** `GET /me` refuses callers with no User row, by design, and the client treated each 401 as an expired token and renewed (so the 401s came in pairs).
+
+**Decisions.**
+- Spec gap: before an invite is redeemed, Settings redirects to Home (which shows the join form), and `useMe` runs only once `/config` has a `userId` ([`frontend.md` §7.6](../../docs/design/frontend.md#76-settingspage)). The client's 401-means-expired assumption is a known gap in [`PROGRESS.md`](../PROGRESS.md).
+- `make seed` gives the bootstrap admin a fresh random 20-character password on every run (meeting the pool policy: lowercase, uppercase, digit, symbol from `-_.%`), unless `--admin-password` is given. The password is set on every run, but the user is never recreated, so its sub and the rows derived from it stay stable. Consequence: the `dev` E2E user can't be the seeded admin ([`testing-and-ci.md` §4.3](../../docs/development/testing-and-ci.md#43-playwright-e2e)).
+- 2026-10-26: `seed_dev_data.py` and `bootstrap_admin.py` run on Python 3.8 again (the WSL2 venv). `UTC` is `timezone.utc` rather than `datetime.UTC` (3.11+), and `zoneinfo` falls back to `backports.zoneinfo` below 3.9 (in `scripts/requirements.txt` with a version marker). Re-run the WSL2 venv's `pip install` to pick it up. Checked with `ast` 3.8 syntax parsing and an import under Python 3.9; not yet run on a real 3.8.
+
+**Tests.** CDK +1 (access-log format), Vitest +1 (Settings redirect); the admin-page test now mocks `/config`. Current baselines are in [`PROGRESS.md`](../PROGRESS.md).

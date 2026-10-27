@@ -28,10 +28,17 @@ import secrets
 import string
 import sys
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+
+if sys.version_info >= (3, 9):  # noqa: UP036 (ruff assumes 3.9+)
+    from zoneinfo import ZoneInfo
+else:  # the WSL2 venv runs 3.8
+    from backports.zoneinfo import ZoneInfo
+
+# Not `datetime.UTC`: that needs Python 3.11, and the WSL2 venv runs 3.8.
+UTC = timezone.utc
 
 try:
     import boto3  # type: ignore[import-untyped]

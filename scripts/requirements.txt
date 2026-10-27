@@ -3,3 +3,5 @@
 boto3[crt]>=1.34.0
 # generate_vapid_keys.py encodes keys for py-vapid >=1.8's raw key objects.
 py-vapid>=1.8.0
+# zoneinfo is stdlib from 3.9; the WSL2 venv runs 3.8.
+backports.zoneinfo>=0.2.1; python_version < "3.9"

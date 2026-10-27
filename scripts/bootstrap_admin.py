@@ -39,10 +39,17 @@ import json
 import secrets
 import sys
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+if sys.version_info >= (3, 9):  # noqa: UP036 (ruff assumes 3.9+)
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+else:  # the WSL2 venv runs 3.8
+    from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# Not `datetime.UTC`: that needs Python 3.11, and the WSL2 venv runs 3.8.
+UTC = timezone.utc
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "infra"))

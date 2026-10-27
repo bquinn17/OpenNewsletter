@@ -86,7 +86,7 @@ Component tests `vi.mock` `api/client` and seed the TanStack Query cache, with f
 
 Two projects:
 - **`mock`** (default, no env needed): `vite build --mode e2e` (checked-in `.env.e2e`, mocks on) served with `vite preview`. Runs the CSP checks from [`frontend.md` §12.1](../design/frontend.md#121-content-security-policy) against a real production build, plus the golden paths the mock transport supports (it has no auth and no dev tick routes). The viewport is phone-sized (390×844), since the app is a mobile-first PWA.
-- **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are scaffolded as `fixme` until a dev deploy exists (B5).
+- **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are still scaffolded as `fixme`; the dev stack they need is now deployed. `make seed` gives the bootstrap admin a new random password on every run, so the E2E user must be a separate Cognito user, or the seed must pass a fixed `--admin-password` from the same secret.
 
 Golden paths (≤10):
 1. Sign in → no groups → redeem invite → see group.
