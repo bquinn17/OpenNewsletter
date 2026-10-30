@@ -1213,3 +1213,17 @@ First `make deploy-dev`; all nine stacks are up (last deployed 2026-10-19 02:03 
 **Decisions.** A signed-in visitor can use the demo; their session is left alone. Demo state lives in memory instead of being cleared on exit: no exit path can leave anything behind, and a blanket clear would sign a real user out.
 
 **Tests.** Vitest +21 (366 → 387): `demo.test.ts`, `AuthProvider.demo.test.tsx`, `DemoBanner.test.tsx`, plus demo cases in the HomePage and NotificationsSection tests. Playwright +6: a new `demo` project that builds `.env.e2e` with mocks off into `dist-e2e-demo` and serves it on :4174.
+
+## Demo photos and uploads (2026-10-29)
+
+Every image in the demo was a black box: the mock served one 1×1 black PNG for every image, stretched to fit. Design in [`frontend.md` §17](../../docs/design/frontend.md#17-demo-mode).
+
+**What landed.**
+- Uploads show the picked file. The fake upload keeps it in memory as a `blob:` URL (`api/mockUploads.ts`), and the mock serves it, with its real size, for responses, comments and avatars. The progress bar now fills over 1.2–4 s, depending on the file's size.
+- Three freely licensed Wikimedia Commons photos in `public/demo-media/`, with `CREDITS.txt`, on the seeded published edition: the Mailbox Peak mailbox, a ridge at sunset (newly added to Sam's answer), and a hiker on a summit.
+
+**Bugs fixed on the way.**
+- `mockFetch` returned its live fixture objects, so TanStack Query's cache and the mock shared arrays. A new comment was pushed by the mock and then appended again by `useAddComment`, showing twice after the refetch. This affected every comment in mock mode and the demo. `mockFetch` now returns a JSON copy, like the network.
+- A site-relative image URL crashed the newsletter page: `mediaCacheKey` runs `new URL()` on it. The sample photos use absolute URLs.
+
+**Tests.** Vitest +2 (387 → 389): an upload's `blob:` URL reaches its upload row and a comment and is freed on delete, and `mockFetch` returns copies. Playwright +2 (14 → 16): the sample photos load, and a comment's uploaded image is the picked file.

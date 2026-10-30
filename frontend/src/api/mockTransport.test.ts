@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../types/api";
 import { ApiError } from "./client";
+import { PUBLISHED_CYCLE_ID } from "./mockShared";
 import { mockFetch } from "./mockTransport";
 
 type ConfigResponse = components["schemas"]["ConfigResponse"];
+type NewsletterDetailResponse = components["schemas"]["NewsletterDetailResponse"];
 type GroupResponse = components["schemas"]["GroupResponse"];
 type RedeemResponse = components["schemas"]["RedeemResponse"];
 
@@ -18,6 +20,26 @@ describe("mockFetch", () => {
     await expect(
       mockFetch("POST", "/invites/redeem", { code: "NOT-A-REAL-CODE" }),
     ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("returns copies, so data a caller already holds never changes under it", async () => {
+    const newsletterPath = `/groups/g_trail/newsletters/${PUBLISHED_CYCLE_ID}`;
+    const ridgeWalk = (newsletter: NewsletterDetailResponse) =>
+      newsletter.status === "published"
+        ? newsletter.questions
+            .flatMap((q) => q.answers ?? [])
+            .find((a) => a.responseId === "pub_r1")
+        : undefined;
+    const cached = (await mockFetch("GET", newsletterPath)) as NewsletterDetailResponse;
+    const commentsBefore = ridgeWalk(cached)!.comments.length;
+
+    await mockFetch("POST", `${newsletterPath}/questions/q_trail_hike/responses/pub_r1/comments`, {
+      body: "Copied, not shared.",
+    });
+    const refetched = (await mockFetch("GET", newsletterPath)) as NewsletterDetailResponse;
+
+    expect(ridgeWalk(cached)!.comments).toHaveLength(commentsBefore);
+    expect(ridgeWalk(refetched)!.comments).toHaveLength(commentsBefore + 1);
   });
 
   it("redeems the demo invite code, adds the group to /config, and is idempotent on repeat", async () => {

@@ -6,6 +6,7 @@ import {
   deleteMockImage,
   MOCK_IMAGE_DATA_URL,
   fail,
+  imageRows,
   isAdminOf,
   newsletters,
   NO_MOCK_ROUTE,
@@ -43,15 +44,16 @@ function requirePublishedAnswer(
   return answer;
 }
 
-/** A generic stand-in for whatever image the caller uploaded (mirrors `mockTransport.ts`'s own placeholder). */
+/** The image the caller uploaded, from its upload row (`mockTransport.ts`); a placeholder without one. */
 function mockCommentImage(imageId: string): S["CommentImageResponse"] {
+  const row = imageRows.get(imageId);
   return {
     imageId,
-    displayUrl: MOCK_IMAGE_DATA_URL,
-    thumbUrl: MOCK_IMAGE_DATA_URL,
-    width: 800,
-    height: 600,
-    caption: null,
+    displayUrl: row?.displayUrl ?? MOCK_IMAGE_DATA_URL,
+    thumbUrl: row?.thumbUrl ?? MOCK_IMAGE_DATA_URL,
+    width: row?.width ?? 800,
+    height: row?.height ?? 600,
+    caption: row?.caption ?? null,
   };
 }
 

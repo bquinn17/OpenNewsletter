@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * The demo (`docs/design/frontend.md` §17) against a real, non-mock build — the shape of the
@@ -79,18 +79,67 @@ test("the demo sends nothing off the site and stores nothing in the browser", as
   await page.getByRole("link", { name: /you've published/ }).click();
   await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
   await page.getByPlaceholder("Tell us about it…").fill("A demo answer with a photo");
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "photo.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=",
-      "base64",
-    ),
+  await page.locator('input[type="file"]').setInputFiles(PHOTO);
+  await expect(page.getByPlaceholder("Describe this image")).toBeVisible({
+    timeout: UPLOAD_TIMEOUT_MS,
   });
-  await expect(page.getByPlaceholder("Describe this image")).toBeVisible();
 
   expect(await browserStorage(page)).toEqual(before);
   expect(offSiteRequests).toEqual([]);
+});
+
+/** A 3×2 PNG, so a rendered width of 3 proves the page shows the picked file itself. */
+const PHOTO = {
+  name: "photo.png",
+  mimeType: "image/png",
+  buffer: Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGP432MDQQxwFgBvSgqrV15PgAAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+};
+
+/** The fake upload's progress bar, then the mock's processing polls (`docs/design/frontend.md` §17). */
+const UPLOAD_TIMEOUT_MS = 10_000;
+
+function renderedWidth(image: Locator): Promise<number> {
+  return image.evaluate((img: HTMLImageElement) => img.naturalWidth);
+}
+
+test("the sample editions show their photos, served from the site", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+
+  for (const name of [
+    "The signed mailbox on the summit of Mailbox Peak",
+    "Golden light on a ridgeline at sunset",
+  ]) {
+    const photo = page.getByRole("img", { name });
+    await photo.scrollIntoViewIfNeeded();
+    await expect.poll(() => renderedWidth(photo)).toBe(1200);
+  }
+});
+
+test("an image uploaded to a comment shows the picture that was picked", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+  const answer = page.locator("article", { hasText: "ridge walk" });
+
+  await answer.locator('input[type="file"]').setInputFiles(PHOTO);
+  await expect(answer.getByText(/Uploading \d+%/)).toBeVisible();
+  await expect(answer.getByPlaceholder("Describe this image")).toBeVisible({
+    timeout: UPLOAD_TIMEOUT_MS,
+  });
+  await answer.getByRole("button", { name: "Post" }).click();
+
+  const posted = answer.locator('a[href^="blob:"] img');
+  await expect(posted).toBeVisible();
+  expect(await renderedWidth(posted)).toBe(3);
 });
 
 test("exiting the demo returns to the real, signed-out home", async ({ page }) => {
