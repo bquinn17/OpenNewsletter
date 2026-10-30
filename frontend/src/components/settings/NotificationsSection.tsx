@@ -7,6 +7,7 @@ import {
   isPushSupported,
   type LocalPushState,
 } from "../../pwa/pushSetup";
+import { isDemo } from "../../demo";
 import { isIOS, isStandaloneDisplay } from "../../utils/platform";
 import { summarizeUserAgent } from "../../utils/userAgent";
 import { usePushPreferences, usePushSubscriptions } from "../../api/queries";
@@ -55,6 +56,16 @@ export function NotificationsSection({ config }: { config: S["ConfigResponse"] }
   const preferencesQuery = usePushPreferences();
   const removeSub = useRemovePushSubscription();
   const sendTest = useSendTestPush();
+
+  if (isDemo) {
+    return (
+      <SectionShell>
+        <p className="p-4 text-sm text-inkmuted">
+          Notifications aren&apos;t available in the demo.
+        </p>
+      </SectionShell>
+    );
+  }
 
   if (iosNotInstalled) {
     return (

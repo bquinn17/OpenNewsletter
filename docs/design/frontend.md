@@ -132,6 +132,7 @@ React Router v6 (`createBrowserRouter`). Pages fetch through TanStack Query hook
 /g/:groupId/n/:cycleId/respond/:questionId   Editor for one question
 /g/:groupId/admin           Admin page (gated by role) — Members / Invites / Settings tabs only (no Curate; see lifecycle.md §7)
 /admin/bootstrap-login      Dev-only username/password login against the `admin-bootstrap` Cognito client; hidden in prod via `env.appEnv !== "dev"` (see `docs/development/environments.md` §6)
+/demo/*                     The whole app as a demo on mock data, e.g. /demo/g/g_trail (§17)
 *                           NotFound
 ```
 
@@ -521,7 +522,7 @@ export const env = {
 //   `https://cognito-idp.us-east-1.amazonaws.com/${env.cognitoUserPoolId}`
 ```
 
-Plus `useMocks: import.meta.env.VITE_USE_MOCKS === "true"`. When set, `AuthProvider` reports a fake signed-in user and `api/client.ts` dispatches to `api/mockTransport.ts` instead of `fetch`. Outside mock mode, a missing required variable throws when the app starts.
+Plus `useMocks: import.meta.env.VITE_USE_MOCKS === "true"`. When set, `AuthProvider` reports a fake signed-in user and `api/client.ts` dispatches to `api/mockTransport.ts` instead of `fetch`. Outside mock mode, a missing required variable throws when the app starts. A page loaded under `/demo` uses the mocks too, in any build (§17).
 
 Two build inputs aren't in `env`, because the running app never reads them: `VITE_MEDIA_BASE_URL` (the processed bucket's origin) and `VITE_UPLOAD_ORIGINS` (space-separated, the two originals buckets' upload endpoints). They go into the CSP (§12.1), and the service worker matches its media routes against the media origin (§5.2). A prod build (`VITE_ENV=prod`) without a valid value for either fails in `cspPlugin`, because its CSP would block every image or every upload. Other builds, such as the env-less CI compile check and mock builds, leave a missing origin out of the policy.
 
@@ -531,7 +532,7 @@ Env files:
 - `.env.production` is not yet defined — lands with Milestone 14 ([`build-order.md`](../../plans/build-order.md)).
 - `redirectUri` may be empty; the SPA then derives `${origin}/auth/callback`.
 
-The CSP `<meta>` tag from §12.1 applies to production builds only (`cspPlugin`, `apply: "build"`). In dev, `@vitejs/plugin-react` injects an inline preamble script that `script-src 'self'` would block. `.env.e2e` (mock mode, placeholder https origins) is the mode the Playwright `mock` project builds with ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)).
+The CSP `<meta>` tag from §12.1 applies to production builds only (`cspPlugin`, `apply: "build"`). In dev, `@vitejs/plugin-react` injects an inline preamble script that `script-src 'self'` would block. `.env.e2e` (mock mode, placeholder https origins) is the mode the Playwright `mock` project builds with, and the `demo` project builds with it too, with mocks off ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)).
 
 ---
 
@@ -618,3 +619,33 @@ These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the O
 ## 16. Legacy mock pages (historical)
 
 An early commit shipped a mock-only UI on hand-written types before the real API existed; `src/mocks/` and `PendingMilestonePage` are long gone. Every page now runs on `api/queries.ts` + `types/api.ts`, with `VITE_USE_MOCKS=true` routing those same pages through `api/mockTransport.ts` (§2, §13) instead of a separate legacy tree.
+
+---
+
+## 17. Demo mode
+
+Anyone can try the app without an account at `/demo`. The signed-out home screen links to it ("See a demo"), and any `/demo/...` URL can be shared, e.g. `/demo/g/g_trail/upcoming`. It's the normal app, served from the deployed build, running against the in-memory mock (`api/mockTransport.ts`) as the mock user "Quinn". GitHub Pages' `404.html` fallback (§14.5) serves deep links, so the demo needs no second build.
+
+**Demo or not is decided once, when a page loads.** `src/demo.ts` sets `isDemo` from the URL the page loaded at: `/demo` or anything under it. `isMockMode` (a mock build, §13, or the demo) is what `AuthProvider` and `api/client.ts` check. The router gets `basename: "/demo"` in the demo, so every link and redirect stays inside it without the pages knowing. Entering and leaving are always full page loads: "See a demo" is a plain `<a href="/demo">`, not a router `Link`.
+
+**How it ends.** A demo page that goes away, for whatever reason, takes the demo with it:
+- the banner's **Exit demo**, or **Exit demo** in the account menu (where "Sign out" usually is), loads `/`;
+- the banner's **Sign in** starts a real sign-in; the `UserManager` exists in the demo for this, and the callback lands outside `/demo`;
+- a sign-in in another tab: `AuthProvider` listens for a new `oidc.user:*` key in `localStorage` (no old value; a renewal rewrites an existing one and is ignored) and loads `/`;
+- the back button past the demo's first page, typing a URL, or closing the tab;
+- a reload starts the demo again, with fresh data, at the same URL.
+
+**Nothing is stored in the browser.** The client state that normally goes to `localStorage` (the current group, the draft mirror of §8.3, the dismissed iOS install banner) goes through `utils/appStorage.ts`, which in the demo is a `Map` that lives only as long as the page. The demo never reads or writes the real keys, so nothing has to be cleared on the way out, and an exit the page never sees (a phone killing a background tab) loses nothing. A blanket `localStorage.clear()` would have signed out a visitor's real session and deleted their unsent drafts.
+
+**Nothing is written to the backend, S3 or the push service.**
+- Every API call goes to the mock. As a second check, `rawFetch` refuses to run in the demo.
+- `uploadToS3` doesn't PUT in mock mode. It steps the progress bar and reports success, and the mock marks the image ready after a couple of polls with a placeholder data URL.
+- `isPushSupported()` is `false` in the demo, so the app-load resubscribe (`notifications.md` §11.2) does nothing, and Settings → Notifications says notifications aren't available in the demo.
+- Sign-out doesn't revoke tokens or call Cognito's `/logout`; it only leaves the demo.
+- The idle-backend principle holds: the demo never reaches API Gateway.
+
+**Signed-in visitors** can open the demo too. It runs as Quinn and doesn't touch their stored session. A banner (`DemoBanner`) in the app header is on every demo page: "Demo. Sample groups — nothing you do here is saved." with **Sign in** and **Exit demo** buttons. If the browser holds a real session, it says instead that they're still signed in, but these aren't their groups and nothing is saved, and it drops **Sign in**. Exit returns them to their real home, still signed in.
+
+**Copied invite links** (`utils/inviteUrl.ts`) are `/demo/join?code=…` in the demo, so they stay in it. `DEMO-JOIN-CODE` is the mock's working code.
+
+**Tests.** Unit tests cover the path check, the no-network session (`demo.test.ts`), `AuthProvider` in the demo, the banner and the notifications copy. The Playwright `demo` project ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) runs a non-mock build and checks that a demo session sends nothing off the site except web-font requests and leaves browser storage unchanged.

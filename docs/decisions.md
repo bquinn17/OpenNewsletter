@@ -173,6 +173,13 @@ A device keeps an avatar for 90 days: the service worker's `media-avatars` cache
 
 **Why.** Avatars appear on almost every screen and change rarely, and an avatar's bytes never change under its key: a new avatar gets a new `avatarId`, so a new path that misses every cache. The cost is that a replaced or deleted avatar can stay in a device's cache for up to 90 days, though nothing references its path any more ([D8](#d8)'s accepted residual copies). See [`media.md` §11.3](design/media.md#113-serving).
 
+<a id="demo-mode"></a>
+### A demo at `/demo`, on mock data, that writes nothing (2026-10-29)
+
+The deployed site serves a demo at `/demo`: the normal app on the in-memory mock, linked from the signed-out home screen ("See a demo") and shareable as any `/demo/...` URL. Whether a page is the demo depends only on the URL it loaded at. Leaving `/demo` in any way leaves the demo, and so does a sign-in, here or in another tab. The demo makes no writes to the API, S3 or the push service, and keeps its client state in memory rather than browser storage. Signed-in visitors can use it, and a banner on every page says it's a demo.
+
+**Why.** It lets people see the app before they have an invite, with no second GitHub Pages build and no backend cost: the demo never reaches API Gateway. A URL prefix rather than a stored flag means there is no "in the demo" state that could outlive the demo. Keeping its state in memory, rather than clearing storage on exit, means no exit path can leave anything behind, and a visitor's real session and drafts are never touched. See [`frontend.md` §17](design/frontend.md#17-demo-mode).
+
 ---
 
 ## Design review, 2026-10-08

@@ -1196,3 +1196,20 @@ First `make deploy-dev`; all nine stacks are up (last deployed 2026-10-19 02:03 
 - 2026-10-26: `seed_dev_data.py` and `bootstrap_admin.py` run on Python 3.8 again (the WSL2 venv). `UTC` is `timezone.utc` rather than `datetime.UTC` (3.11+), and `zoneinfo` falls back to `backports.zoneinfo` below 3.9 (in `scripts/requirements.txt` with a version marker). Re-run the WSL2 venv's `pip install` to pick it up. Checked with `ast` 3.8 syntax parsing and an import under Python 3.9; not yet run on a real 3.8.
 
 **Tests.** CDK +1 (access-log format), Vitest +1 (Settings redirect); the admin-page test now mocks `/config`. Current baselines are in [`PROGRESS.md`](../PROGRESS.md).
+
+## Demo mode — what landed (2026-10-29)
+
+`/demo` serves the whole app on the in-memory mock, from the deployed build: "See a demo" on the signed-out home screen, and any `/demo/...` URL can be shared. Design in [`frontend.md` §17](../../docs/design/frontend.md#17-demo-mode); decision in [`decisions.md`](../../docs/decisions.md#demo-mode).
+
+**What landed.**
+- `src/demo.ts` decides demo-or-not once per page load from the URL. The router gets `basename: "/demo"`; `AuthProvider` and `api/client.ts` switch on `isMockMode` (mock build or demo) instead of `env.useMocks`.
+- `utils/appStorage.ts`: the current group, the draft mirror and the iOS-banner flag go to an in-memory store in the demo, so it never reads or writes the real `localStorage` keys.
+- No writes: `rawFetch` refuses to run in the demo, `uploadToS3` fakes the PUT in mock mode, `isPushSupported()` is `false` in the demo, and sign-out there only loads `/`.
+- `DemoBanner` on every demo page, with Sign in (a real sign-in, which leaves the demo) and Exit demo; a signed-in visitor is told these aren't their groups. A sign-in in another tab (a new `oidc.user:*` key) ends the demo.
+- Demo invite links are `/demo/join?code=…`.
+
+**Bug fixed on the way.** Image and avatar uploads failed in local mock mode (`npm run dev`): the mock's `mock://upload/…` presign was PUT for real. `uploadToS3` now fakes it in mock mode.
+
+**Decisions.** A signed-in visitor can use the demo; their session is left alone. Demo state lives in memory instead of being cleared on exit: no exit path can leave anything behind, and a blanket clear would sign a real user out.
+
+**Tests.** Vitest +21 (366 → 387): `demo.test.ts`, `AuthProvider.demo.test.tsx`, `DemoBanner.test.tsx`, plus demo cases in the HomePage and NotificationsSection tests. Playwright +6: a new `demo` project that builds `.env.e2e` with mocks off into `dist-e2e-demo` and serves it on :4174.

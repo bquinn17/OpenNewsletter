@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useQueryClient } from "@tanstack/react-query";
 import type { User } from "oidc-client-ts";
 import { env } from "../env";
+import { exitDemo, isDemo, isMockMode } from "../demo";
 import { useCurrentGroup } from "../state/currentGroup";
 import {
   AuthContext,
@@ -28,6 +29,9 @@ async function bestEffortDisablePush(): Promise<void> {
 
 const MOCK_USER: AuthUser = { sub: "mock-sub", email: "quinn@example.com", name: "Quinn" };
 
+/** `oidc-client-ts`'s `localStorage` key for a stored user: `oidc.user:<authority>:<client_id>`. */
+const OIDC_USER_KEY_PREFIX = "oidc.user:";
+
 function toAuthUser(user: User): AuthUser {
   return {
     sub: user.profile.sub,
@@ -38,8 +42,8 @@ function toAuthUser(user: User): AuthUser {
 
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<AuthStatus>(env.useMocks ? "authenticated" : "loading");
-  const [user, setUser] = useState<AuthUser | null>(env.useMocks ? MOCK_USER : null);
+  const [status, setStatus] = useState<AuthStatus>(isMockMode ? "authenticated" : "loading");
+  const [user, setUser] = useState<AuthUser | null>(isMockMode ? MOCK_USER : null);
   // Set while logout() runs. Removing the user fires `userUnloaded`, and on a
   // protected route RequireAuth would answer with `signinRedirect()`, whose
   // redirect can land after (and override) the Cognito `/logout` redirect.
@@ -49,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
-    if (env.useMocks || !userManager) return;
+    if (isMockMode || !userManager) return;
     const manager = userManager;
     let cancelled = false;
 
@@ -104,13 +108,32 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     };
   }, []);
 
+  // A sign-in in another tab ends the demo here too (`docs/design/frontend.md` §17). Only a new
+  // stored user counts: a renewal rewrites one that's already there, and mustn't end the demo.
+  useEffect(() => {
+    if (!isDemo) return;
+    const handleStorage = (event: StorageEvent): void => {
+      if (event.key?.startsWith(OIDC_USER_KEY_PREFIX) && !event.oldValue && event.newValue) {
+        exitDemo();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
   const login = useCallback(async (opts?: LoginOptions): Promise<void> => {
+    // Not `isMockMode`: the demo's "Sign in" starts a real sign-in, which leaves the demo.
     if (env.useMocks || !userManager) return;
     if (opts?.invite) stashInvite(opts.invite);
     await userManager.signinRedirect({ state: { invite: opts?.invite, returnTo: opts?.returnTo } });
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    // The demo's "Sign out" leaves it, and must not touch a real session or push subscription.
+    if (isDemo) {
+      exitDemo();
+      return;
+    }
     setSigningOut(true);
     // Best-effort, before tokens are cleared below — never blocks logout.
     await bestEffortDisablePush();

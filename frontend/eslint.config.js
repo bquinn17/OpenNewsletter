@@ -8,7 +8,7 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "src/types/api.ts"],
+    ignores: ["dist/**", "dist-e2e-demo/**", "src/types/api.ts"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

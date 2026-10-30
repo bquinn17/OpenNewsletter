@@ -1,5 +1,6 @@
 import type { components } from "../types/api";
 import { env } from "../env";
+import { isDemo, isMockMode } from "../demo";
 import { newCorrelationId } from "../utils/correlation";
 import { renewSession } from "../auth/renewSession";
 import { userManager } from "../auth/userManager";
@@ -46,6 +47,9 @@ async function rawFetch<T>(
   idToken: string | null,
   signal: AbortSignal | undefined,
 ): Promise<T> {
+  // The demo never reaches the real API (`docs/design/frontend.md` §17); `apiFetch` routes it to
+  // the mock first, so this only fires if a future caller bypasses that.
+  if (isDemo) throw new Error(`Refusing a real API call in the demo: ${method} ${path}`);
   const headers: Record<string, string> = { "x-correlation-id": newCorrelationId() };
   if (idToken) headers.Authorization = `Bearer ${idToken}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -83,7 +87,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const method = init?.method ?? "GET";
 
-  if (env.useMocks) {
+  if (isMockMode) {
     return (await mockFetch(method, path, init?.body)) as T;
   }
 

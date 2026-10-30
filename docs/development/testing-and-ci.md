@@ -84,8 +84,9 @@ Component tests `vi.mock` `api/client` and seed the TanStack Query cache, with f
 
 ### 4.3 Playwright E2E
 
-Two projects:
+Three projects:
 - **`mock`** (default, no env needed): `vite build --mode e2e` (checked-in `.env.e2e`, mocks on) served with `vite preview`. Runs the CSP checks from [`frontend.md` §12.1](../design/frontend.md#121-content-security-policy) against a real production build, plus the golden paths the mock transport supports (it has no auth and no dev tick routes). The viewport is phone-sized (390×844), since the app is a mobile-first PWA.
+- **`demo`** (also by default): the same `.env.e2e` with `VITE_USE_MOCKS=false`, built into `dist-e2e-demo` and served on :4174, the shape of a deployed build. Covers the `/demo` mode of [`frontend.md` §17](../design/frontend.md#17-demo-mode): entering from Home and by deep link, exiting, a signed-in visitor's session left alone, a sign-in in another tab ending the demo, and a session (including an image upload) that sends nothing off the site except web-font requests and leaves browser storage unchanged.
 - **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are still scaffolded as `fixme`; the dev stack they need is now deployed. `make seed` gives the bootstrap admin a new random password on every run, so the E2E user must be a separate Cognito user, or the seed must pass a fixed `--admin-password` from the same secret.
 
 Golden paths (≤10):
@@ -163,7 +164,7 @@ Backend and frontend are always promoted together from one SHA, backend first. T
 
 ### 6.5 `e2e.yml`
 
-Nightly at 07:00 UTC and on manual dispatch: install Chromium, `npm run e2e`, upload traces on failure. Runs the `mock` project, and also the `dev` project when `vars.E2E_BASE_URL` is set. Per-PR stacks are a future idea ([`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks)).
+Nightly at 07:00 UTC and on manual dispatch: install Chromium, `npm run e2e`, upload traces on failure. Runs the `mock` and `demo` projects, and also the `dev` project when `vars.E2E_BASE_URL` is set. Per-PR stacks are a future idea ([`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks)).
 
 ---
 

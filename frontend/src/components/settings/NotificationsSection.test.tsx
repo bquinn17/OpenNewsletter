@@ -33,6 +33,13 @@ vi.mock("../../pwa/pushSetup", () => ({
   disablePush: vi.fn(),
 }));
 
+const demo = vi.hoisted(() => ({ isDemo: false }));
+vi.mock("../../demo", () => ({
+  get isDemo() {
+    return demo.isDemo;
+  },
+}));
+
 vi.mock("../../utils/platform", () => ({
   isIOS: vi.fn(() => false),
   isStandaloneDisplay: vi.fn(() => false),
@@ -80,9 +87,24 @@ function subscription(
 
 afterEach(() => {
   vi.clearAllMocks();
+  demo.isDemo = false;
 });
 
 describe("NotificationsSection", () => {
+  it("demo: says notifications aren't available and never calls any push API", async () => {
+    demo.isDemo = true;
+    mockedApi.push.listSubscriptions.mockResolvedValue({ items: [] });
+    mockedApi.push.listPreferences.mockResolvedValue({ items: [] });
+
+    renderSection(baseConfig());
+
+    expect(
+      await screen.findByText("Notifications aren't available in the demo."),
+    ).toBeInTheDocument();
+    expect(mockedPushSetup.getLocalPushState).not.toHaveBeenCalled();
+    expect(mockedPushSetup.ensurePushSubscription).not.toHaveBeenCalled();
+  });
+
   it("unsupported: shows the fallback copy and never calls any push API", async () => {
     mockedPushSetup.isPushSupported.mockReturnValue(false);
     mockedPlatform.isIOS.mockReturnValue(false);

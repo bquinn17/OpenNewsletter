@@ -1,4 +1,5 @@
 import { useAuth } from "../auth/useAuth";
+import { DEMO_BASENAME } from "../demo";
 import { useConfig, useNewsletters } from "../api/queries";
 import { JoinForm } from "../components/join/JoinForm";
 import { InstallPwaPrompt } from "../components/pwa/InstallPwaPrompt";
@@ -25,9 +26,17 @@ export function HomePage() {
           Your group&apos;s newsletter, together.
         </h1>
         <p className="mt-2 text-inkmuted">Sign in to see your group&apos;s newsletters.</p>
-        <Button className="mt-5" onClick={() => void login({ returnTo: "/" })}>
-          Sign in
-        </Button>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button onClick={() => void login({ returnTo: "/" })}>Sign in</Button>
+          {/* A plain link, not a router `Link`: the demo is decided when a page loads, so
+              entering it has to be a full page load (`docs/design/frontend.md` §17). */}
+          <a
+            href={DEMO_BASENAME}
+            className="inline-flex items-center justify-center rounded-full border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:border-ink"
+          >
+            See a demo
+          </a>
+        </div>
         <div className="mt-8 rounded-3xl border border-line bg-white p-5 shadow-soft">
           <p className="mb-3 text-sm text-inkmuted">Have an invite code?</p>
           <JoinForm />

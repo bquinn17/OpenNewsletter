@@ -8,7 +8,8 @@ import { defineConfig, devices } from "@playwright/test";
  *   e2e`, `.env.e2e`) and serves it with `vite preview` on :4173. Only the
  *   `mock` project runs — it has no real backend, no `/admin/dev/tick`, and
  *   no real Cognito session, so `e2e/mock/**` sticks to what the in-memory
- *   mock transport can actually do.
+ *   mock transport can actually do. The `demo` project runs alongside it,
+ *   against the same env with mocks off, served on :4174 (`e2e/demo/**`).
  * - `E2E_BASE_URL` set: points at a deployed `dev` stack with no `webServer`
  *   step. Only the `dev` project runs, against `e2e/dev/**`. Those tests
  *   need a signed-in session a deployed Cognito pool provides — blocked on
@@ -47,13 +48,35 @@ export default defineConfig({
             baseURL: "http://localhost:4173",
           },
         },
+        {
+          name: "demo",
+          testDir: "./e2e/demo",
+          use: {
+            ...devices["Desktop Chrome"],
+            viewport: mobileViewport,
+            baseURL: "http://localhost:4174",
+          },
+        },
       ],
   webServer: baseURL
     ? undefined
-    : {
-        command: "npx vite build --mode e2e && npx vite preview --port 4173 --strict-port",
-        port: 4173,
-        reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
-      },
+    : [
+        {
+          command: "npx vite build --mode e2e && npx vite preview --port 4173 --strict-port",
+          port: 4173,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+        {
+          // `.env.e2e` with mocks off, so the demo runs in a real build as on the deployed site
+          // (`docs/design/frontend.md` §17); a process env var overrides an `.env` file. Its own
+          // `outDir`, so the two builds don't overwrite each other.
+          command:
+            "npx vite build --mode e2e --outDir dist-e2e-demo && npx vite preview --outDir dist-e2e-demo --port 4174 --strict-port",
+          env: { VITE_USE_MOCKS: "false" },
+          port: 4174,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      ],
 });

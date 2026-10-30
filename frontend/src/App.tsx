@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, type RouteObject } from "react-router-dom";
 import { env } from "./env";
+import { DEMO_BASENAME, isDemo } from "./demo";
 import { useAuth } from "./auth/useAuth";
 import { useConfig } from "./api/queries";
 import { ensurePushSubscription } from "./pwa/pushSetup";
@@ -23,7 +24,7 @@ import { NewsletterPage } from "./pages/NewsletterPage";
 import { RespondPage } from "./pages/RespondPage";
 import { GroupAdminPage } from "./pages/GroupAdminPage";
 
-const router = createBrowserRouter([
+const routes: RouteObject[] = [
   { path: "/auth/callback", element: <AuthCallbackPage /> },
   {
     path: "/",
@@ -33,7 +34,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: "join", element: <JoinPage /> },
       // Dev only, and only with an `admin-bootstrap` client (D5, `docs/design/auth.md` §9.2).
-      ...(env.bootstrapLoginEnabled
+      ...(env.bootstrapLoginEnabled && !isDemo
         ? [{ path: "admin/bootstrap-login", element: <BootstrapLoginPage /> }]
         : []),
       {
@@ -61,7 +62,11 @@ const router = createBrowserRouter([
       { path: "*", element: <NotFoundPage /> },
     ],
   },
-]);
+];
+
+// The demo is the whole app under `/demo` (`docs/design/frontend.md` §17), so every in-app link
+// and redirect stays inside it without knowing it's there.
+const router = createBrowserRouter(routes, { basename: isDemo ? DEMO_BASENAME : undefined });
 
 export function App() {
   const { status } = useAuth();

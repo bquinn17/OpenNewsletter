@@ -2,8 +2,9 @@ import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 import { env } from "../env";
 
 /**
- * Single shared `UserManager` instance. `null` in mock mode — nothing in that
- * mode talks to Cognito, so constructing it would just throw on missing env vars.
+ * Single shared `UserManager` instance. `null` in a mock build — nothing in that
+ * build talks to Cognito, so constructing it would just throw on missing env vars.
+ * The demo still has one: its "Sign in" starts a real sign-in (`docs/design/frontend.md` §17).
  */
 export const userManager: UserManager | null = env.useMocks
   ? null

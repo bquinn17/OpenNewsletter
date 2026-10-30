@@ -1,4 +1,5 @@
 import { api } from "../api/client";
+import { isDemo } from "../demo";
 
 /**
  * Web Push subscription lifecycle (`docs/design/notifications.md` §3/§11, M11
@@ -9,8 +10,10 @@ import { api } from "../api/client";
  * (best-effort unsubscribe) call imperatively.
  */
 
+/** Also `false` in the demo, which must never subscribe this browser (`docs/design/frontend.md` §17). */
 export function isPushSupported(): boolean {
   return (
+    !isDemo &&
     typeof navigator !== "undefined" &&
     "serviceWorker" in navigator &&
     typeof window !== "undefined" &&
