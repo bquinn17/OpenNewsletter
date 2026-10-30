@@ -73,6 +73,48 @@ describe("a page loaded under /demo", () => {
     expect(xhrSpy).not.toHaveBeenCalled();
   });
 
+  it("shows an uploaded picture from the page's memory, and frees it once deleted", async () => {
+    const revokeObjectURL = vi.fn();
+    // jsdom has no `blob:` URLs or image decoding; stand in for the browser's.
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = () => "blob:demo/photo";
+        static revokeObjectURL = revokeObjectURL;
+      },
+    );
+    vi.stubGlobal("createImageBitmap", async () => ({ width: 640, height: 480, close() {} }));
+    const { api, uploadToS3 } = await loadAt("/demo");
+    const { PUBLISHED_CYCLE_ID: cycleId } = await import("./api/mockShared");
+
+    const presign = await api.media.createUpload({
+      groupId: "g_trail",
+      cycleId,
+      questionId: "q_trail_hike",
+      purpose: "comment",
+      mimeType: "image/png",
+      byteSize: 1,
+    });
+    await uploadToS3(presign.uploadUrl, new File(["x"], "x.png"), presign.headers);
+    await api.media.getUpload(presign.imageId, "g_trail", cycleId);
+    const ready = await api.media.getUpload(presign.imageId, "g_trail", cycleId);
+    const comment = await api.engagement.createComment(
+      "g_trail",
+      cycleId,
+      "q_trail_hike",
+      "pub_r1",
+      {
+        body: "",
+        imageMediaId: presign.imageId,
+      },
+    );
+    await api.media.deleteUpload(presign.imageId, "g_trail", cycleId);
+
+    expect(ready).toMatchObject({ status: "ready", displayUrl: "blob:demo/photo", width: 640 });
+    expect(comment.image).toMatchObject({ displayUrl: "blob:demo/photo", height: 480 });
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:demo/photo");
+  });
+
   it("keeps stored client state in memory, never in localStorage", async () => {
     const { appStorage } = await loadAt("/demo");
 

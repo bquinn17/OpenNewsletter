@@ -1,5 +1,6 @@
 import type { components } from "../types/api";
 import { ApiError, type ProblemDetails } from "./client";
+import { releaseMockUpload } from "./mockUploads";
 
 type S = components["schemas"];
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -11,8 +12,8 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export const CALLER_ID = "u_quinn";
 
-// 1x1 transparent PNG — stands in for a real presigned S3 asset so
-// published/draft images render without any network request in mock mode.
+// 1x1 black PNG, for an upload with no file kept in memory (`mockUploads.ts`) — only under
+// jsdom, which has no `blob:` URLs. Renders without any network request.
 export const MOCK_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";
 
@@ -26,8 +27,8 @@ export const imageRows = new Map<string, S["ImageMediaResponse"]>();
 /** A real delete (D8): the row is gone and a later `GET /uploads/{id}` 404s. Idempotent. */
 export function deleteMockImage(imageId: string): void {
   imageRows.delete(imageId);
+  releaseMockUpload(imageId);
 }
-
 /** Returned by a per-feature mock route that doesn't handle the request. */
 export const NO_MOCK_ROUTE = Symbol("NO_MOCK_ROUTE");
 

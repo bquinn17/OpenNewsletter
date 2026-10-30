@@ -1,7 +1,6 @@
 import type { components } from "../types/api";
 import {
   CALLER_ID,
-  MOCK_IMAGE_DATA_URL,
   NO_MOCK_ROUTE,
   OPEN_CYCLE_ID,
   PUBLISHED_CYCLE_ID,
@@ -206,8 +205,19 @@ function hydrateOpenQuestions(groupId: string, cycleId: string): OpenQuestion[] 
 // ---- §5.2 published-cycle fixtures. Static — nothing writes to a published
 // cycle (`PUT` always refuses once a cycle leaves `open`). ----
 
-function imageRef(imageId: string, width: number, height: number): S["PublishedImageResponse"] {
-  return { imageId, displayUrl: MOCK_IMAGE_DATA_URL, thumbUrl: MOCK_IMAGE_DATA_URL, width, height };
+/**
+ * A sample photo shipped with the site, in `public/demo-media/` (credited in its `CREDITS.txt`).
+ * Absolute, like a presigned URL, which `mediaCacheKey` parses.
+ */
+function sampleImage(
+  imageId: string,
+  fileName: string,
+  width: number,
+  height: number,
+): S["PublishedImageResponse"] {
+  const url = new URL(`${import.meta.env.BASE_URL}demo-media/${fileName}`, window.location.origin)
+    .href;
+  return { imageId, displayUrl: url, thumbUrl: url, width, height };
 }
 
 const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
@@ -223,8 +233,10 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         responseId: "pub_r1",
         userId: "u_sam",
         displayName: "Sam",
-        body: "Can't beat the **ridge walk at sunset** — golden light the whole way down.",
-        images: [],
+        body:
+          "Can't beat the **ridge walk at sunset** — golden light the whole way down.\n\n" +
+          "![Golden light on a ridgeline at sunset](image:img_pub_ridge)",
+        images: [sampleImage("img_pub_ridge", "ridge-sunset.jpg", 1200, 797)],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 1000).toISOString(),
         // Seeded for M10 (`docs/design/engagement.md` §1) — one edited, one soft-deleted,
         // so VITE_USE_MOCKS=true demonstrates both without any manual steps.
@@ -256,8 +268,10 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         responseId: "pub_r2",
         userId: CALLER_ID,
         displayName: "Quinn",
-        body: "Mailbox Peak nearly killed me but so worth it.\n\n![](image:img_pub_hike)",
-        images: [imageRef("img_pub_hike", 1200, 800)],
+        body:
+          "Mailbox Peak nearly killed me but so worth it.\n\n" +
+          "![The signed mailbox on the summit of Mailbox Peak](image:img_pub_hike)",
+        images: [sampleImage("img_pub_hike", "mailbox-peak.jpg", 1200, 796)],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 2000).toISOString(),
         comments: [],
         reactionGroups: [],
@@ -277,7 +291,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         userId: CALLER_ID,
         displayName: "Quinn",
         body: "From the summit.",
-        images: [imageRef("img_pub_photo1", 1200, 900)],
+        images: [sampleImage("img_pub_photo1", "summit.jpg", 1200, 799)],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 3000).toISOString(),
         comments: [],
         reactionGroups: [],

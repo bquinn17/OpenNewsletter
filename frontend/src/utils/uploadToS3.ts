@@ -1,19 +1,35 @@
+import { keepMockUpload } from "../api/mockUploads";
 import { isMockMode } from "../demo";
 
 export type UploadResult = { status: number };
 
-const MOCK_PROGRESS_STEPS = [0.3, 0.7, 1];
-const MOCK_PROGRESS_STEP_MS = 150;
+/** A believable upload speed, so the demo's progress bar fills the way a real one would. */
+const MOCK_UPLOAD_BYTES_PER_SECOND = 1_500_000;
+const MOCK_UPLOAD_MIN_MS = 1200;
+const MOCK_UPLOAD_MAX_MS = 4000;
+const MOCK_PROGRESS_TICK_MS = 100;
 
 /**
  * Stands in for the S3 PUT when the API is the in-memory mock, whose presigned URLs
- * (`mock://upload/…`) aren't reachable. Steps the progress bar so the uploader looks the same.
+ * (`mock://upload/…`) aren't reachable. Keeps `file` in memory, so the mock serves the picture
+ * itself once it's "processed", and fills the progress bar over a time that grows with its size.
  */
-async function mockUpload(onProgress?: (progress: number) => void): Promise<UploadResult> {
-  for (const progress of MOCK_PROGRESS_STEPS) {
-    await new Promise((resolve) => setTimeout(resolve, MOCK_PROGRESS_STEP_MS));
-    onProgress?.(progress);
+async function mockUpload(
+  url: string,
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<UploadResult> {
+  const kept = keepMockUpload(url, file);
+  const durationMs = Math.min(
+    Math.max((file.size / MOCK_UPLOAD_BYTES_PER_SECOND) * 1000, MOCK_UPLOAD_MIN_MS),
+    MOCK_UPLOAD_MAX_MS,
+  );
+  const ticks = Math.ceil(durationMs / MOCK_PROGRESS_TICK_MS);
+  for (let tick = 1; tick <= ticks; tick++) {
+    await new Promise((resolve) => setTimeout(resolve, MOCK_PROGRESS_TICK_MS));
+    onProgress?.(tick / ticks);
   }
+  await kept;
   return { status: 200 };
 }
 
@@ -28,7 +44,7 @@ export function uploadToS3(
   headers: Record<string, string>,
   onProgress?: (progress: number) => void,
 ): Promise<UploadResult> {
-  if (isMockMode) return mockUpload(onProgress);
+  if (isMockMode) return mockUpload(url, file, onProgress);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url, true);

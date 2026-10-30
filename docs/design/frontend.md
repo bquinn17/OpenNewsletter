@@ -639,13 +639,15 @@ Anyone can try the app without an account at `/demo`. The signed-out home screen
 
 **Nothing is written to the backend, S3 or the push service.**
 - Every API call goes to the mock. As a second check, `rawFetch` refuses to run in the demo.
-- `uploadToS3` doesn't PUT in mock mode. It steps the progress bar and reports success, and the mock marks the image ready after a couple of polls with a placeholder data URL.
+- `uploadToS3` doesn't PUT in mock mode. It fills the progress bar over a time that grows with the file's size (about 1.5 MB/s, 1.2–4 s), and keeps the picked file in memory as a `blob:` URL (`api/mockUploads.ts`). The mock marks the image or avatar ready after a couple of polls and serves that `blob:` URL with the file's real dimensions, so responses, comments and avatars show the picture that was picked. Deleting the image frees it, and nothing goes to browser storage. CSP `img-src` already allows `blob:` (§12.1).
 - `isPushSupported()` is `false` in the demo, so the app-load resubscribe (`notifications.md` §11.2) does nothing, and Settings → Notifications says notifications aren't available in the demo.
 - Sign-out doesn't revoke tokens or call Cognito's `/logout`; it only leaves the demo.
 - The idle-backend principle holds: the demo never reaches API Gateway.
 
 **Signed-in visitors** can open the demo too. It runs as Quinn and doesn't touch their stored session. A banner (`DemoBanner`) in the app header is on every demo page: "Demo. Sample groups — nothing you do here is saved." with **Sign in** and **Exit demo** buttons. If the browser holds a real session, it says instead that they're still signed in, but these aren't their groups and nothing is saved, and it drops **Sign in**. Exit returns them to their real home, still signed in.
 
+**Sample photos.** The seeded published edition shows real photos, served from the site itself at `public/demo-media/` rather than S3. The service worker doesn't precache them (only JS, CSS, HTML and SVG are). They're freely licensed from Wikimedia Commons; `public/demo-media/CREDITS.txt`, deployed with them, gives the author, licence and source of each. The mock gives them absolute URLs, like presigned ones, because `mediaCacheKey` parses every image URL.
+
 **Copied invite links** (`utils/inviteUrl.ts`) are `/demo/join?code=…` in the demo, so they stay in it. `DEMO-JOIN-CODE` is the mock's working code.
 
-**Tests.** Unit tests cover the path check, the no-network session (`demo.test.ts`), `AuthProvider` in the demo, the banner and the notifications copy. The Playwright `demo` project ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) runs a non-mock build and checks that a demo session sends nothing off the site except web-font requests and leaves browser storage unchanged.
+**Tests.** Unit tests cover the path check, the no-network session (`demo.test.ts`), `AuthProvider` in the demo, the banner and the notifications copy. The Playwright `demo` project ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) runs a non-mock build and checks that a demo session sends nothing off the site except web-font requests and leaves browser storage unchanged. It also checks that the sample photos load, and that an image uploaded to a comment shows the picked file.

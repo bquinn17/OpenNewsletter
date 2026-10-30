@@ -18,6 +18,7 @@ import {
   type Method,
   type MockRequest,
 } from "./mockShared";
+import { mockUploadedFile, mockUploadUrl, releaseMockUpload } from "./mockUploads";
 
 type S = components["schemas"];
 
@@ -240,7 +241,7 @@ function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
   imagePollCounts[imageId] = 0;
   return {
     imageId,
-    uploadUrl: `mock://upload/${imageId}`,
+    uploadUrl: mockUploadUrl(imageId),
     headers: { "content-type": request.mimeType },
     expiresInSeconds: 600,
   };
@@ -253,11 +254,13 @@ function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"
   if (poll && row.status === "pending") {
     imagePollCounts[imageId] = (imagePollCounts[imageId] ?? 0) + 1;
     if (imagePollCounts[imageId]! >= 2) {
+      // The picked file itself, kept in memory by the fake upload.
+      const file = mockUploadedFile(imageId);
       row.status = "ready";
-      row.width = 800;
-      row.height = 600;
-      row.displayUrl = MOCK_IMAGE_DATA_URL;
-      row.thumbUrl = MOCK_IMAGE_DATA_URL;
+      row.width = file?.width ?? 800;
+      row.height = file?.height ?? 600;
+      row.displayUrl = file?.url ?? MOCK_IMAGE_DATA_URL;
+      row.thumbUrl = file?.url ?? MOCK_IMAGE_DATA_URL;
       row.processedAt = new Date().toISOString();
     }
   }
@@ -296,7 +299,7 @@ function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
   avatarPollCounts[avatarId] = 0;
   return {
     avatarId,
-    uploadUrl: `mock://upload/${avatarId}`,
+    uploadUrl: mockUploadUrl(avatarId),
     headers: { "content-type": request.mimeType },
     expiresInSeconds: 600,
   };
@@ -310,7 +313,7 @@ function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
     avatarPollCounts[avatarId] = (avatarPollCounts[avatarId] ?? 0) + 1;
     if (avatarPollCounts[avatarId]! >= 2) {
       row.status = "ready";
-      row.avatarUrl = MOCK_IMAGE_DATA_URL;
+      row.avatarUrl = mockUploadedFile(avatarId)?.url ?? MOCK_IMAGE_DATA_URL;
       row.processedAt = new Date().toISOString();
     }
   }
@@ -323,14 +326,24 @@ function handleGetAvatar(avatarId: string): S["AvatarMediaResponse"] {
  */
 function handleDeleteAvatar(avatarId: string): undefined {
   avatarRows.delete(avatarId);
+  releaseMockUpload(avatarId);
   if (me.avatarMediaId === avatarId) me = { ...me, avatarMediaId: null, avatarUrl: null };
   return undefined;
 }
 
-/** Routes `apiFetch` calls to in-memory fixtures instead of the network (`env.useMocks`). */
+/**
+ * Routes `apiFetch` calls to in-memory fixtures instead of the network (`env.useMocks`). Returns a
+ * copy, as the network would. Handlers hand back their live fixtures, and a cache holding one
+ * would see the mock's later in-place changes: a new comment pushed onto an answer it cached, which
+ * `useAddComment` then appends a second time.
+ */
 export async function mockFetch(method: Method, path: string, body?: unknown): Promise<unknown> {
   await sleep(LATENCY_MS);
+  const result = routeMockRequest(method, path, body);
+  return result === undefined ? undefined : JSON.parse(JSON.stringify(result));
+}
 
+function routeMockRequest(method: Method, path: string, body: unknown): unknown {
   const [rawPath, queryString] = path.split("?");
   const segments = rawPath.split("/").filter(Boolean);
   const query = new URLSearchParams(queryString ?? "");
