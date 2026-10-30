@@ -17,7 +17,7 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-26):** backend 496 (`cargo test --workspace`), CDK 153 (`pytest infra/tests`), Vitest 366, Playwright 8 (mock project). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+**Test baselines (2026-10-29):** backend 496 (`cargo test --workspace`), CDK 153 (`pytest infra/tests`), Vitest 387, Playwright 14 (8 `mock`, 6 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { appStorage } from "../utils/appStorage";
 
 /**
  * Not in `lib.dom.d.ts` (the spec is still a WICG draft). Minimal shape
@@ -14,7 +15,7 @@ const IOS_BANNER_DISMISSED_KEY = "on:iosInstallBannerDismissed";
 
 function readIosBannerDismissed(): boolean {
   try {
-    return localStorage.getItem(IOS_BANNER_DISMISSED_KEY) === "1";
+    return appStorage().getItem(IOS_BANNER_DISMISSED_KEY) === "1";
   } catch {
     return false;
   }
@@ -23,7 +24,7 @@ function readIosBannerDismissed(): boolean {
 type State = {
   /** The captured `beforeinstallprompt` event, or `null` before it fires / after it's used. */
   event: BeforeInstallPromptEvent | null;
-  /** Persisted (`localStorage`) so a dismissed iOS "Add to Home Screen" banner stays dismissed. */
+  /** Persisted (`appStorage`) so a dismissed iOS "Add to Home Screen" banner stays dismissed. */
   iosBannerDismissed: boolean;
   capture: (event: BeforeInstallPromptEvent) => void;
   /** Shows the native install prompt. Resolves "unavailable" if no event was captured. */
@@ -45,7 +46,7 @@ export const useInstallPrompt = create<State>((set, get) => ({
   },
   dismissIosBanner: () => {
     try {
-      localStorage.setItem(IOS_BANNER_DISMISSED_KEY, "1");
+      appStorage().setItem(IOS_BANNER_DISMISSED_KEY, "1");
     } catch {
       // Best effort — the banner just reappears next load.
     }

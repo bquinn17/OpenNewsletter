@@ -3,9 +3,11 @@ import { Link, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useConfig } from "../../api/queries";
 import { useCurrentGroup } from "../../state/currentGroup";
+import { isDemo } from "../../demo";
 import { Avatar } from "../ui/Avatar";
 import { useDismissableMenu } from "../ui/useDismissableMenu";
 import { ToastStack } from "../ui/Toast";
+import { DemoBanner } from "./DemoBanner";
 import { GroupSwitcher } from "./GroupSwitcher";
 
 export function AppShell() {
@@ -44,6 +46,7 @@ export function AppShell() {
         {/* A page's sticky PageHeader shares z-30 and comes later, so it paints over
             this bar; lift the bar while one of its menus is open so the menu isn't hidden. */}
         <header className="sticky top-0 z-30 border-b border-ink/5 bg-mist/90 backdrop-blur has-[[role=menu]]:z-40">
+          {isDemo && <DemoBanner />}
           <div className="flex h-14 items-center justify-between gap-3 px-4">
             <div className="flex min-w-0 items-center gap-2">
               <Link
@@ -97,7 +100,7 @@ export function AppShell() {
                         }}
                         className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-coral hover:bg-cream"
                       >
-                        Sign out
+                        {isDemo ? "Exit demo" : "Sign out"}
                       </button>
                     </div>
                   )}

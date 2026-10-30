@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { appStorage } from "../utils/appStorage";
 
 type State = {
   currentGroupId: string | null;
@@ -15,6 +16,6 @@ export const useCurrentGroup = create<State>()(
       setCurrentGroup: (groupId) => set({ currentGroupId: groupId }),
       clear: () => set({ currentGroupId: null }),
     }),
-    { name: "on:currentGroup" },
+    { name: "on:currentGroup", storage: createJSONStorage(appStorage) },
   ),
 );

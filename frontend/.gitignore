@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-ssr
+dist-e2e-demo
 *.local
 .vscode/*
 !.vscode/extensions.json

@@ -41,11 +41,11 @@ const MEMBER: S["MembershipSummary"] = {
   gradient: "grape-sky",
 };
 
-function renderHome() {
+function renderHome(auth: AuthValue = signedIn) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider value={signedIn}>
+      <AuthContext.Provider value={auth}>
         <MemoryRouter>
           <HomePage />
         </MemoryRouter>
@@ -57,6 +57,12 @@ function renderHome() {
 afterEach(() => vi.clearAllMocks());
 
 describe("HomePage", () => {
+  it("offers the demo to a signed-out visitor as a full page load of /demo", () => {
+    renderHome({ ...signedIn, status: "unauthenticated", user: null });
+
+    expect(screen.getByRole("link", { name: "See a demo" })).toHaveAttribute("href", "/demo");
+  });
+
   it("shows a spinner, not the join form, while /config is loading", () => {
     vi.mocked(api.getConfig).mockReturnValue(new Promise(() => {}));
 

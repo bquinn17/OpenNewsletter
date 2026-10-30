@@ -3,6 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api, ApiError, apiErrorMessage } from "../../api/client";
 import { queryKeys } from "../../api/queries";
 import { env } from "../../env";
+import { appStorage } from "../../utils/appStorage";
 import { backoffDelayMs } from "../../utils/retry";
 import type { components } from "../../types/api";
 
@@ -71,7 +72,7 @@ function storageKey(groupId: string, cycleId: string, questionId: string, userId
 
 function readStoredDraft(key: string): Draft | null {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = appStorage().getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<Draft>;
     if (typeof parsed.body !== "string") return null;
@@ -86,7 +87,7 @@ function readStoredDraft(key: string): Draft | null {
 
 function writeStoredDraft(key: string, draft: Draft): void {
   try {
-    localStorage.setItem(key, JSON.stringify(draft));
+    appStorage().setItem(key, JSON.stringify(draft));
   } catch {
     // Best effort — a crashed write just means tab-crash recovery doesn't work this time.
   }
@@ -94,7 +95,7 @@ function writeStoredDraft(key: string, draft: Draft): void {
 
 function clearStoredDraft(key: string): void {
   try {
-    localStorage.removeItem(key);
+    appStorage().removeItem(key);
   } catch {
     // Best effort.
   }
@@ -293,7 +294,7 @@ export function useResponseEditor({
     };
   }, [local, enabled]);
 
-  // Mirror `local` into localStorage (`docs/design/frontend.md` §8.3) — best-effort, wrapped in try/catch inside the helpers.
+  // Mirror `local` into `appStorage` (`docs/design/frontend.md` §8.3) — best-effort, wrapped in try/catch inside the helpers.
   useEffect(() => {
     if (!enabled || !key) return;
     if (draftsEqual(local, serverDraftRef.current)) {
