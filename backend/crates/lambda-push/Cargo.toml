@@ -19,7 +19,7 @@ shared = { path = "../shared" }
 async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-secretsmanager = "1"
+aws-sdk-secretsmanager.workspace = true
 base64.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
@@ -35,7 +35,7 @@ tracing.workspace = true
 # Pure-Rust RFC 8291 / RFC 8292 Web Push crypto (M11 decision D1) — the
 # `web-push` crate pulls in `ece` (openssl) and `isahc` (libcurl), both C
 # builds that are unreliable under the `cargo-lambda` arm64 cross-compile.
-p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+p256 = { version = "0.14", features = ["ecdh", "ecdsa"] }
 hkdf = "0.12"
 sha2 = "0.10"
 aes-gcm = "0.10"

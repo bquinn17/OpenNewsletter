@@ -39,11 +39,15 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        from py_vapid import Vapid
-        from py_vapid.utils import b64urlencode, num_to_bytes
+        from py_vapid import Vapid  # type: ignore[import-untyped]
+        from py_vapid.utils import (  # type: ignore[import-untyped]
+            b64urlencode,
+            num_to_bytes,
+        )
     except ImportError:
         print(
-            "ERROR: py-vapid not installed. Run: pip install py-vapid",
+            "ERROR: py-vapid not installed. "
+            "Run: infra/.venv/bin/pip install -r scripts/requirements.txt",
             file=sys.stderr,
         )
         return 1

@@ -230,6 +230,17 @@ describe("CandidatesPage", () => {
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
   });
 
+  it("counts a one-vote allowance in the singular", async () => {
+    vi.mocked(api.listNewsletters).mockResolvedValue(newsletters([]));
+    vi.mocked(api.listCandidates).mockResolvedValue(
+      candidateList([item({})], { votesPerUserPerCycle: 1 }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("You've used 0 of 1 vote")).toBeInTheDocument();
+  });
+
   it("shows a friendly message (not the raw id list) and refetches on VOTE_CAP_REACHED", async () => {
     const user = userEvent.setup();
     vi.mocked(api.listNewsletters).mockResolvedValue(newsletters([]));

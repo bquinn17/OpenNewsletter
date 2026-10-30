@@ -1,6 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "./client";
 import { useAuth } from "../auth/useAuth";
+import { MEDIA_URLS_META } from "../utils/media";
+import type { components } from "../types/api";
+
+type S = components["schemas"];
 
 export const queryKeys = {
   config: ["config"] as const,
@@ -14,6 +18,9 @@ export const queryKeys = {
   myResponse: (groupId: string, cycleId: string, questionId: string) =>
     ["myResponse", groupId, cycleId, questionId] as const,
   invites: (groupId: string) => ["invites", groupId] as const,
+  /** One uploaded image's `GET /uploads/{id}` row (`docs/design/media.md` §3.3, §4.4). */
+  upload: (groupId: string, cycleId: string, imageId: string) =>
+    ["upload", groupId, cycleId, imageId] as const,
   pushSubscriptions: ["pushSubscriptions"] as const,
   pushPreferences: ["pushPreferences"] as const,
 };
@@ -31,7 +38,14 @@ export function useConfig() {
 }
 
 export function useMe() {
-  return useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
+  // `GET /me` 401s until the caller redeems an invite; `/config` says whether they have.
+  const { data: config } = useConfig();
+  return useQuery({
+    queryKey: queryKeys.me,
+    queryFn: api.getMe,
+    meta: MEDIA_URLS_META,
+    enabled: !!config?.userId,
+  });
 }
 
 export function useGroup(groupId: string | undefined) {
@@ -40,6 +54,7 @@ export function useGroup(groupId: string | undefined) {
     queryFn: () => api.getGroup(groupId!),
     enabled: !!groupId,
     staleTime: 5 * 60_000,
+    meta: MEDIA_URLS_META,
   });
 }
 
@@ -64,6 +79,7 @@ export function useNewsletter(groupId: string | undefined, cycleId: string | und
     queryFn: () => api.getNewsletter(groupId!, cycleId!),
     enabled: !!groupId && !!cycleId,
     staleTime: 30_000,
+    meta: MEDIA_URLS_META,
   });
 }
 
@@ -73,6 +89,49 @@ export function useCandidates(groupId: string | undefined, sort: CandidateSort =
     queryFn: () => api.listCandidates(groupId!, { sort }),
     enabled: !!groupId,
     staleTime: 30_000,
+    meta: MEDIA_URLS_META,
+  });
+}
+
+/**
+ * One upload's row, the one place its presigned URLs live (`docs/design/media.md` §4.4): the
+ * uploader's tiles, the editor's preview and the read-only answer all read this entry, so the
+ * global `refreshMediaUrls` re-signs them together. Never stale on its own; the uploader's poll
+ * writes the `ready` row in with `setQueryData`.
+ */
+export function uploadQuery(groupId: string, cycleId: string, imageId: string) {
+  return {
+    queryKey: queryKeys.upload(groupId, cycleId, imageId),
+    queryFn: () => api.media.getUpload(imageId, groupId, cycleId),
+    staleTime: Infinity,
+    meta: MEDIA_URLS_META,
+  };
+}
+
+type UploadRow = S["ImageMediaResponse"];
+
+/** Module-level, so `useQueries` can keep the combined array's identity while nothing changed. */
+function loadedRows(results: UseQueryResult<UploadRow>[]): UploadRow[] {
+  return results.flatMap((result) => (result.data ? [result.data] : []));
+}
+
+/**
+ * The cached rows for `imageIds`, in order. One that hasn't loaded, or failed to, is left out.
+ * `initialRows` seeds an entry that isn't cached yet, so a row the caller already has costs no
+ * request.
+ */
+export function useUploads(
+  groupId: string,
+  cycleId: string,
+  imageIds: string[],
+  initialRows?: ReadonlyMap<string, UploadRow>,
+): UploadRow[] {
+  return useQueries({
+    queries: imageIds.map((imageId) => ({
+      ...uploadQuery(groupId, cycleId, imageId),
+      initialData: initialRows?.get(imageId),
+    })),
+    combine: loadedRows,
   });
 }
 

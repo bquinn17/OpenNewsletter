@@ -8,7 +8,7 @@
 | Data integrity | A | Writes use conditional checks and transactions, and there are concurrency tests for the vote cap, the last admin, double counts and comment races. Several real bugs were found and fixed this way. |
 | Performance at scale | C+ | Latency grows linearly in a few places, and list queries don't paginate (details below). |
 | Cost | A− at idle, B at scale | M13.5 already fixes the idle overhead. At scale the costs that grow are Cognito monthly active users and stored original images. |
-| Security | B+ | Strong CSP, 80-bit invite codes, group-scoped signed cookies. A few gaps are listed below. |
+| Security | B+ | Strong CSP, 80-bit invite codes, group-scoped media access. A few gaps are listed below. |
 | Operational readiness | D | Nothing has been deployed. Thirteen milestones are "code-complete, deploy unverified". This is the biggest risk in the project. |
 
 ## Fix before prod
@@ -38,7 +38,7 @@
 ## Performance and cost at scale
 
 - **Merge the 8 API Lambdas into one.** I recommend this most among the simplifications.
-  - Today a single page load can cold-start 4 functions (`/config`, newsletters, questions, media-cookie), and each one rebuilds its own membership cache.
+  - Today a single page load can cold-start 3 functions (`/config`, newsletters, questions), and each one rebuilds its own membership cache.
   - One function means one cold start and a shared cache.
   - It also makes decision #7's "≤10 free alarms" possible: per-function error alarms for 11 Lambdas can't fit.
   - Least privilege is weaker than it looks today: every function already gets read/write on the whole table ([api_stack.py:445](infra/opennewsletter/api_stack.py#L445)). Keep `image-process` and the two tick functions separate.
@@ -48,13 +48,12 @@
 - **Push fan-out reads 2 rows per member, one member at a time** ([fanout.rs:235](backend/crates/lambda-push/src/fanout.rs#L235)). The notification pref and push subscriptions both live under `USER#u`, so one query per member covers both, and those queries can run concurrently.
 - **Original images are kept forever after processing.** They're the storage cost that grows (about 120 MB per group per month of phone photos), and they still carry EXIF data, including GPS location. Delete them once processing succeeds, or expire them after 30 days. That saves money and cuts the location data you hold. It's your call whether you'd ever want to reprocess at new sizes.
 - **Intelligent-Tiering on the processed and avatar buckets is wasted** ([media_persistent_stack.py:74](infra/opennewsletter/media_persistent_stack.py#L74)). Objects under 128 KB never move to a cheaper tier, but each lifecycle transition still costs money. Keep it only on the originals bucket, if you keep originals at all.
-- **At scale, Cognito becomes the biggest bill**: free up to 10k monthly active users, then about $0.0055 each. Lambda, DynamoDB and CloudFront stay small. Put that in the [`infrastructure.md` §12](docs/design/infrastructure.md#12-cost-expectations) cost model.
+- **At scale, Cognito becomes the biggest bill**: free up to 10k monthly active users, then about $0.0055 each. Lambda, DynamoDB and S3 stay small. Put that in the [`infrastructure.md` §12](docs/design/infrastructure.md#12-cost-expectations) cost model.
 - **Keep the 5-minute tick.** It costs essentially nothing and is simpler than scheduled one-off events.
 
 ## Security
 
 - **Any Google or Facebook user can get a valid JWT.** Federated sign-in goes around `self_sign_up_enabled=False`, and `PreSignUp` is a pass-through. Data is safe because invites gate membership, but strangers' traffic does reach Lambda, which slightly bends the "idle backend" principle. HTTP APIs can't use WAF or per-client throttling. The current throttle of 25 requests/s applies to each route separately ([api_stack.py:489](infra/opennewsletter/api_stack.py#L489)), so the combined ceiling is very high. A merged Lambda with reserved concurrency (around 10–20) puts a hard cap on cost exposure.
-- **The `/media-cookie` body returns the policy and signature**, so the `HttpOnly` cookie doesn't stop an XSS from reading them. In prod, where the cookie is set, leave them out of the body.
 - **GitHub Pages can't send `frame-ancestors` or `X-Frame-Options`**, and a meta-tag CSP ignores `frame-ancestors`. Clickjacking risk is low but it can't be fixed on this host. Note it in [`frontend.md` §12](docs/design/frontend.md#12-build--deploy).
 - **Facebook's `email` claim may not be verified.** When M13.5 adds email-bound invites, make sure they can only be redeemed with Google's `email_verified=true`, as the plan says.
 

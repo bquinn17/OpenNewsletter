@@ -4,59 +4,13 @@
 use crate::state::AppState;
 use crate::validation;
 use chrono::Utc;
-use domain::api::{MyResponsesList, ResponseDto, SaveResponseRequest};
+use domain::api::{ResponseDto, SaveResponseRequest};
 use domain::{
     ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImageMedia, ImagePurpose, LockedQuestion,
     MediaStatus, NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, UserId,
 };
 use persistence::responses::ResponseSave;
 use persistence::{auth, media, newsletters, questions, responses};
-
-/// `GET /groups/{groupId}/newsletters/{cycleId}/my-responses` (§7.1). AP15.
-pub async fn list_my_responses(
-    state: &AppState,
-    caller: &UserId,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-) -> Result<MyResponsesList, ApiError> {
-    auth::require_membership(&state.repo, caller, group_id, false).await?;
-    require_newsletter_not_archived(state, group_id, cycle_id).await?;
-
-    let items = responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");
-            ApiError::internal("failed to list your responses")
-        })?
-        .into_iter()
-        .map(ResponseDto::from)
-        .collect();
-
-    Ok(MyResponsesList { items })
-}
-
-/// `GET .../questions/{questionId}/my-response` (§7.2). AP16. 404 if the
-/// caller has no draft yet.
-pub async fn get_my_response(
-    state: &AppState,
-    caller: &UserId,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    question_id: &QuestionId,
-) -> Result<ResponseDto, ApiError> {
-    auth::require_membership(&state.repo, caller, group_id, false).await?;
-    require_newsletter_not_archived(state, group_id, cycle_id).await?;
-
-    let response = responses::get_my_response(&state.repo, group_id, cycle_id, question_id, caller)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response lookup failed");
-            ApiError::internal("failed to load your response")
-        })?
-        .ok_or_else(|| ApiError::not_found("no response found for this question"))?;
-
-    Ok(response.into())
-}
 
 /// `PUT .../questions/{questionId}/my-response` (§7.3) — the autosave/save-draft
 /// and publish endpoint. Validation order: membership, cycle exists and isn't

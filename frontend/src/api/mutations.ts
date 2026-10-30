@@ -2,6 +2,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "./client";
 import { queryKeys } from "./queries";
 import { useCurrentGroup } from "../state/currentGroup";
+import { invalidateMediaQueries } from "../utils/media";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -19,11 +20,7 @@ export function useRedeemInvite() {
     // Returned so TanStack awaits the refetch before the caller's `onSuccess`
     // runs: JoinPage navigates into the new group straight away, and
     // RequireMembership would bounce a stale membership list back to `/`.
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: queryKeys.config, refetchType: "all" }),
-        qc.invalidateQueries({ queryKey: ["groups"] }),
-      ]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.config, refetchType: "all" }),
   });
 }
 
@@ -31,9 +28,15 @@ export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: S["PatchMeRequest"]) => api.patchMe(body),
-    onSuccess: (data) => {
+    onSuccess: (data, body) => {
       qc.setQueryData(queryKeys.me, data);
       qc.invalidateQueries({ queryKey: queryKeys.config });
+      // Members' avatars (photo and colour) appear only in queries that carry media URLs. A new
+      // photo has a new path, so it misses every cache, but only once those queries refetch
+      // (`docs/design/media.md` §11.3). `me` already holds the response, so it's skipped.
+      if (body.avatarMediaId !== undefined || body.avatarColor !== undefined) {
+        void invalidateMediaQueries(qc, queryKeys.me);
+      }
     },
   });
 }

@@ -8,7 +8,7 @@
 
 mod common;
 
-use domain::api::SaveResponseRequest;
+use domain::api::{ResponseDto, SaveResponseRequest};
 use domain::{
     ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, PollOptionId, QuestionId,
     ResponseStatus, Role, UserId,
@@ -56,16 +56,6 @@ async fn non_member_is_forbidden_on_every_route() {
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
 
-    let list_err = handlers::list_my_responses(&state, &outsider, &group_id, &cycle_id)
-        .await
-        .expect_err("non-member must be refused");
-    assert_eq!(list_err.code, ApiErrorCode::Forbidden);
-
-    let get_err = handlers::get_my_response(&state, &outsider, &group_id, &cycle_id, &question_id)
-        .await
-        .expect_err("non-member must be refused");
-    assert_eq!(get_err.code, ApiErrorCode::Forbidden);
-
     let put_err = handlers::save_response(
         &state,
         &outsider,
@@ -80,29 +70,7 @@ async fn non_member_is_forbidden_on_every_route() {
 }
 
 #[tokio::test]
-async fn get_my_response_404s_when_no_draft_exists() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("g404", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    newsletters::write_status_transition(&repo, &common::open_newsletter("g404", "202606"))
-        .await
-        .unwrap();
-
-    let state = state(repo);
-    let err = handlers::get_my_response(
-        &state,
-        &UserId::new("u1"),
-        &GroupId::new("g404"),
-        &CycleId::new("202606"),
-        &QuestionId::new("q1"),
-    )
-    .await
-    .expect_err("no draft exists yet");
-    assert_eq!(err.code, ApiErrorCode::NotFound);
-}
-
-#[tokio::test]
-async fn save_draft_then_get_returns_the_draft() {
+async fn save_draft_stores_and_returns_the_draft() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gsd", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
@@ -131,10 +99,17 @@ async fn save_draft_then_get_returns_the_draft() {
     assert_eq!(saved.body.as_deref(), Some("my draft answer"));
     assert!(saved.published_at.is_none());
 
-    let fetched = handlers::get_my_response(&state, &caller, &group_id, &cycle_id, &question_id)
-        .await
-        .expect("draft exists");
-    assert_eq!(fetched, saved);
+    let stored = persistence::responses::get_my_response(
+        &state.repo,
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &caller,
+    )
+    .await
+    .unwrap()
+    .expect("draft exists");
+    assert_eq!(ResponseDto::from(stored), saved);
 }
 
 #[tokio::test]
@@ -288,11 +263,6 @@ async fn first_publish_in_a_second_group_same_month_still_bumps_editions_answere
                 .unwrap();
         assert_eq!(membership.editions_answered, 1, "group {g}");
     }
-
-    let listed = handlers::list_my_responses(&state, &caller, &GroupId::new("gx-b"), &cycle_id)
-        .await
-        .unwrap();
-    assert_eq!(listed.items.len(), 1);
 }
 
 #[tokio::test]
@@ -740,58 +710,4 @@ async fn valid_ready_response_image_is_accepted() {
     .await
     .expect("a ready response image owned by the caller is valid");
     assert_eq!(saved.image_media_ids, vec![image_id]);
-}
-
-#[tokio::test]
-async fn my_responses_lists_only_the_callers_rows() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("gml", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    common::seed_group_and_membership(&repo, &group, "u2", Role::Member).await;
-    newsletters::write_status_transition(&repo, &common::open_newsletter("gml", "202606"))
-        .await
-        .unwrap();
-    common::put_locked_question(&repo, &common::locked_question("gml", "202606", "q1", "u1")).await;
-    common::put_locked_question(&repo, &common::locked_question("gml", "202606", "q2", "u1")).await;
-
-    let state = state(repo);
-    let group_id = GroupId::new("gml");
-    let cycle_id = CycleId::new("202606");
-
-    handlers::save_response(
-        &state,
-        &UserId::new("u1"),
-        &group_id,
-        &cycle_id,
-        &QuestionId::new("q1"),
-        text_request("u1's answer to q1", vec![], false),
-    )
-    .await
-    .unwrap();
-    handlers::save_response(
-        &state,
-        &UserId::new("u1"),
-        &group_id,
-        &cycle_id,
-        &QuestionId::new("q2"),
-        text_request("u1's answer to q2", vec![], false),
-    )
-    .await
-    .unwrap();
-    handlers::save_response(
-        &state,
-        &UserId::new("u2"),
-        &group_id,
-        &cycle_id,
-        &QuestionId::new("q1"),
-        text_request("u2's answer to q1", vec![], false),
-    )
-    .await
-    .unwrap();
-
-    let mine = handlers::list_my_responses(&state, &UserId::new("u1"), &group_id, &cycle_id)
-        .await
-        .unwrap();
-    assert_eq!(mine.items.len(), 2);
-    assert!(mine.items.iter().all(|r| r.user_id == UserId::new("u1")));
 }

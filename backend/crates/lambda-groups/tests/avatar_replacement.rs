@@ -49,7 +49,7 @@ fn set_avatar(avatar_id: &AvatarId) -> PatchMeRequest {
 async fn replacing_an_avatar_deletes_the_old_one() {
     let (_c, repo) = test_factories::make_test_repo().await;
     let (old, new) = seed_user_with_two_avatars(&repo).await;
-    let (state, store, cdn) = common::state_with_fakes(repo);
+    let (state, store) = common::state_with_fakes(repo);
     let user_id = UserId::new("u1");
 
     let me = me::patch_me(&state, &user_id, set_avatar(&new))
@@ -65,14 +65,10 @@ async fn replacing_an_avatar_deletes_the_old_one() {
                 "uploads/u1/av-old.jpg".to_owned()
             ),
             (
-                common::AVATARS_PROCESSED.to_owned(),
+                common::PROCESSED.to_owned(),
                 "avatar/av-old/display.webp".to_owned()
             ),
         ]
-    );
-    assert_eq!(
-        cdn.invalidations().await,
-        vec![vec!["/avatar/av-old/display.webp".to_owned()]]
     );
     assert_eq!(
         media::get_avatar(&state.repo, &user_id, &old)
@@ -90,7 +86,7 @@ async fn replacing_an_avatar_deletes_the_old_one() {
 async fn clearing_the_avatar_deletes_it() {
     let (_c, repo) = test_factories::make_test_repo().await;
     let (old, _new) = seed_user_with_two_avatars(&repo).await;
-    let (state, store, cdn) = common::state_with_fakes(repo);
+    let (state, store) = common::state_with_fakes(repo);
     let user_id = UserId::new("u1");
     let clear = PatchMeRequest {
         display_name: None,
@@ -103,10 +99,6 @@ async fn clearing_the_avatar_deletes_it() {
     assert_eq!(me.avatar_media_id, None);
     assert_eq!(store.deleted().await.len(), 2);
     assert_eq!(
-        cdn.invalidations().await,
-        vec![vec!["/avatar/av-old/display.webp".to_owned()]]
-    );
-    assert_eq!(
         media::get_avatar(&state.repo, &user_id, &old)
             .await
             .unwrap(),
@@ -118,7 +110,7 @@ async fn clearing_the_avatar_deletes_it() {
 async fn a_patch_that_leaves_the_avatar_alone_deletes_nothing() {
     let (_c, repo) = test_factories::make_test_repo().await;
     let (old, _new) = seed_user_with_two_avatars(&repo).await;
-    let (state, store, _cdn) = common::state_with_fakes(repo);
+    let (state, store) = common::state_with_fakes(repo);
     let user_id = UserId::new("u1");
     let rename = PatchMeRequest {
         display_name: Some("Quinn".into()),
@@ -136,7 +128,7 @@ async fn a_patch_that_leaves_the_avatar_alone_deletes_nothing() {
 async fn a_failed_delete_of_the_replaced_avatar_still_saves_the_profile() {
     let (_c, repo) = test_factories::make_test_repo().await;
     let (old, new) = seed_user_with_two_avatars(&repo).await;
-    let (state, store, _cdn) = common::state_with_fakes(repo);
+    let (state, store) = common::state_with_fakes(repo);
     store.set_failing(true);
     let user_id = UserId::new("u1");
 

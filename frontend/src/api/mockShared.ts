@@ -11,9 +11,8 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export const CALLER_ID = "u_quinn";
 
-// 1x1 transparent PNG, duplicated from `mockTransport.ts`'s own copy (not
-// exported there) — stands in for a real CDN asset so published/draft images
-// render without any network request in mock mode.
+// 1x1 transparent PNG — stands in for a real presigned S3 asset so
+// published/draft images render without any network request in mock mode.
 export const MOCK_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAWJDR3EAAAAASUVORK5CYII=";
 
@@ -56,6 +55,19 @@ function problemFor(status: number, code: string, detail: string): ProblemDetail
 
 export function fail(status: number, code: string, detail: string): never {
   throw new ApiError(status, code, problemFor(status, code, detail));
+}
+
+/** Throws a 422 `VALIDATION_FAILED` naming one request field (`docs/design/api.md` §1.1). */
+export function validationFailed(
+  field: string,
+  message: string,
+  code: S["FieldErrorCode"] = "INVALID",
+): never {
+  const problem: ProblemDetails = {
+    ...problemFor(422, "VALIDATION_FAILED", message),
+    fieldErrors: [{ field, code, message }],
+  };
+  throw new ApiError(422, "VALIDATION_FAILED", problem);
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

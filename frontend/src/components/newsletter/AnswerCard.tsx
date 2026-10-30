@@ -37,16 +37,9 @@ export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: P
         </div>
       </header>
 
-      {answer.body && (
-        <MarkdownBody
-          body={answer.body}
-          images={answer.images}
-          groupId={groupId}
-          className="mt-3"
-        />
-      )}
+      {answer.body && <MarkdownBody body={answer.body} images={answer.images} className="mt-3" />}
 
-      <ImageGallery images={answer.images} body={answer.body ?? ""} groupId={groupId} />
+      <ImageGallery images={answer.images} body={answer.body ?? ""} />
 
       <ReactionBar
         groupId={groupId}

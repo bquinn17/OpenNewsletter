@@ -92,17 +92,13 @@ export function activatePromptly(scope: ActivationScope): void {
   scope.addEventListener("activate", (event) => event.waitUntil(scope.clients.claim()));
 }
 
-/** CloudFront signed-URL query params (`docs/design/media.md` §4.5). */
-const MEDIA_AUTH_PARAMS = ["Policy", "Signature", "Key-Pair-Id", "Expires"];
-
 /**
- * The `cdn-images` cache key for `url`: the URL without CloudFront's signed-URL
- * params. Dev signs image URLs with query params that change every hour, so
- * keying on the full URL would never hit. Prod URLs carry none (cookies do the
- * work), so this leaves them unchanged.
+ * The `media-images` cache key for `url`: its origin plus path, with the whole query string
+ * dropped (`docs/design/media.md` §4.4). Every presigned S3 GET re-signs the same object with a
+ * new `X-Amz-*` query string, so keying on the full URL would never hit; the path alone is a
+ * stable identity for the object.
  */
-export function stripMediaAuthParams(url: string): string {
+export function mediaCacheKey(url: string): string {
   const parsed = new URL(url);
-  for (const param of MEDIA_AUTH_PARAMS) parsed.searchParams.delete(param);
-  return parsed.toString();
+  return `${parsed.origin}${parsed.pathname}`;
 }

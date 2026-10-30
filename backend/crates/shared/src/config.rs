@@ -20,6 +20,7 @@ pub const GRADIENT_SLUGS: &[&str] = &[
     "ocean-dusk",
     "citrus-blush",
     "slate-lilac",
+    "lavender-blush",
 ];
 
 /// Avatar fallback colour slugs (`docs/design/api.md` §2.3).
@@ -55,6 +56,13 @@ pub const MAX_COMMENT_BODY_CHARS: usize = 2_000;
 pub const MAX_IMAGE_BYTES: u64 = 15 * 1024 * 1024;
 pub const MAX_AVATAR_BYTES: u64 = 5 * 1024 * 1024;
 
+/// How long a presigned S3 GET URL stays valid (`docs/design/media.md` §4.2).
+pub const MEDIA_URL_TTL_SECONDS: u64 = 3600;
+/// The presign start time is floored to this window, so repeat requests
+/// within it from one warm Lambda container produce byte-identical URLs —
+/// a stable `<img src>` across refetches (`docs/design/media.md` §4.2).
+pub const MEDIA_URL_SIGN_WINDOW_SECONDS: u64 = 300;
+
 /// `lambda-image-process` variant dimensions and WebP quality
 /// (`docs/design/media.md` §1, §5.3, §11.1).
 pub const DISPLAY_LONG_EDGE_PX: u32 = 1200;
@@ -63,6 +71,16 @@ pub const THUMB_LONG_EDGE_PX: u32 = 400;
 pub const THUMB_QUALITY: f32 = 75.0;
 pub const AVATAR_SIZE_PX: u32 = 256;
 pub const AVATAR_QUALITY: f32 = 82.0;
+
+/// `Cache-Control: max-age` on processed image variants: 60 days. Kept at two
+/// months or less so a stale copy can't outlive a fix for long, such as a
+/// header change (`docs/design/media.md` §5.1).
+pub const IMAGE_CACHE_MAX_AGE_SECONDS: u64 = 60 * 86_400;
+/// `Cache-Control: max-age` on processed avatars: 90 days, longer than images
+/// because a changed avatar is a new `avatarId` and so a new key. The service
+/// worker's `media-avatars` expiry (`frontend/src/pwa/sw.ts`) mirrors it
+/// (`docs/design/media.md` §11.3).
+pub const AVATAR_CACHE_MAX_AGE_SECONDS: u64 = 90 * 86_400;
 
 /// `lambda-image-process` decode budget, checked against the header before any
 /// pixel buffer is allocated. A 15 MB upload can declare a canvas that decodes

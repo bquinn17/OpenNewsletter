@@ -24,10 +24,13 @@ use crate::state::AppState;
 
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
 const IMAGE_DECODE_FAILED: &str = "IMAGE_DECODE_FAILED";
-/// 60 days. Kept at two months or less so a browser or CDN copy can't outlive
-/// a fix for long, such as a header or CORS change (`docs/design/media.md` §5.1).
-const IMAGE_CACHE_CONTROL: &str = "public, max-age=5184000, immutable";
-const AVATAR_CACHE_CONTROL: &str = "public, max-age=86400, immutable";
+
+/// The `Cache-Control` a processed variant is stored with. `private` because
+/// there is no shared cache in front of the processed bucket to benefit from
+/// `public` (`docs/design/media.md` §5.1).
+fn cache_control(max_age_seconds: u64) -> String {
+    format!("private, max-age={max_age_seconds}, immutable")
+}
 
 /// Processes every record in the event, continuing past a terminal failure
 /// on any individual record. Returns the first transient error encountered
@@ -91,22 +94,28 @@ async fn handle_image_record(
         return Ok(());
     }
 
-    let content_length = state.store.content_length(bucket, key).await?;
+    let Some(content_length) = state.store.content_length(bucket, key).await? else {
+        info!(image_id = %parsed.image_id, "original already deleted; skipping");
+        return Ok(());
+    };
     if content_length > shared::config::MAX_IMAGE_BYTES {
-        return fail_image(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        return fail_image(state, &parsed, bucket, key, IMAGE_TOO_LARGE).await;
     }
 
-    let bytes = state.store.get(bucket, key).await?;
+    let Some(bytes) = state.store.get(bucket, key).await? else {
+        info!(image_id = %parsed.image_id, "original already deleted; skipping");
+        return Ok(());
+    };
     let processed = tokio::task::spawn_blocking(move || process_image(&bytes))
         .await
         .map_err(|e| TransientError::Join(e.to_string()))?;
     let variants = match processed {
         Ok(v) => v,
         Err(ProcessError::DecodeFailed) => {
-            return fail_image(state, &parsed, None, IMAGE_DECODE_FAILED).await;
+            return fail_image(state, &parsed, bucket, key, IMAGE_DECODE_FAILED).await;
         }
         Err(ProcessError::TooLarge) => {
-            return fail_image(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+            return fail_image(state, &parsed, bucket, key, IMAGE_TOO_LARGE).await;
         }
     };
 
@@ -128,6 +137,7 @@ async fn handle_image_record(
         parsed.image_id,
         variants.thumb.format.extension()
     );
+    let image_cache_control = cache_control(shared::config::IMAGE_CACHE_MAX_AGE_SECONDS);
 
     state
         .store
@@ -136,7 +146,7 @@ async fn handle_image_record(
             &display_key,
             variants.display.bytes,
             variants.display.format.content_type(),
-            IMAGE_CACHE_CONTROL,
+            &image_cache_control,
         )
         .await?;
     state
@@ -146,7 +156,7 @@ async fn handle_image_record(
             &thumb_key,
             variants.thumb.bytes,
             variants.thumb.format.content_type(),
-            IMAGE_CACHE_CONTROL,
+            &image_cache_control,
         )
         .await?;
 
@@ -164,39 +174,60 @@ async fn handle_image_record(
         },
     )
     .await?;
-    if outcome == UpdateOutcome::AlreadyFinal {
-        // The conditional update also fails when the row is gone: the image was
-        // deleted while this invocation processed it. The deleter saw no
-        // processed keys on the pending row, so the objects just written are
-        // ours to remove.
-        let row = media::get_image(
-            &state.repo,
-            &parsed.group_id,
-            &parsed.cycle_id,
-            &parsed.image_id,
-        )
-        .await?;
-        if row.is_none() {
-            info!(image_id = %parsed.image_id, "image deleted during processing; removing its processed objects");
-            state
-                .store
-                .delete(&state.buckets.processed, &display_key)
-                .await?;
-            state
-                .store
-                .delete(&state.buckets.processed, &thumb_key)
-                .await?;
-        } else {
-            info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+    match outcome {
+        UpdateOutcome::Updated => {
+            // The original is no longer needed once the row is ready; a
+            // 7-day bucket lifecycle expiry (infra) is the safety net if
+            // this delete itself fails (`docs/design/media.md` §5.1).
+            delete_original_best_effort(state, bucket, key).await;
+        }
+        UpdateOutcome::AlreadyFinal => {
+            // The conditional update also fails when the row is gone: the image was
+            // deleted while this invocation processed it. The deleter saw no
+            // processed keys on the pending row, so the objects just written are
+            // ours to remove. Leave the original alone either way: the deleter
+            // owns it on a delete, and the winning invocation owns it otherwise.
+            let row = media::get_image(
+                &state.repo,
+                &parsed.group_id,
+                &parsed.cycle_id,
+                &parsed.image_id,
+            )
+            .await?;
+            if row.is_none() {
+                info!(image_id = %parsed.image_id, "image deleted during processing; removing its processed objects");
+                state
+                    .store
+                    .delete(&state.buckets.processed, &display_key)
+                    .await?;
+                state
+                    .store
+                    .delete(&state.buckets.processed, &thumb_key)
+                    .await?;
+            } else {
+                info!(image_id = %parsed.image_id, "image row finished concurrently; leaving the winner's write in place");
+            }
         }
     }
     Ok(())
 }
 
+/// Deletes the original once its row is final (`ready` or `failed`). Best
+/// effort: a failure here only leaves the original behind (purged by the
+/// bucket's lifecycle rule), never fails the invocation — returning `Err`
+/// would make Lambda retry the whole record, which would just skip the
+/// no-longer-`pending` row without reaching this delete again.
+async fn delete_original_best_effort(state: &AppState, bucket: &str, key: &str) {
+    if let Err(e) = state.store.delete(bucket, key).await {
+        tracing::error!(error = ?e, bucket = %bucket, key = %key, "failed to delete original after processing");
+    }
+}
+
 async fn fail_image(
     state: &AppState,
     parsed: &ParsedImageKey,
-    original: Option<(&str, &str)>,
+    bucket: &str,
+    key: &str,
     reason: &str,
 ) -> Result<(), TransientError> {
     media_status::mark_image_failed(
@@ -208,9 +239,7 @@ async fn fail_image(
         Utc::now(),
     )
     .await?;
-    if let Some((bucket, key)) = original {
-        state.store.delete(bucket, key).await?;
-    }
+    delete_original_best_effort(state, bucket, key).await;
     Ok(())
 }
 
@@ -234,22 +263,28 @@ async fn handle_avatar_record(
         return Ok(());
     }
 
-    let content_length = state.store.content_length(bucket, key).await?;
+    let Some(content_length) = state.store.content_length(bucket, key).await? else {
+        info!(avatar_id = %parsed.avatar_id, "original already deleted; skipping");
+        return Ok(());
+    };
     if content_length > shared::config::MAX_AVATAR_BYTES {
-        return fail_avatar(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+        return fail_avatar(state, &parsed, bucket, key, IMAGE_TOO_LARGE).await;
     }
 
-    let bytes = state.store.get(bucket, key).await?;
+    let Some(bytes) = state.store.get(bucket, key).await? else {
+        info!(avatar_id = %parsed.avatar_id, "original already deleted; skipping");
+        return Ok(());
+    };
     let processed = tokio::task::spawn_blocking(move || process_avatar(&bytes))
         .await
         .map_err(|e| TransientError::Join(e.to_string()))?;
     let variant = match processed {
         Ok(v) => v,
         Err(ProcessError::DecodeFailed) => {
-            return fail_avatar(state, &parsed, None, IMAGE_DECODE_FAILED).await;
+            return fail_avatar(state, &parsed, bucket, key, IMAGE_DECODE_FAILED).await;
         }
         Err(ProcessError::TooLarge) => {
-            return fail_avatar(state, &parsed, Some((bucket, key)), IMAGE_TOO_LARGE).await;
+            return fail_avatar(state, &parsed, bucket, key, IMAGE_TOO_LARGE).await;
         }
     };
 
@@ -261,11 +296,11 @@ async fn handle_avatar_record(
     state
         .store
         .put(
-            &state.buckets.avatars_processed,
+            &state.buckets.processed,
             &display_key,
             variant.display.bytes,
             variant.display.format.content_type(),
-            AVATAR_CACHE_CONTROL,
+            &cache_control(shared::config::AVATAR_CACHE_MAX_AGE_SECONDS),
         )
         .await?;
 
@@ -277,17 +312,22 @@ async fn handle_avatar_record(
         Utc::now(),
     )
     .await?;
-    if outcome == UpdateOutcome::AlreadyFinal {
-        // As for images: a missing row means the avatar was deleted mid-processing.
-        let row = media::get_avatar(&state.repo, &parsed.user_id, &parsed.avatar_id).await?;
-        if row.is_none() {
-            info!(avatar_id = %parsed.avatar_id, "avatar deleted during processing; removing its processed object");
-            state
-                .store
-                .delete(&state.buckets.avatars_processed, &display_key)
-                .await?;
-        } else {
-            info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+    match outcome {
+        UpdateOutcome::Updated => {
+            delete_original_best_effort(state, bucket, key).await;
+        }
+        UpdateOutcome::AlreadyFinal => {
+            // As for images: a missing row means the avatar was deleted mid-processing.
+            let row = media::get_avatar(&state.repo, &parsed.user_id, &parsed.avatar_id).await?;
+            if row.is_none() {
+                info!(avatar_id = %parsed.avatar_id, "avatar deleted during processing; removing its processed object");
+                state
+                    .store
+                    .delete(&state.buckets.processed, &display_key)
+                    .await?;
+            } else {
+                info!(avatar_id = %parsed.avatar_id, "avatar row finished concurrently; leaving the winner's write in place");
+            }
         }
     }
     Ok(())
@@ -296,7 +336,8 @@ async fn handle_avatar_record(
 async fn fail_avatar(
     state: &AppState,
     parsed: &ParsedAvatarKey,
-    original: Option<(&str, &str)>,
+    bucket: &str,
+    key: &str,
     reason: &str,
 ) -> Result<(), TransientError> {
     media_status::mark_avatar_failed(
@@ -307,8 +348,6 @@ async fn fail_avatar(
         Utc::now(),
     )
     .await?;
-    if let Some((bucket, key)) = original {
-        state.store.delete(bucket, key).await?;
-    }
+    delete_original_best_effort(state, bucket, key).await;
     Ok(())
 }

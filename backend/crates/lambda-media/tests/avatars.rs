@@ -80,9 +80,13 @@ async fn get_avatar_returns_the_caller_s_own_avatar() {
         .await
         .expect("owner can read their avatar");
     assert_eq!(response.avatar_id, avatar_id);
-    assert_eq!(
-        response.avatar_url,
-        Some("https://cdn.example.com/avatar/av-01/display.webp".into())
+    let avatar_url = response.avatar_url.expect("ready avatar has a url");
+    assert!(
+        avatar_url.starts_with(&format!(
+            "https://{}.s3.us-east-1.amazonaws.com/avatar/av-01/display.webp?",
+            common::MEDIA_PROCESSED
+        )),
+        "{avatar_url}"
     );
 }
 
@@ -150,7 +154,7 @@ async fn delete_avatar_clears_the_user_s_avatar_media_id() {
 }
 
 #[tokio::test]
-async fn delete_avatar_removes_the_objects_invalidates_the_cdn_and_deletes_the_row() {
+async fn delete_avatar_removes_the_objects_and_deletes_the_row() {
     let (_c, repo) = common::make_repo().await;
     let avatar_id = common::seed_avatar(&repo, "u1", "av-04", MediaStatus::Ready).await;
     let (state, fakes) = common::test_state_with_fakes(repo);
@@ -167,14 +171,10 @@ async fn delete_avatar_removes_the_objects_invalidates_the_cdn_and_deletes_the_r
                 "uploads/u1/av-04.jpg".to_owned()
             ),
             (
-                common::AVATARS_PROCESSED.to_owned(),
+                common::MEDIA_PROCESSED.to_owned(),
                 "avatar/av-04/display.webp".to_owned()
             ),
         ]
-    );
-    assert_eq!(
-        fakes.cdn.invalidations().await,
-        vec![vec!["/avatar/av-04/display.webp".to_owned()]]
     );
     let err = handlers::get_avatar(&state, &UserId::new("u1"), &avatar_id)
         .await

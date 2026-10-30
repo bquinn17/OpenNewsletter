@@ -23,7 +23,6 @@ APP_SECRET_FACEBOOK_APP_SECRET = "facebook_app_secret"
 APP_SECRET_VAPID_PUBLIC_KEY = "vapid_public_key"
 APP_SECRET_VAPID_PRIVATE_KEY = "vapid_private_key"
 APP_SECRET_VAPID_SUBJECT = "vapid_subject"
-APP_SECRET_CDN_SIGNING_PRIVATE_KEY = "cdn_signing_private_key"
 
 
 def secret_ref(secret_arn: str, json_field: str) -> str:

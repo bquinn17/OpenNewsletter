@@ -5,12 +5,12 @@ MonitoringStack is volatile (`make redeploy-volatile` destroys and recreates
 it), so it must not hold a CloudFormation cross-stack reference (Fn::ImportValue)
 onto anything in a persistent stack — that would create an export the producer
 stack can never again be updated or destroyed out from under. The HTTP API's
-id and the CloudFront distribution's id are both assigned by AWS at deploy
-time, not deterministic like a Lambda `function_name` or the DynamoDB table
-name, so there's no literal string to put in a dimensions_map at synth time.
+id is assigned by AWS at deploy time, not deterministic like a Lambda
+`function_name` or the DynamoDB table name, so there's no literal string to put
+in a dimensions_map at synth time.
 
-The fix: the producer stack (`ApiStack`, `MediaPersistentStack`) publishes the
-value to an SSM parameter, and MonitoringStack reads it back via a
+The fix: the producer stack (`ApiStack`) publishes the value to an SSM
+parameter, and MonitoringStack reads it back via a
 CloudFormation dynamic reference (`{{resolve:ssm:...}}`), the same mechanism
 `api_stack.py`/`auth_stack.py` already use for Secrets Manager values. A
 dynamic reference resolves at CloudFormation deploy time, not CDK synth time,
@@ -24,10 +24,6 @@ from __future__ import annotations
 
 def http_api_id_parameter_name(env: str) -> str:
     return f"/opennewsletter/{env}/http-api-id"
-
-
-def cloudfront_distribution_id_parameter_name(env: str) -> str:
-    return f"/opennewsletter/{env}/cloudfront-distribution-id"
 
 
 def ssm_dynamic_ref(parameter_name: str) -> str:

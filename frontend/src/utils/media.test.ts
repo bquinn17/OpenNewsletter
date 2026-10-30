@@ -1,136 +1,128 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../api/client", () => ({
-  api: { media: { getMediaCookie: vi.fn() } },
+const { invalidateQueries } = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
+
+vi.mock("../api/queryClient", () => ({
+  queryClient: { invalidateQueries },
 }));
 
-import { api } from "../api/client";
-import { env } from "../env";
-import { ensureCookie, refreshMediaAuth, resetMediaAuthCache, withMediaAuth } from "./media";
-
-const getMediaCookie = api.media.getMediaCookie as ReturnType<typeof vi.fn>;
-
-function cookie(
-  overrides: Partial<{ policy: string; signature: string; keyPairId: string }> = {},
-  expiresInMs = 60 * 60_000,
-) {
-  return {
-    policy: overrides.policy ?? "p",
-    signature: overrides.signature ?? "s",
-    keyPairId: overrides.keyPairId ?? "k",
-    expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
-  };
+/**
+ * `refreshMediaUrls` throttles itself via module-level state, so each test gets a fresh module
+ * instance (`vi.resetModules()` + a dynamic re-import) rather than sharing that state across
+ * cases (`coding-standards.md` §1.8: no shared mutable state between tests).
+ */
+async function freshRefreshMediaUrls() {
+  vi.resetModules();
+  const mod = await import("./media");
+  return mod.refreshMediaUrls;
 }
 
-describe("ensureCookie / withMediaAuth", () => {
-  const originalAppEnv = env.appEnv;
-  const originalUseMocks = env.useMocks;
-
+describe("refreshMediaUrls", () => {
   beforeEach(() => {
-    resetMediaAuthCache();
-    getMediaCookie.mockReset();
-    env.appEnv = "dev";
-    env.useMocks = false;
+    vi.useFakeTimers();
+    invalidateQueries.mockReset();
+    invalidateQueries.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
-    env.appEnv = originalAppEnv;
-    env.useMocks = originalUseMocks;
+    vi.useRealTimers();
   });
 
-  it("reuses the cached cookie until 5 minutes before expiry", async () => {
-    getMediaCookie.mockResolvedValue(cookie());
+  it("refetches only the active queries flagged as carrying media URLs", async () => {
+    const refreshMediaUrls = await freshRefreshMediaUrls();
+    const { MEDIA_URLS_META } = await import("./media");
 
-    await ensureCookie("g1");
-    await ensureCookie("g1");
+    await refreshMediaUrls();
 
-    expect(getMediaCookie).toHaveBeenCalledTimes(1);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+    const [{ predicate, refetchType }] = invalidateQueries.mock.calls[0];
+    expect(refetchType).toBe("active");
+    expect(predicate({ meta: MEDIA_URLS_META })).toBe(true);
+    expect(predicate({ meta: undefined })).toBe(false);
   });
 
-  it("refetches once the cached cookie is within 5 minutes of expiry", async () => {
-    getMediaCookie.mockResolvedValueOnce(cookie({}, 4 * 60_000));
-    getMediaCookie.mockResolvedValueOnce(cookie({}, 60 * 60_000));
+  it("does nothing while the browser is offline", async () => {
+    const refreshMediaUrls = await freshRefreshMediaUrls();
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
 
-    await ensureCookie("g1");
-    await ensureCookie("g1");
+    await refreshMediaUrls();
 
-    expect(getMediaCookie).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).not.toHaveBeenCalled();
+    onLine.mockRestore();
   });
 
-  it("shares one in-flight request across concurrent callers for the same group", async () => {
-    let resolveFetch!: (value: ReturnType<typeof cookie>) => void;
-    getMediaCookie.mockReturnValue(
-      new Promise((resolve) => {
-        resolveFetch = resolve;
+  it("shares one in-flight refresh across concurrent callers", async () => {
+    const refreshMediaUrls = await freshRefreshMediaUrls();
+    let resolveInvalidate!: () => void;
+    invalidateQueries.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveInvalidate = resolve;
       }),
     );
 
-    const first = ensureCookie("g1");
-    const second = ensureCookie("g1");
-    resolveFetch(cookie());
+    const first = refreshMediaUrls();
+    const second = refreshMediaUrls();
+    resolveInvalidate();
     await Promise.all([first, second]);
 
-    expect(getMediaCookie).toHaveBeenCalledTimes(1);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
-  it("fetches separately per group", async () => {
-    getMediaCookie.mockResolvedValue(cookie());
+  it("throttles to at most once per 10s, then refreshes again after", async () => {
+    const refreshMediaUrls = await freshRefreshMediaUrls();
 
-    await ensureCookie("g1");
-    await ensureCookie("g2");
+    await refreshMediaUrls();
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
 
-    expect(getMediaCookie).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(9_999);
+    await refreshMediaUrls();
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await refreshMediaUrls();
+    expect(invalidateQueries).toHaveBeenCalledTimes(2);
   });
 
-  it("is a no-op in mock mode", async () => {
-    env.useMocks = true;
+  it("resolves without invalidating when a call lands inside the throttle window", async () => {
+    const refreshMediaUrls = await freshRefreshMediaUrls();
 
-    await ensureCookie("g1");
+    await refreshMediaUrls();
+    await expect(refreshMediaUrls()).resolves.toBeUndefined();
 
-    expect(getMediaCookie).not.toHaveBeenCalled();
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("thumbSize", () => {
+  it("scales a landscape original's long edge down to 400px", async () => {
+    const { thumbSize } = await import("./media");
+
+    expect(thumbSize(4032, 3024)).toEqual({ width: 400, height: 300 });
   });
 
-  it("appends CloudFront signed-URL query params in dev for a cached group", async () => {
-    getMediaCookie.mockResolvedValue(cookie({ policy: "POL", signature: "SIG", keyPairId: "KEY" }));
-    await ensureCookie("g1");
+  it("scales a portrait original by its height", async () => {
+    const { thumbSize } = await import("./media");
 
-    const url = withMediaAuth(`${env.cdnBaseUrl}/img/g1/202606/q1/u1/img1/thumb.webp`);
-
-    expect(url).toContain("Policy=POL");
-    expect(url).toContain("Signature=SIG");
-    expect(url).toContain("Key-Pair-Id=KEY");
+    expect(thumbSize(1000, 2000)).toEqual({ width: 200, height: 400 });
   });
 
-  it("passes through unchanged in prod even with a cached cookie", async () => {
-    getMediaCookie.mockResolvedValue(cookie());
-    await ensureCookie("g1");
-    env.appEnv = "prod";
+  it("keeps an original already under the thumb size, since variants are never upscaled", async () => {
+    const { thumbSize } = await import("./media");
 
-    const url = `${env.cdnBaseUrl}/img/g1/202606/q1/u1/img1/thumb.webp`;
-
-    expect(withMediaAuth(url)).toBe(url);
+    expect(thumbSize(300, 200)).toEqual({ width: 300, height: 200 });
   });
 
-  it("passes through a group with no cached cookie", () => {
-    const url = `${env.cdnBaseUrl}/img/unknown-group/202606/q1/u1/img1/thumb.webp`;
+  it("returns no size when the dimensions aren't known yet", async () => {
+    const { thumbSize } = await import("./media");
 
-    expect(withMediaAuth(url)).toBe(url);
+    expect(thumbSize(null, undefined)).toEqual({});
   });
 
-  it("passes through unsigned avatar URLs regardless of cache state", async () => {
-    getMediaCookie.mockResolvedValue(cookie());
-    await ensureCookie("g1");
-    const url = `${env.cdnBaseUrl}/avatar/a1/display.webp`;
+  it("scales down further, keeping the aspect ratio, to fit a height cap", async () => {
+    const { thumbSize } = await import("./media");
 
-    expect(withMediaAuth(url)).toBe(url);
-  });
-
-  it("refreshMediaAuth refetches even when the cached cookie is still fresh", async () => {
-    getMediaCookie.mockResolvedValue(cookie());
-    await ensureCookie("g1");
-
-    await refreshMediaAuth("g1");
-
-    expect(getMediaCookie).toHaveBeenCalledTimes(2);
+    expect(thumbSize(1000, 2000, 192)).toEqual({ width: 96, height: 192 });
+    expect(thumbSize(4032, 3024, 192)).toEqual({ width: 256, height: 192 });
+    expect(thumbSize(300, 100, 192)).toEqual({ width: 300, height: 100 });
   });
 });

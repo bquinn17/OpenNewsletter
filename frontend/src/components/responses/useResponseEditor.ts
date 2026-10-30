@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../../api/client";
+import { api, ApiError, apiErrorMessage } from "../../api/client";
 import { queryKeys } from "../../api/queries";
 import { env } from "../../env";
 import { backoffDelayMs } from "../../utils/retry";
@@ -242,9 +242,7 @@ export function useResponseEditor({
         queuedRef.current = null;
         rejectDetachWaiters(detachWaitersRef, error);
         attemptRef.current = 0;
-        setProblemDetail(
-          error instanceof ApiError ? (error.problem?.detail ?? error.message) : "Couldn't save.",
-        );
+        setProblemDetail(apiErrorMessage(error, "Couldn't save."));
         setStatus({ kind: "dirty" });
         return;
       }

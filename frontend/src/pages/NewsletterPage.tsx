@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ApiError } from "../api/client";
 import { useMembership, useNewsletter, useNewsletters } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
+import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
 import { PollWidget } from "../components/newsletter/PollWidget";
@@ -55,7 +56,9 @@ export function NewsletterPage() {
       return <NotFoundState groupId={groupId} />;
     }
     return (
-      <ErrorState
+      <PageErrorState
+        title="Edition"
+        back="/"
         message={error instanceof Error ? error.message : "Couldn't load this edition."}
         onRetry={() => refetch()}
       />
@@ -89,7 +92,7 @@ export function NewsletterPage() {
 
 function LoadingShell() {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Loading…" eyebrow="Edition" back="/" />
       <div className="space-y-3 px-5 pt-6">
         {[0, 1, 2].map((i) => (
@@ -100,27 +103,9 @@ function LoadingShell() {
   );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="bg-cream pb-12">
-      <PageHeader title="Edition" eyebrow="Couldn't load" back="/" />
-      <div className="px-5 pt-8 text-center">
-        <div className="mb-3 text-5xl">😬</div>
-        <p className="font-semibold text-ink">{message}</p>
-        <button
-          onClick={onRetry}
-          className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
-        >
-          Try again
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function NotFoundState({ groupId }: { groupId: string }) {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Edition" eyebrow="Not found" back={`/g/${groupId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🔍</div>
@@ -132,7 +117,7 @@ function NotFoundState({ groupId }: { groupId: string }) {
 
 function ArchivedState({ groupId }: { groupId: string }) {
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader title="Edition" eyebrow="Archived" back={`/g/${groupId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🗄️</div>
@@ -159,12 +144,13 @@ function OpenLayout({
   const { monthLabel, yearLabel } = cycleLabels(data.responseOpenAt, timezone);
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
         title={`${monthLabel} ${yearLabel}`}
         back="/"
         rightSlot={<Pill tone="coral">{shortCountdown(data.responseCloseAt)}</Pill>}
+        phase="open"
       />
 
       <div className="px-5 pt-5">
@@ -280,12 +266,13 @@ function PublishedLayout({
   );
 
   return (
-    <div className="bg-cream pb-12">
+    <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
         title={`${monthLabel} ${yearLabel}`}
         back="/"
         rightSlot={<Pill tone="ink">Published</Pill>}
+        phase="published"
       />
 
       <div className="flex items-center justify-between px-5 pt-5 text-sm text-inkmuted">

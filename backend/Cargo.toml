@@ -5,6 +5,7 @@ members = [
     "crates/persistence",
     "crates/shared",
     "crates/media-delete",
+    "crates/media-urls",
     "crates/lambda-invites",
     "crates/lambda-groups",
     "crates/lambda-newsletters",
@@ -24,10 +25,19 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-aws-sdk-dynamodb = "1"
-aws-sdk-s3 = "1"
-aws-sdk-cloudfront = "1"
-aws-sdk-lambda = "1"
+# The SDK crates' defaults minus `rustls`, which only compiles in the legacy
+# hyper 0.14 / rustls 0.21 client. Every `load_defaults` passes
+# `BehaviorVersion::latest()`, so the client actually used is
+# `default-https-client` (hyper 1 / rustls 0.23); dropping `rustls` keeps the
+# unused, unpatched rustls 0.21 out of the dependency tree (`deny.toml`).
+# S3 also drops `sigv4a`: SigV4a only signs requests to Multi-Region Access
+# Points, which nothing here uses (presigned URLs and object calls are plain
+# SigV4 on regular buckets), and it pulls in crypto-bigint 0.5, whose
+# RUSTSEC-2026-0387 has no fix on the 0.5 line that aws-sigv4 still requires.
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "http-1x"] }
+aws-sdk-lambda = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-secretsmanager = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-config = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

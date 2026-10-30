@@ -29,8 +29,7 @@ Read: [`auth.md` §10](../../docs/design/auth.md#10-identity-provider-setup-desi
 A human operator (the user) completes the out-of-band setup:
 - [ ] Register Google, Facebook OAuth apps with the Cognito redirect URI (need Cognito domain set up first, OR placeholder updated after Milestone 3). No Apple IdP — dropped, see `plans/PROGRESS.md` decisions (M1); Apple Developer membership is $99/yr.
 - [ ] Generate VAPID keys (`scripts/generate_vapid_keys.py`) and store in Secrets Manager.
-- [ ] Generate a CloudFront signing keypair per env, **RSA 2048** (not ECDSA — [`auth.md` §10](../../docs/design/auth.md#10-identity-provider-setup-design-relevant-facts)); store the private half as `cdn_signing_private_key` in `opennewsletter/{env}`, and commit the public half to `infra/keys/cf-signing.pub.pem` (dev) or `infra/keys/cf-signing-prod.pub.pem` (prod).
-- [ ] Configure DNS for the chosen domain (`opennewsletter.example.com`, `cdn.opennewsletter.example.com`, `api.opennewsletter.example.com`). If using Route53, note the hosted zone ID.
+- [ ] Configure DNS for the chosen domain (`opennewsletter.example.com`, `api.opennewsletter.example.com`). If using Route53, note the hosted zone ID.
 
 Subagents cannot execute this milestone — flag for the operator. Subagents proceed using placeholder ARNs for any blocking steps.
 
@@ -64,7 +63,7 @@ Read: [`infrastructure.md`](../../docs/design/infrastructure.md).
 - `infra/opennewsletter/config.py` with `EnvConfig` dataclass and dev/prod loaders.
 - `DataStack` — DynamoDB table + GSIs.
 - `AuthStack` — Cognito user pool + 2 IdPs (Google, Facebook) + app clients + hosted UI domain (use placeholder secret ARNs from M1; refresh once the operator finalizes).
-- `MediaPersistentStack` — S3 buckets + CloudFront + KeyGroup.
+- `MediaPersistentStack` — S3 buckets for media originals and processed output.
 - `MediaPipelineStack` — `lambda-image-process` (the Lambda code can be a stub at this point; replaced in M8) and its S3 event subscription.
 - `FrontendStack` — ACM cert and DNS records.
 - `MonitoringStack` skeleton (alarms wired empty for now).
@@ -83,7 +82,7 @@ Read: [`environments.md`](../../docs/development/environments.md).
 **Deliverables**:
 - `Makefile` targets: `make deploy-dev`, `make seed`, `make redeploy-volatile`, `make reset-all`, `make deploy-lambda LAMBDA=...`, `make fe`.
 - `scripts/seed_dev_data.py` — idempotent + destructive: scans + batch-deletes the DynamoDB table, empties S3 prefixes, writes the small fixture (one group, bootstrap admin as sole member, one `voting` cycle). Does NOT touch Cognito. Prints sign-in credentials. See [`environments.md` §4](../../docs/development/environments.md#4-reset-granularities).
-- `scripts/write_frontend_env.py` — reads `cdk.out/dev-outputs.json`, writes `frontend/.env.dev` with API/CDN/Cognito values per [`environments.md` §7](../../docs/development/environments.md#7-frontend-pointing-at-dev).
+- `scripts/write_frontend_env.py` — reads `cdk.out/dev-outputs.json`, writes `frontend/.env.dev` with API/media/Cognito values per [`environments.md` §7](../../docs/development/environments.md#7-frontend-pointing-at-dev).
 - Dev-environment removal-policy overrides applied across all CDK stacks per [`infrastructure.md` §10.5](../../docs/design/infrastructure.md#105-dev-environment-resource-policy-overrides).
 - `MediaStack` split into `MediaPersistentStack` + `MediaPipelineStack` per [`infrastructure.md` §5](../../docs/design/infrastructure.md#5-mediapersistentstack-and-mediapipelinestack).
 - `POST /admin/dev/tick/{cycle|notify}` admin route stubs in `lambda-cycle-tick` / `lambda-notify-tick` (gated on `ENV=dev`) — full implementations landed in M5 (cycle) and M11 (notify); the routes exist now so manual testing has a fast-forward path.
@@ -99,7 +98,7 @@ Read: [`auth.md`](../../docs/design/auth.md).
 
 **Deliverables**:
 - `lambda-invites` crate compiled to `bootstrap` binary; supports both API routes (`POST /admin/invites`, `POST /invites/redeem`, `POST /admin/invites/{code}/revoke`, `GET /admin/groups/{g}/invites`) and a `PreSignUp` Cognito trigger (pass-through per §3.3).
-- `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
+- `lambda-groups` crate with `GET /me`, `PATCH /me`, `GET /config`, `GET /groups/{g}`, `PATCH /groups/{g}`, member-mgmt routes.
 - **Create `ApiStack`** ([`infrastructure.md` §6](../../docs/design/infrastructure.md#6-apistack) — HTTP API, CORS, JWT authorizer, throttling, access logs; this stack does not exist before M4) and wire both Lambdas' routes into it. The dev-only tick routes stubbed in M3.5 get their API Gateway wiring in M5 when the tick Lambdas land.
 - `scripts/bootstrap_admin.py` per [`auth.md` §9.1](../../docs/design/auth.md#91-scriptsbootstrap_adminpy--dev).
 - The `admin-bootstrap` Cognito app client.
@@ -183,15 +182,12 @@ Read: [`frontend.md`](../../docs/design/frontend.md), [`auth.md`](../../docs/des
 Read: [`media.md`](../../docs/design/media.md).
 
 **Deliverables**:
-- `lambda-media` with all nine routes (`POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{id}`, `POST /uploads/{id}/complete`, `GET /media-cookie`, and the three `/avatars` routes; [`api.md` §9](../../docs/design/api.md#9-media-routes)).
+- `lambda-media` with all eight routes (`POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{id}`, `POST /uploads/{id}/complete`, and the three `/avatars` routes; [`api.md` §9](../../docs/design/api.md#9-media-routes)).
 - `lambda-image-process` real implementation (replacing the M3 stub) — reads originals, generates display + thumb WebP/GIF, writes to processed bucket, marks DDB row ready.
 - `frontend/src/components/responses/ImageUploader.tsx` with the drag-drop, presign, PUT, poll loop.
-- CloudFront signed-cookie issuance integrated end-to-end (frontend `ensureCookie`, sets `credentials: include`).
 - Image-pipeline integration tests per [`media.md` §10](../../docs/design/media.md#10-tests).
 
-**Done when**: I can upload a 5MB JPEG, see thumbnail render in the editor, and reload the page to see the image rendered via CloudFront.
-
-**Also verify CDN CORS at this gate (added 2026-10-11).** CDN images and avatars load with `crossorigin="use-credentials"` ([`frontend.md` §5.2](../../docs/design/frontend.md#52-service-worker--caching-strategy)), so a wrong CloudFront CORS policy breaks every image, not just offline caching. Run the CDN CORS check in [`docs/operations/smoke-test.md` §6](../../docs/operations/smoke-test.md#6-draft-publish-comment-react-dev-on-prod-during-a-real-open-cycle): the right `Access-Control-Allow-*` headers, no CORS console errors, and a `cdn-images` cache entry. Run it again after the first prod deploy (M14).
+**Done when**: I can upload a 5MB JPEG, see thumbnail render in the editor, and reload the page to see the image rendered via a presigned S3 URL.
 
 ---
 
@@ -291,7 +287,7 @@ Read: the "Plan review (2026-10-07)" section of `PROGRESS.md`. Then read each pl
   - promotion and `sort=top` order by votes desc, then oldest first ([`lifecycle.md` §5.2](../../docs/design/lifecycle.md#52-promote_and_opennl), [`api.md` §6.1](../../docs/design/api.md#61-get-groupsgroupidcandidate-questions))
 - **Settings apply now (D10)**: `PATCH /groups/{g}` reschedules the current `voting` cycle regardless of candidates, and moves an `open` cycle's close when it's still in the future, else 422 ([`lifecycle.md` §6](../../docs/design/lifecycle.md#6-settings-changes-mid-cycle)). Update the admin Settings copy.
 - **Real media deletion (D8)**:
-  - Backend: a shared delete helper (S3 objects + CloudFront invalidation + row) used by `DELETE /uploads`, comment image release, and avatar delete/replace ([`api.md` §9.4](../../docs/design/api.md#94-delete-uploadsimageid)/§9.7, [`media.md` §8](../../docs/design/media.md#8-cleanup-paths)).
+  - Backend: a shared delete helper (S3 objects, then row) used by `DELETE /uploads`, comment image release, and avatar delete/replace ([`api.md` §9.4](../../docs/design/api.md#94-delete-uploadsimageid)/§9.7, [`media.md` §8](../../docs/design/media.md#8-cleanup-paths)).
   - Infra:
     - IAM for the media, engagement and groups Lambdas
     - no bucket versioning

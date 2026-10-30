@@ -470,21 +470,6 @@ function handleGetDetail(groupId: string, cycleId: string): S["NewsletterDetailR
   fail(410, "ARCHIVED", `cycle ${cycleId} has been archived`);
 }
 
-function handleGetMyResponses(groupId: string, cycleId: string): S["MyResponsesList"] {
-  if (!newsletters[groupId]) fail(403, "FORBIDDEN", `not a member of ${groupId}`);
-  if (!findSummary(groupId, cycleId)) fail(404, "NOT_FOUND", `cycle ${cycleId} not found`);
-  const items = (OPEN_QUESTIONS[groupId] ?? [])
-    .map((seed) => responses.get(responseKey(groupId, cycleId, seed.questionId)))
-    .filter((dto): dto is ResponseDto => !!dto);
-  return { items };
-}
-
-function handleGetMyResponse(groupId: string, cycleId: string, questionId: string): ResponseDto {
-  const dto = responses.get(responseKey(groupId, cycleId, questionId));
-  if (!dto) fail(404, "NOT_FOUND", `no response for question ${questionId}`);
-  return dto;
-}
-
 function adjustSummaryCounts(
   groupId: string,
   cycleId: string,
@@ -553,7 +538,7 @@ function handlePutMyResponse(
   return dto;
 }
 
-/** Mock routes for newsletter detail and `my-response(s)`. */
+/** Mock routes for newsletter detail and saving the caller's `my-response`. */
 export function mockNewsletterRoute(request: MockRequest): unknown {
   const { method, segments, body } = request;
   if (segments[0] !== "groups" || segments[2] !== "newsletters") return NO_MOCK_ROUTE;
@@ -564,13 +549,13 @@ export function mockNewsletterRoute(request: MockRequest): unknown {
   if (method === "GET" && segments.length === 4) {
     return handleGetDetail(groupId, cycleId);
   }
-  if (method === "GET" && segments.length === 5 && segments[4] === "my-responses") {
-    return handleGetMyResponses(groupId, cycleId);
-  }
-  if (segments.length === 7 && segments[4] === "questions" && segments[6] === "my-response") {
-    const questionId = decodeURIComponent(segments[5]!);
-    if (method === "GET") return handleGetMyResponse(groupId, cycleId, questionId);
-    if (method === "PUT") return handlePutMyResponse(groupId, cycleId, questionId, body);
+  if (
+    method === "PUT" &&
+    segments.length === 7 &&
+    segments[4] === "questions" &&
+    segments[6] === "my-response"
+  ) {
+    return handlePutMyResponse(groupId, cycleId, decodeURIComponent(segments[5]!), body);
   }
 
   return NO_MOCK_ROUTE;

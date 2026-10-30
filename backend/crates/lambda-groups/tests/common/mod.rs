@@ -4,35 +4,29 @@
 use aws_sdk_dynamodb::types::AttributeValue;
 use domain::{GroupMembership, Role};
 use groups::state::AppState;
-use media_delete::fakes::{fake_deleter, RecordingInvalidator, RecordingObjectStore};
+use media_delete::fakes::{fake_deleter, RecordingObjectStore};
 use persistence::keys::{attr, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk};
 use persistence::{groups as group_repo, test_factories, users, Repo};
 use std::sync::Arc;
 
 pub const AVATARS_ORIGINALS: &str = "test-avatars-originals";
-pub const AVATARS_PROCESSED: &str = "test-avatars-processed";
+pub const PROCESSED: &str = "test-processed";
 
 pub fn state(repo: Repo) -> AppState {
     state_with_fakes(repo).0
 }
 
-/// An `AppState` whose avatar deleter records into the returned fakes.
-pub fn state_with_fakes(
-    repo: Repo,
-) -> (
-    AppState,
-    Arc<RecordingObjectStore>,
-    Arc<RecordingInvalidator>,
-) {
-    let (avatar_deleter, store, cdn) = fake_deleter(AVATARS_ORIGINALS, AVATARS_PROCESSED);
+/// An `AppState` whose avatar deleter records into the returned fake.
+pub fn state_with_fakes(repo: Repo) -> (AppState, Arc<RecordingObjectStore>) {
+    let (avatar_deleter, store) = fake_deleter(AVATARS_ORIGINALS, PROCESSED);
     let state = AppState {
         repo,
         group_defaults: serde_json::json!({}),
         vapid_public_key: String::new(),
-        cdn_base_url: String::new(),
+        media_urls: media_urls::MediaUrls::for_tests(PROCESSED),
         avatar_deleter,
     };
-    (state, store, cdn)
+    (state, store)
 }
 
 /// A group whose members are `(user_id, role)`, each with a profile row.

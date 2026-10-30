@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  cycleLabels,
-  countdownTo,
-  formatDate,
-  formatInZone,
-  formatRelative,
-  shortCountdown,
-} from "./dates";
+import { cycleLabels, countdownTo, formatInZone, formatRelative, shortCountdown } from "./dates";
 
 // A UTC instant chosen so the local calendar date — and even the month/year
 // — differs by timezone (`docs/design/frontend.md` §14a: every date on a
@@ -41,16 +34,6 @@ describe("formatInZone", () => {
     expect(
       formatInZone(NEW_YEAR_EVE_UTC, "America/New_York", { month: "short", day: "numeric" }),
     ).toBe("Dec 31");
-  });
-});
-
-describe("formatDate", () => {
-  it("formats with the default 'MMM d' pattern", () => {
-    expect(formatDate("2026-06-15T12:00:00Z")).toBe("Jun 15");
-  });
-
-  it("accepts a custom date-fns format string", () => {
-    expect(formatDate("2026-06-15T12:00:00Z", "yyyy-MM-dd")).toBe("2026-06-15");
   });
 });
 

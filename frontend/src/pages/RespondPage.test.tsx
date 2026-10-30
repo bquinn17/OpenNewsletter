@@ -17,7 +17,6 @@ vi.mock("../utils/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/media")>();
   return {
     ...actual,
-    ensureCookie: vi.fn().mockResolvedValue(undefined),
     sha256Base64: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -204,8 +203,8 @@ describe("RespondPage", () => {
       purpose: "response",
       mimeType: "image/jpeg",
       caption: null,
-      thumbUrl: "https://cdn.example/img1-thumb.webp",
-      displayUrl: "https://cdn.example/img1.webp",
+      thumbUrl: "https://media.example/img1-thumb.webp",
+      displayUrl: "https://media.example/img1.webp",
       width: 100,
       height: 100,
       errorMessage: null,
@@ -285,8 +284,8 @@ describe("RespondPage", () => {
       width: 800,
       height: 600,
       caption: null,
-      displayUrl: "https://cdn.test.invalid/img1/display.webp",
-      thumbUrl: "https://cdn.test.invalid/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img1/thumb.webp",
       errorMessage: null,
       uploadedAt: "2026-06-01T00:00:00Z",
       processedAt: "2026-06-01T00:00:01Z",
@@ -386,8 +385,8 @@ describe("RespondPage", () => {
       purpose: "response",
       mimeType: "image/jpeg",
       caption: null,
-      thumbUrl: "https://cdn.example/img1-thumb.webp",
-      displayUrl: "https://cdn.example/img1.webp",
+      thumbUrl: "https://media.example/img1-thumb.webp",
+      displayUrl: "https://media.example/img1.webp",
       width: 100,
       height: 100,
       errorMessage: null,

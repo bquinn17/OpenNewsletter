@@ -1,7 +1,9 @@
 type CspEnvVars = {
-  cdnBaseUrl?: string;
+  mediaBaseUrl?: string;
   apiBaseUrl?: string;
   cognitoHostedDomain?: string;
+  /** Space-separated list of upload origins (`VITE_UPLOAD_ORIGINS`) — the two originals buckets. */
+  uploadOrigins?: string;
 };
 
 /** The origin of `url`, or `null` when it's unset, empty or unparseable. */
@@ -14,11 +16,19 @@ function originOf(url: string | undefined): string | null {
   }
 }
 
+/** Each whitespace-separated URL in `value`, reduced to its origin; invalid/empty entries dropped. */
+function originsOf(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/\s+/)
+    .map((url) => originOf(url))
+    .filter((origin): origin is string => origin !== null);
+}
+
 /**
  * Builds the `Content-Security-Policy` directive string for `index.html`
- * (`docs/design/frontend.md` §12.1). A pure function of the three
- * origin-bearing env vars so it's unit-testable without spinning up Vite —
- * `cspPlugin` below is the only caller in the real build.
+ * (`docs/design/frontend.md` §12.1). A pure function of the env vars so it's unit-testable without
+ * spinning up Vite — `cspPlugin` below is the only caller in the real build.
  *
  * `worker-src`/`manifest-src` aren't in the `docs/design/frontend.md` §12.1 policy text; added
  * here because the service worker and PWA manifest need them and a `meta`
@@ -26,9 +36,10 @@ function originOf(url: string | undefined): string | null {
  * being explicit documents the requirement.
  */
 export function buildCspPolicy(vars: CspEnvVars): string {
-  const cdnOrigin = originOf(vars.cdnBaseUrl);
+  const mediaOrigin = originOf(vars.mediaBaseUrl);
   const apiOrigin = originOf(vars.apiBaseUrl);
   const hostedOrigin = vars.cognitoHostedDomain ? `https://${vars.cognitoHostedDomain}` : null;
+  const uploadOrigins = originsOf(vars.uploadOrigins);
 
   const directives: Array<[string, Array<string | null>]> = [
     ["default-src", ["'self'"]],
@@ -36,10 +47,16 @@ export function buildCspPolicy(vars: CspEnvVars): string {
     // Google Fonts: `index.html` links the stylesheet, which pulls the font
     // files from gstatic (decided M13, `docs/design/frontend.md` §12.1).
     ["style-src", ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"]],
-    ["img-src", ["'self'", "data:", "blob:", cdnOrigin]],
+    ["img-src", ["'self'", "data:", "blob:", mediaOrigin]],
     [
       "connect-src",
-      ["'self'", apiOrigin, cdnOrigin, "https://cognito-idp.us-east-1.amazonaws.com", hostedOrigin],
+      [
+        "'self'",
+        apiOrigin,
+        ...uploadOrigins,
+        "https://cognito-idp.us-east-1.amazonaws.com",
+        hostedOrigin,
+      ],
     ],
     ["font-src", ["'self'", "https://fonts.gstatic.com"]],
     ["base-uri", ["'self'"]],
@@ -51,6 +68,20 @@ export function buildCspPolicy(vars: CspEnvVars): string {
   return directives
     .map(([name, values]) => `${name} ${values.filter((v): v is string => !!v).join(" ")}`)
     .join("; ");
+}
+
+/**
+ * The CSP inputs a prod build can't ship without, by variable name, when unset or unparseable:
+ * with no media origin `img-src` blocks every image, and with no upload origin `connect-src`
+ * blocks every upload. Only the build reads them (plus the service worker's media routes), so
+ * `cspPlugin` checks them at build time rather than the app at startup (`docs/design/frontend.md`
+ * §13).
+ */
+export function missingProdCspVars(vars: CspEnvVars): string[] {
+  const missing: string[] = [];
+  if (!originOf(vars.mediaBaseUrl)) missing.push("VITE_MEDIA_BASE_URL");
+  if (originsOf(vars.uploadOrigins).length === 0) missing.push("VITE_UPLOAD_ORIGINS");
+  return missing;
 }
 
 /**

@@ -177,9 +177,8 @@ def test_dashboard_body_references_the_table_and_apis(
     body = str(dashboard["Properties"]["DashboardBody"])
     assert "OpenNewsletter-dev" in body  # table name
     assert "AWS/ApiGateway" in body
-    assert "AWS/CloudFront" in body
+    assert "AWS/S3" in body
     assert "{{resolve:ssm:/opennewsletter/dev/http-api-id}}" in body
-    assert "{{resolve:ssm:/opennewsletter/dev/cloudfront-distribution-id}}" in body
 
 
 @pytest.mark.parametrize("env", ["dev", "prod"])

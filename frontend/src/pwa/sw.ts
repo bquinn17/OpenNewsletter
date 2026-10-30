@@ -2,7 +2,7 @@
 // Custom service worker, injected into Workbox's precache manifest via
 // `vite-plugin-pwa`'s `injectManifest` strategy (`docs/design/frontend.md`
 // §14.2). Handles: prompt activation of a new deploy (D6), precaching the
-// build, `CacheFirst` for CDN images only, and Web Push
+// build, `CacheFirst` for media images only, and Web Push
 // `push`/`notificationclick` (`docs/design/notifications.md` §5, M11 D11).
 //
 // Deliberately does NOT runtime-cache any API response (M11 D11 deviation
@@ -11,13 +11,14 @@
 import { precacheAndRoute } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
 import { CacheFirst } from "workbox-strategies";
+import { CacheableResponsePlugin } from "workbox-cacheable-response";
 import { ExpirationPlugin } from "workbox-expiration";
 import {
   activatePromptly,
   buildNotificationOptions,
+  mediaCacheKey,
   parsePushPayload,
   resolveNotificationUrl,
-  stripMediaAuthParams,
 } from "./swHelpers";
 
 declare let self: ServiceWorkerGlobalScope & {
@@ -35,32 +36,48 @@ activatePromptly(self);
 
 precacheAndRoute(self.__WB_MANIFEST);
 
-/** The CDN's own origin, or `null` if the build-time env var is missing/malformed. */
-const CDN_ORIGIN: string | null = (() => {
+/** The media bucket's own origin, or `null` if the build-time env var is missing/malformed. */
+const MEDIA_ORIGIN: string | null = (() => {
   try {
-    return new URL(import.meta.env.VITE_CDN_BASE_URL).origin;
+    return new URL(import.meta.env.VITE_MEDIA_BASE_URL).origin;
   } catch {
     return null;
   }
 })();
 
-// CDN images only (`/img/*`, `/avatar/*`) — the signed-cookie URL is the same
-// path for every viewer, so caching is effective (`docs/design/frontend.md` §5.2). `CdnImage` and
-// `Avatar` load these in CORS mode, so responses aren't opaque and `CacheFirst`'s
-// default stores only status 200s: a 403 from a stale cookie is never pinned.
-// Keys drop dev's rotating signed-URL params, or dev would never get a hit.
-registerRoute(
-  ({ url }) =>
-    CDN_ORIGIN !== null &&
-    url.origin === CDN_ORIGIN &&
-    (url.pathname.startsWith("/img/") || url.pathname.startsWith("/avatar/")),
-  new CacheFirst({
-    cacheName: "cdn-images",
+const DAY_SECONDS = 24 * 60 * 60;
+
+// Processed media only (`/img/*`, `/avatar/*`) — a presigned S3 GET URL has the same path
+// regardless of its re-signed query string, so caching by path is effective (`docs/design/media.md`
+// §4.4). `MediaImage` and `Avatar` load these in CORS mode (`crossorigin="anonymous"`), so
+// responses aren't opaque and `CacheableResponsePlugin` stores only status 200s: an expired
+// presigned URL's 403 is never pinned. Keys drop the whole query string, or a fresh signature for
+// the same object would never hit.
+function mediaCacheFirst(cacheName: string, maxAgeSeconds: number): CacheFirst {
+  return new CacheFirst({
+    cacheName,
     plugins: [
-      { cacheKeyWillBeUsed: async ({ request }) => stripMediaAuthParams(request.url) },
-      new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+      { cacheKeyWillBeUsed: async ({ request }) => mediaCacheKey(request.url) },
+      new CacheableResponsePlugin({ statuses: [200] }),
+      new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds }),
     ],
-  }),
+  });
+}
+
+function isMediaPath(url: URL, prefix: "/img/" | "/avatar/"): boolean {
+  return MEDIA_ORIGIN !== null && url.origin === MEDIA_ORIGIN && url.pathname.startsWith(prefix);
+}
+
+registerRoute(
+  ({ url }) => isMediaPath(url, "/img/"),
+  mediaCacheFirst("media-images", 30 * DAY_SECONDS),
+);
+// Longer for avatars (`docs/design/media.md` §11.3): a new avatar gets a new `avatarId`, so a new
+// path, and a cached path's bytes never change. Mirrors `AVATAR_CACHE_MAX_AGE_SECONDS` in
+// `backend/crates/shared/src/config.rs`.
+registerRoute(
+  ({ url }) => isMediaPath(url, "/avatar/"),
+  mediaCacheFirst("media-avatars", 90 * DAY_SECONDS),
 );
 
 self.addEventListener("push", (event: PushEvent) => {

@@ -108,16 +108,6 @@ describe("mockFetch", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("returns dummy signed-cookie values for the caller's group", async () => {
-      const cookie = (await mockFetch(
-        "GET",
-        "/media-cookie?groupId=g1",
-      )) as components["schemas"]["MediaCookieResponse"];
-      expect(cookie.policy).toBeTruthy();
-      expect(cookie.signature).toBeTruthy();
-      expect(cookie.keyPairId).toBeTruthy();
-    });
-
     it("creates a pending avatar and flips to ready after a couple of polls, then really deletes it", async () => {
       const created = (await mockFetch("POST", "/avatars", {
         mimeType: "image/png",

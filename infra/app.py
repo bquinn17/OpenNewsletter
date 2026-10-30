@@ -24,7 +24,7 @@ app = cdk.App()
 env_name: str = app.node.try_get_context("env") or "dev"
 config = load_config(env_name)
 
-# All stacks target us-east-1 (ACM certs for CloudFront + API must be in us-east-1).
+# All stacks target us-east-1, so the ACM cert sits in the API's region.
 aws_env = cdk.Environment(region="us-east-1")
 
 suffix = f"-{env_name}"
@@ -43,7 +43,6 @@ media_persistent_stack = MediaPersistentStack(
     f"MediaPersistentStack{suffix}",
     config=config,
     table=data_stack.table,
-    certificate=frontend_stack.certificate,
     env=aws_env,
 )
 
@@ -55,7 +54,6 @@ media_pipeline_stack = MediaPipelineStack(
     originals_bucket=media_persistent_stack.originals_bucket,
     processed_bucket=media_persistent_stack.processed_bucket,
     avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
-    avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
     env=aws_env,
 )
 
@@ -81,21 +79,16 @@ api_stack = ApiStack(
     media_originals_bucket=media_persistent_stack.originals_bucket,
     media_processed_bucket=media_persistent_stack.processed_bucket,
     avatars_originals_bucket=media_persistent_stack.avatars_originals_bucket,
-    avatars_processed_bucket=media_persistent_stack.avatars_processed_bucket,
-    cdn_domain=media_persistent_stack.distribution.distribution_domain_name,
-    cdn_key_pair_id=media_persistent_stack.cdn_key_pair_id,
-    cdn_distribution_id=media_persistent_stack.distribution_id,
     env=aws_env,
 )
 
 monitoring_stack = MonitoringStack(
     app, f"MonitoringStack{suffix}", config=config, env=aws_env
 )
-# Deploy order only, no export: MonitoringStack resolves the SSM parameters
-# these two stacks write (`ssm_refs.py`), so on a fresh `--all` deploy they
-# must exist first.
+# Deploy order only, no export: MonitoringStack resolves the SSM parameter
+# ApiStack writes (`ssm_refs.py`), so on a fresh `--all` deploy it must exist
+# first.
 monitoring_stack.add_dependency(api_stack)
-monitoring_stack.add_dependency(media_persistent_stack)
 
 # Account-wide, not suffixed by env — deploying under either env context
 # manages the same CloudFormation stack (see ci_stack.py).

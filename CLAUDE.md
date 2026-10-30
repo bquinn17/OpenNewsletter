@@ -74,7 +74,7 @@ Frontend: React 18 + TS + Vite + Tailwind, GitHub Pages.
 Auth: Cognito User Pool, hosted UI, Google/Facebook IdPs. (Apple dropped — see [`docs/decisions.md`](docs/decisions.md#apple-idp-dropped); Apple Developer membership is $99/yr.)
 API: API Gateway HTTP API + Cognito JWT authorizer → Rust Lambdas (`provided.al2023`, `cargo-lambda`).
 Data: DynamoDB on-demand single table.
-Media: S3 + CloudFront with signed cookies.
+Media: private S3; API responses carry short-lived presigned GET URLs (see [`docs/decisions.md`](docs/decisions.md#presigned-s3-media)).
 Notifications: Web Push (VAPID) directly from Lambda.
 Scheduling: EventBridge (cycle tick + notify tick).
 IaC: AWS CDK in Python.

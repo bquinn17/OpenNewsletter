@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import clsx from "clsx";
 import { api } from "../../api/client";
 import type { components } from "../../types/api";
 import { MarkdownBody } from "../../utils/markdown";
@@ -74,15 +75,21 @@ export function ResponseEditor({
       altText: i.caption ?? "",
       thumbUrl: i.thumbUrl,
       displayUrl: i.displayUrl,
+      width: i.width,
+      height: i.height,
     })),
   );
 
   const wordCount = body.trim() ? body.trim().split(/\s+/).length : 0;
 
+  // The uploader's `onChange` reads its URLs from each image's `uploadQuery` entry, so a URL
+  // refresh reaches the preview too (`docs/design/media.md` §4.4).
   const previewImages = liveImages.map((i) => ({
     imageId: i.imageId,
     displayUrl: i.displayUrl,
     thumbUrl: i.thumbUrl,
+    width: i.width,
+    height: i.height,
   }));
 
   function handleUploaderChange(images: UploaderImage[]) {
@@ -129,9 +136,10 @@ export function ResponseEditor({
           <button
             type="button"
             onClick={() => setPreview((p) => !p)}
-            className={`rounded-md px-2 py-1 text-xs font-medium ${
-              preview ? "bg-ink text-cream" : "hover:bg-cream"
-            }`}
+            className={clsx(
+              "rounded-md px-2 py-1 text-xs font-medium",
+              preview ? "bg-ink text-cream" : "hover:bg-cream",
+            )}
           >
             {preview ? "Edit" : "Preview"}
           </button>
@@ -139,7 +147,7 @@ export function ResponseEditor({
         {preview ? (
           <div className="min-h-[200px] px-4 py-4">
             {body.trim() ? (
-              <MarkdownBody body={body} images={previewImages} groupId={groupId} />
+              <MarkdownBody body={body} images={previewImages} />
             ) : (
               <p className="italic text-inkmuted">Nothing to preview yet.</p>
             )}

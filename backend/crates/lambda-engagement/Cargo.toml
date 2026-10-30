@@ -17,6 +17,7 @@ domain = { path = "../domain" }
 persistence = { path = "../persistence" }
 shared = { path = "../shared" }
 media-delete = { path = "../media-delete" }
+media-urls = { path = "../media-urls" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 chrono.workspace = true
@@ -29,6 +30,7 @@ tracing.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 persistence = { path = "../persistence", features = ["test-utils"] }
+media-urls = { path = "../media-urls", features = ["test-utils"] }
 testcontainers.workspace = true
 testcontainers-modules.workspace = true
 serde_dynamo.workspace = true

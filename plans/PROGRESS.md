@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-12: M0–M13.5 code-complete plus the design-review fixes, nothing deployed, M14 next. This file is read at the start of every session, so it holds only the current state. How the system works is documented in [`docs/`](../docs/README.md). Milestone definitions and gates are in [`build-order.md`](build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
+Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes and presigned-S3 media serving (with its code-review fixes). Dev is deployed (2026-10-18), but runs that day's build, so it's behind `main`. Of the deploy-shaped gates, M3's deploy and M7 are confirmed. M14 next. This file is read at the start of every session, so it holds only the current state. How the system works is documented in [`docs/`](../docs/README.md). Milestone definitions and gates are in [`build-order.md`](build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
 
 ---
 
@@ -11,12 +11,13 @@ Snapshot as of 2026-10-12: M0–M13.5 code-complete plus the design-review fixes
 | M0 | Repo skeleton | ✅ done |
 | M1 | Operator prerequisites | 🟡 partial — see B5 |
 | M2 | Domain + persistence | ✅ done |
-| M3–M13 | Infra → Hardening | 🟡 code-complete; every deploy-shaped gate ([`build-order.md`](build-order.md)) waits on a dev deploy (B5) |
+| M3–M13 | Infra → Hardening | 🟡 code-complete; dev deployed. Confirmed against dev: M3 (deploy), M7. Every other deploy-shaped gate ([`build-order.md`](build-order.md)) is still to run |
 | M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
 | — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
+| — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-13):** backend 507 (`cargo test --workspace`, last full green run), CDK 159 (`pytest infra/tests`), Vitest 334, Playwright 8 (mock project). fmt, clippy `-D warnings`, `cargo deny`, ruff, `mypy --strict`, typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint` and `cdk synth` (dev + prod) are clean.
+**Test baselines (2026-10-26):** backend 496 (`cargo test --workspace`), CDK 153 (`pytest infra/tests`), Vitest 366, Playwright 8 (mock project). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 
@@ -24,26 +25,21 @@ Snapshot as of 2026-10-12: M0–M13.5 code-complete plus the design-review fixes
 
 ### B5 — M1 operator tasks outstanding
 
-Done: domain `betterloop.site` (Namecheap DNS, no Route53 zone, so ACM validation CNAMEs are added at Namecheap by hand); Cognito domain prefix; `aws login` as IAM user `bquinn17` (not root); `cdk bootstrap`; VAPID keys; a separate RSA-2048 CloudFront pair per env (public halves committed in `infra/keys/`); the combined `opennewsletter/dev` secret (all 8 keys); `ALARM_EMAIL`.
+Done: domain `betterloop.site` (Namecheap DNS, no Route53 zone, so ACM validation CNAMEs are added at Namecheap by hand); Cognito domain prefix; `aws login` as IAM user `bquinn17` (not root); `cdk bootstrap`; VAPID keys; the combined `opennewsletter/dev` secret, whose Google credentials a real sign-in has proven; `ALARM_EMAIL`. The old per-credential dev secrets are deleted.
 
 Still open:
-- **Confirm the OAuth secrets hold real client IDs and secrets**, and that both IdP apps list the redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
-- **Fill in `opennewsletter/prod`.** It holds only `cdn_signing_private_key`; *merge* the OAuth and VAPID keys into it (M14).
-- **The four old dev secrets are scheduled for deletion on 2026-10-18.** Deploy dev before then. If the new secret misbehaves, `aws secretsmanager restore-secret --secret-id <name>`.
+- **Confirm Facebook sign-in** against dev: the app ID/secret in `opennewsletter/dev` and the redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse` on the Facebook app. M13.5's Facebook `email_verified` check needs it anyway.
+- **Fill in `opennewsletter/prod`** with the OAuth and VAPID keys: write the full key set with `aws secretsmanager put-secret-value` (M14, [`runbook.md`](../docs/operations/runbook.md)).
 - **`.env.local` overrides environment variables for prod too** (`load_config`), so a workstation prod synth/deploy would pick up the dev `APP_SECRET_ARN`. Make it dev-only or override it before a local prod bring-up (swap `APP_SECRET_ARN`/`ROOT_DOMAIN`/`API_DOMAIN` with the `PROD_*`-prefixed lines next to them, then swap back). CI has no `.env.local`.
 - `aws login` sessions expire. Check `aws sts get-caller-identity` before deploying.
 
-**Decision (2026-10-13) — dev gets its own subdomain (`dev.betterloop.site`/`api.dev.betterloop.site`), not prod's apex.** `config.py` has no local dev/prod split for `ROOT_DOMAIN`/`API_DOMAIN`, and `MediaPersistentStack`'s CloudFront alias isn't gated on env the way `ApiStack`'s custom domain is — so the first local dev deploy claimed `cdn.betterloop.site`/`api.betterloop.site`, which would have collided with prod's later deploy of the same alias (one enabled distribution per alias, account-wide). Fixed in `.env.local`; full writeup in [`docs/development/environments.md` §2](../docs/development/environments.md#2-environments). `MediaPersistentStack`'s missing dev-gate itself is unfixed (not needed now, worth closing later for consistency).
+**Decision (2026-10-13) — dev gets its own subdomain (`dev.betterloop.site`/`api.dev.betterloop.site`), not prod's apex.** `config.py` has no local dev/prod split for `ROOT_DOMAIN`/`API_DOMAIN`, and the ACM cert covers both names in every env, so dev pointed at the apex would put prod's hostnames on the dev cert. Set in `.env.local`; full writeup in [`docs/development/environments.md` §2](../docs/development/environments.md#2-environments).
 
-These block every deploy gate (M3–M14), not code work.
-
-### B7 — AWS account not yet verified for CloudFront
-
-First `MediaPersistentStack-dev` deploy (2026-10-12) failed: `AWS::CloudFront::Distribution` returned `AccessDenied` — "Your account must be verified before you can add new CloudFront resources." New-account anti-abuse gate, unrelated to billing/free-tier (CloudFront costs are negligible at this project's scale either way — see `docs/design/media.md` §6.1's own cost comparison). Rollback was clean (all resources `DELETE_COMPLETE`, nothing orphaned). Support case filed 2026-10-13 requesting account verification; typically resolved within hours. Once cleared, re-run `make deploy-dev` — `CiStack`, `AuthStack-dev`, `DataStack-dev`, `FrontendStack-dev`, `NotificationsStack-dev` are already up; only `MediaPersistentStack-dev`, `MediaPipelineStack-dev`, `ApiStack-dev` and `MonitoringStack-dev` remain.
+These block M14 (and the Facebook checks), not code work or the other dev gates.
 
 ### B6 — Lambda release builds
 
-- **macOS:** all 12 artifacts in `backend/target/lambda/` were built 2026-10-11/12, but they predate the last M13.5 fixes and the design review. Run `make build-lambdas` right before any deploy (`make deploy-dev` does). `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing; `deploy.yml` guards against that with `scripts/check_lambda_binaries.sh`.
+- **macOS:** builds fine; `make deploy-dev` rebuilds every artifact. A manual `cdk deploy` needs `make build-lambdas` first: `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing (`make deploy-dev` and `deploy.yml` both run `scripts/check_lambda_binaries.sh` to catch that).
 - **Windows/WSL2:** release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain. Debug builds and tests are unaffected.
 - `backend-ci`'s first run is also the first Linux build of `image-process` (`libwebp-sys`).
 
@@ -51,23 +47,21 @@ First `MediaPersistentStack-dev` deploy (2026-10-12) failed: `AWS::CloudFront::D
 
 ## Next steps (in order)
 
-1. **Operator:** clear B5's open items; set `BOOTSTRAP_ADMIN_EMAIL`; configure GitHub per `.github/workflows/README.md`:
-   - repo variables `DEPLOY_ENABLED`, `DEV_APP_SECRET_ARN`, `APP_SECRET_ARN`, `BOOTSTRAP_ADMIN_EMAIL`, `FRONTEND_DOMAIN` (and optionally the `DEV_*` domain variables)
-   - the `production` environment with a required reviewer **and a `main`-only deployment-branch rule** (its OIDC subject carries no branch)
-   - delete the old `*_SECRET_ARN`, `FRONTEND_DEPLOY_ENABLED`/`BACKEND_DEPLOY_ENABLED` variables and the `VITE_COGNITO_BOOTSTRAP_CLIENT_ID` secret
-2. **Deploy dev before 2026-10-18:** `make deploy-dev && make seed && make fe` ([`runbook.md`](../docs/operations/runbook.md)).
-3. **Run every pending gate in [`build-order.md`](build-order.md)**, M3 through M13.5, against dev. Push a branch so the CI workflows run for real.
-4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, merge the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
+1. **Redeploy dev:** `make deploy-dev`. Dev's stacks were last deployed 2026-10-19 02:03 UTC, before `d2ef568` changed the backend, `ApiStack`'s routes and `MediaPipelineStack`'s IAM.
+2. **Operator, GitHub** ([`.github/workflows/README.md`](../.github/workflows/README.md)). Done: the repo variables, both `AWS_*_ROLE_ARN`s, the `production` environment with a required reviewer and a `main`-only branch rule, and the old variables are gone. Still to do:
+   - add the seven prod `VITE_*` secrets. None exist yet, and `promote-prod` stops before the frontend build without them ([`operator-setup.md` §6](../docs/operations/operator-setup.md#6-frontend-media-origins) has the two media ones).
+   - `production` holds `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` as environment *secrets*. `deploy.yml` reads both as repo variables (`vars.*`), so they're unused, and the `DEV_` one doesn't belong in prod. Delete them unless they're meant for something.
+   - set `DEPLOY_ENABLED=true` once CI is green.
+3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Push a branch so the CI workflows run for real. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
+4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
 
 Workstation setup for either machine: [`environments.md` §0](../docs/development/environments.md#0-workstation-setup).
 
 ### Open owner questions (design review, 2026-10-08)
 
-Not changed in code; each needs the owner's call before or soon after M14.
+Not changed in code; each needs the owner's call before or soon after M14. (2 and 4 are settled; the numbers are kept so references stay valid. Originals are deleted once processed: [`decisions.md`](../docs/decisions.md#originals-deleted-on-success).)
 1. **Merge the 8 API Lambdas into one?** Fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and one build artifact, against a broader IAM role (every function already has table read/write).
-2. **Keep originals after processing?** They're the storage that keeps growing and they retain EXIF/GPS. Options: delete on success, or expire after N days, unless reprocessing at new sizes is wanted ([`infrastructure.md` §12](../docs/design/infrastructure.md#12-cost-expectations)).
 3. **Cap cost exposure.** Any Google/Facebook user can get a JWT. Reserved concurrency on the API function (easiest after 1) and/or lower per-route throttles.
-4. **Omit `policy`/`signature` from the prod `/media-cookie` body.** The HttpOnly cookie is moot while the body carries them; a contract change, so expand → contract.
 5. **Raise the Lambda account concurrency quota.** It's 50, shared by dev and prod: fine for launch, too low before inviting many groups.
 
 ---
@@ -88,6 +82,10 @@ Product and UX:
 - PWA icons are generated placeholders (`frontend/scripts/generate-icons.mjs`).
 - Fonts come from Google Fonts, so they aren't available offline and the CSP allows two Google origins ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)).
 
+Frontend:
+- `apiFetch` treats every 401 as an expired token: it renews the session and retries once. The server also returns 401 `UNAUTHENTICATED` for a valid token whose caller hasn't redeemed an invite (`require_user_id`), so those calls cost a pointless refresh-token round trip and log two 401s. Settings avoids it by enabling `useMe` only once `/config` has a `userId` ([`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage)); any other user-scoped call made before an invite is redeemed still hits it. Fix by giving that case its own status or code, or by renewing only when the ID token has actually expired.
+- `ResponseEditor`'s preview refreshes an expired image URL itself (`refreshPreviewImage`), duplicating the always-mounted `ImageUploader`'s own `refreshImage` for the same thumb. One expired thumb costs two `GET /uploads/{id}`, and the uploader's next `onChange` overwrites whatever the preview fetched. The fix is for `ImageUploader` to expose its refresh to the parent, which changes its props. Do it when the editor is next touched.
+
 Backend and ops:
 - The D10 open-cycle close move is best-effort: it runs after the group update, and a write error is logged rather than returned. The 422 check runs before any write.
 - A crash mid-fan-out loses the rest of that fan-out (markers are claimed first, at-most-once, [`notifications.md` §7.1](../docs/design/notifications.md#71-algorithm)).
@@ -95,9 +93,10 @@ Backend and ops:
 - `lambda-cycle-tick` needs `#![recursion_limit = "256"]`. If it creeps up, box the dispatch futures.
 - The account-level Lambda error alarm also counts dev's errors (one account, [`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
 - `CiStack` deploys with every `--all`, including `make deploy-dev`. It's account-wide and idempotent.
-- `rsa` timing advisory (RUSTSEC-2023-0071) is mitigated by blinded signing, not fixed; five more `cargo deny` advisory ignores have no upstream fix (three `rustls-webpki` 0.101 via the AWS SDK's legacy rustls, two test-only). Re-check after AWS SDK bumps.
+- `cargo deny` still ignores one advisory with no upstream fix (`tokio-tar`, test-only via testcontainers) and three unmaintained-crate notices (`rustls-pemfile`, `paste`, `unsafe-libyaml`). Re-check after dependency bumps.
 
 Testing:
+- `make seed` resets the bootstrap admin's password to a new random one on every run, so `E2E_USERNAME`/`E2E_PASSWORD` for the `dev` E2E project can't be the seeded admin. Use a separate Cognito user, or seed with `--admin-password` taken from the same secret.
 - Mock-mode E2E can't cover reload-persistence of saved drafts (the mock transport is in-memory); that's a `dev`-project test.
 - The comment composer's image upload and the `[deleted]` placeholder are only exercised in mock mode and component tests until the M10 gate runs.
 

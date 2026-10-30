@@ -1,6 +1,13 @@
 import type { components } from "../types/api";
-import { ApiError } from "./client";
-import { CALLER_ID, fail, newsletters, NO_MOCK_ROUTE, type MockRequest } from "./mockShared";
+import {
+  CALLER_ID,
+  fail,
+  isAdminOf,
+  newsletters,
+  NO_MOCK_ROUTE,
+  validationFailed,
+  type MockRequest,
+} from "./mockShared";
 
 type S = components["schemas"];
 type AskedBy = S["AskedBy"];
@@ -22,9 +29,6 @@ const MAX_PROMPT_CHARS = 500;
 const MIN_POLL_OPTIONS = 2;
 const MAX_POLL_OPTIONS = 6;
 const MAX_POLL_OPTION_LABEL_CHARS = 80;
-
-/** `CALLER_ID` is a group admin only in `g_trail` (mirrors the memberships fixture in `mockTransport.ts`). */
-const ADMIN_GROUP_IDS = new Set(["g_trail"]);
 
 type StoredCandidate = {
   questionId: string;
@@ -246,7 +250,7 @@ function listCandidates(groupId: string, query: URLSearchParams): S["CandidateLi
       : new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
   );
   const votedSet = votesFor(groupId, voting.cycleId);
-  const isAdmin = ADMIN_GROUP_IDS.has(groupId);
+  const isAdmin = isAdminOf(groupId, CALLER_ID);
 
   return {
     nextCycleId: voting.cycleId,
@@ -257,32 +261,14 @@ function listCandidates(groupId: string, query: URLSearchParams): S["CandidateLi
   };
 }
 
-type FieldError = S["FieldError"];
-
-function validationFailed(fieldErrors: FieldError[]): never {
-  const problem: S["ProblemDetails"] = {
-    type: "https://api.opennewsletter.example.com/errors/validation-failed",
-    title: "Validation failed",
-    status: 422,
-    detail: fieldErrors[0]!.message,
-    code: "VALIDATION_FAILED",
-    correlationId: "mock-correlation-id",
-    fieldErrors,
-  };
-  throw new ApiError(422, "VALIDATION_FAILED", problem);
-}
-
 function validatePrompt(raw: string): string {
   const trimmed = raw.trim();
   const len = trimmed.length;
   if (len < MIN_PROMPT_CHARS || len > MAX_PROMPT_CHARS) {
-    validationFailed([
-      {
-        field: "prompt",
-        code: "INVALID",
-        message: `prompt must be between ${MIN_PROMPT_CHARS} and ${MAX_PROMPT_CHARS} characters`,
-      },
-    ]);
+    validationFailed(
+      "prompt",
+      `prompt must be between ${MIN_PROMPT_CHARS} and ${MAX_PROMPT_CHARS} characters`,
+    );
   }
   return trimmed;
 }
@@ -293,31 +279,20 @@ function validatePollOptions(
 ): PollOptionResponse[] | undefined {
   if (kind === "text") {
     if (raw && raw.length > 0) {
-      validationFailed([
-        {
-          field: "pollOptions",
-          code: "INVALID",
-          message: "pollOptions must be omitted for kind=text",
-        },
-      ]);
+      validationFailed("pollOptions", "pollOptions must be omitted for kind=text");
     }
     return undefined;
   }
 
   const opts = raw && raw.length > 0 ? raw : undefined;
   if (!opts) {
-    validationFailed([
-      { field: "pollOptions", code: "INVALID", message: "pollOptions is required for kind=poll" },
-    ]);
+    validationFailed("pollOptions", "pollOptions is required for kind=poll");
   }
   if (opts.length < MIN_POLL_OPTIONS || opts.length > MAX_POLL_OPTIONS) {
-    validationFailed([
-      {
-        field: "pollOptions",
-        code: "INVALID",
-        message: `pollOptions must have between ${MIN_POLL_OPTIONS} and ${MAX_POLL_OPTIONS} options`,
-      },
-    ]);
+    validationFailed(
+      "pollOptions",
+      `pollOptions must have between ${MIN_POLL_OPTIONS} and ${MAX_POLL_OPTIONS} options`,
+    );
   }
 
   const seen = new Set<string>();
@@ -325,23 +300,17 @@ function validatePollOptions(
   for (const opt of opts) {
     const label = opt.label.trim();
     if (label.length === 0 || label.length > MAX_POLL_OPTION_LABEL_CHARS) {
-      validationFailed([
-        {
-          field: "pollOptions",
-          code: "INVALID",
-          message: `pollOptions labels must be 1 to ${MAX_POLL_OPTION_LABEL_CHARS} characters`,
-        },
-      ]);
+      validationFailed(
+        "pollOptions",
+        `pollOptions labels must be 1 to ${MAX_POLL_OPTION_LABEL_CHARS} characters`,
+      );
     }
     const key = label.toLowerCase();
     if (seen.has(key)) {
-      validationFailed([
-        {
-          field: "pollOptions",
-          code: "INVALID",
-          message: `pollOptions labels must be unique; "${label}" is duplicated`,
-        },
-      ]);
+      validationFailed(
+        "pollOptions",
+        `pollOptions labels must be unique; "${label}" is duplicated`,
+      );
     }
     seen.add(key);
     result.push({ optionId: `cq_${nextQuestionId}_opt_${result.length + 1}`, label });
@@ -370,7 +339,7 @@ function createCandidate(groupId: string, body: unknown): CandidateItemResponse 
   ensurePool(groupId, voting.cycleId).push(candidate);
 
   // The submitter always sees their own attribution, even when isAnonymous=true (§6.2).
-  return toItem(candidate, ADMIN_GROUP_IDS.has(groupId), false);
+  return toItem(candidate, isAdminOf(groupId, CALLER_ID), false);
 }
 
 function castVote(groupId: string, questionId: string): S["CandidateVoteResponse"] {

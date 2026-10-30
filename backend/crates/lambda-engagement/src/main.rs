@@ -4,6 +4,7 @@
 use engagement::{router, state::AppState};
 use lambda_http::{service_fn, Error};
 use media_delete::MediaDeleter;
+use media_urls::MediaUrls;
 use persistence::Repo;
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ async fn main() -> Result<(), Error> {
 
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
-        cdn_base_url: std::env::var("CDN_BASE_URL").unwrap_or_default(),
+        media_urls: MediaUrls::from_env(&aws_config)?,
         image_deleter,
     });
 

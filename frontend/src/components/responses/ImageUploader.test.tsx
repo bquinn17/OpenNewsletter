@@ -1,6 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
+import { queryClient } from "../../api/queryClient";
 import type { components } from "../../types/api";
 import { uploadToS3 } from "../../utils/uploadToS3";
 import { ImageUploader } from "./ImageUploader";
@@ -23,13 +26,12 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-// Keeps the real `withMediaAuth`/`refreshMediaAuth`/`pollMediaStatus` (exercised via real timers
-// below) but stubs out the network-backed cookie fetch and the SHA-256 digest.
+// Keeps the real `pollMediaStatus` (exercised via real timers below) but stubs out the SHA-256
+// digest, which isn't under test here.
 vi.mock("../../utils/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/media")>();
   return {
     ...actual,
-    ensureCookie: vi.fn().mockResolvedValue(undefined),
     sha256Base64: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -48,6 +50,14 @@ function getFileInput(): HTMLInputElement {
   return document.querySelector("input[type=file]") as HTMLInputElement;
 }
 
+/**
+ * The app's own client, because `MediaImage`'s refresh (`refreshMediaUrls`) invalidates that one:
+ * a ready image's URLs are its `uploadQuery` entry's.
+ */
+function render(ui: ReactElement) {
+  return rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 async function flush(times = 8) {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
@@ -63,6 +73,7 @@ describe("ImageUploader", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    queryClient.clear();
   });
 
   it("rejects files that fail client-side validation without calling the API", async () => {
@@ -99,7 +110,13 @@ describe("ImageUploader", () => {
     });
 
     expect(createUpload).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("b.jpg: You can attach up to 1 images.")).toBeInTheDocument();
+    expect(screen.getByText("b.jpg: You can attach up to 1 image.")).toBeInTheDocument();
+  });
+
+  it("counts a one-image uploader's slots in the singular", () => {
+    render(<ImageUploader groupId="g1" cycleId="202606" questionId="q1" maxImages={1} />);
+
+    expect(screen.getByText(/^0\/1 image · JPEG/)).toBeInTheDocument();
   });
 
   it("uploads, PUTs with every presign header, polls, and shows the ready thumbnail", async () => {
@@ -114,8 +131,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
 
@@ -245,8 +262,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
     deleteUpload.mockResolvedValue(undefined);
@@ -281,8 +298,8 @@ describe("ImageUploader", () => {
       purpose: "response",
       mimeType: "image/jpeg",
       caption: null,
-      thumbUrl: "https://cdn.test.invalid/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img1/display.webp",
       width: 10,
       height: 10,
       errorMessage: null,
@@ -378,8 +395,8 @@ describe("ImageUploader", () => {
     getUpload.mockResolvedValue({
       imageId: "img1",
       status: "ready",
-      thumbUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
-      displayUrl: "https://cdn.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
+      thumbUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp",
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp",
       errorMessage: null,
     });
 
@@ -421,5 +438,48 @@ describe("ImageUploader", () => {
 
     expect(getUpload).toHaveBeenCalledWith("img1", "g1", "202606");
     expect(screen.getByAltText("Uploaded image")).toBeInTheDocument();
+  });
+
+  it("re-signs an expired thumbnail through its upload query", async () => {
+    const stale = "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp?sig=old";
+    const fresh = "https://media.test.invalid/img/g1/202606/q1/u1/img1/thumb.webp?sig=new";
+    const row = {
+      imageId: "img1",
+      status: "ready",
+      purpose: "response",
+      mimeType: "image/jpeg",
+      caption: null,
+      thumbUrl: stale,
+      displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp?sig=old",
+      width: 10,
+      height: 10,
+      errorMessage: null,
+    } as components["schemas"]["ImageMediaResponse"];
+    getUpload.mockResolvedValue({ ...row, thumbUrl: fresh });
+    const onChange = vi.fn();
+
+    render(
+      <ImageUploader
+        groupId="g1"
+        cycleId="202606"
+        questionId="q1"
+        initialImages={[row]}
+        onChange={onChange}
+      />,
+    );
+    // Seeded from `initialImages`: no request until a URL fails.
+    expect(getUpload).not.toHaveBeenCalled();
+
+    fireEvent.error(screen.getByAltText("Uploaded image"));
+
+    // TanStack notifies observers on a `setTimeout(0)`, so wait rather than flush microtasks.
+    await waitFor(() =>
+      expect(screen.getByAltText("Uploaded image")).toHaveAttribute("src", fresh),
+    );
+    expect(getUpload).toHaveBeenCalledTimes(1);
+    expect(getUpload).toHaveBeenCalledWith("img1", "g1", "202606");
+    expect(onChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ imageId: "img1", thumbUrl: fresh }),
+    ]);
   });
 });

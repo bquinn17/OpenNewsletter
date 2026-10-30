@@ -1,11 +1,7 @@
-import { format, formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceToNowStrict } from "date-fns";
 
 export function formatRelative(iso: string): string {
   return formatDistanceToNowStrict(new Date(iso), { addSuffix: true });
-}
-
-export function formatDate(iso: string, fmt = "MMM d"): string {
-  return format(new Date(iso), fmt);
 }
 
 export interface Countdown {
@@ -53,6 +49,21 @@ export function cycleLabels(responseOpenAt: string, timezone: string): CycleLabe
     timeZone: timezone,
   }).format(date);
   return { monthLabel, yearLabel };
+}
+
+/** Whether a cycle (by `responseOpenAt`) falls in the same calendar month as `now`, in the group's timezone. */
+export function isCurrentCycleMonth(
+  responseOpenAt: string,
+  timezone: string,
+  now: Date = new Date(),
+): boolean {
+  // en-CA formats as "2026-10", so the strings compare directly.
+  const yearMonth = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    timeZone: timezone,
+  });
+  return yearMonth.format(new Date(responseOpenAt)) === yearMonth.format(now);
 }
 
 /**

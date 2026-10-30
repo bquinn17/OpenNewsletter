@@ -63,8 +63,8 @@ cargo test -p lambda-questions --test lifecycle   # one suite
 - Cognito has two app clients in `dev` (`frontend` + `admin-bootstrap`) and one in `prod`.
 - Each Lambda role's IAM policy matches the documented least-privilege scope ([`infrastructure.md` §10](../design/infrastructure.md#10-iam-least-privilege-summary)).
 - Every API route has the JWT authorizer: there are zero public routes.
-- DynamoDB keys, TTL attribute and both GSIs; CloudFront KeyGroup attached; S3 Block Public Access fully on.
-- Both CloudFront signing public keys are distinct RSA-2048 keys (`test_cf_signing_keys.py`).
+- DynamoDB keys, TTL attribute and both GSIs; S3 Block Public Access fully on for all three media buckets ([`decisions.md`](../decisions.md#presigned-s3-media)).
+- Each media-signing Lambda's `s3:GetObject` grant is scoped to the right prefix (`img/*`, `avatar/*`, or both) on the processed bucket, never the whole bucket ([`infrastructure.md` §6.2](../design/infrastructure.md#62-lambda-functions-request-handlers)).
 
 ---
 
@@ -86,7 +86,7 @@ Component tests `vi.mock` `api/client` and seed the TanStack Query cache, with f
 
 Two projects:
 - **`mock`** (default, no env needed): `vite build --mode e2e` (checked-in `.env.e2e`, mocks on) served with `vite preview`. Runs the CSP checks from [`frontend.md` §12.1](../design/frontend.md#121-content-security-policy) against a real production build, plus the golden paths the mock transport supports (it has no auth and no dev tick routes). The viewport is phone-sized (390×844), since the app is a mobile-first PWA.
-- **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are scaffolded as `fixme` until a dev deploy exists (B5).
+- **`dev`**: runs only when `E2E_BASE_URL` is set, against a deployed stack, with a real Cognito user (`E2E_USERNAME`/`E2E_PASSWORD`). Its tests are still scaffolded as `fixme`; the dev stack they need is now deployed. `make seed` gives the bootstrap admin a new random password on every run, so the E2E user must be a separate Cognito user, or the seed must pass a fixed `--admin-password` from the same secret.
 
 Golden paths (≤10):
 1. Sign in → no groups → redeem invite → see group.
@@ -194,7 +194,7 @@ Not enforced in CI, and only partly measured. `frontend-ci.yml` runs `npm run te
 
 ## 10. Fixtures
 
-`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code. `lambda-media` loads a throwaway signing key from `tests/fixtures/test_signing_key.pem` (explicitly un-ignored in `.gitignore`). Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
+`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code. Media-URL signing (`media-urls`) needs no fixture key — it presigns with whatever AWS credentials the test/DynamoDB-Local harness already has, the same as any other S3 call. Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
 
 ---
 

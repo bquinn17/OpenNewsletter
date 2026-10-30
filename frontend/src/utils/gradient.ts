@@ -10,6 +10,7 @@ export const GRADIENT_SLUGS = [
   "ocean-dusk",
   "citrus-blush",
   "slate-lilac",
+  "lavender-blush",
 ] as const;
 
 // Tailwind classes for each `GradientSlug` (`docs/design/frontend.md` §14a). The slug is the API
@@ -23,6 +24,7 @@ const GRADIENT_CLASSES: Record<GradientSlug, string> = {
   "ocean-dusk": "bg-gradient-to-br from-blue-700 to-indigo-400 text-white",
   "citrus-blush": "bg-gradient-to-br from-amber-300 to-pink-400 text-ink",
   "slate-lilac": "bg-gradient-to-br from-slate-600 to-purple-300 text-white",
+  "lavender-blush": "bg-gradient-to-br from-lavender to-blush text-ink",
 };
 
 export function gradientClasses(slug: GradientSlug): string {

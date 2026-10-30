@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../api/client";
-import { useConfig, useMembership, useNewsletter } from "../api/queries";
+import { useConfig, useMembership, useNewsletter, useUploads } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
+import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { Button } from "../components/ui/Button";
 import { Spinner } from "../components/ui/Spinner";
@@ -11,7 +10,10 @@ import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
 import { ResponseEditor } from "../components/responses/ResponseEditor";
 import { AUTO_PUBLISH_BADGE, DraftStatusBadge } from "../components/responses/DraftStatusBadge";
 import { PublishButton } from "../components/responses/PublishButton";
-import { cacheSavedResponse, useResponseEditor } from "../components/responses/useResponseEditor";
+import { useResponseEditor } from "../components/responses/useResponseEditor";
+import { useHydratedImages } from "../components/responses/useHydratedImages";
+import { usePollResponse } from "../components/responses/usePollResponse";
+import { PollPicker } from "../components/responses/PollPicker";
 import { MarkdownBody } from "../utils/markdown";
 import { useToasts } from "../state/toast";
 import { formatInZone, shortCountdown } from "../utils/dates";
@@ -29,11 +31,12 @@ export function RespondPage() {
 
   if (isError) {
     return (
-      <ErrorState
-        groupId={groupId}
-        cycleId={cycleId}
+      <PageErrorState
+        title="Question"
+        back={`/g/${groupId}/n/${cycleId}`}
         message={error instanceof Error ? error.message : "Couldn't load this question."}
         onRetry={() => refetch()}
+        className="pb-32"
       />
     );
   }
@@ -57,7 +60,7 @@ export function RespondPage() {
 
 function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader title="Loading…" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="space-y-3 px-5 pt-6">
         <div className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
@@ -66,37 +69,9 @@ function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }
   );
 }
 
-function ErrorState({
-  groupId,
-  cycleId,
-  message,
-  onRetry,
-}: {
-  groupId: string;
-  cycleId: string;
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="bg-cream pb-32">
-      <PageHeader title="Question" eyebrow="Couldn't load" back={`/g/${groupId}/n/${cycleId}`} />
-      <div className="px-5 pt-8 text-center">
-        <div className="mb-3 text-5xl">😬</div>
-        <p className="font-semibold text-ink">{message}</p>
-        <button
-          onClick={onRetry}
-          className="mt-5 rounded-full bg-ink px-5 py-3 font-semibold text-cream"
-        >
-          Try again
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader title="Question" eyebrow="Not found" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🔍</div>
@@ -104,38 +79,6 @@ function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string 
       </div>
     </div>
   );
-}
-
-/**
- * Loads the `ImageMediaResponse` rows for the draft's images as they were when
- * the page opened. `ImageUploader` and `ResponseEditor` read `initialImages`
- * once, on mount, so the editor must not render until this has settled — an
- * editor mounted with no images would report `imageMediaIds: []` and autosave
- * the draft's images away. An image that can't be fetched (e.g. deleted) is
- * dropped rather than blocking the editor.
- */
-function useHydratedImages(
-  groupId: string,
-  cycleId: string,
-  imageMediaIds: string[],
-): { images: S["ImageMediaResponse"][]; ready: boolean } {
-  const [ids] = useState(imageMediaIds);
-  const { data, isSuccess } = useQuery(imagesQuery(groupId, cycleId, ids));
-  return { images: data ?? [], ready: ids.length === 0 || isSuccess };
-}
-
-function imagesQuery(groupId: string, cycleId: string, ids: string[]) {
-  return {
-    queryKey: ["myResponseImages", groupId, cycleId, ids.join(",")],
-    queryFn: async () => {
-      const results = await Promise.allSettled(
-        ids.map((id) => api.media.getUpload(id, groupId, cycleId)),
-      );
-      return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-    },
-    enabled: ids.length > 0,
-    staleTime: Infinity,
-  };
 }
 
 function QuestionBody({
@@ -152,7 +95,6 @@ function QuestionBody({
   responseCloseAt: string;
 }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const pushToast = useToasts((s) => s.push);
   const { data: config } = useConfig();
   const isText = question.kind === "text";
@@ -188,87 +130,41 @@ function QuestionBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `pushToast` is a stable zustand setter.
   }, [editor.lastResponse]);
 
-  // The read-only view follows the current draft, including images added on this visit.
-  const { data: viewImages = hydratedImages } = useQuery({
-    ...imagesQuery(groupId, cycleId, editor.imageMediaIds),
-    placeholderData: keepPreviousData,
-  });
+  // The read-only view follows the current draft, including images added on this visit. Their
+  // rows are the uploader's own `uploadQuery` entries, already cached.
+  const viewImages = useUploads(groupId, cycleId, editor.imageMediaIds);
 
   const isPublished = (editor.lastResponse?.status ?? question.myResponse?.status) === "published";
   const canPublishText = editor.body.trim().length > 0 || editor.imageMediaIds.length > 0;
   const textIsUnpublishedDraft = !isPublished && canPublishText;
 
-  const [pollOptionId, setPollOptionId] = useState<string | null>(
-    question.myResponse?.pollOptionId ?? null,
-  );
-  // The pick the server holds, so a failed save can put the UI back on it.
-  const savedPollOptionIdRef = useRef<string | null>(question.myResponse?.pollOptionId ?? null);
-  const [pollSaving, setPollSaving] = useState(false);
-  const [pollResponse, setPollResponse] = useState<S["ResponseDto"] | null>(null);
-  const [pollClosed, setPollClosed] = useState(false);
-  const pollIsPublished = (pollResponse?.status ?? question.myResponse?.status) === "published";
-  const pollIsUnpublishedDraft = !pollIsPublished && pollOptionId !== null;
+  const poll = usePollResponse({
+    groupId,
+    cycleId,
+    questionId: question.questionId,
+    initialResponse: question.myResponse,
+  });
   // `docs/design/frontend.md` §7.3 (D2): a non-empty draft auto-publishes when responses close.
   const showAutoPublishNote = isText
     ? textIsUnpublishedDraft && !editor.readOnly
-    : pollIsUnpublishedDraft && !pollClosed;
-
-  async function savePoll(publish: boolean, optionId: string) {
-    setPollSaving(true);
-    try {
-      const response = await api.saveMyResponse(groupId, cycleId, question.questionId, {
-        kind: "poll",
-        pollOptionId: optionId,
-        publish,
-      });
-      setPollResponse(response);
-      savedPollOptionIdRef.current = response.pollOptionId ?? optionId;
-      cacheSavedResponse(queryClient, groupId, cycleId, question.questionId, response);
-      if (response.status === "published" && prevStatusRef.current !== "published") {
-        pushToast("Published — friends can see this when the edition publishes.", "success");
-      }
-      prevStatusRef.current = response.status;
-    } catch (err) {
-      // The server still holds the last saved pick, and that's what would
-      // auto-publish, so show that rather than the unsaved one.
-      setPollOptionId(savedPollOptionIdRef.current);
-      if (err instanceof ApiError && err.status === 409) {
-        setPollClosed(true);
-      }
-      const message =
-        err instanceof ApiError && err.status === 409
-          ? "This edition has closed — your last saved version stands."
-          : "Couldn't save your vote — try again.";
-      pushToast(message, "error");
-    } finally {
-      setPollSaving(false);
-    }
-  }
-
-  function handlePollSelect(optionId: string) {
-    setPollOptionId(optionId);
-    // Every pick saves right away as a draft, the first one included, the
-    // same as a text autosave (`docs/design/frontend.md` §7.3, D2). An unpublished pick is then
-    // auto-published at the deadline; once published, a change stays
-    // published (publishing is sticky server-side, `docs/design/api.md` §7.3).
-    void savePoll(false, optionId);
-  }
+    : poll.isUnpublishedDraft && !poll.closed;
 
   async function handlePublish() {
     if (isText) {
       await editor.publish();
-    } else if (pollOptionId) {
-      await savePoll(true, pollOptionId);
+    } else {
+      await poll.publish();
     }
   }
 
   return (
-    <div className="bg-cream pb-32">
+    <div className="pb-32">
       <PageHeader
         eyebrow={`Question · ${question.kind === "poll" ? "poll" : "question"}`}
         title={question.prompt}
         back={`/g/${groupId}/n/${cycleId}`}
         rightSlot={<Pill tone="coral">{shortCountdown(responseCloseAt)}</Pill>}
+        phase="open"
       />
 
       <div className="px-5 pt-5">
@@ -306,12 +202,7 @@ function QuestionBody({
         isPublished && !showEditor ? (
           <div className="mt-4 px-5">
             <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
-              <MarkdownBody
-                body={editor.body}
-                images={viewImages}
-                groupId={groupId}
-                className="mt-1"
-              />
+              <MarkdownBody body={editor.body} images={viewImages} className="mt-1" />
               <button
                 type="button"
                 onClick={() => setShowEditor(true)}
@@ -352,13 +243,13 @@ function QuestionBody({
       ) : (
         <PollPicker
           question={question}
-          selected={pollOptionId}
-          disabled={pollSaving}
-          onSelect={handlePollSelect}
+          selected={poll.pollOptionId}
+          disabled={poll.saving}
+          onSelect={poll.select}
         />
       )}
 
-      {(isText ? editor.readOnly : pollClosed) && (
+      {(isText ? editor.readOnly : poll.closed) && (
         <div className="mt-4 px-5">
           <div className="rounded-3xl border border-line bg-white p-4 text-sm text-inkmuted">
             This edition has closed — your last saved version stands.
@@ -371,11 +262,11 @@ function QuestionBody({
           <div className="text-xs leading-tight">
             {isText ? (
               <DraftStatusBadge status={editor.status} unpublishedDraft={textIsUnpublishedDraft} />
-            ) : pollSaving ? (
+            ) : poll.saving ? (
               <Pill tone="grape">● Saving…</Pill>
-            ) : (pollResponse || question.myResponse) && pollIsUnpublishedDraft ? (
+            ) : (poll.response || question.myResponse) && poll.isUnpublishedDraft ? (
               <Pill tone="mint">{AUTO_PUBLISH_BADGE}</Pill>
-            ) : pollResponse || question.myResponse ? (
+            ) : poll.response || question.myResponse ? (
               <Pill tone="mint">Saved</Pill>
             ) : (
               <Pill tone="sun">Pick one</Pill>
@@ -392,59 +283,14 @@ function QuestionBody({
               onPublish={() => void handlePublish()}
             />
           )}
-          {!isText && !pollClosed && (
+          {!isText && !poll.closed && (
             <PublishButton
-              isPublished={pollIsPublished}
-              disabled={!pollOptionId || pollSaving}
+              isPublished={poll.isPublished}
+              disabled={!poll.pollOptionId || poll.saving}
               onPublish={() => void handlePublish()}
             />
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function PollPicker({
-  question,
-  selected,
-  disabled,
-  onSelect,
-}: {
-  question: S["OpenQuestionResponse"];
-  selected: string | null;
-  disabled: boolean;
-  onSelect: (optionId: string) => void;
-}) {
-  if (!question.pollOptions) return null;
-  return (
-    <div className="mt-4 px-5">
-      <div className="space-y-2 rounded-3xl border border-line bg-white p-5 shadow-soft">
-        {question.pollOptions.map((opt) => {
-          const mine = selected === opt.optionId;
-          return (
-            <button
-              key={opt.optionId}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect(opt.optionId)}
-              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition disabled:opacity-60 ${
-                mine
-                  ? "border-grape bg-grape/5 ring-2 ring-grape/30"
-                  : "border-line hover:border-ink"
-              }`}
-            >
-              <span
-                className={`grid h-5 w-5 place-items-center rounded-full border-2 ${
-                  mine ? "border-grape" : "border-line"
-                }`}
-              >
-                {mine && <span className="h-2.5 w-2.5 rounded-full bg-grape" />}
-              </span>
-              <span className="font-semibold">{opt.label}</span>
-            </button>
-          );
-        })}
       </div>
     </div>
   );

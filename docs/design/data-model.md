@@ -414,7 +414,7 @@ User avatars are uploaded via a dedicated pipeline (separate from the per-questi
 | `processed_at` | ISO-8601 \| null |
 | `error_message` | string \| null — same values as `ImageMedia.error_message`. As with `ImageMedia`, `DELETED` is not a possible value: `DELETE /avatars/{id}` deletes the row ([D8](../decisions.md#d8)). |
 
-The processed avatar bucket is served via a separate CloudFront behavior (`/avatar/*`) that does NOT require signed cookies — avatars are not tenant-scoped, URLs use the UUIDv7 `avatar_id` (unguessable), and an avatar leak is acceptable. Cache-control: `public, max-age=86400, immutable` so changing avatars produces a new `avatar_id` and never collides with the old one in caches.
+The processed avatar lives under the `avatar/*` prefix of the same processed bucket images use ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), served the same way as any other image — a presigned GET minted by the handler ([`media.md` §4](media.md#4-serving-presigned-s3-gets), §11.3). Avatars are not tenant-scoped, so a leaked avatar URL exposes little, but signing them costs nothing extra and keeps the bucket free of any public path. Cache-control: `private, max-age=7776000, immutable` (90 days, [`media.md` §11.3](media.md#113-serving)); changing avatars produces a new `avatar_id`, so it never collides with the old one in caches.
 
 ---
 
@@ -450,7 +450,7 @@ The processed avatar bucket is served via a separate CloudFront behavior (`/avat
 
 **AP18 + AP19 can be one read.** Comments (`C#`) and reactions (`R#`) share the engagement partition, so `engagement::list_engagement` reads both with one paginated Query of the partition; the published-edition read ([`api.md` §5.2](api.md#52-get-groupsgroupidnewsletterscycleid)) uses it.
 
-**AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: `my-responses`, the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
+**AP15 must filter by group.** `gsi1pk = USER#{u}#NL#{cycleId}` carries no group, and cycle IDs are calendar months shared by every group, so a user in two groups gets both groups' responses for the same month from this query. `persistence::responses::list_my_responses_in_cycle` takes `group_id` and drops the other groups' rows — needed everywhere this query is used: the newsletter list/detail counts, the deadline reminder's "N of total" count, and the `editions_answered` bump (step 4 below), which would otherwise skip group B's bump when a multi-group user publishes in group B after group A in the same month.
 
 ---
 
@@ -513,7 +513,7 @@ For admin-only operations: the cached membership must have `role=admin`.
 
 - Comments use soft-delete (`deleted_at` set, `body` blanked). Hard delete reserved for compliance/admin.
 - Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead ([D2](../decisions.md#d2) — §4 #4a).
-- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects, invalidate the CloudFront path, and delete the `ImageMedia`/`AvatarMedia` row — see [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7. No bucket versioning ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker image cache (≤30 days) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted ([D8](../decisions.md#d8), [D9](../decisions.md#d9)).
+- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects and delete the `ImageMedia`/`AvatarMedia` row — see [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7. Once an object is gone, its outstanding presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). No bucket versioning ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker cache (≤30 days for images, ≤90 for avatars) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted ([D8](../decisions.md#d8), [D9](../decisions.md#d9)).
 - When a Newsletter transitions to `archived` (manual or future job), see [`archival.md` §3](archival.md#3-per-cycle-archive-procedure) for the export-and-prune procedure.
 
 ---
