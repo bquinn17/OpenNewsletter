@@ -1,0 +1,16 @@
+Sample photos in the OpenNewsletter demo (/demo). Each was resized to 1200px wide and
+re-compressed; nothing else was changed.
+
+mailbox-peak.jpg
+  "Mailbox Peak mailbox" by Michael Cline, CC BY-SA 2.0
+  https://creativecommons.org/licenses/by-sa/2.0/
+  https://commons.wikimedia.org/wiki/File:Mailbox_Peak_mailbox.jpg
+
+ridge-sunset.jpg
+  "Sunset on Penguin Ridge. Chugach State Park, Alaska" by Paxson Woelber, CC BY 2.0
+  https://creativecommons.org/licenses/by/2.0/
+  https://commons.wikimedia.org/wiki/File:Sunset_on_Penguin_Ridge._Chugach_State_Park,_Alaska_(29306871222).jpg
+
+summit.jpg
+  "Hanging Rock Hiker" by the Bureau of Land Management Oregon and Washington, public domain
+  https://commons.wikimedia.org/wiki/File:Hanging_Rock_Hiker_(11408438663).jpg
