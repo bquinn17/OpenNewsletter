@@ -1227,3 +1227,16 @@ Every image in the demo was a black box: the mock served one 1×1 black PNG for 
 - A site-relative image URL crashed the newsletter page: `mediaCacheKey` runs `new URL()` on it. The sample photos use absolute URLs.
 
 **Tests.** Vitest +2 (387 → 389): an upload's `blob:` URL reaches its upload row and a comment and is freed on delete, and `mockFetch` returns copies. Playwright +2 (14 → 16): the sample photos load, and a comment's uploaded image is the picked file.
+
+## Dev auto-deploy with a hosted dev site (2026-10-31)
+
+Every push to `main` now deploys dev end to end; prod stays behind the `production` reviewer. Decision in [`decisions.md`](../../docs/decisions.md#hosted-dev-frontend), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion).
+
+**What landed.**
+- `deploy.yml`'s `dev` job, after its `cdk deploy`, writes `frontend/.env.dev` from the stack outputs (`write_frontend_env.py --strict`, a new flag that fails on any empty value), builds with `--mode dev` and the `dev.betterloop.site` sign-in redirect, and publishes to this repo's `gh-pages`. It fails fast without `DEV_ROOT_DOMAIN`.
+- `promote-prod` publishes the prod frontend to [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site)'s `gh-pages` with a deploy key, rather than to this repo's `gh-pages`, which would have overwritten the dev site. It checks `PROD_PAGES_REPO` and `PROD_PAGES_DEPLOY_KEY` before deploying anything, and no longer needs `contents: write` here.
+- `DEPLOY_ENABLED=true` set on the repo.
+
+**Found on the way.** dev.betterloop.site was a build pushed to `gh-pages` by hand on 2026-10-19, so the demo hadn't reached it. It was republished by hand from `86f791f` on 2026-10-31. That push also dropped about 20 stray repo files (`.github/workflows/*`, `frontend/.env.*`) the hand-made branch had carried.
+
+**Tests.** No test changes; `actionlint`, `ruff` and `mypy --strict` on the script are clean.

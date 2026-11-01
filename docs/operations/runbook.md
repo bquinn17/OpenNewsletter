@@ -224,7 +224,7 @@ Follow [`smoke-test.md`](smoke-test.md). All steps must pass clean.
 ## Wiring up GitHub Actions (M13 gate)
 
 1. `CiStack` deploys with `--all`. Copy its outputs `GithubDeployRoleArn` and `GithubDiffRoleArn` into the repo variables `AWS_DEPLOY_ROLE_ARN` and `AWS_DIFF_ROLE_ARN`.
-2. Set the remaining repo variables and secrets listed in [`.github/workflows/README.md`](../../.github/workflows/README.md). Leave `DEPLOY_ENABLED` unset until the M14 production deploy ([`build-order.md`](../../plans/build-order.md)), and create the `production` environment with yourself as required reviewer.
+2. Set the remaining repo variables and secrets listed in [`.github/workflows/README.md`](../../.github/workflows/README.md). Create the `production` environment with yourself as required reviewer, then set `DEPLOY_ENABLED=true`: every push to `main` then deploys dev, and prod waits for your approval. Prod's frontend also needs its own Pages repo ([`operator-setup.md` §10](operator-setup.md#10-prod-frontend-pages-repo)).
 3. Push a branch and confirm `frontend-ci`, `backend-ci` and `infra-ci` go green.
 
 ---

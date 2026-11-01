@@ -180,6 +180,13 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 **Why.** It lets people see the app before they have an invite, with no second GitHub Pages build and no backend cost: the demo never reaches API Gateway. A URL prefix rather than a stored flag means there is no "in the demo" state that could outlive the demo. Keeping its state in memory, rather than clearing storage on exit, means no exit path can leave anything behind, and a visitor's real session and drafts are never touched. See [`frontend.md` §17](design/frontend.md#17-demo-mode).
 
+<a id="hosted-dev-frontend"></a>
+### Every push to `main` deploys dev, frontend included; prod's site lives in its own repo (2026-10-31)
+
+`deploy.yml` deploys dev, backend and frontend, on every push to `main` (`DEPLOY_ENABLED=true`). The dev frontend is built from the outputs of the stacks it just deployed and served from this repo's GitHub Pages site at `dev.betterloop.site`. Prod still waits for the owner's approval ([D6](#d6)). Its frontend publishes to the `gh-pages` branch of a separate repo (`PROD_PAGES_REPO`, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site)), pushed with a deploy key.
+
+**Why.** A merged change should be live on dev without anyone running `make deploy-dev`, and a hosted dev site is what the owner and testers actually use. A repo hosts only one Pages site, so dev and prod can't both be served from this one. Moving prod to its own repo keeps the live dev site where it is, and keeps prod on free GitHub Pages, consistent with the idle-backend principle. See [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion) and [`operator-setup.md` §10](operations/operator-setup.md#10-prod-frontend-pages-repo).
+
 ---
 
 ## Design review, 2026-10-08
