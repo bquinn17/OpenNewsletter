@@ -1,7 +1,8 @@
 # Trigger: every push to main.
-# Purpose: deploy the backend to dev, then — behind the `production`
-# environment's required reviewer — deploy the same build to prod and publish
-# the frontend to gh-pages (docs/development/testing-and-ci.md §6.4). The Lambdas are
+# Purpose: deploy the backend to dev and publish the dev frontend to this
+# repo's gh-pages, then — behind the `production` environment's required
+# reviewer — deploy the same build to prod and publish the prod frontend to the
+# prod Pages repo (docs/development/testing-and-ci.md §6.4). The Lambdas are
 # built once, in the dev job, and the prod job deploys that exact artifact, so
 # what gets promoted is what ran in dev. Backend before frontend, always from
 # one SHA: API changes are expand → contract (docs/development/coding-standards.md §8).
@@ -30,7 +31,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       id-token: write
-      contents: read
+      contents: write # peaceiris/actions-gh-pages pushes the gh-pages branch
     # Read by infra/opennewsletter/config.py (EnvConfig). Dev's values are the
     # DEV_-prefixed repo variables, so dev can never silently pick up a prod
     # value; prod's are unprefixed (see .github/workflows/README.md). These
@@ -48,14 +49,21 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # Without it config.py falls back to a placeholder ARN and the deploy
-      # fails late, inside CloudFormation.
+      # Without the ARN config.py falls back to a placeholder and the deploy
+      # fails late, inside CloudFormation. ROOT_DOMAIN is also the dev
+      # frontend's GitHub Pages domain (its CNAME, below).
       - name: Check dev config
         run: |
+          missing=0
           if [ -z "$APP_SECRET_ARN" ]; then
             echo "::error::Repo variable DEV_APP_SECRET_ARN is not set."
-            exit 1
+            missing=1
           fi
+          if [ -z "$ROOT_DOMAIN" ]; then
+            echo "::error::Repo variable DEV_ROOT_DOMAIN is not set."
+            missing=1
+          fi
+          exit "$missing"
 
       # rustup on ubuntu-latest reads rust-toolchain.toml (repo root) and
       # installs/pins the toolchain it names.
@@ -103,19 +111,58 @@ jobs:
 
       - run: pip install -r infra/requirements.txt
 
-      # Needed for `npx aws-cdk@2`.
+      # Needed for `npx aws-cdk@2` and the frontend build.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
+      # Backend first: the frontend below may depend on what this ships.
       - name: cdk deploy (dev)
         working-directory: infra
-        run: npx aws-cdk@2 deploy --context env=dev --all --require-approval never
+        run: >-
+          npx aws-cdk@2 deploy --context env=dev --all --require-approval never
+          --outputs-file cdk.out/dev-outputs.json
+
+      # The dev build's API, Cognito and media values come straight from the
+      # stacks just deployed, as `make deploy-dev` does locally, so they can't
+      # drift from what's running. --strict fails here rather than publishing
+      # a site with an empty endpoint.
+      - name: Write frontend/.env.dev from the stack outputs
+        run: python3 scripts/write_frontend_env.py --env dev --strict
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      # The env var overrides .env.dev's localhost redirect, which is for `make fe`.
+      - name: Build frontend (dev)
+        working-directory: frontend
+        run: npm run build -- --mode dev
+        env:
+          VITE_REDIRECT_URI: https://${{ vars.DEV_ROOT_DOMAIN }}/auth/callback
+          VITE_BUILD_SHA: ${{ github.sha }}
+
+      - name: Write GitHub Pages CNAME
+        working-directory: frontend
+        run: echo "$ROOT_DOMAIN" > dist/CNAME
+
+      - name: SPA fallback for deep links (docs/design/frontend.md §14.5)
+        working-directory: frontend
+        run: cp dist/index.html dist/404.html
+
+      # This repo's GitHub Pages site serves dev; prod has its own Pages repo
+      # (promote-prod, below), since a repo hosts only one Pages site.
+      - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: frontend/dist
 
       # Later: run the Playwright `dev` project here (docs/development/testing-and-ci.md §6.4 step 4).
 
@@ -127,9 +174,11 @@ jobs:
     # each promotion. Environment-level variables/secrets, if any, override
     # the repo-level ones below.
     environment: production
+    # The prod site is pushed to another repo with PROD_PAGES_DEPLOY_KEY, so
+    # this job needs no write access here.
     permissions:
       id-token: write
-      contents: write # peaceiris/actions-gh-pages pushes the gh-pages branch
+      contents: read
     env:
       ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
       API_DOMAIN: ${{ vars.API_DOMAIN }}
@@ -143,17 +192,24 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # The Pages repo and its key are checked here, before any deploy, so a
+      # missing one can't leave prod's backend ahead of its frontend.
       - name: Check prod config
+        env:
+          FRONTEND_DOMAIN: ${{ vars.FRONTEND_DOMAIN }}
+          PROD_PAGES_REPO: ${{ vars.PROD_PAGES_REPO }}
+          PROD_PAGES_DEPLOY_KEY: ${{ secrets.PROD_PAGES_DEPLOY_KEY }}
         run: |
           missing=0
-          for name in APP_SECRET_ARN ROOT_DOMAIN API_DOMAIN COGNITO_DOMAIN_PREFIX; do
+          for name in APP_SECRET_ARN ROOT_DOMAIN API_DOMAIN COGNITO_DOMAIN_PREFIX \
+            FRONTEND_DOMAIN PROD_PAGES_REPO; do
             if [ -z "${!name}" ]; then
               echo "::error::Variable $name is not set for prod."
               missing=1
             fi
           done
-          if [ -z "${{ vars.FRONTEND_DOMAIN }}" ]; then
-            echo "::error::Variable FRONTEND_DOMAIN is not set."
+          if [ -z "$PROD_PAGES_DEPLOY_KEY" ]; then
+            echo "::error::Secret PROD_PAGES_DEPLOY_KEY is not set for prod."
             missing=1
           fi
           exit "$missing"
@@ -244,7 +300,10 @@ jobs:
         working-directory: frontend
         run: cp dist/index.html dist/404.html
 
+      # Prod's own Pages repo: this repo's gh-pages is the dev site.
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          deploy_key: ${{ secrets.PROD_PAGES_DEPLOY_KEY }}
+          external_repository: ${{ vars.PROD_PAGES_REPO }}
+          publish_branch: gh-pages
           publish_dir: frontend/dist

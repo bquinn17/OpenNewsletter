@@ -151,14 +151,13 @@ Push to `main`.
 
 **Dev job** (when `vars.DEPLOY_ENABLED == 'true'`):
 1. Build every Lambda (`cargo lambda build --release --arm64`), check none is a stub (`scripts/check_lambda_binaries.sh`), and upload them as a tarred artifact (keeps the exec bit).
-2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never`.
-
-Dev has no hosted frontend; it's exercised via `make fe`.
+2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never --outputs-file cdk.out/dev-outputs.json`.
+3. `scripts/write_frontend_env.py --env dev --strict` writes `frontend/.env.dev` from those outputs, failing on any empty value. `npm run build -- --mode dev`, with `VITE_REDIRECT_URI` set to `https://$DEV_ROOT_DOMAIN/auth/callback`; add `CNAME` (`DEV_ROOT_DOMAIN`) and `404.html`; push `dist/` to this repo's `gh-pages`, which GitHub Pages serves as the dev site.
 
 **`promote-prod` job** (needs the dev job; `environment: production` with a required reviewer):
 1. Download the dev job's Lambda artifact, so prod runs exactly what ran in dev.
 2. `cdk deploy --context env=prod --all --require-approval never`.
-3. `npm run build` with the prod `VITE_*` env, add `CNAME`, copy `index.html` → `404.html` ([`frontend.md` §14.5](../design/frontend.md#145-github-pages-spa-fallback)), push `dist/` to `gh-pages`.
+3. `npm run build` with the prod `VITE_*` env, add `CNAME`, copy `index.html` → `404.html` ([`frontend.md` §14.5](../design/frontend.md#145-github-pages-spa-fallback)), push `dist/` to the `gh-pages` branch of `PROD_PAGES_REPO` with the `PROD_PAGES_DEPLOY_KEY` deploy key. A repo hosts only one Pages site and this repo's is dev, so prod's lives in its own repo. The job checks the repo and key before step 1.
 
 Backend and frontend are always promoted together from one SHA, backend first. That makes the **expand → contract** rule ([`coding-standards.md` §8](coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task)) load-bearing: an installed PWA runs its previous frontend until its service worker updates, so a route or field is removed only after the frontend that stopped using it has shipped. The SW activates new versions promptly (`activatePromptly`: `skipWaiting` + `clients.claim()`, not `autoUpdate`, which reloads open pages; [`frontend.md` §5.2](../design/frontend.md#52-service-worker--caching-strategy)).
 

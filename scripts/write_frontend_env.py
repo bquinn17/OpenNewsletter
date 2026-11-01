@@ -5,9 +5,10 @@ Reads infra/cdk.out/{env}-outputs.json (produced by 'cdk deploy --outputs-file')
 Writes frontend/.env.{env} so Vite picks up the right API, media and Cognito endpoints.
 
 Usage:
-    python3 scripts/write_frontend_env.py [--env dev]
+    python3 scripts/write_frontend_env.py [--env dev] [--strict]
 
-Called automatically by 'make deploy-dev'.
+Called automatically by 'make deploy-dev', and with --strict by deploy.yml's dev
+job, which builds the dev frontend from it.
 """
 
 from __future__ import annotations
@@ -44,6 +45,11 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--env", default="dev")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero if any value is missing, rather than only warning",
+    )
     args = parser.parse_args()
     env = args.env
 
@@ -97,6 +103,8 @@ def main() -> None:
         if not v
     ]
     if missing:
+        if args.strict:
+            sys.exit(f"Missing values for: {', '.join(missing)}")
         print(f"  WARNING: missing values for: {', '.join(missing)}")
         print("  Run 'make deploy-dev' to populate them from deployed stacks.")
 

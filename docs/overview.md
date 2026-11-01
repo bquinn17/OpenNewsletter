@@ -115,7 +115,7 @@ OpenNewsletter/
 │   ├── frontend-ci.yml             # typecheck, lint, test, build
 │   ├── backend-ci.yml              # fmt, clippy, cargo deny, cargo test, Lambda cross-build
 │   ├── infra-ci.yml                # ruff, mypy, pytest, cdk synth; cdk diff on PR
-│   ├── deploy.yml                  # main → dev; gated promote-prod → prod backend + gh-pages
+│   ├── deploy.yml                  # main → dev + dev site; gated promote-prod → prod + prod site
 │   └── e2e.yml                     # nightly Playwright
 │
 ├── CLAUDE.md                       # runtime guidance for AI assistants in-repo
@@ -157,8 +157,10 @@ OpenNewsletter/
 
 Two environments managed by CDK context:
 
-- `dev` — stack suffix `-dev`. **No custom domains**: raw AWS endpoints (`*.execute-api…`; media is served from S3 bucket endpoints in every env, [`decisions.md`](decisions.md#presigned-s3-media)), per [`environments.md` §2](development/environments.md#2-environments). Seeded via `make seed`.
-- `prod` — stack suffix `-prod`, custom domains, the only environment with a hosted frontend and alarms.
+- `dev` — stack suffix `-dev`. **No custom API domain**: raw AWS endpoints (`*.execute-api…`; media is served from S3 bucket endpoints in every env, [`decisions.md`](decisions.md#presigned-s3-media)), per [`environments.md` §2](development/environments.md#2-environments). Seeded via `make seed`.
+- `prod` — stack suffix `-prod`, custom domains, the only environment with alarms.
+
+Each has a hosted frontend on GitHub Pages: dev's on this repo's Pages site, deployed on every push to `main`; prod's on its own Pages repo, after the owner approves ([`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion)).
 
 Both live in one personal AWS account; stronger account-level isolation is out of scope for v1.
 

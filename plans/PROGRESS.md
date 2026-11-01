@@ -47,11 +47,14 @@ These block M14 (and the Facebook checks), not code work or the other dev gates.
 
 ## Next steps (in order)
 
-1. **Redeploy dev:** `make deploy-dev`. Dev's stacks were last deployed 2026-10-19 02:03 UTC, before `d2ef568` changed the backend, `ApiStack`'s routes and `MediaPipelineStack`'s IAM.
+1. **Watch the first CI deploy of dev.** `DEPLOY_ENABLED` is `true` (2026-10-31), so every push to `main` now deploys dev's backend and publishes the dev frontend to `dev.betterloop.site` ([`decisions.md`](../docs/decisions.md#hosted-dev-frontend)). The first run is also the first real test of `GithubDeployRole`'s permissions, and the first dev deploy since 2026-10-19 02:03 UTC (before `d2ef568` changed the backend, `ApiStack`'s routes and `MediaPipelineStack`'s IAM). Each run also leaves a `promote-prod` job waiting for approval: don't approve one until M14 is ready.
 2. **Operator, GitHub** ([`.github/workflows/README.md`](../.github/workflows/README.md)). Done: the repo variables, both `AWS_*_ROLE_ARN`s, the `production` environment with a required reviewer and a `main`-only branch rule, and the old variables are gone. Still to do:
    - add the seven prod `VITE_*` secrets. None exist yet, and `promote-prod` stops before the frontend build without them ([`operator-setup.md` §6](../docs/operations/operator-setup.md#6-frontend-media-origins) has the two media ones).
    - `production` holds `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` as environment *secrets*. `deploy.yml` reads both as repo variables (`vars.*`), so they're unused, and the `DEV_` one doesn't belong in prod. Delete them unless they're meant for something.
-   - set `DEPLOY_ENABLED=true` once CI is green.
+   - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) (created 2026-10-31, empty), when prod is ready ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5). `promote-prod` stops before deploying anything until they're done:
+     - add a write-access deploy key to that repo, and store its private half as the secret `PROD_PAGES_DEPLOY_KEY` here;
+     - set the repo variable `PROD_PAGES_REPO=bquinn17/betterloop-site`;
+     - after the first approved prod deploy pushes its `gh-pages`, point that repo's Pages at `gh-pages` with custom domain `betterloop.site`, and add GitHub's apex `A`/`AAAA` records at Namecheap.
 3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Push a branch so the CI workflows run for real. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
 4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
 
