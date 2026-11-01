@@ -45,6 +45,12 @@ that build and never rebuilds; a commit more than 30 days old can't be
 released. Both jobs run `scripts/check_lambda_binaries.sh` first, because CDK
 silently swaps a missing binary for a stub.
 
+The `dev` job also caches the built binaries (`lambda-binaries-<hash>`, keyed
+on `backend/**` and `rust-toolchain.toml`). A push that doesn't change those,
+such as a frontend or docs change, restores them and skips the ~7-minute Rust
+build; it still uploads the artifact, so it can still be released. Both deploys
+run `cdk deploy --concurrency 4`, which deploys independent stacks side by side.
+
 Each workflow has its own concurrency group, `deploy-dev` and `deploy-prod`: a
 newer push queues behind a running deploy rather than cancelling it mid-update,
 and a dev deploy never waits on prod. They can run side by side because they

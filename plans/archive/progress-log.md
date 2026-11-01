@@ -1256,3 +1256,8 @@ The owner's sign-off for prod is now a push to the `release` branch, not an appr
 - `.github/workflows/README.md`'s `DEV_ROOT_DOMAIN` note sat inside the variables table, cutting off the `E2E_BASE_URL` row. Moved below the table.
 
 **Tests.** `actionlint` clean; `infra` pytest 153 passed, `ruff`, `mypy --strict`, `cdk synth` dev + prod clean. `cdk ls --context env=prod '*-prod'` lists the eight prod stacks and not `CiStack`.
+
+**Faster dev deploys (same PR).** The first CI deploy of dev took 16½ minutes: 10m 12s building the Lambdas on a cold Rust cache, 4m 05s in `cdk deploy`. A warm cache doesn't fix the build: `backend-ci`'s warm release build recompiles only the 14 workspace crates and still takes 6m 47s.
+- The `dev` job caches `backend/target/lambda` under a hash of `backend/**` and `rust-toolchain.toml`. A push that leaves those alone restores the binaries and skips rust-cache, cargo-lambda and the build; the artifact is still uploaded for `release.yml`. Identical binaries also leave every Lambda unchanged for CDK. `GET /healthz`'s `version` is now the commit the running binaries were built at ([`api.md` §11.1](../../docs/design/api.md#111-get-healthz)).
+- Both deploys pass `--concurrency 4`, so independent stacks deploy side by side (the 9 dev stacks ran strictly one at a time, ~25s each). The only cross-stack link CDK can't infer, `MonitoringStack`'s SSM read of `ApiStack`, already has an explicit dependency.
+- Not done: running `npm ci` and `pip install` alongside the Rust build (~75s, and nothing on a cached run), and splitting the build across runners (gain unmeasured: each runner would still compile `domain`/`shared`/`persistence`).

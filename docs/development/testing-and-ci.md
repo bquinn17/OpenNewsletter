@@ -150,15 +150,15 @@ PRs and pushes touching `infra/**`: ruff, mypy, pytest, `cdk synth` dev + prod. 
 **Who can release.** A job with `environment: production` gets the OIDC subject `repo:…:environment:production`, which carries no branch, so the `production` environment **must** restrict deployment branches to `release`. Repo rulesets let only the owner create or update `release`, and block force pushes and deletion for everyone, so it only moves forward. Setup: [`.github/workflows/README.md`](../../.github/workflows/README.md#the-release-branch-and-the-production-environment).
 
 **Dev job** (`deploy.yml`):
-1. Build every Lambda (`cargo lambda build --release --arm64`), check none is a stub (`scripts/check_lambda_binaries.sh`), and upload them as a tarred artifact (keeps the exec bit), kept 30 days.
-2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never --outputs-file cdk.out/dev-outputs.json`. `--all` includes the account-wide `CiStack`.
+1. Build every Lambda (`cargo lambda build --release --arm64`), check none is a stub (`scripts/check_lambda_binaries.sh`), and upload them as a tarred artifact (keeps the exec bit), kept 30 days. The build takes ~7 minutes even with a warm Rust cache, so the binaries are also cached under a hash of `backend/**` and `rust-toolchain.toml`: a push that doesn't change those restores them and skips the build. The artifact is uploaded either way.
+2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never --concurrency 4 --outputs-file cdk.out/dev-outputs.json`. `--all` includes the account-wide `CiStack`; `--concurrency` deploys stacks that don't depend on each other side by side.
 3. `scripts/write_frontend_env.py --env dev --strict` writes `frontend/.env.dev` from those outputs, failing on any empty value. `npm run build -- --mode dev`, with `VITE_REDIRECT_URI` set to `https://$DEV_ROOT_DOMAIN/auth/callback`; add `CNAME` (`DEV_ROOT_DOMAIN`) and `404.html`; push `dist/` to this repo's `gh-pages`, which GitHub Pages serves as the dev site.
 
 **Prod job** (`release.yml`; `environment: production`):
 1. Refuse a SHA that isn't on `main`. Find `deploy.yml`'s run for the same SHA, wait for its dev job if it's still running, and refuse unless it succeeded. Prod only gets what dev ran first.
 2. Check the prod variables, `PROD_PAGES_REPO` and the `PROD_PAGES_DEPLOY_KEY` secret, before deploying anything.
 3. Download that dev run's Lambda artifact, so prod runs exactly what ran in dev. A commit whose artifact has expired (30 days) can't be released.
-4. `cdk deploy --context env=prod '*-prod' --require-approval never`: every prod stack, but not `CiStack`, which only the dev job deploys.
+4. `cdk deploy --context env=prod '*-prod' --require-approval never --concurrency 4`: every prod stack, but not `CiStack`, which only the dev job deploys.
 5. `npm run build` with the prod `VITE_*` env, add `CNAME`, copy `index.html` → `404.html` ([`frontend.md` §14.5](../design/frontend.md#145-github-pages-spa-fallback)), push `dist/` to the `gh-pages` branch of `PROD_PAGES_REPO` with the `PROD_PAGES_DEPLOY_KEY` deploy key. A repo hosts only one Pages site and this repo's is dev, so prod's lives in its own repo.
 
 **Concurrency.** Each workflow has its own group (`deploy-dev`, `deploy-prod`) that queues rather than cancels, so a deploy is never stopped mid-update and a dev deploy never waits on prod. The two can run side by side because they deploy disjoint stacks.
