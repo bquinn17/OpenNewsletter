@@ -1230,7 +1230,7 @@ Every image in the demo was a black box: the mock served one 1×1 black PNG for 
 
 ## Dev auto-deploy with a hosted dev site (2026-10-31)
 
-Every push to `main` now deploys dev end to end; prod stays behind the `production` reviewer. Decision in [`decisions.md`](../../docs/decisions.md#hosted-dev-frontend), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion).
+Every push to `main` now deploys dev end to end; prod stays behind the `production` reviewer. Decision in [`decisions.md`](../../docs/decisions.md#hosted-dev-frontend), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release).
 
 **What landed.**
 - `deploy.yml`'s `dev` job, after its `cdk deploy`, writes `frontend/.env.dev` from the stack outputs (`write_frontend_env.py --strict`, a new flag that fails on any empty value), builds with `--mode dev` and the `dev.betterloop.site` sign-in redirect, and publishes to this repo's `gh-pages`. It fails fast without `DEV_ROOT_DOMAIN`.
@@ -1240,3 +1240,19 @@ Every push to `main` now deploys dev end to end; prod stays behind the `producti
 **Found on the way.** dev.betterloop.site was a build pushed to `gh-pages` by hand on 2026-10-19, so the demo hadn't reached it. It was republished by hand from `86f791f` on 2026-10-31. That push also dropped about 20 stray repo files (`.github/workflows/*`, `frontend/.env.*`) the hand-made branch had carried.
 
 **Tests.** No test changes; `actionlint`, `ruff` and `mypy --strict` on the script are clean.
+
+## Prod deploys on a push to `release` (2026-11-01)
+
+The owner's sign-off for prod is now a push to the `release` branch, not an approval on every `main` run. Decision in [D6](../../docs/decisions.md#d6), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release).
+
+**What landed.**
+- `promote-prod` moved out of `deploy.yml` into a new `release.yml` (`prod` job, push to `release`). It refuses a SHA that isn't on `main`, waits for `deploy.yml`'s dev job on the same SHA and refuses unless it succeeded, then downloads that run's `lambda-binaries` artifact (`run-id`, `actions: read`).
+- The prod deploy targets `'*-prod'` instead of `--all`, so only the dev deploy updates the account-wide `CiStack`. That let each workflow take its own concurrency group (`deploy-dev`, `deploy-prod`), so a dev deploy never waits on prod.
+- GitHub settings: the `production` environment admits only `release` and has no required reviewer. Ruleset `release: owner only` restricts creating and updating `release` to the admin role (only the owner, on a personal repo); `release: no rewrites` blocks force pushes and deletion with no bypass. The `release` branch doesn't exist yet.
+- `GithubDeployRole`'s trust is unchanged (`environment:production`); its description now names `release`.
+
+**Found on the way.**
+- The first CI deploy of dev (run 41322503828, `a1482c8`) passed. Its `promote-prod` sat waiting for approval, and the workflow-wide `deploy` concurrency group would have queued the next dev deploy behind it. That's what prompted this change; the waiting run was cancelled.
+- `.github/workflows/README.md`'s `DEV_ROOT_DOMAIN` note sat inside the variables table, cutting off the `E2E_BASE_URL` row. Moved below the table.
+
+**Tests.** `actionlint` clean; `infra` pytest 153 passed, `ruff`, `mypy --strict`, `cdk synth` dev + prod clean. `cdk ls --context env=prod '*-prod'` lists the eight prod stacks and not `CiStack`.

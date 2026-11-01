@@ -294,6 +294,6 @@ Before opening a PR:
 - [ ] No new dependencies added without justification in the PR description.
 - [ ] No secrets, env-specific values, or local paths in the diff.
 - [ ] OpenAPI YAML (`shared/openapi.yaml`) updated if any route or schema changed; codegen re-run (`scripts/codegen_types.sh`).
-- [ ] **([D6](../decisions.md#d6))** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend promote together from one SHA, backend first ([`testing-and-ci.md` §6](testing-and-ci.md#6-github-actions-workflows)), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
+- [ ] **([D6](../decisions.md#d6))** A removed or renamed route/field ships **expand → contract**: add the new shape, ship the frontend release that uses it, and only remove the old shape in a later change. Backend and frontend deploy together from one SHA, backend first ([`testing-and-ci.md` §6](testing-and-ci.md#6-github-actions-workflows)), but an installed PWA keeps running its previous frontend release until its service worker updates, so the backend must keep serving it.
 - [ ] The relevant `docs/design/` page updated — and [`decisions.md`](../decisions.md) too, if you made a new standing decision — if you discovered a gap or made a non-obvious call.
 - [ ] PR description follows §6.3.

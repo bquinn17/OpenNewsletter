@@ -123,10 +123,10 @@ Time fast-forwarding uses the dev-only tick routes ([`api.md` §11a](../design/a
 
 ## 6. GitHub Actions workflows
 
-Five workflows, each with a header comment explaining it. Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment, and `.github/dependabot.yml` bumps them in one weekly PR. Node comes from `.nvmrc` everywhere. Deploy-shaped steps stay off until repo variables enable them, so `main` is green without AWS. The variable and secret list is in [`.github/workflows/README.md`](../../.github/workflows/README.md).
+Six workflows, each with a header comment explaining it. Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment, and `.github/dependabot.yml` bumps them in one weekly PR. Node comes from `.nvmrc` everywhere. Deploy-shaped steps stay off until repo variables enable them, so `main` is green without AWS. The variable and secret list is in [`.github/workflows/README.md`](../../.github/workflows/README.md).
 
 OIDC roles live in `CiStack` (`infra/opennewsletter/ci_stack.py`):
-- **`GithubDeployRole`** trusts `ref:refs/heads/main` and `environment:production`, and may only assume the CDK bootstrap roles.
+- **`GithubDeployRole`** trusts `ref:refs/heads/main` (the dev deploy) and `environment:production` (the prod deploy), and may only assume the CDK bootstrap roles.
 - **`GithubDiffRole`** trusts pull requests and assumes **no** bootstrap role: the PR job runs the branch's own code, and the bootstrap lookup role's `ReadOnlyAccess` could scan the table and read private media. It gets only `DescribeStacks`/`GetTemplate` on the prod stacks and `CiStack`, and `cdk diff` runs with `--no-change-set`.
 
 ### 6.1 `frontend-ci.yml`
@@ -141,25 +141,31 @@ PRs and pushes touching `backend/**`: fmt, clippy, `cargo deny`, `cargo test --w
 
 PRs and pushes touching `infra/**`: ruff, mypy, pytest, `cdk synth` dev + prod. On PRs, when `vars.AWS_DIFF_ROLE_ARN` is set, `cdk diff --context env=prod --no-change-set` is posted as a comment, using the same prod config variables as the deploy.
 
-### 6.4 `deploy.yml` — dev auto-deploy + gated prod promotion
+### 6.4 `deploy.yml` and `release.yml` — dev auto-deploy, prod on release
 
-Push to `main`.
+`deploy.yml` deploys dev on every push to `main`. `release.yml` deploys prod on every push to the `release` branch, and that push is the manual gate: `git push origin main:release`. The tip of `release` is what's in prod. Both workflows run only when `vars.DEPLOY_ENABLED == 'true'`.
 
 **Config.** Unprefixed repo variables (`ROOT_DOMAIN`, `APP_SECRET_ARN`, `BOOTSTRAP_ADMIN_EMAIL`, …) are prod's; the dev job maps `DEV_*` variables onto the same names, so dev can never pick up a prod value. `ALARM_EMAIL` is shared (`CiStack` is account-wide). Each job fails fast on an empty app-secret ARN.
 
-**OIDC.** A job with `environment: production` gets the subject `repo:…:environment:production`, which carries no branch, so the `production` environment **must** restrict deployment branches to `main`.
+**Who can release.** A job with `environment: production` gets the OIDC subject `repo:…:environment:production`, which carries no branch, so the `production` environment **must** restrict deployment branches to `release`. Repo rulesets let only the owner create or update `release`, and block force pushes and deletion for everyone, so it only moves forward. Setup: [`.github/workflows/README.md`](../../.github/workflows/README.md#the-release-branch-and-the-production-environment).
 
-**Dev job** (when `vars.DEPLOY_ENABLED == 'true'`):
-1. Build every Lambda (`cargo lambda build --release --arm64`), check none is a stub (`scripts/check_lambda_binaries.sh`), and upload them as a tarred artifact (keeps the exec bit).
-2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never --outputs-file cdk.out/dev-outputs.json`.
+**Dev job** (`deploy.yml`):
+1. Build every Lambda (`cargo lambda build --release --arm64`), check none is a stub (`scripts/check_lambda_binaries.sh`), and upload them as a tarred artifact (keeps the exec bit), kept 30 days.
+2. Assume `GithubDeployRole` via OIDC; `cdk deploy --context env=dev --all --require-approval never --outputs-file cdk.out/dev-outputs.json`. `--all` includes the account-wide `CiStack`.
 3. `scripts/write_frontend_env.py --env dev --strict` writes `frontend/.env.dev` from those outputs, failing on any empty value. `npm run build -- --mode dev`, with `VITE_REDIRECT_URI` set to `https://$DEV_ROOT_DOMAIN/auth/callback`; add `CNAME` (`DEV_ROOT_DOMAIN`) and `404.html`; push `dist/` to this repo's `gh-pages`, which GitHub Pages serves as the dev site.
 
-**`promote-prod` job** (needs the dev job; `environment: production` with a required reviewer):
-1. Download the dev job's Lambda artifact, so prod runs exactly what ran in dev.
-2. `cdk deploy --context env=prod --all --require-approval never`.
-3. `npm run build` with the prod `VITE_*` env, add `CNAME`, copy `index.html` → `404.html` ([`frontend.md` §14.5](../design/frontend.md#145-github-pages-spa-fallback)), push `dist/` to the `gh-pages` branch of `PROD_PAGES_REPO` with the `PROD_PAGES_DEPLOY_KEY` deploy key. A repo hosts only one Pages site and this repo's is dev, so prod's lives in its own repo. The job checks the repo and key before step 1.
+**Prod job** (`release.yml`; `environment: production`):
+1. Refuse a SHA that isn't on `main`. Find `deploy.yml`'s run for the same SHA, wait for its dev job if it's still running, and refuse unless it succeeded. Prod only gets what dev ran first.
+2. Check the prod variables, `PROD_PAGES_REPO` and the `PROD_PAGES_DEPLOY_KEY` secret, before deploying anything.
+3. Download that dev run's Lambda artifact, so prod runs exactly what ran in dev. A commit whose artifact has expired (30 days) can't be released.
+4. `cdk deploy --context env=prod '*-prod' --require-approval never`: every prod stack, but not `CiStack`, which only the dev job deploys.
+5. `npm run build` with the prod `VITE_*` env, add `CNAME`, copy `index.html` → `404.html` ([`frontend.md` §14.5](../design/frontend.md#145-github-pages-spa-fallback)), push `dist/` to the `gh-pages` branch of `PROD_PAGES_REPO` with the `PROD_PAGES_DEPLOY_KEY` deploy key. A repo hosts only one Pages site and this repo's is dev, so prod's lives in its own repo.
 
-Backend and frontend are always promoted together from one SHA, backend first. That makes the **expand → contract** rule ([`coding-standards.md` §8](coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task)) load-bearing: an installed PWA runs its previous frontend until its service worker updates, so a route or field is removed only after the frontend that stopped using it has shipped. The SW activates new versions promptly (`activatePromptly`: `skipWaiting` + `clients.claim()`, not `autoUpdate`, which reloads open pages; [`frontend.md` §5.2](../design/frontend.md#52-service-worker--caching-strategy)).
+**Concurrency.** Each workflow has its own group (`deploy-dev`, `deploy-prod`) that queues rather than cancels, so a deploy is never stopped mid-update and a dev deploy never waits on prod. The two can run side by side because they deploy disjoint stacks.
+
+**Rolling back.** `release` can't be rewound. Revert the change on `main`, let dev deploy it, then push `release` again.
+
+Backend and frontend always deploy together from one SHA, backend first. That makes the **expand → contract** rule ([`coding-standards.md` §8](coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task)) load-bearing: an installed PWA runs its previous frontend until its service worker updates, so a route or field is removed only after the frontend that stopped using it has shipped. The SW activates new versions promptly (`activatePromptly`: `skipWaiting` + `clients.claim()`, not `autoUpdate`, which reloads open pages; [`frontend.md` §5.2](../design/frontend.md#52-service-worker--caching-strategy)).
 
 ### 6.5 `e2e.yml`
 
@@ -216,4 +222,4 @@ Never change an existing key shape in place: add a new attribute or key, dual-wr
 
 ## 13. Manual smoke runbook
 
-[`docs/operations/smoke-test.md`](../operations/smoke-test.md), parameterised by `ENV=dev|prod`. Run it on dev before approving a `promote-prod`, and on prod after it ships. Prod has no dev tick routes, so commenting and reacting can only be smoke-tested there on an edition that is already published.
+[`docs/operations/smoke-test.md`](../operations/smoke-test.md), parameterised by `ENV=dev|prod`. Run it on dev before pushing `release`, and on prod after the release deploys. Prod has no dev tick routes, so commenting and reacting can only be smoke-tested there on an edition that is already published.

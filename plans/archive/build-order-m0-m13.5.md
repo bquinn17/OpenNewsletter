@@ -250,7 +250,7 @@ Read: [`frontend.md` §7.7](../../docs/design/frontend.md#77-groupadminpage), [`
 
 **Deliverables**:
 - All tests in [`testing-and-ci.md` §2](../../docs/development/testing-and-ci.md#2-rust-backend-tests)–§4 implemented (gaps from prior milestones filled).
-- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; [`testing-and-ci.md` §6](../../docs/development/testing-and-ci.md#6-github-actions-workflows)). *Superseded in M13.5: `deploy.yml` replaced `frontend-deploy` and `backend-deploy`, leaving five workflows ([`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion)).*
+- All six GitHub Actions workflows green on `main` (`frontend-ci`, `frontend-deploy`, `backend-ci`, `backend-deploy`, `infra-ci`, `e2e`; [`testing-and-ci.md` §6](../../docs/development/testing-and-ci.md#6-github-actions-workflows)). *Superseded in M13.5: `deploy.yml` replaced `frontend-deploy` and `backend-deploy`, leaving five workflows ([`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release)).*
 - Monitoring alarms wired to a working SNS topic + email.
 - CSP set on the frontend; verified by a Playwright test.
 - Manual smoke runbook ([`smoke-test.md`](../../docs/operations/smoke-test.md)) executed and observed clean.

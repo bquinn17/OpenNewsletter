@@ -42,7 +42,7 @@ All values above (cycle length, response window, questions-per-cycle, timezone) 
 | Notifications | Web Push sent directly from Lambda (own RFC 8291/8292 implementation, [`notifications.md` §10](design/notifications.md#10-web-push-delivery-details-rust)); VAPID keys in the per-env Secrets Manager secret |
 | Scheduling | Amazon EventBridge scheduler rules (cycle tick + notification tick Lambdas) |
 | IaC | AWS CDK in Python |
-| CI/CD | GitHub Actions: a CI workflow per area, one `deploy.yml` (dev auto-deploy, gated prod promotion), nightly E2E ([`testing-and-ci.md` §6](development/testing-and-ci.md#6-github-actions-workflows)) |
+| CI/CD | GitHub Actions: a CI workflow per area, `deploy.yml` (every merge deploys dev), `release.yml` (pushing the `release` branch deploys prod), nightly E2E ([`testing-and-ci.md` §6](development/testing-and-ci.md#6-github-actions-workflows)) |
 
 ---
 
@@ -115,7 +115,8 @@ OpenNewsletter/
 │   ├── frontend-ci.yml             # typecheck, lint, test, build
 │   ├── backend-ci.yml              # fmt, clippy, cargo deny, cargo test, Lambda cross-build
 │   ├── infra-ci.yml                # ruff, mypy, pytest, cdk synth; cdk diff on PR
-│   ├── deploy.yml                  # main → dev + dev site; gated promote-prod → prod + prod site
+│   ├── deploy.yml                  # push to main → dev + dev site
+│   ├── release.yml                 # push to release → prod + prod site
 │   └── e2e.yml                     # nightly Playwright
 │
 ├── CLAUDE.md                       # runtime guidance for AI assistants in-repo
@@ -160,7 +161,7 @@ Two environments managed by CDK context:
 - `dev` — stack suffix `-dev`. **No custom API domain**: raw AWS endpoints (`*.execute-api…`; media is served from S3 bucket endpoints in every env, [`decisions.md`](decisions.md#presigned-s3-media)), per [`environments.md` §2](development/environments.md#2-environments). Seeded via `make seed`.
 - `prod` — stack suffix `-prod`, custom domains, the only environment with alarms.
 
-Each has a hosted frontend on GitHub Pages: dev's on this repo's Pages site, deployed on every push to `main`; prod's on its own Pages repo, after the owner approves ([`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion)).
+Each has a hosted frontend on GitHub Pages: dev's on this repo's Pages site, deployed on every push to `main`; prod's on its own Pages repo, deployed when the owner pushes the `release` branch ([`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release)).
 
 Both live in one personal AWS account; stronger account-level isolation is out of scope for v1.
 

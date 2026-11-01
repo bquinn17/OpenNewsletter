@@ -1,0 +1,220 @@
+# Trigger: every push to the `release` branch.
+# Purpose: deploy a commit that has already deployed to dev to prod, then
+# publish the prod frontend to the prod Pages repo
+# (docs/development/testing-and-ci.md §6.4). Pushing `release` is the manual
+# gate: `git push origin main:release`. Only the owner may update the branch
+# (a repo ruleset), and the `production` environment only deploys from it.
+# The Lambdas are not rebuilt: this deploys the exact artifact that deploy.yml's
+# dev job built and deployed for the same SHA, so what reaches prod is what ran
+# in dev. Backend before frontend, always from one SHA: API changes are
+# expand → contract (docs/development/coding-standards.md §8).
+# Inert until the repo variable DEPLOY_ENABLED is "true". AWS access is GitHub
+# OIDC into CiStack's GithubDeployRole (infra/opennewsletter/ci_stack.py) — no
+# long-lived AWS keys in this repo.
+name: release
+
+on:
+  push:
+    branches: [release]
+
+permissions:
+  contents: read
+
+# Never run two prod deploys at once, and never cancel one halfway through a
+# CloudFormation update. Dev deploys have their own group (deploy.yml) and
+# touch disjoint stacks: this job leaves out the account-wide CiStack.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Up to 40 minutes waiting on dev's deploy of this SHA, then the deploy.
+    timeout-minutes: 90
+    # Its branch rule (`release` only) is what keeps GithubDeployRole's
+    # `environment:production` trust from being used anywhere else.
+    # Environment-level variables/secrets, if any, override the repo-level
+    # ones below.
+    environment: production
+    # The prod site is pushed to another repo with PROD_PAGES_DEPLOY_KEY, so
+    # this job needs no write access here. `actions: read` is for the dev
+    # run's status and artifact.
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    env:
+      ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
+      API_DOMAIN: ${{ vars.API_DOMAIN }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
+      COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+      APP_SECRET_ARN: ${{ vars.APP_SECRET_ARN }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+      ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+      GITHUB_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # `release` only ever moves to a commit already on main. "behind" or
+      # "identical" means this SHA is in main's history.
+      - name: Check the commit is on main
+        run: |
+          status="$(gh api "repos/$GH_REPO/compare/main...$GITHUB_SHA" --jq .status)"
+          if [ "$status" != "behind" ] && [ "$status" != "identical" ]; then
+            echo "::error::$GITHUB_SHA is not on main (compare: $status). Release with: git push origin main:release"
+            exit 1
+          fi
+
+      # Prod only gets a SHA that deployed to dev. A release pushed right
+      # after a merge waits here for that merge's dev deploy to finish.
+      - name: Wait for dev's deploy of this commit
+        id: dev
+        run: |
+          run_id="$(gh run list --workflow deploy.yml --event push --branch main \
+            --commit "$GITHUB_SHA" --json databaseId --jq '.[0].databaseId')"
+          if [ -z "$run_id" ]; then
+            echo "::error::No dev deploy ran for $GITHUB_SHA. Release a commit that was main's tip after a push."
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          for _ in $(seq 1 80); do
+            conclusion="$(gh run view "$run_id" --json jobs \
+              --jq '.jobs[] | select(.name == "dev") | .conclusion')"
+            case "$conclusion" in
+              success) exit 0 ;;
+              "") sleep 30 ;;
+              *)
+                echo "::error::dev's deploy of $GITHUB_SHA (run $run_id) ended in '$conclusion'."
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::Timed out waiting for dev's deploy of $GITHUB_SHA (run $run_id)."
+          exit 1
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The Pages repo and its key are checked here, before any deploy, so a
+      # missing one can't leave prod's backend ahead of its frontend.
+      - name: Check prod config
+        env:
+          FRONTEND_DOMAIN: ${{ vars.FRONTEND_DOMAIN }}
+          PROD_PAGES_REPO: ${{ vars.PROD_PAGES_REPO }}
+          PROD_PAGES_DEPLOY_KEY: ${{ secrets.PROD_PAGES_DEPLOY_KEY }}
+        run: |
+          missing=0
+          for name in APP_SECRET_ARN ROOT_DOMAIN API_DOMAIN COGNITO_DOMAIN_PREFIX \
+            FRONTEND_DOMAIN PROD_PAGES_REPO; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Variable $name is not set for prod."
+              missing=1
+            fi
+          done
+          if [ -z "$PROD_PAGES_DEPLOY_KEY" ]; then
+            echo "::error::Secret PROD_PAGES_DEPLOY_KEY is not set for prod."
+            missing=1
+          fi
+          exit "$missing"
+
+      # The exact binaries dev's deploy built and deployed — no rebuild. The
+      # artifact is kept 30 days, so an older commit can't be released.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: lambda-binaries
+          run-id: ${{ steps.dev.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Unpack Lambda binaries
+        run: |
+          mkdir -p backend/target
+          tar -xzf lambda-binaries.tgz -C backend/target
+
+      - name: Check every Lambda binary is present
+        run: ./scripts/check_lambda_binaries.sh
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r infra/requirements.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Backend first: the frontend below may depend on what this ships.
+      # '*-prod' is every prod stack but the account-wide CiStack, which only
+      # deploy.yml deploys, so a dev deploy and a release never update the
+      # same stack at once.
+      - name: cdk deploy (prod)
+        working-directory: infra
+        run: npx aws-cdk@2 deploy --context env=prod '*-prod' --require-approval never
+
+      # After the deploy, not in "Check prod config": on the first prod run
+      # VITE_MEDIA_BASE_URL and VITE_UPLOAD_ORIGINS can only be set once the
+      # deploy above has created MediaPersistentStack. The prod build itself
+      # also fails without them (cspPlugin); this names every missing secret
+      # at once, before npm ci.
+      - name: Check prod frontend build secrets
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_MEDIA_BASE_URL: ${{ secrets.VITE_MEDIA_BASE_URL }}
+          VITE_UPLOAD_ORIGINS: ${{ secrets.VITE_UPLOAD_ORIGINS }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_CLIENT_ID: ${{ secrets.VITE_COGNITO_CLIENT_ID }}
+          VITE_COGNITO_HOSTED_DOMAIN: ${{ secrets.VITE_COGNITO_HOSTED_DOMAIN }}
+        run: |
+          missing=0
+          for name in VITE_API_BASE_URL VITE_MEDIA_BASE_URL VITE_UPLOAD_ORIGINS \
+            VITE_COGNITO_USER_POOL_ID VITE_COGNITO_CLIENT_ID VITE_COGNITO_HOSTED_DOMAIN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set for prod."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (prod)
+        working-directory: frontend
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_MEDIA_BASE_URL: ${{ secrets.VITE_MEDIA_BASE_URL }}
+          VITE_UPLOAD_ORIGINS: ${{ secrets.VITE_UPLOAD_ORIGINS }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_CLIENT_ID: ${{ secrets.VITE_COGNITO_CLIENT_ID }}
+          VITE_COGNITO_HOSTED_DOMAIN: ${{ secrets.VITE_COGNITO_HOSTED_DOMAIN }}
+          VITE_REDIRECT_URI: ${{ secrets.VITE_REDIRECT_URI }}
+          VITE_ENV: prod
+          VITE_USE_MOCKS: "false"
+          VITE_BUILD_SHA: ${{ github.sha }}
+
+      - name: Write GitHub Pages CNAME
+        working-directory: frontend
+        run: echo "${{ vars.FRONTEND_DOMAIN }}" > dist/CNAME
+
+      - name: SPA fallback for deep links (docs/design/frontend.md §14.5)
+        working-directory: frontend
+        run: cp dist/index.html dist/404.html
+
+      # Prod's own Pages repo: this repo's gh-pages is the dev site.
+      - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          deploy_key: ${{ secrets.PROD_PAGES_DEPLOY_KEY }}
+          external_repository: ${{ vars.PROD_PAGES_REPO }}
+          publish_branch: gh-pages
+          publish_dir: frontend/dist

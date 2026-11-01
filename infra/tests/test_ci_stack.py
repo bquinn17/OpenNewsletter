@@ -80,7 +80,7 @@ def test_exactly_two_named_github_roles(ci_template: assertions.Template) -> Non
 def test_deploy_role_trust_is_scoped_to_main_and_the_production_environment(
     ci_template: assertions.Template,
 ) -> None:
-    # A job with `environment: production` (deploy.yml's promote-prod) gets an
+    # A job with `environment: production` (release.yml's prod job) gets an
     # `environment:production` OIDC subject instead of its ref.
     deploy_role = _role_by_name(ci_template, "OpenNewsletter-GithubDeploy")
     statement = deploy_role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
