@@ -155,10 +155,11 @@ jobs:
       # Backend first: the frontend below may depend on what this ships.
       # '*-prod' is every prod stack but the account-wide CiStack, which only
       # deploy.yml deploys, so a dev deploy and a release never update the
-      # same stack at once.
+      # same stack at once. --concurrency deploys independent stacks side by
+      # side, in dependency order (see deploy.yml).
       - name: cdk deploy (prod)
         working-directory: infra
-        run: npx aws-cdk@2 deploy --context env=prod '*-prod' --require-approval never
+        run: npx aws-cdk@2 deploy --context env=prod '*-prod' --require-approval never --concurrency 4
 
       # After the deploy, not in "Check prod config": on the first prod run
       # VITE_MEDIA_BASE_URL and VITE_UPLOAD_ORIGINS can only be set once the

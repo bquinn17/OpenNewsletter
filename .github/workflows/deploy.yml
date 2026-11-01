@@ -65,9 +65,23 @@ jobs:
           fi
           exit "$missing"
 
+      # The release build takes ~7 minutes even with a warm rust-cache, so a
+      # push that doesn't touch the backend reuses the binaries built for the
+      # same sources. Keyed before rust-cache restores backend/target, and
+      # with target excluded anyway. Identical binaries also mean CDK sees no
+      # Lambda code change. `GET /healthz` then reports the commit the
+      # binaries were built at (docs/design/api.md §11.1).
+      - name: Restore Lambda binaries built from these sources
+        id: lambda-build
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: backend/target/lambda
+          key: lambda-binaries-${{ hashFiles('backend/**', '!backend/target/**', 'rust-toolchain.toml') }}
+
       # rustup on ubuntu-latest reads rust-toolchain.toml (repo root) and
       # installs/pins the toolchain it names.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.lambda-build.outputs.cache-hit != 'true'
         with:
           workspaces: backend
 
@@ -79,9 +93,11 @@ jobs:
       # cargo-lambda's PyPI package bundles zig, which it uses as the arm64
       # cross-linker.
       - name: Install cargo-lambda
+        if: steps.lambda-build.outputs.cache-hit != 'true'
         run: pip install cargo-lambda
 
       - name: Build Lambda binaries
+        if: steps.lambda-build.outputs.cache-hit != 'true'
         working-directory: backend
         env:
           # Compiled into `GET /healthz` (lambda-groups), as `make build-lambdas` does.
@@ -95,6 +111,14 @@ jobs:
       # (infra/opennewsletter/lambda_assets.py), so check before packaging.
       - name: Check every Lambda binary was built
         run: ./scripts/check_lambda_binaries.sh
+
+      # Only after the check, so a partial build is never reused.
+      - name: Save Lambda binaries for the next push with these sources
+        if: steps.lambda-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: backend/target/lambda
+          key: ${{ steps.lambda-build.outputs.cache-primary-key }}
 
       # A tarball, because upload-artifact drops the executable bit that
       # Lambda needs on `bootstrap`.
@@ -126,11 +150,14 @@ jobs:
 
       # Backend first: the frontend below may depend on what this ships.
       # --all includes the account-wide CiStack; release.yml leaves it out.
+      # --concurrency deploys stacks that don't depend on each other side by
+      # side; CDK still orders dependent ones (MonitoringStack's SSM read of
+      # ApiStack is an explicit dependency, infra/app.py).
       - name: cdk deploy (dev)
         working-directory: infra
         run: >-
           npx aws-cdk@2 deploy --context env=dev --all --require-approval never
-          --outputs-file cdk.out/dev-outputs.json
+          --concurrency 4 --outputs-file cdk.out/dev-outputs.json
 
       # The dev build's API, Cognito and media values come straight from the
       # stacks just deployed, as `make deploy-dev` does locally, so they can't
