@@ -90,12 +90,23 @@ def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
-    """cycleId = yyyymm of responseOpenAt in the group's local time zone
-    (`docs/design/lifecycle.md` §4.1; mirrors
+def cycle_frequency(outputs: dict[str, Any], env: str) -> str:
+    """The deployed cycle cadence, `monthly` or `weekly` (`docs/design/lifecycle.md` §13).
+    Monthly when the output is missing, as on a stack deployed before it existed."""
+    frequency: str = outputs.get(f"NotificationsStack-{env}", {}).get(
+        "CycleFrequency", "monthly"
+    )
+    return frequency
+
+
+def cycle_id_for(frequency: str, response_open_at: datetime, tz: ZoneInfo) -> str:
+    """cycleId = yyyymm (monthly) or yyyymmdd (weekly) of responseOpenAt in the
+    group's local time zone (`docs/design/lifecycle.md` §4.1, §13.1; mirrors
     `backend/crates/shared/src/cycle_time.rs::cycle_id_for`).
     """
     local = response_open_at.astimezone(tz)
+    if frequency == "weekly":
+        return f"{local.year:04d}{local.month:02d}{local.day:02d}"
     return f"{local.year:04d}{local.month:02d}"
 
 
@@ -409,16 +420,18 @@ def main() -> None:
 
     print("[5/5] Writing fixture data…")
     now = datetime.now(UTC)
-    vote_close = now + timedelta(days=27)  # ~1-month voting window
+    frequency = cycle_frequency(outputs, args.env)
+    # A voting window of about one period.
+    vote_close = now + timedelta(days=6 if frequency == "weekly" else 27)
     response_close = vote_close + parse_duration(args.cycle_close_in)
 
     # Derive stable IDs from known seeds so re-running seed gives the same IDs.
     user_id = deterministic_id(f"seed:user:{cognito_sub}")
     group_id = deterministic_id("seed:dev-group")
-    # cycleId is a real "yyyymm" (it's the Newsletter row's sort key, not an
-    # opaque id) — derived from response_open_at (== vote_close) in the
-    # fixture group's timezone, matching every other Newsletter writer.
-    cycle_id = cycle_id_for(vote_close, ZoneInfo("America/New_York"))
+    # cycleId is a real "yyyymm" or "yyyymmdd" (it's the Newsletter row's sort
+    # key, not an opaque id), derived from response_open_at (== vote_close) in
+    # the fixture group's timezone, matching every other Newsletter writer.
+    cycle_id = cycle_id_for(frequency, vote_close, ZoneInfo("America/New_York"))
 
     write_fixture(
         table,

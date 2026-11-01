@@ -7,14 +7,15 @@
 mod common;
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{Duration, TimeZone, Utc};
-use common::{seed, state};
+use chrono::{Duration, NaiveTime, TimeZone, Utc, Weekday};
+use common::{seed, state, state_with_cadence};
 use domain::api::{CycleSettingsPatch, PatchGroupRequest};
 use domain::{ApiErrorCode, GroupId, Newsletter, NewsletterStatus, Role, UserId};
 use groups::group_routes;
 use persistence::keys::{attr, group_pk, newsletter_gsi2sk, newsletter_sk};
 use persistence::{groups as group_repo, newsletters, questions, test_factories, Repo};
 use pretty_assertions::assert_eq;
+use shared::cycle_time::CycleCadence;
 
 fn window_patch(days: u32) -> PatchGroupRequest {
     PatchGroupRequest {
@@ -185,10 +186,11 @@ async fn a_voting_cycle_with_candidates_is_rescheduled() {
     let (_c, repo) = test_factories::make_test_repo().await;
     seed(&repo, "g-voting", &[("a1", Role::Admin)]).await;
     let tz: chrono_tz::Tz = shared::config::DEFAULT_TIMEZONE.parse().unwrap();
-    let voting =
-        newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-voting"), tz, 7, Utc::now())
-            .await
-            .unwrap();
+    let schedule =
+        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, Utc::now(), tz, 7);
+    let voting = newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-voting"), schedule)
+        .await
+        .unwrap();
     let candidate = test_factories::candidate("g-voting", voting.cycle_id.as_str(), "q1", "a1", 2);
     questions::put_candidate(&repo, &candidate).await.unwrap();
     let state = state(repo);
@@ -246,10 +248,10 @@ async fn a_timezone_change_reschedules_the_voting_cycle_without_changing_its_id(
     // Created well after its own month began, like a successor the repair
     // pass creates late: its `voteWindowOpenAt` (now) is no anchor for it.
     let after = Utc.with_ymd_and_hms(2030, 11, 1, 5, 0, 0).unwrap();
-    let voting =
-        newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-tz-west"), ny, 7, after)
-            .await
-            .unwrap();
+    let schedule = shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, ny, 7);
+    let voting = newsletters::create_next_voting_cycle(&repo, &GroupId::new("g-tz-west"), schedule)
+        .await
+        .unwrap();
     assert_eq!(voting.cycle_id.as_str(), "203012");
     let state = state(repo);
 
@@ -272,4 +274,40 @@ async fn a_timezone_change_reschedules_the_voting_cycle_without_changing_its_id(
     assert_eq!(rescheduled.response_open_at, open_at);
     assert_eq!(rescheduled.response_close_at, open_at + Duration::days(7));
     assert_eq!(rescheduled.next_transition_at, Some(open_at));
+}
+
+fn weekly_cadence() -> CycleCadence {
+    CycleCadence::Weekly {
+        weekday: Weekday::Sun,
+        at: NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+    }
+}
+
+/// `docs/design/lifecycle.md` §13 — a weekly deployment's `responseWindowDays`
+/// cap is 7 (the period itself), not the monthly 28.
+#[tokio::test]
+async fn a_weekly_deployment_accepts_a_seven_day_window_but_rejects_eight() {
+    let (_c, repo) = test_factories::make_test_repo().await;
+    seed(&repo, "g-weekly-cap", &[("a1", Role::Admin)]).await;
+    let state = state_with_cadence(repo, weekly_cadence());
+
+    let err = group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-weekly-cap"),
+        window_patch(8),
+    )
+    .await
+    .expect_err("8 days exceeds the weekly cap");
+    assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    assert_eq!(err.field_errors[0].field, "responseWindowDays");
+
+    group_routes::patch_group(
+        &state,
+        &UserId::new("a1"),
+        &GroupId::new("g-weekly-cap"),
+        window_patch(7),
+    )
+    .await
+    .expect("7 days is exactly the weekly period");
 }

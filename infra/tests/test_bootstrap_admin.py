@@ -69,6 +69,7 @@ def prod_items(script: ModuleType) -> tuple[str, list[dict[str, Any]]]:
         tz_name="America/New_York",
         bound_email="  Admin@Example.COM ",
         invite_code=_CODE,
+        cadence="monthly",
         now=_NOW,
     )
     assert isinstance(cycle_id, str)
@@ -149,6 +150,105 @@ def test_prod_invite_is_bound_to_the_lowercased_email(
     assert invite["bound_email"] == {"S": "admin@example.com"}
 
 
+# --- Weekly cadence tests ---
+
+
+@pytest.fixture(scope="module")
+def weekly_prod_items(script: ModuleType) -> tuple[str, list[dict[str, Any]]]:
+    """Weekly cadence case: now=2026-10-27T12:00:00Z, tz=America/New_York, sun 21:00.
+
+    First cycle opens Sun 2026-11-01 21:00 EST, which is 2026-11-02T02:00:00Z
+    (US DST ends on Nov 1, 2026). The cycle_id is 20261101 (yyyymmdd).
+    Response window: 7 days later at 2026-11-09T02:00:00Z.
+    """
+    cadence = script.WeeklyCadence(weekday_index=6, hour=21, minute=0)
+    cycle_id, items = script.prod_bootstrap_transact_items(
+        table_name="OpenNewsletter-prod",
+        group_id=_GROUP_ID,
+        group_name="Weekly Test",
+        tz_name="America/New_York",
+        bound_email="admin@example.com",
+        invite_code=_CODE,
+        cadence=cadence,
+        now=datetime(2026, 10, 27, 12, 0, 0, tzinfo=UTC),
+    )
+    assert isinstance(cycle_id, str)
+    return cycle_id, items
+
+
+def test_weekly_cycle_id_is_yyyymmdd(
+    weekly_prod_items: tuple[str, list[dict[str, Any]]],
+) -> None:
+    cycle_id, _ = weekly_prod_items
+    assert cycle_id == "20261101"
+
+
+def test_weekly_first_cycle_opens_on_the_scheduled_weekday_and_time(
+    weekly_prod_items: tuple[str, list[dict[str, Any]]],
+) -> None:
+    _, items = weekly_prod_items
+    newsletter = _item(items, "Newsletter")
+    # First cycle opens Sun 2026-11-01 21:00 EST = 2026-11-02T02:00:00Z
+    # (DST ends on Nov 1, 2026; EST is UTC-5)
+    assert newsletter["response_open_at"] == {"S": "2026-11-02T02:00:00Z"}
+    assert newsletter["gsi2sk"] == {"S": f"2026-11-02T02:00:00Z#{_GROUP_ID}#20261101"}
+
+
+def test_weekly_first_cycle_closes_after_the_default_window(
+    weekly_prod_items: tuple[str, list[dict[str, Any]]],
+) -> None:
+    _, items = weekly_prod_items
+    newsletter = _item(items, "Newsletter")
+    # 7 days after 2026-11-02T02:00:00Z
+    assert newsletter["response_close_at"] == {"S": "2026-11-09T02:00:00Z"}
+
+
+def test_weekly_window_is_clamped_to_the_period(script: ModuleType) -> None:
+    cadence = script.WeeklyCadence(weekday_index=6, hour=21, minute=0)
+    _, open_at, close_at = script.next_cycle_schedule(
+        cadence, _NOW, script.parse_timezone("America/New_York"), 10
+    )
+    assert close_at - open_at == timedelta(days=7)
+
+
+def test_weekly_now_on_boundary_moves_to_next_week(script: ModuleType) -> None:
+    """When now is exactly on a cycle boundary, we move to the next occurrence."""
+    # Boundary: Sun 2026-11-01 21:00 EST = 2026-11-02T02:00:00Z UTC
+    cadence = script.WeeklyCadence(weekday_index=6, hour=21, minute=0)
+    cycle_id, items = script.prod_bootstrap_transact_items(
+        table_name="OpenNewsletter-prod",
+        group_id=_GROUP_ID,
+        group_name="Boundary Test",
+        tz_name="America/New_York",
+        bound_email="admin@example.com",
+        invite_code=_CODE,
+        cadence=cadence,
+        now=datetime(2026, 11, 2, 2, 0, 0, tzinfo=UTC),  # exactly on boundary
+    )
+    newsletter = _item(items, "Newsletter")
+    # Next occurrence is Sun 2026-11-08 21:00 EST = 2026-11-09T02:00:00Z UTC
+    assert newsletter["response_open_at"] == {"S": "2026-11-09T02:00:00Z"}
+    assert cycle_id == "20261108"
+
+
+def test_weekly_spring_forward_week(script: ModuleType) -> None:
+    """US DST starts 2026-03-08, so that Sunday's 21:00 is EDT (UTC-4), not EST."""
+    cadence = script.WeeklyCadence(weekday_index=6, hour=21, minute=0)
+    cycle_id, items = script.prod_bootstrap_transact_items(
+        table_name="OpenNewsletter-prod",
+        group_id=_GROUP_ID,
+        group_name="Spring Test",
+        tz_name="America/New_York",
+        bound_email="admin@example.com",
+        invite_code=_CODE,
+        cadence=cadence,
+        now=datetime(2026, 3, 3, 0, 0, 0, tzinfo=UTC),
+    )
+    newsletter = _item(items, "Newsletter")
+    assert newsletter["response_open_at"] == {"S": "2026-03-09T01:00:00Z"}
+    assert cycle_id == "20260308"
+
+
 def test_prod_invite_expires_in_30_days_and_ttl_adds_the_audit_window(
     prod_items: tuple[str, list[dict[str, Any]]],
 ) -> None:
@@ -183,6 +283,7 @@ def test_dev_group_still_starts_with_its_admin(script: ModuleType) -> None:
         group_id=_GROUP_ID,
         group_name="Dev",
         tz_name="America/New_York",
+        cadence="monthly",
         now=_NOW,
     )
     entities = [put["Put"]["Item"]["entity"]["S"] for put in captured]

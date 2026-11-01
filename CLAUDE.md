@@ -58,7 +58,7 @@ Full first-time setup for each machine: [`docs/development/environments.md`](doc
 
 ## What this app is
 
-OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce a monthly newsletter. Members suggest and upvote candidate questions between cycles; on the 1st of each month the top-voted questions promote into an active newsletter and a 7-day response window opens; at close, non-empty drafts auto-publish, the edition publishes, and comments/reactions become available.
+OpenNewsletter is a multi-tenant PWA where small groups collaboratively produce a newsletter: monthly in prod, weekly in dev (`CYCLE_FREQUENCY`, [`docs/design/lifecycle.md` §13](docs/design/lifecycle.md#13-cycle-cadence)). Members suggest and upvote candidate questions between cycles; at the start of each period (the 1st of the month, or the configured weekday and time) the top-voted questions promote into an active newsletter and a 7-day response window opens; at close, non-empty drafts auto-publish, the edition publishes, and comments/reactions become available.
 
 ## Architectural principles (must hold)
 

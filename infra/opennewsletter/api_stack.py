@@ -425,6 +425,8 @@ class ApiStack(cdk.Stack):
             "RUST_LOG": "info",
             "ENV": self._config.env,
             "API_BASE_URL": f"https://{self._config.api_domain}",
+            "CYCLE_FREQUENCY": self._config.cycle_frequency,
+            "CYCLE_WEEKLY_START": self._config.cycle_weekly_start,
             **(extra_environment or {}),
         }
 

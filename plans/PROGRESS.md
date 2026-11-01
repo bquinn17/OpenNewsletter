@@ -15,9 +15,10 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
 | — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
 | — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
+| — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30) | ✅ code-complete; reaches dev with the merge's auto-deploy, then needs `make seed` to start weekly ([`lifecycle.md` §13.2](../docs/design/lifecycle.md#132-cycle-ids-across-a-cadence-change)) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-29):** backend 496 (`cargo test --workspace`), CDK 153 (`pytest infra/tests`), Vitest 389, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+**Test baselines (2026-11-01):** backend 526 (`cargo test --workspace`), CDK 181 (`pytest infra/tests`), Vitest 404, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 

@@ -72,6 +72,9 @@ paths:
                 displayName: "Quinn"
                 vapidPublicKey: "BPV_example_vapid_public_key"
                 groupDefaults: {}
+                cycleCadence:
+                  frequency: monthly
+                  maxResponseWindowDays: 28
                 memberships: []
         "401":
           $ref: "#/components/responses/Unauthenticated"
@@ -1695,6 +1698,9 @@ components:
       name: cycleId
       in: path
       required: true
+      description: >
+        Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a
+        weekly one (`docs/design/lifecycle.md` §13).
       schema:
         type: string
       example: "202606"
@@ -1988,7 +1994,7 @@ components:
 
     ConfigResponse:
       type: object
-      required: [userId, email, displayName, vapidPublicKey, groupDefaults, memberships]
+      required: [userId, email, displayName, vapidPublicKey, groupDefaults, cycleCadence, memberships]
       properties:
         userId:
           type: [string, "null"]
@@ -2000,10 +2006,29 @@ components:
           type: string
         groupDefaults:
           type: object
+        cycleCadence:
+          $ref: "#/components/schemas/CycleCadence"
         memberships:
           type: array
           items:
             $ref: "#/components/schemas/MembershipSummary"
+
+    CycleCadence:
+      type: object
+      description: >
+        How often this deployment runs a cycle (`docs/design/lifecycle.md` §13).
+        Set per deployment, not per group. The SPA labels editions by month
+        when `monthly` and by publication date when `weekly`.
+      required: [frequency, maxResponseWindowDays]
+      properties:
+        frequency:
+          type: string
+          enum: [monthly, weekly]
+        maxResponseWindowDays:
+          type: integer
+          description: >
+            Upper bound on `cycleSettings.responseWindowDays` for this cadence:
+            28 when monthly, 7 when weekly, so a window never outlasts its period.
 
     UserResponse:
       type: object

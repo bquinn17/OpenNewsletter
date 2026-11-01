@@ -12,6 +12,7 @@ use persistence::keys::{
 };
 use persistence::responses::{self, ResponseSave};
 use persistence::{groups, media, newsletters, test_factories, Repo};
+use shared::cycle_time::CycleCadence;
 
 pub use test_factories::{candidate, group, make_test_repo, membership};
 
@@ -54,7 +55,7 @@ pub async fn seed_open_cycle(repo: &Repo, group_id: &str, locked: &[&str]) -> Ne
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
     let nl = Newsletter {
         group_id: GroupId::new(group_id),
-        cycle_id: shared::cycle_time::cycle_id_for(now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz),
         status: NewsletterStatus::Open,
         vote_window_open_at: now - Duration::days(30),
         vote_window_close_at: now - Duration::days(1),

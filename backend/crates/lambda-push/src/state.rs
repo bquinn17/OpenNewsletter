@@ -5,6 +5,7 @@ use crate::webpush::VapidKeys;
 use domain::ApiError;
 use persistence::Repo;
 use serde::Deserialize;
+use shared::cycle_time::CycleCadence;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -21,6 +22,10 @@ pub struct AppState {
     /// (its dev route lives on `notify-tick`) but kept for parity with the
     /// other Lambdas' `AppState` and in case a push-side dev route is added.
     pub env: String,
+    /// This deployment's cycle cadence (`docs/design/lifecycle.md` §13),
+    /// read once at cold start from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START`.
+    /// Picks the publication push's "week's"/"month's" wording.
+    pub cadence: CycleCadence,
     vapid: OnceCell<VapidKeys>,
 }
 
@@ -45,6 +50,7 @@ impl AppState {
         app_secret_arn: String,
         sender: Arc<dyn PushSender>,
         env: String,
+        cadence: CycleCadence,
     ) -> Self {
         Self {
             repo,
@@ -52,6 +58,7 @@ impl AppState {
             app_secret_arn,
             sender,
             env,
+            cadence,
             vapid: OnceCell::new(),
         }
     }

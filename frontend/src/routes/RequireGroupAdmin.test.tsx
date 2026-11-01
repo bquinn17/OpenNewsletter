@@ -13,6 +13,7 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 
 type Role = components["schemas"]["Role"];
+type ConfigResponse = components["schemas"]["ConfigResponse"];
 
 const signedIn: AuthValue = {
   status: "authenticated",
@@ -21,13 +22,14 @@ const signedIn: AuthValue = {
   logout: vi.fn(),
 };
 
-function config(role: Role) {
+function config(role: Role): ConfigResponse {
   return {
     userId: "u1",
     email: null,
     displayName: null,
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [
       { groupId: "g1", role, groupName: "G", timezone: "UTC", gradient: "grape-sky" as const },
     ],

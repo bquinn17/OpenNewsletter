@@ -1,14 +1,14 @@
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useState } from "react";
 import { ApiError } from "../api/client";
-import { useMembership, useNewsletter, useNewsletters } from "../api/queries";
+import { useCycleCadence, useMembership, useNewsletter, useNewsletters } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
-import { cycleLabels, formatInZone, shortCountdown } from "../utils/dates";
+import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
 import { stripImageTokens } from "../utils/markdown";
 import type { components } from "../types/api";
 
@@ -45,6 +45,7 @@ export function NewsletterPage() {
   const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
   const membership = useMembership(groupId);
   const timezone = membership?.timezone ?? "UTC";
+  const { frequency } = useCycleCadence();
 
   if (isLoading) return <LoadingShell />;
 
@@ -76,6 +77,7 @@ export function NewsletterPage() {
         groupId={groupId}
         groupName={membership?.groupName ?? ""}
         timezone={timezone}
+        frequency={frequency}
       />
     );
   }
@@ -86,6 +88,7 @@ export function NewsletterPage() {
       groupId={groupId}
       groupName={membership?.groupName ?? ""}
       timezone={timezone}
+      frequency={frequency}
     />
   );
 }
@@ -132,22 +135,24 @@ function OpenLayout({
   groupId,
   groupName,
   timezone,
+  frequency,
 }: {
   data: OpenDetail;
   groupId: string;
   groupName: string;
   timezone: string;
+  frequency: S["CycleCadence"]["frequency"];
 }) {
   const sorted = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
   const totalQs = sorted.length;
   const publishedCount = sorted.filter((q) => q.myResponse?.status === "published").length;
-  const { monthLabel, yearLabel } = cycleLabels(data.responseOpenAt, timezone);
+  const { title } = editionLabel(data, timezone, frequency);
 
   return (
     <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
-        title={`${monthLabel} ${yearLabel}`}
+        title={title}
         back="/"
         rightSlot={<Pill tone="coral">{shortCountdown(data.responseCloseAt)}</Pill>}
         phase="open"
@@ -239,17 +244,28 @@ function PublishedLayout({
   groupId,
   groupName,
   timezone,
+  frequency,
 }: {
   data: PublishedDetail;
   groupId: string;
   groupName: string;
   timezone: string;
+  frequency: S["CycleCadence"]["frequency"];
 }) {
   const { data: newsletters } = useNewsletters(groupId);
   const summary = newsletters?.items.find((n) => n.cycleId === data.cycleId);
-  const { monthLabel, yearLabel } = cycleLabels(
-    summary?.responseOpenAt ?? data.publishedAt,
+  // The published payload carries no `responseOpenAt` (`docs/design/frontend.md`
+  // §7.2), so the monthly label falls back to the cycle's `NewsletterSummary`,
+  // then to `publishedAt`. Weekly ignores `responseOpenAt` entirely and labels
+  // by `publishedAt` directly.
+  const { title, short } = editionLabel(
+    {
+      responseOpenAt: summary?.responseOpenAt ?? data.publishedAt,
+      responseCloseAt: data.responseCloseAt,
+      publishedAt: data.publishedAt,
+    },
     timezone,
+    frequency,
   );
   const sorted = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -269,7 +285,7 @@ function PublishedLayout({
     <div className="pb-12">
       <PageHeader
         eyebrow={`${groupName} · editions`}
-        title={`${monthLabel} ${yearLabel}`}
+        title={title}
         back="/"
         rightSlot={<Pill tone="ink">Published</Pill>}
         phase="published"
@@ -322,7 +338,7 @@ function PublishedLayout({
                   ))}
                   {(q.answers ?? []).length === 0 && (
                     <div className="rounded-3xl border border-dashed border-line bg-white p-6 text-center text-sm text-inkmuted">
-                      Nobody answered this one. Maybe next month.
+                      Nobody answered this one. Maybe next {cadenceNoun(frequency)}.
                     </div>
                   )}
                 </div>
@@ -337,7 +353,9 @@ function PublishedLayout({
 
       <div className="mt-12 px-5 text-center text-sm text-inkmuted">
         <div className="mb-1 font-display text-2xl text-ink">
-          That&apos;s a wrap on {monthLabel} 🎈
+          {frequency === "weekly"
+            ? `That's a wrap on the ${short} edition 🎈`
+            : `That's a wrap on ${short} 🎈`}
         </div>
         <p>
           The next edition opens soon.{" "}

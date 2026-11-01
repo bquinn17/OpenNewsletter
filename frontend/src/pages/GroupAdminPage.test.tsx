@@ -116,6 +116,7 @@ beforeEach(() => {
     displayName: ME.displayName,
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [],
   });
   vi.mocked(api.getMe).mockResolvedValue(ME);
@@ -545,16 +546,42 @@ describe("GroupAdminPage", () => {
     });
 
     it("invalidates the config query on a successful save", async () => {
-      const { user, queryClient } = await openSettingsTab();
-      queryClient.setQueryData(["config"], { userId: "u_me" });
+      const { user } = await openSettingsTab();
       vi.mocked(api.patchGroup).mockResolvedValue(baseGroup({ name: "Trailblazers" }));
+      // The settings form itself now reads `/config` for the cadence's response-window max
+      // (`docs/design/frontend.md` §14a), so it's an active subscriber — invalidating refetches
+      // it rather than just flagging it stale, which is the more robust thing to assert on.
+      const fetchesBeforeSave = vi.mocked(api.getConfig).mock.calls.length;
 
       await user.clear(screen.getByLabelText("Group name"));
       await user.type(screen.getByLabelText("Group name"), "Trailblazers");
       await user.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => expect(api.patchGroup).toHaveBeenCalled());
-      await waitFor(() => expect(queryClient.getQueryState(["config"])?.isInvalidated).toBe(true));
+      await waitFor(() =>
+        expect(vi.mocked(api.getConfig).mock.calls.length).toBeGreaterThan(fetchesBeforeSave),
+      );
+    });
+
+    it("caps the response window at the deployment's cadence max (weekly: 7 days)", async () => {
+      vi.mocked(api.getConfig).mockResolvedValue({
+        userId: ME.userId,
+        email: ME.email,
+        displayName: ME.displayName,
+        vapidPublicKey: "",
+        groupDefaults: {},
+        cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+        memberships: [],
+      });
+      const { user } = await openSettingsTab();
+
+      const windowInput = screen.getByLabelText("Response window (days)");
+      await user.clear(windowInput);
+      await user.type(windowInput, "10");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("7 days max.")).toBeInTheDocument();
+      expect(api.patchGroup).not.toHaveBeenCalled();
     });
   });
 });

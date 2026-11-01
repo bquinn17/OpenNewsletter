@@ -44,7 +44,11 @@ class EnvConfig:
     alarm_email: str | None
     bootstrap_admin_email: str | None # prod only; target of the email-bound admin invite scripts/bootstrap_admin.py creates (docs/design/auth.md §9)
     github_repo: str                  # "owner/repo" slug CiStack's GitHub OIDC trust conditions match
+    cycle_frequency: str              # CYCLE_FREQUENCY; "weekly" in dev, "monthly" in prod
+    cycle_weekly_start: str           # CYCLE_WEEKLY_START; "<day> <HH>:<MM>" group-local, default "sun 21:00"
 ```
+
+`cycle_frequency` and `cycle_weekly_start` set the deployment's cycle cadence ([`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)). Their defaults come from the env name, and the same-named `.env.local`/environment keys override them. `load_config` rejects an unknown frequency or a malformed start, so a bad value fails `cdk synth`. Both are passed as Lambda environment variables to every API Lambda (through `ApiStack._handler_lambda`) and to the cycle-tick Lambda. `NotificationsStack` also exports them as the `CycleFrequency` and `CycleWeeklyStart` outputs, which `scripts/bootstrap_admin.py` and `scripts/seed_dev_data.py` read from `infra/cdk.out/{env}-outputs.json` to seed cycles at the deployed cadence.
 
 Provider OAuth credentials and VAPID keys are pre-populated in AWS Secrets Manager out-of-band (not in CDK), as JSON keys inside the one per-env secret `opennewsletter/{env}` referenced by `app_secret_arn` (§7.1, §12). `config.py` only stores the ARN.
 

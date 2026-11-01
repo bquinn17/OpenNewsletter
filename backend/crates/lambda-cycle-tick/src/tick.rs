@@ -12,6 +12,7 @@ use domain::{
 };
 use persistence::responses::AutoPublishOutcome;
 use persistence::{groups, newsletters, questions, responses, Repo, RepoError};
+use shared::cycle_time::CycleCadence;
 
 use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 
@@ -19,20 +20,24 @@ use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 /// then record the sentinel. Every per-cycle failure is logged and skipped —
 /// one group's bad data never blocks another group's tick (§8). Fan-outs go
 /// nowhere; see [`run_tick_with`].
-pub async fn run_tick(repo: &Repo) -> DevTickCycleResponse {
-    run_tick_with(repo, &NoopNotifier).await
+pub async fn run_tick(repo: &Repo, cadence: CycleCadence) -> DevTickCycleResponse {
+    run_tick_with(repo, &NoopNotifier, cadence).await
 }
 
 /// [`run_tick`], triggering a notification fan-out through `notifier` after
 /// each cycle opens or publishes.
-pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> DevTickCycleResponse {
+pub async fn run_tick_with(
+    repo: &Repo,
+    notifier: &dyn Notifier,
+    cadence: CycleCadence,
+) -> DevTickCycleResponse {
     let now = Utc::now();
     let mut transitions = Vec::new();
 
     match newsletters::list_cycles_due(repo, NewsletterStatus::Voting, now).await {
         Ok(due) => {
             for nl in due {
-                transitions.extend(promote_and_open(repo, notifier, &nl, now).await);
+                transitions.extend(promote_and_open(repo, notifier, &nl, now, cadence).await);
             }
         }
         Err(e) => tracing::error!(error = ?e, "failed to query voting cycles due for promotion"),
@@ -56,7 +61,7 @@ pub async fn run_tick_with(repo: &Repo, notifier: &dyn Notifier) -> DevTickCycle
                 tracing::error!(pk = %bad.pk, sk = %bad.sk, error = %bad.error, "skipping an unreadable open cycle in successor repair");
             }
             for nl in open.iter().filter(|nl| !has_voting.contains(&nl.group_id)) {
-                transitions.extend(ensure_next_voting_cycle(repo, nl).await);
+                transitions.extend(ensure_next_voting_cycle(repo, nl, cadence).await);
             }
         }
         (Err(e), _) | (_, Err(e)) => {
@@ -92,6 +97,7 @@ async fn promote_and_open(
     notifier: &dyn Notifier,
     nl: &Newsletter,
     now: DateTime<Utc>,
+    cadence: CycleCadence,
 ) -> Vec<CycleTransition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
         Ok(Some(g)) => g,
@@ -171,7 +177,15 @@ async fn promote_and_open(
         to: NewsletterStatus::Open,
     }];
 
-    if let Some(created) = create_next_voting_cycle(repo, &nl.group_id, &group, &nl.cycle_id).await
+    if let Some(created) = create_next_voting_cycle(
+        repo,
+        &nl.group_id,
+        &group,
+        cadence,
+        &nl.cycle_id,
+        nl.response_close_at,
+    )
+    .await
     {
         transitions.push(CycleTransition {
             group_id: nl.group_id.clone(),
@@ -190,7 +204,11 @@ async fn promote_and_open(
 /// voting-due query — so the group's lifecycle would stop after this edition
 /// publishes. Called only for an `open` cycle whose group showed no `voting`
 /// cycle on GSI2 this tick.
-async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<CycleTransition> {
+async fn ensure_next_voting_cycle(
+    repo: &Repo,
+    nl: &Newsletter,
+    cadence: CycleCadence,
+) -> Option<CycleTransition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -203,7 +221,15 @@ async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<CycleT
         }
     };
 
-    let created = create_next_voting_cycle(repo, &nl.group_id, &group, &nl.cycle_id).await?;
+    let created = create_next_voting_cycle(
+        repo,
+        &nl.group_id,
+        &group,
+        cadence,
+        &nl.cycle_id,
+        nl.response_close_at,
+    )
+    .await?;
     tracing::warn!(group_id = %nl.group_id, cycle_id = %created, "repaired a missing next voting cycle");
     Some(CycleTransition {
         group_id: nl.group_id.clone(),
@@ -213,14 +239,16 @@ async fn ensure_next_voting_cycle(repo: &Repo, nl: &Newsletter) -> Option<CycleT
     })
 }
 
-/// §5.4, best-effort: creates the cycle for the month after `current`.
-/// Returns the new cycle's id when this call actually created it (as opposed
-/// to losing a create race, or failing outright).
+/// §5.4/§13, best-effort: creates `current`'s successor cycle. Returns the
+/// new cycle's id when this call actually created it (as opposed to losing a
+/// create race, or failing outright).
 async fn create_next_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
     group: &domain::Group,
+    cadence: CycleCadence,
     current: &CycleId,
+    current_close: DateTime<Utc>,
 ) -> Option<CycleId> {
     let tz: Tz = match group.timezone.parse() {
         Ok(tz) => tz,
@@ -229,20 +257,18 @@ async fn create_next_voting_cycle(
             return None;
         }
     };
-    let Some(after) = shared::cycle_time::cycle_month_start(current, tz) else {
-        tracing::error!(group_id = %group_id, cycle_id = %current, "cycle id is not a valid yyyymm; cannot create its next voting cycle");
+    let Some(schedule) = shared::cycle_time::successor_schedule(
+        cadence,
+        current,
+        current_close,
+        tz,
+        group.cycle_settings.response_window_days,
+    ) else {
+        tracing::error!(group_id = %group_id, cycle_id = %current, "cycle id is not valid under this deployment's cadence; cannot create its next voting cycle");
         return None;
     };
 
-    match newsletters::create_next_voting_cycle(
-        repo,
-        group_id,
-        tz,
-        group.cycle_settings.response_window_days,
-        after,
-    )
-    .await
-    {
+    match newsletters::create_next_voting_cycle(repo, group_id, schedule).await {
         Ok(nl) => Some(nl.cycle_id),
         Err(e) if e.is_lost_race() => {
             tracing::info!(group_id = %group_id, "next voting cycle already created by a concurrent tick");

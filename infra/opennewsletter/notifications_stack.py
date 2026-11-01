@@ -79,6 +79,8 @@ class NotificationsStack(cdk.Stack):
                 # Fan-out target, addressed by name rather than by construct:
                 # ApiStack depends on this stack, so the reverse ref would cycle.
                 "PUSH_FUNCTION_NAME": f"OpenNewsletter-Push-{config.env}",
+                "CYCLE_FREQUENCY": config.cycle_frequency,
+                "CYCLE_WEEKLY_START": config.cycle_weekly_start,
             },
             log_group=cycle_tick_log_group,
         )
@@ -149,3 +151,7 @@ class NotificationsStack(cdk.Stack):
             schedule=events.Schedule.rate(cdk.Duration.minutes(15)),
             targets=[events_targets.LambdaFunction(self.notify_tick_fn)],
         )
+
+        # Stack outputs for operational scripts (bootstrap_admin, seed_dev_data)
+        cdk.CfnOutput(self, "CycleFrequency", value=config.cycle_frequency)
+        cdk.CfnOutput(self, "CycleWeeklyStart", value=config.cycle_weekly_start)

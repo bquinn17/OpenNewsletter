@@ -1240,3 +1240,32 @@ Every push to `main` now deploys dev end to end; prod stays behind the `producti
 **Found on the way.** dev.betterloop.site was a build pushed to `gh-pages` by hand on 2026-10-19, so the demo hadn't reached it. It was republished by hand from `86f791f` on 2026-10-31. That push also dropped about 20 stray repo files (`.github/workflows/*`, `frontend/.env.*`) the hand-made branch had carried.
 
 **Tests.** No test changes; `actionlint`, `ruff` and `mypy --strict` on the script are clean.
+
+## Configurable cycle cadence — what landed (2026-10-30)
+
+Each deployment now chooses monthly or weekly cycles. Dev is weekly; prod stays monthly. Design: [`lifecycle.md` §13](../../docs/design/lifecycle.md#13-cycle-cadence); decision: [`decisions.md`](../../docs/decisions.md#cycle-cadence).
+
+**What landed.**
+- **Backend.** `shared::cycle_time::CycleCadence` is read from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START` at cold start; a malformed value fails it.
+  - `period_start` replaces `cycle_month_start` and parses both `yyyymm` and `yyyymmdd`.
+  - New: `next_period_start` (a group's first cycle) and `successor_schedule` (the tick's promotion and successor repair).
+  - `persistence::newsletters::create_next_voting_cycle` now takes a precomputed `CycleSchedule`.
+  - Cycle-tick, groups and push read the cadence. `lambda-notify-tick` reads it too, only because it shares `push::state::AppState`.
+  - `GET /config` serves `cycleCadence`. `PATCH /groups/{g}` caps `responseWindowDays` at 7 when weekly. The publication push says "this week's edition".
+- **API.** New `CycleCadence` schema and a required `ConfigResponse.cycleCadence`. The change is additive and touches no routes.
+- **Infra.** `EnvConfig.cycle_frequency`/`cycle_weekly_start` default from the env name and are validated at synth (`config.parse_weekly_start`). They're passed to every API Lambda and to the cycle-tick, and exported as `NotificationsStack` outputs.
+- **Scripts.** `bootstrap_admin.py` and `seed_dev_data.py` read the deployed cadence from those outputs (monthly if missing). `bootstrap_admin.py` reuses `config.parse_weekly_start`.
+- **Frontend.**
+  - `useCycleCadence`, plus `utils/dates.ts`'s `editionLabel`, `isCurrentEdition` and `cadenceNoun`.
+  - Weekly editions are labelled by publication date ("Nov 15, 2026"; the scheduled close until published). Copy says "week" where it said "month".
+  - The settings form's window max comes from `/config`. Monthly output is unchanged.
+
+**Decisions.**
+- **Weekly cycles are anchored on their open time.** `sun 21:00` opens one edition and, with a 7-day window, publishes the previous one.
+- **The weekly successor is the configured weekday and time at or after max(`cycleId` date + 7 days at local midnight, the current cycle's `responseCloseAt`).** The plan had "strictly after the anchor". The max() stops a mid-life `CYCLE_WEEKLY_START` change, or a legacy `yyyymm` id, from opening a successor before the current cycle closes.
+- **A window equal to the period is allowed.** For one tick there are two `open` rows, and `find_open_cycle` already returns the newer one. Regression test: `persistence/tests/lifecycle.rs::find_open_cycle_resolves_the_newer_of_two_open_rows`.
+- **A cadence switch takes effect at the next successor.** A monthly `voting` cycle opens as stored, and its successor follows the new cadence (for `202611`, the weekly successor would be `20261108`, opening Sun Nov 8 21:00). Dev's `202611` opened 2026-11-01 under the monthly code before this landed, so dev needs `make seed` after the deploy to start weekly.
+
+**Found in review.** `local_to_utc` (generalized from `midnight_local_to_utc`) stopped searching at midnight and reached `unreachable!` when a configured weekly time fell in a DST gap that runs past midnight. It now steps forward by the hour into the next day. Rare in practice: it needs a late start time in a zone that springs forward late in the evening.
+
+**Tests.** Backend 526 (+30), CDK 181 (+28), Vitest 404 (+15), Playwright 16 (unchanged).

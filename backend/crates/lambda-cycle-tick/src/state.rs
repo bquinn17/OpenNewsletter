@@ -2,6 +2,7 @@
 
 use crate::notify::Notifier;
 use persistence::Repo;
+use shared::cycle_time::CycleCadence;
 
 pub struct AppState {
     pub repo: Repo,
@@ -11,6 +12,9 @@ pub struct AppState {
     /// Where cycle-open / publication fan-outs go (`notify::LambdaNotifier`
     /// in a deployed stack).
     pub notifier: Box<dyn Notifier>,
+    /// This deployment's cycle cadence (`docs/design/lifecycle.md` §13),
+    /// read once at cold start from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START`.
+    pub cadence: CycleCadence,
 }
 
 impl AppState {

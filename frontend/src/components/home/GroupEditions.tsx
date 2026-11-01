@@ -1,21 +1,23 @@
 import type { components } from "../../types/api";
-import { isCurrentCycleMonth } from "../../utils/dates";
+import { isCurrentEdition } from "../../utils/dates";
 import { EditionRow } from "./EditionRow";
 
 type NewsletterSummary = components["schemas"]["NewsletterSummary"];
+type CycleCadence = components["schemas"]["CycleCadence"];
 
 type Props = {
   groupId: string;
   timezone: string;
+  frequency: CycleCadence["frequency"];
   /** Newest first, as `GET /groups/{g}/newsletters` returns them. */
   items: NewsletterSummary[];
 };
 
 const MAX_PAST = 3;
 
-export function GroupEditions({ groupId, timezone, items }: Props) {
+export function GroupEditions({ groupId, timezone, frequency, items }: Props) {
   // Newest first, grouped by phase (`docs/design/frontend.md` §7.1). While a cycle
-  // is open, next month's voting cycle already exists (`docs/design/lifecycle.md`
+  // is open, the next edition's voting cycle already exists (`docs/design/lifecycle.md`
   // §5.2), so both can be current at once — show each.
   const chronological = [...items].sort((a, b) => b.responseOpenAt.localeCompare(a.responseOpenAt));
   const published = chronological.filter((n) => n.status === "published");
@@ -23,14 +25,12 @@ export function GroupEditions({ groupId, timezone, items }: Props) {
     { title: "Taking suggestions", items: chronological.filter((n) => n.status === "voting") },
     { title: "Awaiting responses", items: chronological.filter((n) => n.status === "open") },
     {
-      title: "This month's edition",
-      items: published.filter((n) => isCurrentCycleMonth(n.responseOpenAt, timezone)),
+      title: frequency === "weekly" ? "This week's edition" : "This month's edition",
+      items: published.filter((n) => isCurrentEdition(n, timezone, frequency)),
     },
     {
       title: "Past editions",
-      items: published
-        .filter((n) => !isCurrentCycleMonth(n.responseOpenAt, timezone))
-        .slice(0, MAX_PAST),
+      items: published.filter((n) => !isCurrentEdition(n, timezone, frequency)).slice(0, MAX_PAST),
     },
   ].filter((s) => s.items.length > 0);
 
@@ -47,7 +47,13 @@ export function GroupEditions({ groupId, timezone, items }: Props) {
           </h2>
           <div className="space-y-2">
             {section.items.map((n) => (
-              <EditionRow key={n.cycleId} groupId={groupId} timezone={timezone} newsletter={n} />
+              <EditionRow
+                key={n.cycleId}
+                groupId={groupId}
+                timezone={timezone}
+                frequency={frequency}
+                newsletter={n}
+              />
             ))}
           </div>
         </section>

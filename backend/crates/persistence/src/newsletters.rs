@@ -12,9 +12,9 @@ use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
-use chrono_tz::Tz;
 use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
 use serde_dynamo::{from_item, to_item};
+use shared::cycle_time::CycleSchedule;
 use std::collections::{HashMap, HashSet};
 
 /// AP7 — list newsletters in a group, newest first.
@@ -322,13 +322,17 @@ pub async fn record_failed_sweep(
 /// The group's 3 most-recent `NL#` rows, newest first.
 ///
 /// Invariant this relies on (`docs/design/data-model.md` §3, decided
-/// 2026-10-08): cycle ids are `yyyymm` and a group gains a new cycle only
-/// when the tick creates the month after the one it just opened (§5.4 of
-/// `docs/design/lifecycle.md`). So a group's non-terminal cycles are always its newest rows: the
-/// `voting` cycle (if any) is the newest, the `open` cycle (if any) is the
-/// month before it, and every `published`/`archived` cycle is older still.
-/// Three rows leave one row of slack. [`find_voting_cycle`] and
-/// [`find_open_cycle`] read this fixed-size window instead of the group's
+/// 2026-10-08, extended for weekly cadence §2026-10-29): a group gains a new
+/// cycle only when the tick creates its successor, one at a time (§5.4/§13 of
+/// `docs/design/lifecycle.md`), and `cycleId`s — `yyyymm` under monthly,
+/// `yyyymmdd` under weekly — sort chronologically as plain strings regardless
+/// of which format produced them, because both are left-padded
+/// year/month/[day] fields and a shorter id is always a prefix of any longer
+/// id sharing its leading digits. So a group's non-terminal cycles are always
+/// its newest rows: the `voting` cycle (if any) is the newest, the `open`
+/// cycle (if any) is the one just before it, and every `published`/`archived`
+/// cycle is older still. Three rows leave one row of slack. [`find_voting_cycle`]
+/// and [`find_open_cycle`] read this fixed-size window instead of the group's
 /// entire history.
 async fn recent_newsletters(repo: &Repo, group_id: &GroupId) -> Result<Vec<Newsletter>, RepoError> {
     let resp = repo
@@ -442,19 +446,18 @@ fn decode_cursor(raw: &str) -> Result<CycleId, RepoError> {
     Ok(CycleId::new(cycle_id))
 }
 
-/// §5.4 — put-if-not-exists the next `voting` cycle after `after`, per the
-/// default-schedule formula in `shared::cycle_time`. Returns the newsletter
-/// that now exists — either the one this call just created, or (when
-/// `RepoError::ConditionalCheckFailed`, i.e. a concurrent tick already won the
-/// race) the caller should treat that as a no-op, not a failure (§8).
+/// §5.4/§13 — put-if-not-exists the next `voting` cycle per `schedule`, which
+/// the caller computes via `shared::cycle_time::successor_schedule` (a
+/// cycle's successor) or `next_cycle_schedule` (a group's very first cycle).
+/// Returns the newsletter that now exists — either the one this call just
+/// created, or (when `RepoError::ConditionalCheckFailed`, i.e. a concurrent
+/// tick already won the race) the caller should treat that as a no-op, not a
+/// failure (§8).
 pub async fn create_next_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
-    tz: Tz,
-    response_window_days: u32,
-    after: DateTime<Utc>,
+    schedule: CycleSchedule,
 ) -> Result<Newsletter, RepoError> {
-    let schedule = shared::cycle_time::next_cycle_schedule(after, tz, response_window_days);
     let nl = Newsletter {
         group_id: group_id.clone(),
         cycle_id: schedule.cycle_id,

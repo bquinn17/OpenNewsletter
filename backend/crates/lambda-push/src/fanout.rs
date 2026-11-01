@@ -110,7 +110,14 @@ pub async fn publication_fanout(state: &AppState, group_id: &GroupId, cycle_id: 
         }
     }
 
-    let payload = payload::publication(&group.name, group_id, cycle_id, answers, polls);
+    let payload = payload::publication(
+        state.cadence,
+        &group.name,
+        group_id,
+        cycle_id,
+        answers,
+        polls,
+    );
 
     let mut fanout_metrics = FanoutMetrics::new("publication");
     fan_out_to_members(

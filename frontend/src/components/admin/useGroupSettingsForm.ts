@@ -3,6 +3,7 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { usePatchGroup } from "../../api/mutations";
+import { useCycleCadence } from "../../api/queries";
 import { ApiError, apiErrorMessage } from "../../api/client";
 import { useToasts } from "../../state/toast";
 import { GRADIENT_SLUGS } from "../../utils/gradient";
@@ -18,52 +19,57 @@ export const MAX_NAME_CHARS = 40;
 const MIN_QUESTIONS_PER_CYCLE = 1;
 const MAX_QUESTIONS_PER_CYCLE = 20;
 const MIN_RESPONSE_WINDOW_DAYS = 1;
-const MAX_RESPONSE_WINDOW_DAYS = 28;
 const MAX_REMINDER_OFFSET_HOURS = 168;
 
-const baseSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Name can't be empty.")
-    .max(MAX_NAME_CHARS, `${MAX_NAME_CHARS} characters max.`),
-  gradient: z.enum(GRADIENT_SLUGS),
-  timezone: z.string().min(1, "Pick a timezone."),
-  questionsPerCycle: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(MIN_QUESTIONS_PER_CYCLE, `At least ${MIN_QUESTIONS_PER_CYCLE}.`)
-    .max(MAX_QUESTIONS_PER_CYCLE, `${MAX_QUESTIONS_PER_CYCLE} max.`),
-  votesPerUserPerCycle: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(1, "At least 1."),
-  responseWindowDays: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(MIN_RESPONSE_WINDOW_DAYS, `At least ${MIN_RESPONSE_WINDOW_DAYS} day.`)
-    .max(MAX_RESPONSE_WINDOW_DAYS, `${MAX_RESPONSE_WINDOW_DAYS} days max.`),
-  memberSoftCap: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(0, "Can't be negative."),
-  onCycleOpen: z.boolean(),
-  reminderOffsets: z
-    .array(
-      z.object({
-        hours: z.coerce
-          .number({ invalid_type_error: "Enter a number." })
-          .int("Whole hours only.")
-          .min(1, "At least 1 hour.")
-          .max(MAX_REMINDER_OFFSET_HOURS, `${MAX_REMINDER_OFFSET_HOURS} hours max.`),
-      }),
-    )
-    .min(1, "Add at least one reminder."),
-});
+/** `maxResponseWindowDays` comes from `/config`'s `cycleCadence` — 28 monthly, 7 weekly. */
+function buildBaseSchema(maxResponseWindowDays: number) {
+  return z.object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Name can't be empty.")
+      .max(MAX_NAME_CHARS, `${MAX_NAME_CHARS} characters max.`),
+    gradient: z.enum(GRADIENT_SLUGS),
+    timezone: z.string().min(1, "Pick a timezone."),
+    questionsPerCycle: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(MIN_QUESTIONS_PER_CYCLE, `At least ${MIN_QUESTIONS_PER_CYCLE}.`)
+      .max(MAX_QUESTIONS_PER_CYCLE, `${MAX_QUESTIONS_PER_CYCLE} max.`),
+    votesPerUserPerCycle: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(1, "At least 1."),
+    responseWindowDays: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(MIN_RESPONSE_WINDOW_DAYS, `At least ${MIN_RESPONSE_WINDOW_DAYS} day.`)
+      .max(maxResponseWindowDays, `${maxResponseWindowDays} days max.`),
+    memberSoftCap: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(0, "Can't be negative."),
+    onCycleOpen: z.boolean(),
+    reminderOffsets: z
+      .array(
+        z.object({
+          hours: z.coerce
+            .number({ invalid_type_error: "Enter a number." })
+            .int("Whole hours only.")
+            .min(1, "At least 1 hour.")
+            .max(MAX_REMINDER_OFFSET_HOURS, `${MAX_REMINDER_OFFSET_HOURS} hours max.`),
+        }),
+      )
+      .min(1, "Add at least one reminder."),
+  });
+}
 
-/** `memberCount` is the group's current member count, not a fixed bound — only known per-group at render time. */
-function buildSchema(memberCount: number) {
-  return baseSchema.superRefine((val, ctx) => {
+/**
+ * `memberCount` is the group's current member count, not a fixed bound — only known per-group
+ * at render time. `maxResponseWindowDays` is likewise only known once `/config` has loaded.
+ */
+function buildSchema(memberCount: number, maxResponseWindowDays: number) {
+  return buildBaseSchema(maxResponseWindowDays).superRefine((val, ctx) => {
     if (val.votesPerUserPerCycle > val.questionsPerCycle) {
       ctx.addIssue({
         code: "custom",
@@ -92,7 +98,7 @@ function buildSchema(memberCount: number) {
   });
 }
 
-export type FormValues = z.infer<typeof baseSchema>;
+export type FormValues = z.infer<ReturnType<typeof buildBaseSchema>>;
 
 /** The fields that compare and patch as a single `cycleSettings` sub-object. */
 type CycleFields = Pick<
@@ -215,6 +221,7 @@ const CLOSES_IN_PAST_MESSAGE = "Would close the open cycle in the past.";
 export function useGroupSettingsForm(group: GroupResponse) {
   const patchGroup = usePatchGroup(group.groupId);
   const pushToast = useToasts((s) => s.push);
+  const { maxResponseWindowDays } = useCycleCadence();
 
   const {
     register,
@@ -226,7 +233,7 @@ export function useGroupSettingsForm(group: GroupResponse) {
     control,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(group.memberCount)),
+    resolver: zodResolver(buildSchema(group.memberCount, maxResponseWindowDays)),
     defaultValues: toFormValues(group),
   });
   const { fields, append, remove } = useFieldArray({ control, name: "reminderOffsets" });

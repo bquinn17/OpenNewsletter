@@ -6,14 +6,14 @@ What OpenNewsletter is, the principles every part of it follows, the stack, the 
 
 ## 1. What it does
 
-OpenNewsletter is a multi-tenant PWA where small groups of friends collaboratively produce a monthly newsletter:
+OpenNewsletter is a multi-tenant PWA where small groups of friends collaboratively produce a newsletter, monthly or weekly depending on the deployment ([`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence)):
 
 1. Continuously between cycles, members suggest and upvote questions for the next edition.
-2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 7-day response window opens.
+2. On the 1st of each month (in the group's timezone), the top-voted questions auto-promote into the active newsletter and a 7-day response window opens. On a weekly deployment this happens every week, at a configured weekday and time (Sunday 9pm by default).
 3. During the response window, members write long-form text answers (with up to 10 image/GIF attachments per answer) or vote in poll questions. Drafts autosave; only the author can see their draft.
 4. At the close of the response window, any non-empty draft answer (text with a body or images, or a poll pick) is auto-published, then the newsletter as a whole auto-publishes and comments/emoji reactions become available on every published text answer. Empty drafts stay drafts and are excluded.
 
-All values above (cycle length, response window, questions-per-cycle, timezone) are configured per-group and editable.
+The cadence is set per deployment. The response window, questions-per-cycle and timezone are configured per group and editable.
 
 ---
 
@@ -131,7 +131,7 @@ OpenNewsletter/
 |---|---|
 | **Group** | A tenant. A collection of users that share newsletters. Has its own admin(s), settings, and timezone. |
 | **Member** | A user who belongs to a group. Roles: `admin` or `member`. |
-| **Cycle / Newsletter** | One monthly edition for one group. Identified by `groupId + yyyymm`. Has a status: `voting | open | published | archived`. |
+| **Cycle / Newsletter** | One edition for one group: monthly or weekly, set per deployment ([`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence)). Identified by `groupId + yyyymm` (`yyyymmdd` when weekly). Has a status: `voting | open | published | archived`. |
 | **Candidate question** | A user-suggested question in the pool for the next cycle, eligible for upvotes. Authored by the submitter by default; the submitter may opt in to anonymous display. |
 | **Locked question** | A candidate that has been promoted into a specific cycle and is now visible as a prompt. May be `kind: text` or `kind: poll`. |
 | **Response / Answer** | A user's reply to one locked question in one cycle. Has a `status: draft | published`. May contain text + up to 10 image attachments, OR a poll vote. |
@@ -144,7 +144,7 @@ OpenNewsletter/
 
 ## 6. Cross-cutting conventions
 
-- **IDs.** All IDs are UUIDv7 strings except group cycle IDs which are `yyyymm` (e.g. `202605`). UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see [`data-model.md` §2.1](design/data-model.md#21-user).
+- **IDs.** All IDs are UUIDv7 strings except group cycle IDs, which are `yyyymm` (e.g. `202605`), or `yyyymmdd` on a weekly deployment. UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see [`data-model.md` §2.1](design/data-model.md#21-user).
 - **Timestamps.** All timestamps stored as ISO-8601 UTC strings. Group-local rendering happens client-side using the group's `timezone` field.
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in [`api.md`](design/api.md).
 - **Logging.** Structured JSON logs via `tracing` + `tracing-subscriber` with a `correlation_id` taken from `x-correlation-id` request header (frontend generates ULIDs).

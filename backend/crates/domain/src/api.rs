@@ -42,7 +42,28 @@ pub struct ConfigResponse {
     pub display_name: Option<String>,
     pub vapid_public_key: String,
     pub group_defaults: serde_json::Value,
+    pub cycle_cadence: CycleCadence,
     pub memberships: Vec<MembershipSummary>,
+}
+
+/// How often this deployment runs a cycle (`docs/design/lifecycle.md` §13).
+/// Set per deployment via Lambda env vars, not per group — mirrors
+/// `shared::cycle_time::CycleCadence`, which `domain` can't depend on
+/// directly (`shared` depends on `domain`, not the other way around); the
+/// binary-side crates that depend on both convert between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CycleCadence {
+    pub frequency: CycleFrequency,
+    /// Upper bound on `cycleSettings.responseWindowDays` for this cadence.
+    pub max_response_window_days: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CycleFrequency {
+    Monthly,
+    Weekly,
 }
 
 /// `GET /me` / `PATCH /me` response (§2.2, §2.3).

@@ -23,10 +23,13 @@ function cycle(
   };
 }
 
-function renderEditions(items: NewsletterSummary[]) {
+function renderEditions(
+  items: NewsletterSummary[],
+  frequency: components["schemas"]["CycleCadence"]["frequency"] = "monthly",
+) {
   render(
     <MemoryRouter>
-      <GroupEditions groupId="g1" timezone="UTC" items={items} />
+      <GroupEditions groupId="g1" timezone="UTC" frequency={frequency} items={items} />
     </MemoryRouter>,
   );
 }
@@ -39,6 +42,13 @@ function rowLabels(section: string) {
   return within(screen.getByRole("region", { name: section }))
     .getAllByRole("link")
     .map((a) => a.textContent?.match(/[A-Z][a-z]+ 2026/)?.[0]);
+}
+
+/** Weekly row titles are a publication date, e.g. "Nov 15, 2026". */
+function weeklyRowLabels(section: string) {
+  return within(screen.getByRole("region", { name: section }))
+    .getAllByRole("link")
+    .map((a) => a.textContent?.match(/[A-Z][a-z]+ \d{1,2}, 2026/)?.[0]);
 }
 
 describe("GroupEditions", () => {
@@ -93,7 +103,7 @@ describe("GroupEditions", () => {
 
     render(
       <MemoryRouter>
-        <GroupEditions groupId="g1" timezone="UTC" items={items} />
+        <GroupEditions groupId="g1" timezone="UTC" frequency="monthly" items={items} />
       </MemoryRouter>,
     );
 
@@ -131,12 +141,67 @@ describe("GroupEditions", () => {
 
     render(
       <MemoryRouter>
-        <GroupEditions groupId="g1" timezone="UTC" items={items} />
+        <GroupEditions groupId="g1" timezone="UTC" frequency="monthly" items={items} />
       </MemoryRouter>,
     );
 
     expect(screen.getByRole("link", { name: /October 2026/ })).toHaveTextContent("Voting");
     expect(screen.getByRole("link", { name: /September 2026/ })).toHaveTextContent("Open");
     expect(screen.getByRole("link", { name: /August 2026/ })).toHaveTextContent("Published");
+  });
+
+  it("weekly: labels editions by publication date and titles the current section 'This week's edition'", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-20T12:00:00Z"));
+    const items: NewsletterSummary[] = [
+      {
+        ...cycle("202611w3", "voting", "11"),
+        responseOpenAt: "2026-11-22T12:00:00Z",
+        responseCloseAt: "2026-11-29T12:00:00Z",
+        publishedAt: null,
+      },
+      {
+        ...cycle("202611w2", "published", "11"),
+        responseOpenAt: "2026-11-15T12:00:00Z",
+        responseCloseAt: "2026-11-15T12:00:00Z",
+        publishedAt: "2026-11-15T12:00:00Z",
+      },
+      {
+        ...cycle("202611w1", "published", "11"),
+        responseOpenAt: "2026-11-08T12:00:00Z",
+        responseCloseAt: "2026-11-08T12:00:00Z",
+        publishedAt: "2026-11-08T12:00:00Z",
+      },
+    ];
+    renderEditions(items, "weekly");
+
+    expect(sectionTitles()).toEqual(["Taking suggestions", "This week's edition", "Past editions"]);
+    expect(weeklyRowLabels("This week's edition")).toEqual(["Nov 15, 2026"]);
+    expect(weeklyRowLabels("Past editions")).toEqual(["Nov 8, 2026"]);
+  });
+
+  it("weekly: the voting row invites next week's questions, and a published row drops the date suffix", () => {
+    const items: NewsletterSummary[] = [
+      {
+        ...cycle("202611w1", "voting", "11"),
+        responseOpenAt: "2026-11-22T12:00:00Z",
+        responseCloseAt: "2026-11-29T12:00:00Z",
+        publishedAt: null,
+      },
+      {
+        ...cycle("202610w1", "published", "10"),
+        responseOpenAt: "2026-10-01T12:00:00Z",
+        responseCloseAt: "2026-10-08T12:00:00Z",
+        publishedAt: "2026-10-08T12:00:00Z",
+      },
+    ];
+    renderEditions(items, "weekly");
+
+    expect(screen.getByRole("link", { name: /Suggest and vote/ })).toHaveTextContent(
+      "Suggest and vote on questions for next week",
+    );
+    const publishedLink = screen.getByRole("link", { name: /Oct 8, 2026/ });
+    expect(publishedLink).toHaveTextContent(/4 questions$/);
+    expect(publishedLink).not.toHaveTextContent("published");
   });
 });

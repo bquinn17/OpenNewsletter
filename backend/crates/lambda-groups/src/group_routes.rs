@@ -31,7 +31,7 @@ pub async fn patch_group(
     auth::require_membership(&state.repo, caller, group_id, true).await?;
     let group = load_group(state, group_id).await?;
 
-    let patch = validation::group_patch(&group, request)?;
+    let patch = validation::group_patch(&group, request, state.cadence)?;
     // Validated before any write, so a 422 here leaves the group untouched.
     let open_cycle_close = open_cycle_close_change(state, group_id, &group, &patch).await?;
     groups::update_group(&state.repo, group_id, &patch)
@@ -164,12 +164,18 @@ async fn reschedule_voting_cycle_if_needed(
         return;
     };
 
-    let Some(response_open_at) = shared::cycle_time::cycle_month_start(&voting.cycle_id, tz) else {
-        tracing::error!(group_id = %group_id, cycle_id = %voting.cycle_id, "voting cycle id is not a valid yyyymm; leaving its schedule unchanged");
+    let cadence = state.cadence;
+    let Some(response_open_at) = shared::cycle_time::period_start(cadence, &voting.cycle_id, tz)
+    else {
+        tracing::error!(group_id = %group_id, cycle_id = %voting.cycle_id, "voting cycle id is not valid under this deployment's cadence; leaving its schedule unchanged");
         return;
     };
-    let response_close_at =
-        response_open_at + Duration::days(updated.cycle_settings.response_window_days.into());
+    // A stored `responseWindowDays` can predate a cadence switch (e.g. a
+    // monthly deployment's 20-day window under a weekly cap of 7), and this
+    // path — unlike a `responseWindowDays` PATCH itself — reads it without
+    // going through `validation::group_patch`'s check.
+    let window_days = cadence.clamp_window(updated.cycle_settings.response_window_days);
+    let response_close_at = response_open_at + Duration::days(window_days.into());
 
     let mut rescheduled = voting;
     rescheduled.response_open_at = response_open_at;

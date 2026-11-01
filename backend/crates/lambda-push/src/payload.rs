@@ -6,6 +6,7 @@ use chrono_tz::Tz;
 use domain::{CycleId, GroupId};
 use serde::Serialize;
 use shared::config::MAX_PUSH_PAYLOAD_BYTES;
+use shared::cycle_time::CycleCadence;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,15 +137,21 @@ pub fn format_due_time(at: DateTime<Utc>, tz: Tz) -> String {
 /// `publication` (`docs/design/notifications.md` §8, D6). `answers` is published
 /// responses to text questions across all members; `polls` is the number of
 /// poll questions locked in the cycle. Always-on; no preference, no group
-/// switch.
+/// switch. The title's "week's"/"month's" wording follows the deployment's
+/// cadence (`docs/design/lifecycle.md` §13).
 pub fn publication(
+    cadence: CycleCadence,
     group_name: &str,
     group_id: &GroupId,
     cycle_id: &CycleId,
     answers: u32,
     polls: u32,
 ) -> PushPayload {
-    let title = format!("{group_name}: this month's edition is out");
+    let period = match cadence {
+        CycleCadence::Monthly => "month's",
+        CycleCadence::Weekly { .. } => "week's",
+    };
+    let title = format!("{group_name}: this {period} edition is out");
     let answers_part = if answers == 1 {
         "1 answer".to_owned()
     } else {
@@ -288,16 +295,32 @@ mod tests {
 
     #[test]
     fn publication_omits_the_polls_clause_when_there_are_none() {
-        let p = publication("G", &gid(), &cid(), 7, 0);
+        let p = publication(CycleCadence::Monthly, "G", &gid(), &cid(), 7, 0);
         assert_eq!(p.body, "7 answers — go read it.");
     }
 
     #[test]
     fn publication_pluralizes_answers_and_polls() {
-        let p = publication("G", &gid(), &cid(), 1, 1);
+        let p = publication(CycleCadence::Monthly, "G", &gid(), &cid(), 1, 1);
         assert_eq!(p.body, "1 answer, 1 poll — go read it.");
-        let p = publication("G", &gid(), &cid(), 7, 2);
+        let p = publication(CycleCadence::Monthly, "G", &gid(), &cid(), 7, 2);
         assert_eq!(p.body, "7 answers, 2 polls — go read it.");
+    }
+
+    #[test]
+    fn publication_title_says_month_when_monthly() {
+        let p = publication(CycleCadence::Monthly, "G", &gid(), &cid(), 7, 0);
+        assert_eq!(p.title, "G: this month's edition is out");
+    }
+
+    #[test]
+    fn publication_title_says_week_when_weekly() {
+        let weekly = CycleCadence::Weekly {
+            weekday: chrono::Weekday::Sun,
+            at: chrono::NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        };
+        let p = publication(weekly, "G", &gid(), &cid(), 7, 0);
+        assert_eq!(p.title, "G: this week's edition is out");
     }
 
     #[test]

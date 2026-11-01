@@ -2,28 +2,57 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "../api/client";
+import { AuthContext, type AuthValue } from "../auth/useAuth";
+import type { components } from "../types/api";
 import { SuggestPage } from "./SuggestPage";
+
+type S = components["schemas"];
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, api: { createCandidate: vi.fn() } };
+  return { ...actual, api: { createCandidate: vi.fn(), getConfig: vi.fn() } };
 });
+
+const signedIn: AuthValue = {
+  status: "authenticated",
+  user: { sub: "sub-1", email: "sam@example.com", name: "Sam" },
+  login: vi.fn(),
+  logout: vi.fn(),
+};
+
+function baseConfig(): S["ConfigResponse"] {
+  return {
+    userId: "u1",
+    email: "sam@example.com",
+    displayName: "Sam",
+    vapidPublicKey: "",
+    groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
+    memberships: [],
+  };
+}
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/g/g_test/upcoming/suggest"]}>
-        <Routes>
-          <Route path="/g/:groupId/upcoming/suggest" element={<SuggestPage />} />
-          <Route path="/g/:groupId/upcoming" element={<div>Upcoming page</div>} />
-        </Routes>
-      </MemoryRouter>
+      <AuthContext.Provider value={signedIn}>
+        <MemoryRouter initialEntries={["/g/g_test/upcoming/suggest"]}>
+          <Routes>
+            <Route path="/g/:groupId/upcoming/suggest" element={<SuggestPage />} />
+            <Route path="/g/:groupId/upcoming" element={<div>Upcoming page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  vi.mocked(api.getConfig).mockResolvedValue(baseConfig());
+});
 
 afterEach(() => vi.clearAllMocks());
 
@@ -182,5 +211,16 @@ describe("SuggestPage", () => {
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/check back soon/i);
+  });
+
+  it("weekly: the eyebrow invites next week's question instead of next month's", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue({
+      ...baseConfig(),
+      cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("For next week")).toBeInTheDocument();
   });
 });

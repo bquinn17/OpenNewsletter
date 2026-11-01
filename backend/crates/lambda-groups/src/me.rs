@@ -2,9 +2,12 @@
 
 use crate::state::AppState;
 use crate::validation;
-use domain::api::{ConfigResponse, MembershipSummary, PatchMeRequest, UserResponse};
+use domain::api::{
+    ConfigResponse, CycleFrequency, MembershipSummary, PatchMeRequest, UserResponse,
+};
 use domain::{ApiError, AvatarId, GroupMembership, MediaStatus, User, UserId};
 use persistence::{auth, groups, media, users, RepoError};
+use shared::cycle_time::CycleCadence;
 use shared::http::AuthClaims;
 
 pub async fn get_config(state: &AppState, claims: &AuthClaims) -> Result<ConfigResponse, ApiError> {
@@ -14,6 +17,7 @@ pub async fn get_config(state: &AppState, claims: &AuthClaims) -> Result<ConfigR
         display_name: claims.name.clone(),
         vapid_public_key: state.vapid_public_key.clone(),
         group_defaults: state.group_defaults.clone(),
+        cycle_cadence: cycle_cadence_response(state.cadence),
         memberships: Vec::new(),
     };
 
@@ -39,6 +43,21 @@ pub async fn get_config(state: &AppState, claims: &AuthClaims) -> Result<ConfigR
         memberships,
         ..base
     })
+}
+
+/// `domain::api::CycleCadence` can't be derived from `shared::cycle_time::CycleCadence`
+/// directly (`domain` can't depend on `shared`; see that type's doc comment),
+/// so the binary-side conversion lives here, the only place `GET /config`
+/// builds one.
+fn cycle_cadence_response(cadence: CycleCadence) -> domain::api::CycleCadence {
+    let frequency = match cadence {
+        CycleCadence::Monthly => CycleFrequency::Monthly,
+        CycleCadence::Weekly { .. } => CycleFrequency::Weekly,
+    };
+    domain::api::CycleCadence {
+        frequency,
+        max_response_window_days: cadence.max_response_window_days(),
+    }
 }
 
 pub async fn get_me(state: &AppState, user_id: &UserId) -> Result<UserResponse, ApiError> {

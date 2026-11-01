@@ -18,6 +18,7 @@ use chrono_tz::America;
 use domain::{CandidateQuestion, CycleId, GroupId, NewsletterStatus, UserId};
 use persistence::{newsletters, questions};
 use pretty_assertions::assert_eq;
+use shared::cycle_time::CycleCadence;
 
 #[tokio::test]
 async fn tick_promotes_only_the_top_n_candidates_by_vote() {
@@ -171,13 +172,14 @@ async fn create_next_voting_cycle_is_idempotent_across_rapid_reruns() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("g1");
     let after = Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap();
+    let schedule =
+        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
 
-    newsletters::create_next_voting_cycle(&repo, &group_id, America::New_York, 4, after)
+    newsletters::create_next_voting_cycle(&repo, &group_id, schedule.clone())
         .await
         .unwrap();
 
-    let second =
-        newsletters::create_next_voting_cycle(&repo, &group_id, America::New_York, 4, after).await;
+    let second = newsletters::create_next_voting_cycle(&repo, &group_id, schedule).await;
     let err = second.expect_err("second create attempt must lose the race");
     assert!(err.is_lost_race());
 }
@@ -251,6 +253,7 @@ async fn settings_change_recomputes_a_voting_cycle_with_no_candidates() {
     assert!(candidates.is_empty());
 
     let schedule = shared::cycle_time::next_cycle_schedule(
+        CycleCadence::Monthly,
         voting.vote_window_open_at,
         chrono_tz::America::New_York,
         7, // was 4
@@ -365,10 +368,11 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
     // is 2026-03-01 must land at the right UTC instant. 2026 US DST starts
     // March 8, so March 1 is still EST (UTC-5).
     let after = Utc.with_ymd_and_hms(2026, 2, 10, 0, 0, 0).unwrap();
-    let created =
-        newsletters::create_next_voting_cycle(&repo, &group_id, America::New_York, 4, after)
-            .await
-            .unwrap();
+    let schedule =
+        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
+    let created = newsletters::create_next_voting_cycle(&repo, &group_id, schedule)
+        .await
+        .unwrap();
 
     assert_eq!(created.cycle_id, CycleId::new("202603"));
     assert_eq!(
@@ -418,4 +422,45 @@ async fn current_cycles_resolve_behind_a_long_published_history() {
         .expect("open cycle found");
     assert_eq!(found_voting.cycle_id, CycleId::new("202611"));
     assert_eq!(found_open.cycle_id, CycleId::new("202610"));
+}
+
+/// Window == period (weekly, 7 days, `docs/design/lifecycle.md` §13): cycle N
+/// closes at exactly the instant N+1 opens, so the tick that promotes N+1 and
+/// then publishes N in the same run leaves, for that gap, two `open` rows.
+/// `find_open_cycle` must resolve to the newer one, and `find_voting_cycle`
+/// to the (still newer) voting row — no code change, a regression test for
+/// behavior `recent_newsletters`'s 3-row window already gets right.
+#[tokio::test]
+async fn find_open_cycle_resolves_the_newer_of_two_open_rows() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-window-eq-period");
+
+    let mut older_open = common::voting_newsletter("g-window-eq-period", "20261101");
+    older_open.status = NewsletterStatus::Open;
+    newsletters::write_status_transition(&repo, &older_open)
+        .await
+        .unwrap();
+
+    let mut newer_open = common::voting_newsletter("g-window-eq-period", "20261108");
+    newer_open.status = NewsletterStatus::Open;
+    newsletters::write_status_transition(&repo, &newer_open)
+        .await
+        .unwrap();
+
+    let voting = common::voting_newsletter("g-window-eq-period", "20261115");
+    newsletters::write_status_transition(&repo, &voting)
+        .await
+        .unwrap();
+
+    let found_open = newsletters::find_open_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("an open cycle exists");
+    assert_eq!(found_open.cycle_id, newer_open.cycle_id);
+
+    let found_voting = newsletters::find_voting_cycle(&repo, &group_id)
+        .await
+        .unwrap()
+        .expect("a voting cycle exists");
+    assert_eq!(found_voting.cycle_id, voting.cycle_id);
 }

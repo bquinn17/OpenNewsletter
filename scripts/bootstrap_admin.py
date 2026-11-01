@@ -41,7 +41,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict, Union
 
 if sys.version_info >= (3, 9):
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -51,6 +51,17 @@ else:  # the WSL2 venv runs 3.8
 # Not `datetime.UTC`: that needs Python 3.11, and the WSL2 venv runs 3.8.
 UTC = timezone.utc
 
+
+class WeeklyCadence(TypedDict):
+    """Parsed weekly cycle configuration."""
+
+    weekday_index: int  # 0=mon, 6=sun (Python's date.weekday())
+    hour: int
+    minute: int
+
+
+Cadence = Union[Literal["monthly"], WeeklyCadence]
+
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "infra"))
 
@@ -58,6 +69,7 @@ sys.path.insert(0, str(REPO_ROOT / "infra"))
 # when run from `infra/`, so the ignore must tolerate being unused there.
 from opennewsletter.config import (  # type: ignore[import-not-found, unused-ignore]
     load_config,
+    parse_weekly_start,
 )
 
 # Mirrors AVATAR_COLOR_SLUGS + derive_avatar_color in
@@ -135,19 +147,61 @@ def first_day_of_next_month_local(after_utc: datetime, tz: ZoneInfo) -> datetime
     return local_midnight.astimezone(UTC)
 
 
-def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
-    """cycleId = yyyymm of responseOpenAt in the group's local time zone (§4.1)."""
+def next_period_start(cadence: Cadence, after_utc: datetime, tz: ZoneInfo) -> datetime:
+    """Return the next period start (monthly or weekly) strictly after after_utc
+    in the group's local timezone, converted back to UTC."""
+    if cadence == "monthly":
+        return first_day_of_next_month_local(after_utc, tz)
+
+    # Weekly: first (weekday, HH:MM) group-local instant STRICTLY after after_utc
+    weekly = cadence
+    weekday_index = weekly["weekday_index"]
+    hour = weekly["hour"]
+    minute = weekly["minute"]
+
+    local_date = after_utc.astimezone(tz).date()
+    for d in range(8):  # check at most 8 days ahead
+        day = local_date + timedelta(days=d)
+        if day.weekday() != weekday_index:
+            continue
+        # Construct the candidate instant in local time
+        candidate = datetime(day.year, day.month, day.day, hour, minute, 0, tzinfo=tz)
+        candidate_utc = candidate.astimezone(UTC)
+        if candidate_utc > after_utc:
+            return candidate_utc
+
+    # Fallback (should never be reached)
+    raise RuntimeError(f"Could not find next period start after {after_utc}")
+
+
+def cycle_id_for(cadence: Cadence, response_open_at: datetime, tz: ZoneInfo) -> str:
+    """cycleId = yyyymm (monthly) or yyyymmdd (weekly) of responseOpenAt
+    in the group's local time zone."""
     local = response_open_at.astimezone(tz)
-    return f"{local.year:04d}{local.month:02d}"
+    if cadence == "monthly":
+        return f"{local.year:04d}{local.month:02d}"
+    else:
+        return f"{local.year:04d}{local.month:02d}{local.day:02d}"
 
 
 def next_cycle_schedule(
-    after: datetime, tz: ZoneInfo, response_window_days: int
+    cadence: Cadence, after: datetime, tz: ZoneInfo, response_window_days: int
 ) -> tuple[str, datetime, datetime]:
-    """Returns (cycle_id, response_open_at, response_close_at) per §4.2/§5.4."""
-    response_open_at = first_day_of_next_month_local(after, tz)
-    response_close_at = response_open_at + timedelta(days=response_window_days)
-    return cycle_id_for(response_open_at, tz), response_open_at, response_close_at
+    """Returns (cycle_id, response_open_at, response_close_at).
+
+    For weekly cadences, response window is clamped to at most 7 days.
+    """
+    response_open_at = next_period_start(cadence, after, tz)
+    # Clamp weekly window to 7 days max
+    window_days = (
+        response_window_days if cadence == "monthly" else min(response_window_days, 7)
+    )
+    response_close_at = response_open_at + timedelta(days=window_days)
+    return (
+        cycle_id_for(cadence, response_open_at, tz),
+        response_open_at,
+        response_close_at,
+    )
 
 
 def deterministic_id(seed: str) -> str:
@@ -194,6 +248,24 @@ def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
             f"Missing CDK output {stack}-{env}.{key} — redeploy the {stack} stack."
         )
     return str(value)
+
+
+def load_cadence_from_outputs(outputs: dict[str, Any], env: str) -> Cadence:
+    """Load cycle frequency and weekly start from CDK outputs.
+
+    Falls back to monthly and sun 21:00 if outputs are missing.
+    """
+    cycle_frequency = outputs.get(f"NotificationsStack-{env}", {}).get(
+        "CycleFrequency", "monthly"
+    )
+    cycle_weekly_start = outputs.get(f"NotificationsStack-{env}", {}).get(
+        "CycleWeeklyStart", "sun 21:00"
+    )
+
+    if cycle_frequency != "weekly":
+        return "monthly"
+    weekday, hour, minute = parse_weekly_start(cycle_weekly_start)
+    return WeeklyCadence(weekday_index=weekday, hour=hour, minute=minute)
 
 
 def boto3_session() -> Any:
@@ -266,12 +338,12 @@ def group_meta_item(
 
 
 def first_newsletter_item(
-    *, group_id: str, tz: ZoneInfo, now: datetime
+    *, group_id: str, cadence: Cadence, tz: ZoneInfo, now: datetime
 ) -> tuple[str, dict[str, Any]]:
     """The group's very first `voting` Newsletter (`docs/design/lifecycle.md` §4.2's "very first
     cycle" case — `after` is always "now" here). Returns (cycle_id, item)."""
     cycle_id, response_open_at, response_close_at = next_cycle_schedule(
-        now, tz, DEFAULT_CYCLE_SETTINGS["response_window_days"]
+        cadence, now, tz, DEFAULT_CYCLE_SETTINGS["response_window_days"]
     )
     response_open_at_iso = iso(response_open_at)
     return cycle_id, {
@@ -338,6 +410,7 @@ def prod_bootstrap_transact_items(
     tz_name: str,
     bound_email: str,
     invite_code: str,
+    cadence: Cadence,
     now: datetime,
 ) -> tuple[str, list[dict[str, Any]]]:
     """The one TransactWriteItems for `--env prod` (`docs/design/auth.md` §9.1a): Group META with
@@ -346,7 +419,7 @@ def prod_bootstrap_transact_items(
     never reset a live group's member count. Returns (cycle_id, items)."""
     timestamp = iso(now)
     cycle_id, newsletter = first_newsletter_item(
-        group_id=group_id, tz=parse_timezone(tz_name), now=now
+        group_id=group_id, cadence=cadence, tz=parse_timezone(tz_name), now=now
     )
     group = group_meta_item(
         group_id=group_id,
@@ -440,6 +513,7 @@ def write_group(
     group_id: str,
     group_name: str,
     tz_name: str,
+    cadence: Cadence,
     now: datetime,
 ) -> str:
     """Write the User, sub lookup, Group, admin GroupMembership, and the
@@ -447,7 +521,7 @@ def write_group(
     """
     timestamp = iso(now)
     cycle_id, newsletter = first_newsletter_item(
-        group_id=group_id, tz=parse_timezone(tz_name), now=now
+        group_id=group_id, cadence=cadence, tz=parse_timezone(tz_name), now=now
     )
     items: list[dict[str, Any]] = [
         {
@@ -512,6 +586,7 @@ def bootstrap_dev(args: argparse.Namespace) -> None:
     bootstrap_client_id = get_output(
         outputs, "AuthStack", "UserPoolBootstrapClientId", args.env
     )
+    cadence = load_cadence_from_outputs(outputs, args.env)
 
     session = boto3_session()
     cognito = session.client("cognito-idp")
@@ -538,6 +613,7 @@ def bootstrap_dev(args: argparse.Namespace) -> None:
         group_id=group_id,
         group_name=args.group_name,
         tz_name=args.timezone,
+        cadence=cadence,
         now=datetime.now(UTC),
     )
 
@@ -594,6 +670,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
             "TableName", f"OpenNewsletter-{args.env}"
         )
     )
+    cadence = load_cadence_from_outputs(outputs, args.env)
     # Keyed on the bound email + group name, so re-running for the same group
     # hits the existence conditions instead of creating a duplicate.
     group_id = deterministic_id(f"group:{bound_email}:{args.group_name}")
@@ -606,6 +683,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
         tz_name=args.timezone,
         bound_email=bound_email,
         invite_code=invite_code,
+        cadence=cadence,
         now=datetime.now(UTC),
     )
 

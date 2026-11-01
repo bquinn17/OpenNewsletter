@@ -61,6 +61,7 @@ describe("JoinPage", () => {
       displayName: "Sam",
       vapidPublicKey: "",
       groupDefaults: {},
+      cycleCadence: { frequency: "monthly" as const, maxResponseWindowDays: 28 },
       memberships: [{ groupId: "g_old", role: "member" as const, groupName: "Old", ...tzGradient }],
     };
     vi.mocked(api.getConfig).mockResolvedValueOnce(before);
@@ -76,6 +77,7 @@ describe("JoinPage", () => {
       displayName: "Sam",
       vapidPublicKey: "",
       groupDefaults: {},
+      cycleCadence: { frequency: "monthly" as const, maxResponseWindowDays: 28 },
       memberships: [
         { groupId: "g_old", role: "member", groupName: "Old", ...tzGradient },
         { groupId: "g_new", role: "member", groupName: "New", ...tzGradient },
@@ -128,6 +130,7 @@ describe("JoinPage", () => {
       displayName: "Sam",
       vapidPublicKey: "",
       groupDefaults: {},
+      cycleCadence: { frequency: "monthly" as const, maxResponseWindowDays: 28 },
       memberships: [{ groupId: "g_new", role: "member", groupName: "New", ...tzGradient }],
     });
 
@@ -154,6 +157,7 @@ describe("JoinPage", () => {
       displayName: "Sam",
       vapidPublicKey: "",
       groupDefaults: {},
+      cycleCadence: { frequency: "monthly" as const, maxResponseWindowDays: 28 },
       memberships: [{ groupId: "g_new", role: "member", groupName: "New", ...tzGradient }],
     });
     useCurrentGroup.getState().setCurrentGroup("g_old");

@@ -1,4 +1,7 @@
 import { formatDistanceToNowStrict } from "date-fns";
+import type { components } from "../types/api";
+
+type CycleCadence = components["schemas"]["CycleCadence"];
 
 export function formatRelative(iso: string): string {
   return formatDistanceToNowStrict(new Date(iso), { addSuffix: true });
@@ -64,6 +67,80 @@ export function isCurrentCycleMonth(
     timeZone: timezone,
   });
   return yearMonth.format(new Date(responseOpenAt)) === yearMonth.format(now);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CURRENT_EDITION_WEEKLY_WINDOW_DAYS = 7;
+
+/**
+ * Whether a published edition still counts as "current" on Home
+ * (`docs/design/frontend.md` §7.1 / §14a). Monthly: same calendar month as
+ * `now`, in the group's timezone. Weekly: published within the last
+ * {@link CURRENT_EDITION_WEEKLY_WINDOW_DAYS} days of `now` — month names
+ * don't distinguish weekly editions, so a rolling window stands in for "this
+ * month's".
+ */
+export function isCurrentEdition(
+  edition: { responseOpenAt: string; publishedAt: string | null },
+  timezone: string,
+  frequency: CycleCadence["frequency"],
+  now: Date = new Date(),
+): boolean {
+  if (frequency === "weekly") {
+    if (!edition.publishedAt) return false;
+    const ageMs = now.getTime() - new Date(edition.publishedAt).getTime();
+    return ageMs >= 0 && ageMs < CURRENT_EDITION_WEEKLY_WINDOW_DAYS * DAY_MS;
+  }
+  return isCurrentCycleMonth(edition.responseOpenAt, timezone, now);
+}
+
+/** "month" or "week", for copy that reads naturally for either cadence. */
+export function cadenceNoun(frequency: CycleCadence["frequency"]): "month" | "week" {
+  return frequency === "weekly" ? "week" : "month";
+}
+
+export type EditionLabel = {
+  /** e.g. "October 2026" (monthly) or "Nov 15, 2026" (weekly). */
+  title: string;
+  /** Date tile's top line, e.g. "Oct" or "Nov" — CSS upper-cases it. */
+  tileTop: string;
+  /** Date tile's bottom line, e.g. "2026" (monthly) or "15" (weekly, day of month). */
+  tileBottom: string;
+  /** Short form for running copy, no year, e.g. "October" or "Nov 15". */
+  short: string;
+};
+
+/**
+ * Labels an edition for display (`docs/design/frontend.md` §14a). Monthly
+ * labels are month/year, from `responseOpenAt` exactly as `cycleLabels`
+ * always has. Weekly labels are the edition's publication date — `publishedAt`
+ * once published, otherwise the scheduled `responseCloseAt` — in the group's
+ * timezone.
+ */
+export function editionLabel(
+  edition: { responseOpenAt?: string; responseCloseAt: string; publishedAt?: string | null },
+  timezone: string,
+  frequency: CycleCadence["frequency"],
+): EditionLabel {
+  if (frequency === "weekly") {
+    const date = edition.publishedAt ?? edition.responseCloseAt;
+    return {
+      title: formatInZone(date, timezone, { month: "short", day: "numeric", year: "numeric" }),
+      tileTop: formatInZone(date, timezone, { month: "short" }),
+      tileBottom: formatInZone(date, timezone, { day: "numeric" }),
+      short: formatInZone(date, timezone, { month: "short", day: "numeric" }),
+    };
+  }
+  const { monthLabel, yearLabel } = cycleLabels(
+    edition.responseOpenAt ?? edition.responseCloseAt,
+    timezone,
+  );
+  return {
+    title: `${monthLabel} ${yearLabel}`,
+    tileTop: monthLabel.slice(0, 3),
+    tileBottom: yearLabel,
+    short: monthLabel,
+  };
 }
 
 /**

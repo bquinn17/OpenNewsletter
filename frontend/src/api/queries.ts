@@ -37,6 +37,17 @@ export function useConfig() {
   });
 }
 
+const DEFAULT_CYCLE_CADENCE: S["CycleCadence"] = {
+  frequency: "monthly",
+  maxResponseWindowDays: 28,
+};
+
+/** This deployment's cycle cadence (`docs/design/frontend.md` §14a). Defaults to monthly while `/config` loads. */
+export function useCycleCadence(): S["CycleCadence"] {
+  const { data } = useConfig();
+  return data?.cycleCadence ?? DEFAULT_CYCLE_CADENCE;
+}
+
 export function useMe() {
   // `GET /me` 401s until the caller redeems an invite; `/config` says whether they have.
   const { data: config } = useConfig();

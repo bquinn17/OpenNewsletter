@@ -8,6 +8,7 @@ use cycle_tick::tick::run_tick;
 use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId};
 use persistence::{groups, newsletters, questions};
 use pretty_assertions::assert_eq;
+use shared::cycle_time::CycleCadence;
 
 #[tokio::test]
 async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest() {
@@ -22,7 +23,7 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
     let voting = Newsletter {
         group_id: GroupId::new("g-ties"),
-        cycle_id: shared::cycle_time::cycle_id_for(now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz),
         status: NewsletterStatus::Voting,
         vote_window_open_at: now - Duration::days(30),
         vote_window_close_at: now - Duration::minutes(1),
@@ -53,7 +54,7 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
         questions::put_candidate(&repo, &c).await.unwrap();
     }
 
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     let opened = newsletters::get_newsletter(&repo, &voting.group_id, &voting.cycle_id)
         .await

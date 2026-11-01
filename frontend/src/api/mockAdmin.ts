@@ -4,6 +4,7 @@ import {
   fail,
   groups,
   hasOtherAdmin,
+  MOCK_CYCLE_CADENCE,
   newsletters,
   NO_MOCK_ROUTE,
   validationFailed,
@@ -22,7 +23,6 @@ type S = components["schemas"];
 const MIN_QUESTIONS_PER_CYCLE = 1;
 const MAX_QUESTIONS_PER_CYCLE = 20;
 const MIN_RESPONSE_WINDOW_DAYS = 1;
-const MAX_RESPONSE_WINDOW_DAYS = 28;
 const MAX_REMINDER_OFFSET_HOURS = 168;
 const MAX_DISPLAY_NAME_CHARS = 40;
 const INVITE_MAX_TTL_DAYS = 90;
@@ -179,13 +179,18 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
         `questionsPerCycle must be between ${MIN_QUESTIONS_PER_CYCLE} and ${MAX_QUESTIONS_PER_CYCLE}`,
       );
     }
+    // Read at call time, not module load: `MOCK_CYCLE_CADENCE` and this module
+    // sit in an import cycle through `client.ts` (mock-mode routing) and
+    // `mockTransport.ts`, so a module-level read here can observe it before
+    // `mockShared.ts` finishes initializing.
+    const maxResponseWindowDays = MOCK_CYCLE_CADENCE.maxResponseWindowDays;
     if (
       next.responseWindowDays < MIN_RESPONSE_WINDOW_DAYS ||
-      next.responseWindowDays > MAX_RESPONSE_WINDOW_DAYS
+      next.responseWindowDays > maxResponseWindowDays
     ) {
       validationFailed(
         "responseWindowDays",
-        `responseWindowDays must be between ${MIN_RESPONSE_WINDOW_DAYS} and ${MAX_RESPONSE_WINDOW_DAYS}`,
+        `responseWindowDays must be between ${MIN_RESPONSE_WINDOW_DAYS} and ${maxResponseWindowDays}`,
       );
     }
     if (next.votesPerUserPerCycle < 1 || next.votesPerUserPerCycle > next.questionsPerCycle) {
