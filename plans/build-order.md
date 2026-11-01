@@ -27,19 +27,19 @@ Every gate from M3 onward needs the deployed dev stack. Dev has been up since 20
 | **M11** Notifications | [`notifications.md`](../docs/design/notifications.md) | Enable push on desktop Chrome and an installed iOS PWA; "Send test push" reaches both and "My devices" lists both. Tick to open → one cycle-open push (re-tick: no duplicate). Rewind into the reminder window and `POST /admin/dev/tick/notify` → one reminder, not a burst. Tick to publish → publication push opens the edition. A member with "Deadline reminders" off is skipped. `PushSent`/`PushFailed` EMF metrics appear in CloudWatch. |
 | **M12** Admin UI | [`frontend.md` §7.7](../docs/design/frontend.md#77-groupadminpage), [`api.md` §3](../docs/design/api.md#3-invite--membership-routes) | As an admin: create a member invite, open it signed in as a second Google account → new member on the Members tab, invite shows "used by {name}". Promote, demote, then remove them. Rename the group and change its gradient → Home and the switcher update without a reload. |
 | **M13** Hardening | [`testing-and-ci.md`](../docs/development/testing-and-ci.md) | A new contributor can clone, follow `README.md`, run dev locally and open a PR with passing CI. **Also:** the five workflows go green on GitHub (only checked locally and with `actionlint` so far — `backend-ci` is also the first Linux `cargo lambda build` of `image-process`/`libwebp-sys`); deploy `CiStack` and paste its role ARNs into the repo variables; run [`smoke-test.md`](../docs/operations/smoke-test.md) against dev; fill in the `e2e/dev/` Playwright bodies once a Cognito test user exists. |
-| **M13.5** Plan-review follow-ups (D1–D12) | [`decisions.md`](../docs/decisions.md) | All checks green ✅. Deploy-shaped checks join M14: a bound-invite redeem via Google; a Facebook sign-up gets `email_verified=false`; an auto-publish at a real close; a media delete whose presigned URL 403s immediately afterwards; the `AutoPublishAbandoned` metric reaches CloudWatch and feeds the `CycleTick-Errors` alarm; the first `promote-prod`. |
+| **M13.5** Plan-review follow-ups (D1–D12) | [`decisions.md`](../docs/decisions.md) | All checks green ✅. Deploy-shaped checks join M14: a bound-invite redeem via Google; a Facebook sign-up gets `email_verified=false`; an auto-publish at a real close; a media delete whose presigned URL 403s immediately afterwards; the `AutoPublishAbandoned` metric reaches CloudWatch and feeds the `CycleTick-Errors` alarm; the first release to prod. |
 
 ---
 
 ## Milestone 14 — Production deploy (½ day)
 
-Read: [`runbook.md`](../docs/operations/runbook.md) M14, [`testing-and-ci.md` §6.4](../docs/development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion), [`auth.md` §9.1a](../docs/design/auth.md#91a-scriptsbootstrap_adminpy--prod-d5). Mostly operator work: an agent can prepare and verify, but every `cdk deploy`, secret write and DNS change needs the owner.
+Read: [`runbook.md`](../docs/operations/runbook.md) M14, [`testing-and-ci.md` §6.4](../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release), [`auth.md` §9.1a](../docs/design/auth.md#91a-scriptsbootstrap_adminpy--prod-d5). Mostly operator work: an agent can prepare and verify, but every `cdk deploy`, secret write and DNS change needs the owner.
 
 **Deliverables**:
 - `cdk deploy --context env=prod --all` runs clean.
 - DNS records swung to prod.
 - Bootstrap admin flow exercised in prod: `bootstrap_admin.py --env prod` with `BOOTSTRAP_ADMIN_EMAIL` prints an email-bound admin invite, and the owner redeems it by signing in with Google ([`auth.md` §9](../docs/design/auth.md#9-bootstrap-admin--first-group)).
-- First promotion through the `production` environment gate ([`testing-and-ci.md` §6](../docs/development/testing-and-ci.md#6-github-actions-workflows)).
+- First release: `git push origin main:release` deploys prod through `release.yml` ([`testing-and-ci.md` §6](../docs/development/testing-and-ci.md#6-github-actions-workflows)).
 - Push notifications tested in prod. Prod alarms (10 alarm metrics) sit in `OK`; the SNS and budget email subscriptions are confirmed.
 - README updated with prod URLs.
 

@@ -412,7 +412,7 @@ When `config.env == "dev"`, the following one-line overrides are applied so `cdk
 
 ## 11. Deployment
 
-The operator procedure — one-time account setup, bootstrapping, and ongoing deploys — is in [`runbook.md`](../operations/runbook.md). CI-driven deploys (what `deploy.yml` does on push to `main` and on prod promotion) are covered in [`testing-and-ci.md` §6](../development/testing-and-ci.md#6-github-actions-workflows).
+The operator procedure — one-time account setup, bootstrapping, and ongoing deploys — is in [`runbook.md`](../operations/runbook.md). CI-driven deploys (what `deploy.yml` does on push to `main` and `release.yml` on push to `release`) are covered in [`testing-and-ci.md` §6](../development/testing-and-ci.md#6-github-actions-workflows).
 
 Structurally: CDK Lambda assets reference compiled `bootstrap` binaries in `backend/target/lambda/<crate-name>/bootstrap`, produced by `cargo lambda build --release --arm64` (`make build-lambdas`). The CDK code reads these paths via `aws_lambda.Code.from_asset(...)` and silently falls back to a shell stub if a binary is missing, so `scripts/check_lambda_binaries.sh` guards against that — run by `make deploy-dev` and by `deploy.yml`. `cdk deploy --context env=<dev|prod> --all` deploys every stack for that environment.
 

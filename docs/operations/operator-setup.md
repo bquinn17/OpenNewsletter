@@ -151,13 +151,13 @@ The email the prod bootstrap admin will sign in with via Google. Prod has no pas
 
 ## 10. Prod frontend Pages repo
 
-This repo's GitHub Pages site serves dev (`dev.betterloop.site`), and a repo hosts only one Pages site, so `deploy.yml`'s `promote-prod` publishes prod's frontend to a second repo. Not needed for dev.
+This repo's GitHub Pages site serves dev (`dev.betterloop.site`), and a repo hosts only one Pages site, so `release.yml` publishes prod's frontend to a second repo. Not needed for dev.
 
 1. Create a public, empty repo for it. It holds only built files, which are public anyway. Ours is [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site).
-2. Generate a key pair: `ssh-keygen -t ed25519 -N "" -C "opennewsletter promote-prod" -f prod-pages-key`.
+2. Generate a key pair: `ssh-keygen -t ed25519 -N "" -C "opennewsletter release" -f prod-pages-key`.
 3. In the new repo, Settings → Deploy keys → Add: paste `prod-pages-key.pub` and tick **Allow write access**.
 4. In this repo, set the `production` environment secret (or repo secret) `PROD_PAGES_DEPLOY_KEY` to the contents of `prod-pages-key`, and the repo variable `PROD_PAGES_REPO` to `owner/repo`. Then delete both key files.
-5. After the first approved prod deploy has pushed `gh-pages` there, set that repo's Pages source to the `gh-pages` branch, and its custom domain to `FRONTEND_DOMAIN`. The apex needs GitHub's `A`/`AAAA` records at your DNS provider ([`infrastructure.md` §8](../design/infrastructure.md#8-frontendstack)).
+5. After the first release has pushed `gh-pages` there, set that repo's Pages source to the `gh-pages` branch, and its custom domain to `FRONTEND_DOMAIN`. The apex needs GitHub's `A`/`AAAA` records at your DNS provider ([`infrastructure.md` §8](../design/infrastructure.md#8-frontendstack)).
 
 **GitHub**: variable `PROD_PAGES_REPO`, secret `PROD_PAGES_DEPLOY_KEY`.
 
