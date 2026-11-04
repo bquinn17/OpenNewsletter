@@ -81,9 +81,13 @@ fn cycle_settings(
         votes_per_user_per_cycle: patch
             .votes_per_user_per_cycle
             .unwrap_or(current.votes_per_user_per_cycle),
+        // An omitted `responseWindowDays` self-heals a value stored above the
+        // current cadence's cap (e.g. a monthly deployment's value inherited
+        // across a later switch to weekly); an explicit over-cap value is
+        // still rejected below.
         response_window_days: patch
             .response_window_days
-            .unwrap_or(current.response_window_days),
+            .unwrap_or_else(|| cadence.clamp_window(current.response_window_days)),
         auto_publish: current.auto_publish,
     };
 

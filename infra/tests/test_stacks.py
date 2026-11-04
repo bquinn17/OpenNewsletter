@@ -1594,12 +1594,3 @@ def test_api_handlers_have_cycle_frequency_env_vars(
                 },
             },
         )
-
-
-def test_notifications_stack_outputs_include_cycle_cadence(
-    notifications_template: assertions.Template,
-) -> None:
-    outputs = notifications_template.find_outputs("*", assertions.Match.any_value())
-    output_keys = set(outputs.keys())
-    assert "CycleFrequency" in output_keys
-    assert "CycleWeeklyStart" in output_keys

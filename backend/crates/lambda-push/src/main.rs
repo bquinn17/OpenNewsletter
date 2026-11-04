@@ -25,15 +25,12 @@ async fn main() -> Result<(), Error> {
     let app_secret_arn =
         std::env::var("APP_SECRET_ARN").map_err(|_| "APP_SECRET_ARN is not set")?;
 
-    let cadence = shared::cycle_time::CycleCadence::from_env()?;
-
     let state = Arc::new(AppState::new(
         Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
         aws_sdk_secretsmanager::Client::new(&aws_config),
         app_secret_arn,
         Arc::new(ReqwestPushSender::new()),
         std::env::var("ENV").unwrap_or_default(),
-        cadence,
     ));
 
     run(service_fn(move |event: LambdaEvent<Value>| {

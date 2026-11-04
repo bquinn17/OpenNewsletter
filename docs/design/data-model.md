@@ -101,6 +101,10 @@ The tenant.
 | `gradient` | string (slug from a small preset palette, e.g. `grape-sky`, `coral-sun`; chosen at group creation, admin-editable in Settings) |
 | `created_at` | ISO-8601 |
 | `created_by` | user_id |
+| `gsi2pk` | `GROUP_STATUS#awaiting_first_cycle`, only while the group has no cycle yet |
+| `gsi2sk` | `{created_at}#{group_id}` (canonical key-timestamp format, §1), present only alongside `gsi2pk` |
+
+The scripts that create a group (`scripts/bootstrap_admin.py`, `scripts/seed_dev_data.py`) write the two GSI2 attributes and no Newsletter row. The next cycle tick creates the group's first `voting` cycle and removes both attributes in the same transaction ([`lifecycle.md` §4.2](lifecycle.md#42-default-schedule-per-group)). So the marker is a sparse index: GSI2's `GROUP_STATUS#awaiting_first_cycle` partition holds only groups still waiting for their first tick (AP22).
 
 ### 2.4 Invite
 
@@ -443,8 +447,9 @@ The processed avatar lives under the `avatar/*` prefix of the same processed buc
 | AP19 | Reactions on an answer | Query | base |
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
+| AP22 | Groups awaiting their first cycle | Query `gsi2pk = GROUP_STATUS#awaiting_first_cycle` | GSI2 |
 
-**Every "list everything" Query paginates.** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
+**Every "list everything" Query paginates.** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, AP22, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
 
 **The current-cycle lookup reads 3 rows.** `find_voting_cycle`/`find_open_cycle` ([`lifecycle.md` §10](lifecycle.md#10-read-side-helpers)) run AP7 newest-first with `Limit=3` instead of reading the group's whole history. That's safe because cycle ids sort chronologically and a group gains a cycle only when the tick creates the period after the one it just opened ([`lifecycle.md` §5.4](lifecycle.md#54-create_next_voting_cyclegroup-after)). Ids are `yyyymm` on a monthly deployment and `yyyymmdd` on a weekly one, and the two formats sort correctly against each other across a cadence change ([`lifecycle.md` §13.2](lifecycle.md#132-cycle-ids-across-a-cadence-change)). So the `voting` cycle, if any, is always the newest `NL#` row and the `open` cycle, if any, is the one before it; every published or archived cycle is older. On a weekly deployment with a 7-day window, a group briefly has two `open` rows at a handover. `find_open_cycle` returns the newer one ([`lifecycle.md` §13.3](lifecycle.md#133-window-limits-and-overlap)).
 
@@ -537,7 +542,7 @@ Query GSI2 where gsi2pk = "NL_STATUS#voting" AND gsi2sk <= "{nowKeyTimestamp}#~~
 Query GSI2 where gsi2pk = "NL_STATUS#open"   AND gsi2sk <= "{nowKeyTimestamp}#~~~"
 ```
 
-Two cheap queries per tick; processes only items whose transition is actually due. `{nowKeyTimestamp}` and every `next_transition_at` written into `gsi2sk` go through the same formatter (`persistence::keys::key_timestamp`) so the comparison sorts consistently — see the key-timestamp rule in §1.
+Two cheap queries per tick; processes only items whose transition is actually due. The tick also queries the `GROUP_STATUS#awaiting_first_cycle` partition (AP22, §2.3), which is empty except in the few minutes after a group is created. `{nowKeyTimestamp}` and every `next_transition_at` written into `gsi2sk` go through the same formatter (`persistence::keys::key_timestamp`) so the comparison sorts consistently — see the key-timestamp rule in §1.
 
 When a cycle changes status, the writer recomputes `gsi2pk` (new status) and `gsi2sk` (new `next_transition_at`, via `persistence::keys::newsletter_gsi2sk`/`newsletter_gsi2sk_sentinel`). All such writes go through helper `persistence::newsletters::write_status_transition` to ensure GSI keys stay in sync.
 

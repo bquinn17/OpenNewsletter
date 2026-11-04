@@ -37,15 +37,14 @@ export function useConfig() {
   });
 }
 
-const DEFAULT_CYCLE_CADENCE: S["CycleCadence"] = {
-  frequency: "monthly",
-  maxResponseWindowDays: 28,
-};
-
-/** This deployment's cycle cadence (`docs/design/frontend.md` §14a). Defaults to monthly while `/config` loads. */
-export function useCycleCadence(): S["CycleCadence"] {
+/**
+ * This deployment's cycle cadence (`docs/design/frontend.md` §14a).
+ * `undefined` until `/config` has loaded — callers must not render
+ * cadence-dependent copy or limits before then.
+ */
+export function useCycleCadence(): S["CycleCadence"] | undefined {
   const { data } = useConfig();
-  return data?.cycleCadence ?? DEFAULT_CYCLE_CADENCE;
+  return data?.cycleCadence;
 }
 
 export function useMe() {

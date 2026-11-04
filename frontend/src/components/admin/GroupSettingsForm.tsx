@@ -22,6 +22,7 @@ export function GroupSettingsForm({ group }: Props) {
     append,
     remove,
     hasChanges,
+    cadenceLoaded,
     isSaving,
     onSubmit,
   } = useGroupSettingsForm(group);
@@ -75,12 +76,7 @@ export function GroupSettingsForm({ group }: Props) {
         </div>
       </fieldset>
 
-      <Field
-        id="group-timezone"
-        label="Timezone"
-        error={errors.timezone?.message}
-        hint="Timezone changes affect the current voting cycle's open time."
-      >
+      <Field id="group-timezone" label="Timezone" error={errors.timezone?.message}>
         {typeof Intl.supportedValuesOf === "function" ? (
           <select
             id="group-timezone"
@@ -132,17 +128,20 @@ export function GroupSettingsForm({ group }: Props) {
         id="group-response-window"
         label="Response window (days)"
         error={errors.responseWindowDays?.message}
-        hint="Moves the current voting cycle's close, and an open cycle's close if it's still in the future."
       >
         <input
           id="group-response-window"
           type="number"
+          disabled={!cadenceLoaded}
           {...register("responseWindowDays")}
-          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30 disabled:opacity-60"
         />
       </Field>
 
-      <p className="text-xs text-inkmuted">Changes apply to the current cycle where possible.</p>
+      <p className="text-xs text-inkmuted">
+        Timezone and response window changes apply from the next new cycle. Cycles already scheduled
+        keep their dates.
+      </p>
 
       <fieldset>
         <legend className="mb-2 text-xs font-bold uppercase tracking-widest text-inkmuted">
@@ -219,7 +218,7 @@ export function GroupSettingsForm({ group }: Props) {
       </Field>
 
       <div className="flex justify-end">
-        <Button type="submit" disabled={!hasChanges || isSaving}>
+        <Button type="submit" disabled={!hasChanges || isSaving || !cadenceLoaded}>
           {isSaving ? "Saving…" : "Save"}
         </Button>
       </div>

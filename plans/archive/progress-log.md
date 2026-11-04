@@ -1269,3 +1269,20 @@ Each deployment now chooses monthly or weekly cycles. Dev is weekly; prod stays 
 **Found in review.** `local_to_utc` (generalized from `midnight_local_to_utc`) stopped searching at midnight and reached `unreachable!` when a configured weekly time fell in a DST gap that runs past midnight. It now steps forward by the hour into the next day. Rare in practice: it needs a late start time in a zone that springs forward late in the evening.
 
 **Tests.** Backend 526 (+30), CDK 181 (+28), Vitest 404 (+15), Playwright 16 (unchanged).
+
+## Cycle cadence code-review fixes — what landed (2026-11-03)
+
+A code review of the cadence branch found nine issues; the owner settled each one. Decisions: [D10](../../docs/decisions.md#d10) (rewritten) and [first cycle by tick](../../docs/decisions.md#first-cycle-by-tick).
+
+**What landed.**
+- **DST: response windows count calendar days in the group's timezone** (`shared::cycle_time::add_local_days`). The close was `open + n × 24h` UTC, so in the US spring-forward week a weekly close landed an hour after the next Sunday 21:00, and `successor_schedule`'s `max()` floor skipped a whole week (`20260301` → `20260315`). Monthly closes now keep local midnight too ([`lifecycle.md` §4.2](../../docs/design/lifecycle.md#42-default-schedule-per-group)).
+- **Settings changes never move an existing cycle (D10 rewritten).** `lambda-groups` no longer reschedules the `voting` cycle or moves the `open` cycle's close; cycles created after the change use the new window and timezone. Removed: `reschedule_voting_cycle`, `reschedule_open_cycle_close`, and the `CLOSES_IN_PAST` field error (`FieldErrorCode` is `INVALID` only; safe under expand→contract, since old clients never require it). The settings form says changes "apply from the next new cycle" and no longer refreshes the newsletter list on save.
+- **A stored window above the cadence cap no longer blocks settings saves.** `GET`/`PATCH /groups/{g}` report the capped value; a `cycleSettings` change that omits `responseWindowDays` saves the capped value; only an explicit over-cap value is a 422 ([`lifecycle.md` §13.3](../../docs/design/lifecycle.md#133-window-limits-and-overlap)). The form also caps its default.
+- **Notifications follow the cycle, not the deployment.** `shared::cycle_time::cycle_period` classifies an id as month or week; the publication title uses it (neutral wording for an unparseable id). Push and notify-tick no longer read `CYCLE_FREQUENCY`, which also fixes notify-tick having been silently monthly on weekly dev.
+- **The cycle tick creates a group's first cycle.** The scripts write the group's META row with a sparse GSI2 marker (`GROUP_STATUS#awaiting_first_cycle`, AP22) and no Newsletter; a new first pass in the tick creates the first `voting` cycle and clears the marker in one transaction (`newsletters::create_first_voting_cycle`). A marked group that already has a cycle only has its marker cleared. All Python cycle math is gone from `bootstrap_admin.py` and `seed_dev_data.py`, along with the `CycleFrequency`/`CycleWeeklyStart` stack outputs and seed's `--cycle-close-in` (use the dev tick route's `advanceCycleClosesBy`).
+- **The SPA shows no cadence until `/config` loads.** No client-side default cadence: cadence-dependent labels and copy wait for `/config`, and the settings form keeps the window field and Save disabled.
+- **Leaked test containers.** `testcontainers`' `watchdog` feature removes a run's DynamoDB Local containers on SIGTERM/SIGINT (a `gtimeout` firing, Ctrl-C); `make clean-test-containers` removes what a SIGKILL leaves. Four containers leaked three weeks earlier had been running in Colima since.
+
+**Not changed (owner's call).** A 7-day weekly window still gives two `open` rows for one tick at the handover; the newer one is only open for voting, so it's left as is. The Python and Rust weekly-start parsers still differ on surrounding whitespace.
+
+**Tests.** Backend 530 (+4), CDK 174 (−7, script scheduling tests removed), Vitest 404 (unchanged; CLOSES_IN_PAST tests replaced by not-loaded-cadence tests).

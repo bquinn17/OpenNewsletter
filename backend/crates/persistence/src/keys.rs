@@ -75,6 +75,20 @@ pub fn group_pk(group_id: &GroupId) -> String {
 
 pub const GROUP_META_SK: &str = "META";
 
+/// `gsi2pk` for a group's META row while it has no cycle yet — written by the
+/// bootstrap/seed scripts on group creation, and cleared by
+/// `lambda-cycle-tick`'s first-cycle pass once it creates (or finds) the
+/// group's first `voting`/`open` cycle (`docs/design/lifecycle.md` §4.2).
+/// Sparse: only a group actually awaiting its first cycle carries this GSI2
+/// entry at all.
+pub const GROUP_AWAITING_FIRST_CYCLE_GSI2PK: &str = "GROUP_STATUS#awaiting_first_cycle";
+
+/// `gsi2sk` for [`GROUP_AWAITING_FIRST_CYCLE_GSI2PK`]: `{createdAt}#{groupId}`,
+/// with `createdAt` in the canonical fixed-width [`key_timestamp`] format.
+pub fn group_awaiting_first_cycle_gsi2sk(created_at: DateTime<Utc>, group_id: &GroupId) -> String {
+    format!("{}#{group_id}", key_timestamp(created_at))
+}
+
 // ---------- Invite (§2.4) ----------
 
 pub fn invite_pk(code: &InviteCode) -> String {
@@ -358,6 +372,19 @@ mod tests {
     fn group_keys() {
         assert_eq!(group_pk(&gid()), "GROUP#01HG2");
         assert_eq!(GROUP_META_SK, "META");
+    }
+
+    #[test]
+    fn group_awaiting_first_cycle_keys() {
+        assert_eq!(
+            GROUP_AWAITING_FIRST_CYCLE_GSI2PK,
+            "GROUP_STATUS#awaiting_first_cycle"
+        );
+        let ts = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        assert_eq!(
+            group_awaiting_first_cycle_gsi2sk(ts, &gid()),
+            "2026-01-01T00:00:00Z#01HG2"
+        );
     }
 
     #[test]

@@ -9,12 +9,12 @@ export function SuggestPage() {
   const { groupId = "" } = useParams();
   const navigate = useNavigate();
   const pushToast = useToasts((s) => s.push);
-  const { frequency } = useCycleCadence();
+  const cadence = useCycleCadence();
 
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow={`For next ${cadenceNoun(frequency)}`}
+        eyebrow={cadence ? `For next ${cadenceNoun(cadence.frequency)}` : undefined}
         title="Suggest a question"
         back={`/g/${groupId}/upcoming`}
         phase="voting"

@@ -414,9 +414,9 @@ This runs a second cycle.
 - [ ] Set Questions per cycle to 2 and Votes per member to 2 (votes can't exceed questions), and turn **Notify members when a cycle opens** off. Save.
 - [ ] Suggest three candidates in the new voting cycle, from A and B. As B, vote for two of them. As A, set Votes per member to 1 and save. As B, reload: both votes stay, the line reads "You've used 2 of 1 vote", and the other card can't be voted for until B removes a vote.
 - [ ] Run `advance 50d`. The new edition opens with exactly 2 questions, and no "time to write" notification arrives.
-- [ ] Set Response window to 1 day and save. Inline under the field: "Would close the open cycle in the past." Nothing is saved.
-- [ ] Set Response window to 28 and save. It's accepted, and the open edition's "Closes" date changes to 28 days after its rewound open time.
-- [ ] Restore 5 questions, 3 votes and cycle-open notifications. Leave the window at 28 for now: while this edition is open, setting 7 may be refused with the same "in the past" error. `make seed` resets it.
+- [ ] Under the cycle settings, the form reads "Timezone and response window changes apply from the next new cycle. Cycles already scheduled keep their dates."
+- [ ] Set Response window to 3 days and save. It's accepted. The open edition's "Closes" date and the voting cycle's dates don't change.
+- [ ] Restore 5 questions, 3 votes, cycle-open notifications and the 7-day window.
 
 ## 17. Leaving a group
 

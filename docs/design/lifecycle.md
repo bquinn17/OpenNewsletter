@@ -1,6 +1,6 @@
 # Newsletter lifecycle
 
-How a Newsletter (cycle) progresses from "voting on questions" to "open" to "published" (and, eventually, "archived"): the state machine, the timestamps, the EventBridge schedule, and the algorithm `lambda-cycle-tick` runs on every invocation. Read this before touching cycle transitions, scheduling, or anything that reschedules a cycle from group settings. Where this page and the code disagree, the code wins — `backend/crates/lambda-cycle-tick/src/tick.rs` for the algorithm, `backend/crates/shared/src/config.rs` for the tunables.
+How a Newsletter (cycle) progresses from "voting on questions" to "open" to "published" (and, eventually, "archived"): the state machine, the timestamps, the EventBridge schedule, and the algorithm `lambda-cycle-tick` runs on every invocation. Read this before touching cycle transitions, scheduling, or how group settings feed into new cycles. Where this page and the code disagree, the code wins — `backend/crates/lambda-cycle-tick/src/tick.rs` for the algorithm, `backend/crates/shared/src/config.rs` for the tunables.
 
 ---
 
@@ -22,11 +22,13 @@ Every Newsletter row carries six timestamps:
 | Field | Set when | Meaning |
 |---|---|---|
 | `voteWindowOpenAt` | created | Earliest time candidates can be suggested for this cycle |
-| `voteWindowCloseAt` | created, or recomputed by a `timezone` settings change on the current `voting` cycle (§6, [D10](../decisions.md#d10)) | == `responseOpenAt`. Voting freezes at this instant. |
-| `responseOpenAt` | created, or recomputed by a `timezone` settings change on the current `voting` cycle (§6, [D10](../decisions.md#d10)) | When the cycle transitions `voting → open` |
-| `responseCloseAt` | created, or recomputed by a `responseWindowDays`/`timezone` settings change on the current `voting` or `open` cycle (§6, [D10](../decisions.md#d10)) | When the cycle transitions `open → published` |
+| `voteWindowCloseAt` | created | == `responseOpenAt`. Voting freezes at this instant. |
+| `responseOpenAt` | created | When the cycle transitions `voting → open` |
+| `responseCloseAt` | created | When the cycle transitions `open → published` |
 | `publishedAt` | on publish | Actual transition timestamp (≈ `responseCloseAt`) |
-| `nextTransitionAt` | on every state change, or recomputed alongside the fields above (§6, [D10](../decisions.md#d10)) | The next instant any automatic action is due. Drives GSI2 query. |
+| `nextTransitionAt` | on every state change | The next instant any automatic action is due. Drives GSI2 query. |
+
+A cycle's schedule is fixed when its row is created. Settings changes never move it (§6, [D10](../decisions.md#d10)); only the dev-only deadline rewind does ([`api.md` §11a.1](api.md#11a1-post-admindevtickcycle)).
 
 `nextTransitionAt` always equals one of:
 - in `voting` → `responseOpenAt`
@@ -91,15 +93,19 @@ responseOpenAt     = first day of next month at 00:00 group-local
                      converted to UTC (weekly: the configured weekday
                      and time, §13.1)
 voteWindowCloseAt  = responseOpenAt
-responseCloseAt    = responseOpenAt + responseWindowDays days
+responseCloseAt    = responseOpenAt + responseWindowDays calendar days,
+                     same wall-clock time, group-local
 nextTransitionAt   = responseOpenAt   (because we're in voting)
 ```
 
+`responseWindowDays` counts calendar days in the group's timezone, not 24-hour UTC days. Across a DST change the window is an hour shorter or longer, but the close keeps the open's wall-clock time. That keeps a weekly cycle's close equal to the next cycle's open in a DST week (§13.1). `shared::cycle_time` adds the days to the local date and resolves the result the way §5.5 resolves local midnight. A stored `responseWindowDays` above the cadence's maximum is capped at scheduling (§13.3).
+
 `voteWindowOpenAt` is **informational only** — nothing enforces it. Enforcement is purely status-based: a cycle in `voting` accepts suggestions and votes from the moment its row exists (`CYCLE_NOT_VOTING` otherwise). Members can therefore suggest questions for month N+1 while month N's response window is still open — that is the intended "immediately start suggesting" behavior from §4.
 
-For the very first cycle of a group (created on group creation):
-- If the current month's start has already passed → the *next* month's first becomes `responseOpenAt`.
-- The bootstrap script creates the group with the appropriate first cycle pre-seeded.
+For the very first cycle of a group:
+- The script that creates the group (`scripts/bootstrap_admin.py`, or `scripts/seed_dev_data.py` on dev) writes no Newsletter row. It marks the group's `META` row as awaiting its first cycle ([`data-model.md` §2.3](data-model.md#23-group); [decision](../decisions.md#first-cycle-by-tick)).
+- The next tick (§5.1, step 0) creates the first `voting` cycle with `after = now`: the next 1st of the month (weekly: the next configured weekday and time) strictly after the tick runs becomes `responseOpenAt`. In the same transaction it removes the marker. A marked group that already has a `voting` or `open` cycle just has its marker removed.
+- So a new group has no cycle for up to 5 minutes. On dev, `POST /admin/dev/tick/cycle` runs the tick at once.
 
 ---
 
@@ -113,6 +119,10 @@ EventBridge Scheduler rule fires every 5 minutes.
 # pseudocode in Python style; real impl is Rust
 def tick():
     now = utc_now()
+
+    # 0. Create the first voting cycle for groups that have none yet (§4.2)
+    for group in query_gsi2(gsi2pk="GROUP_STATUS#awaiting_first_cycle"):
+        create_first_voting_cycle(group, after=now)   # also removes the marker
 
     # 1. Find any voting cycles whose vote window has closed
     voting_due = query_gsi2(
@@ -255,7 +265,7 @@ This is the monthly rule; the weekly successor is in §13.1. `after` is the curr
 after_month_start = first_day_of_month_at_midnight(group.timezone, after.yyyymm) -> UTC
 next_cycle_id = first_day_of_month_after(after_month_start, group.timezone) -> "yyyymm"
 next_response_open = first_day_of_month_at_midnight(group.timezone, next_cycle_id) -> UTC
-next_response_close = next_response_open + group.cycleSettings.responseWindowDays
+next_response_close = next_response_open + group.cycleSettings.responseWindowDays  # calendar days, group-local (§4.2)
 
 put_if_not_exists(Newsletter(
     groupId = group.id,
@@ -301,18 +311,16 @@ DST transitions in the group's timezone are handled by `chrono-tz`. The contract
 
 ## 6. Settings changes mid-cycle
 
-Settings apply to the *current* cycle wherever that's technically possible, rather than waiting for a cycle created after the change ([D10](../decisions.md#d10)). When admins `PATCH /groups/{g}`, each field's rule is independent:
+A settings change never moves an existing cycle ([D10](../decisions.md#d10)). When admins `PATCH /groups/{g}`, each field's rule is independent:
 
-- **`questionsPerCycle`** — read at promotion time (§5.2), so it applies to the current `voting` cycle's next promotion. An already-`open` cycle's questions are locked and unaffected — there's nothing left to apply it to.
-- **`votesPerUserPerCycle`** — read live by the vote-cast transaction ([`data-model.md` §4](data-model.md#4-transactional-invariants) #1), so it applies immediately, including to votes already in flight. Lowering it below a member's existing vote count doesn't retract those votes; the member simply can't cast more until they're back under the cap.
-- **`responseWindowDays`**:
-  - Current `voting` cycle: recompute `responseCloseAt` (and `nextTransitionAt`, since it still equals `responseOpenAt` while voting — GSI2 keys are unaffected) **regardless of candidate activity**, via `newsletters::reschedule_voting_cycle`. This builds the same item `write_status_transition` would, but conditions the put on the row still being `voting` — otherwise a tick that promoted the cycle between the handler's read and its write would be undone, putting the row back to `voting` without its locked questions. A lost race is logged at INFO.
-  - Current `open` cycle: recompute `responseCloseAt = responseOpenAt + days` and its GSI2 keys (`gsi2sk`) **only if the new close is still in the future**. If the recomputed close would be in the past, the request is rejected: 422 `VALIDATION_FAILED` with a `fieldErrors` entry on `responseWindowDays`, code `CLOSES_IN_PAST` ("would close the open cycle in the past") — see [`api.md` §4.3](api.md#43-patch-groupsgroupid). Reminder markers already claimed (`NOTIFIED#CLOSE#{offset}`) stay claimed; extending the window doesn't re-send a reminder that already went out. The write (`newsletters::reschedule_open_cycle_close`) is conditioned on `status = open AND response_close_at > now`, so a close that passes between the handler's read and its write is rejected the same way, not silently applied. The handler applies this whenever the PATCH carries `cycleSettings`, even with `responseWindowDays` unchanged, so re-submitting the current value repairs a close whose earlier best-effort move failed; an unchanged value whose close would be in the past is left alone rather than rejected.
-  - **A cycle already past its close but not yet published** (the tick hasn't run yet, or failed auto-publish sweeps are holding it open, §5.3) is left alone: its window is over and some drafts may already have auto-published, so moving the close would reopen it to edits. The PATCH still succeeds and the new value applies from the next cycle.
-- **`timezone`** — recompute the current `voting` cycle's `responseOpenAt`/`voteWindowCloseAt`/`responseCloseAt`/`nextTransitionAt` regardless of candidate activity. The recomputation is anchored on the cycle's own `cycleId`: `responseOpenAt` becomes local midnight on the 1st of that month in the new timezone (weekly: the configured time on the `cycleId`'s date, §13.1; `shared::cycle_time::period_start`), and `responseCloseAt = responseOpenAt + responseWindowDays`. `cycleId` is also the row's partition key (`sk = NL#{cycleId}`) and candidates are keyed by it ([`data-model.md` §2.6](data-model.md#26-candidate-question-in-voting-pool)); anchoring on it means the recomputed schedule always maps back to the same `cycleId`, so the row never moves keys. (Until the 2026-10 review, the schedule was recomputed from `voteWindowOpenAt`, the informational creation instant, and the row was left untouched whenever that produced a different `cycleId` — which a westward timezone change or a late-created successor could trigger, silently deferring the setting by a cycle.) An `open` cycle's instants are never touched by a timezone change (its `cycleId` is already fixed and its clock has already started).
-- **`notificationSettings` and `memberSoftCap`** — already read live at the point of use; no change needed here.
+- **`questionsPerCycle`**: read at promotion time (§5.2), so it applies to the current `voting` cycle's next promotion. An already-`open` cycle's questions are locked and unaffected.
+- **`votesPerUserPerCycle`**: read live by the vote-cast transaction ([`data-model.md` §4](data-model.md#4-transactional-invariants) #1), so it applies immediately, including to votes already in flight. Lowering it below a member's existing vote count doesn't retract those votes; the member simply can't cast more until they're back under the cap.
+- **`responseWindowDays`** and **`timezone`**: apply from the next cycle created after the change. The `open` cycle and the already-scheduled `voting` cycle keep the timestamps they were created with. The tick reads the group's current settings whenever it creates a cycle (§5.4, and a group's first cycle, §4.2), so the successor created when the current `voting` cycle opens is the first cycle to use them. With the default schedule, that cycle opens one period after the current `voting` one.
+- **`notificationSettings` and `memberSoftCap`**: already read live at the point of use.
 
-This logic lives in `lambda-groups`'s `patch_group` handler; the admin Settings form copy reads "applies now," not "applies to future cycles." If the timezone changes, the upcoming `voting` cycle's `responseOpenAt` may shift by hours — acceptable, and documented in the admin UI ("Timezone changes affect the current voting cycle's open time").
+The handler validates and saves the group, nothing else. The admin settings form says so: "Timezone and response window changes apply from the next new cycle. Cycles already scheduled keep their dates."
+
+A stored `responseWindowDays` above the deployment's maximum (a value saved under monthly before a switch to weekly) doesn't block other changes. `GET`/`PATCH /groups/{g}` report the capped value, and a `cycleSettings` change that omits `responseWindowDays` saves the capped value (§13.3).
 
 ---
 
@@ -362,7 +370,7 @@ General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). The
 2. Tick auto-publishes at deadline: `backend/crates/persistence/tests/lifecycle.rs::tick_auto_publishes_an_open_cycle_past_its_deadline`, `backend/crates/lambda-cycle-tick/tests/auto_publish.rs::the_tick_publishes_non_empty_drafts_at_close_and_leaves_empty_ones`.
 3. Tick is idempotent across rapid re-runs: `backend/crates/persistence/tests/lifecycle.rs::promotion_is_idempotent_across_rapid_reruns`, `::publish_is_idempotent_across_rapid_reruns`, `::create_next_voting_cycle_is_idempotent_across_rapid_reruns`.
 4. Empty-candidate cycle still opens and publishes: `backend/crates/persistence/tests/lifecycle.rs::a_cycle_with_no_candidates_still_opens_and_publishes_empty`.
-5. Settings change applies to the current cycle per §6 ([D10](../decisions.md#d10)): a `voting`-cycle `responseWindowDays`/`timezone` change recomputes its timestamps regardless of candidate activity; an `open`-cycle `responseWindowDays` change recomputes `responseCloseAt` when the new value is still in the future, and is rejected with 422 when it would land in the past. `backend/crates/lambda-groups/tests/group_settings.rs::lengthening_the_window_moves_the_open_cycle_s_close`, `::a_window_that_would_close_the_open_cycle_in_the_past_is_rejected_unchanged`, `::a_cycle_past_its_close_is_not_reopened_by_a_longer_window`, `::rescheduling_refuses_a_cycle_whose_close_has_passed`, `::a_voting_cycle_with_candidates_is_rescheduled`; `backend/crates/persistence/tests/lifecycle.rs::settings_change_recomputes_a_voting_cycle_with_no_candidates`, `::settings_change_leaves_a_voting_cycle_with_candidates_untouched`, `::settings_change_does_not_move_the_row_when_the_cycle_id_would_change`.
+5. A settings change never moves an existing cycle (§6, [D10](../decisions.md#d10)), and the next cycle the tick creates uses the new window and timezone. `backend/crates/lambda-groups/tests/group_settings.rs`.
 6. Membership-cap enforcement at invite redemption: `backend/crates/persistence/tests/invites.rs::redemption_is_refused_once_the_group_is_at_its_member_cap`, `::two_concurrent_redemptions_at_the_cap_boundary_leave_exactly_one_winner`.
 7. Concurrent vote casting + admin candidate deletion produces consistent state: `backend/crates/persistence/tests/lifecycle.rs::concurrent_vote_and_admin_delete_leave_the_store_consistent`.
 8. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary. `backend/crates/shared/src/cycle_time.rs` (`mod tests`) `::dst_spring_forward_boundary_is_respected`; `backend/crates/persistence/tests/lifecycle.rs::create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_dst_boundary`.
@@ -390,21 +398,21 @@ Each deployment runs either monthly or weekly cycles. The cadence is per deploym
 | `CYCLE_FREQUENCY` | `monthly` or `weekly`, case-insensitive | `monthly` (also when unset, so a Lambda without it behaves as before) |
 | `CYCLE_WEEKLY_START` | `<day> <HH>:<MM>`: a weekday (`sun` or `sunday`, case-insensitive), then a 24-hour time in the group's timezone | `sun 21:00` (`DEFAULT_WEEKLY_CYCLE_START`) |
 
-`shared::cycle_time::CycleCadence::from_env` parses both at cold start. A malformed value fails the cold start, the same way a missing `TABLE_NAME` does, and `load_config` rejects it at synth. The cycle-tick Lambda reads the cadence to schedule successors. The groups Lambda reads it to reschedule, to validate the window, and for `GET /config`. The push Lambda reads it for the publication title ([`notifications.md` §5.1](notifications.md#51-per-kind-copy)).
+`shared::cycle_time::CycleCadence::from_env` parses both at cold start. A malformed value fails the cold start, the same way a missing `TABLE_NAME` does, and `load_config` rejects it at synth. Only two Lambdas read the cadence. The cycle-tick Lambda reads it to schedule new cycles (first cycles and successors), and the groups Lambda reads it to cap the window and for `GET /config`. Notifications don't read it: their "week's"/"month's" wording comes from the cycle's own id format ([`notifications.md` §5.1](notifications.md#51-per-kind-copy)), so a legacy `yyyymm` cycle on a deployment that just switched to weekly is still announced as a month's edition.
 
 ### 13.1 Weekly schedule
 
-The weekly time is when a cycle **opens** (`responseOpenAt`). The model is the same as the monthly one (§4.2): `responseCloseAt = responseOpenAt + responseWindowDays`. With the default 7-day window, a cycle opens at the same instant the previous edition publishes, so `sun 21:00` means "a new edition every Sunday at 9pm". A group with a shorter window publishes earlier in the week.
+The weekly time is when a cycle **opens** (`responseOpenAt`). The model is the same as the monthly one (§4.2): `responseCloseAt = responseOpenAt + responseWindowDays` calendar days, group-local. With the default 7-day window, a cycle opens at the same instant the previous edition publishes, so `sun 21:00` means "a new edition every Sunday at 9pm". A group with a shorter window publishes earlier in the week.
 
 | | Monthly | Weekly |
 |---|---|---|
 | `responseOpenAt` | midnight group-local on the 1st | the configured weekday and time, group-local |
 | `cycleId` | `yyyymm` of `responseOpenAt`, group-local | `yyyymmdd` of `responseOpenAt`, group-local |
-| First cycle (bootstrap) | the next 1st after now | the next configured weekday and time strictly after now |
+| First cycle (first tick after the group is created, §4.2) | the next 1st after the tick | the next configured weekday and time strictly after the tick |
 | Successor (§5.4) | the 1st of the month after the `cycleId`'s month | the earliest configured weekday and time at or after **both** local midnight on (`cycleId` date + 7 days) **and** the current cycle's `responseCloseAt` |
 | Maximum `responseWindowDays` | 28 (`MAX_RESPONSE_WINDOW_DAYS`) | 7 (`MAX_WEEKLY_RESPONSE_WINDOW_DAYS`) |
 
-Weekly times step local calendar dates, never seven days of UTC, so a cycle keeps its wall-clock time across DST changes. Times that are ambiguous or nonexistent resolve the way §5.5's local midnight does.
+Weekly times and response windows step local calendar dates, never days of UTC, so a cycle keeps its wall-clock time across DST changes, and a 7-day window closes exactly when the next cycle opens even in a DST week. (Adding 168 UTC hours would put the close an hour after the next open in a spring-forward week, and the `responseCloseAt` bound below would then push the successor back a whole week.) Times that are ambiguous or nonexistent resolve the way §5.5's local midnight does.
 
 In the usual case (a `cycleId` dated D, opened at the configured time T, with a window of 7 days or less), the weekly successor opens on D + 7 at T. The successor is anchored on the `cycleId`, as in §5.4, because the dev-only deadline rewind moves timestamps. The extra `responseCloseAt` bound covers an operator who changes `CYCLE_WEEKLY_START` on a live deployment: the next cycle never opens before the current one closes. A rewind only moves timestamps earlier, so the bound can't pull a successor forward.
 
@@ -418,7 +426,12 @@ The id format is opaque to clients (`CycleIdPath` in `shared/openapi.yaml`).
 
 ### 13.3 Window limits and overlap
 
-`PATCH /groups/{g}` rejects a `responseWindowDays` above the cadence's maximum with 422 `VALIDATION_FAILED`. `GET /config` reports the maximum as `cycleCadence.maxResponseWindowDays`, which the admin settings form reads ([`api.md` §2.1](api.md#21-get-config)). Scheduling also clamps a stored window to the maximum. A group whose window predates a switch to weekly therefore can't create overlapping cycles.
+`PATCH /groups/{g}` rejects a `responseWindowDays` above the cadence's maximum with 422 `VALIDATION_FAILED`. `GET /config` reports the maximum as `cycleCadence.maxResponseWindowDays`, which the admin settings form reads ([`api.md` §2.1](api.md#21-get-config)).
+
+A group can still hold a larger stored value, saved before a switch from monthly to weekly. It's handled without blocking the admin:
+- Scheduling caps it at the maximum, so it can't create overlapping cycles.
+- `GET` and `PATCH /groups/{g}` report the capped value, which is what the group's cycles actually use, so the settings form starts from a valid value.
+- A `cycleSettings` change that omits `responseWindowDays` validates and saves the capped value, so the stored value corrects itself on the next save. Only an explicit over-maximum value in the request is rejected.
 
 A weekly window equal to the period (7 days) is allowed: cycle N closes at the same instant N+1 opens. The tick promotes before it publishes (§5.1), so for one tick a group has two `open` rows. If failed sweeps hold N `open`, that lasts about 15 minutes (§5.3). `find_open_cycle` returns the newer one, which is the cycle members should be answering. Members get the publication and cycle-open pushes together. Regression test: `persistence/tests/lifecycle.rs::find_open_cycle_resolves_the_newer_of_two_open_rows`.
 

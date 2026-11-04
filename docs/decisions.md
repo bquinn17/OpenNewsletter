@@ -49,7 +49,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d5"></a>
 ### D5 — Production's first admin is an email-bound invite
 
-**Decision.** `scripts/bootstrap_admin.py --env prod` reads `BOOTSTRAP_ADMIN_EMAIL`. In one conditional transaction it creates the first group, its first cycle and an admin invite that only that email, verified through Google, can redeem. The `admin-bootstrap` password client exists in dev only.
+**Decision.** `scripts/bootstrap_admin.py --env prod` reads `BOOTSTRAP_ADMIN_EMAIL`. In one conditional transaction it creates the first group and an admin invite that only that email, verified through Google, can redeem. The `admin-bootstrap` password client exists in dev only.
 
 **Why.** Production has no password sign-in at all, so there's no password surface to attack, and the first admin signs in the same way every other member does.
 
@@ -92,11 +92,11 @@ A full read-through of the design after the hardening milestone turned up twelve
 **Where.** [`auth.md` §12](design/auth.md#12-threat-model-considerations), [`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy).
 
 <a id="d10"></a>
-### D10 — Settings changes apply to the current cycle where possible
+### D10 — Schedule changes apply from the next new cycle (2026-11-01)
 
-**Decision.** When an admin changes `responseWindowDays` or `timezone`, the current `voting` cycle is rescheduled whether or not it has candidates. An `open` cycle's close moves only if the new close is still in the future; otherwise the request fails with 422, field code `CLOSES_IN_PAST`. A cycle already past its close but not yet published is left alone. The settings form says the change "applies now".
+**Decision.** When an admin changes `responseWindowDays` or `timezone`, no existing cycle moves. The `open` cycle and the already-scheduled `voting` cycle keep their dates, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. `questionsPerCycle` and `votesPerUserPerCycle` are unaffected by this rule: they are read at promotion and at vote time, as before. The settings form says timezone and window changes "apply from the next new cycle".
 
-**Why.** Admins expect a settings change to take effect now, not next month. Moving a close into the past would publish the cycle unexpectedly, and moving one that has already passed would reopen it to edits after some drafts have auto-published.
+**Why.** Moving a live cycle's open or close interacted badly with the weekly cadence: a rescheduled `voting` cycle could open before the `open` one closed, leaving two cycles open at once. Rescheduling also needed an error path for closes that would land in the past. Leaving scheduled cycles alone means members never see a date they were told change underneath them, and the scheduling rules live in one place, the tick.
 
 **Where.** [`lifecycle.md` §6](design/lifecycle.md#6-settings-changes-mid-cycle), [`api.md` §4.3](design/api.md#43-patch-groupsgroupid).
 
@@ -192,9 +192,18 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 **Decision.** The `CYCLE_FREQUENCY` Lambda environment variable (`monthly` or `weekly`) chooses the cadence for a whole deployment. `CYCLE_WEEKLY_START` (default `sun 21:00`, group-local) sets when weekly cycles open. With the default 7-day window, that's also when the previous edition publishes. Weekly cycle ids are `yyyymmdd`. A weekly response window is capped at 7 days. A monthly deployment keeps month-name labels. A weekly one labels each edition by its publication date, the scheduled close until it publishes.
 
-**Why.** Dev needs to exercise a full cycle in days, not a month, and a weekly schedule is the requested behaviour there. A per-deployment setting keeps the monthly code path and prod data unchanged, where a per-group setting would add a group field and UI. Anchoring weekly cycles on their open time, rather than on publication, keeps one schedule model for both cadences, so window and timezone changes ([D10](#d10)) behave the same either way. Month names can't tell weekly editions apart, and the publication date is the date members know an edition by.
+**Why.** Dev needs to exercise a full cycle in days, not a month, and a weekly schedule is the requested behaviour there. A per-deployment setting keeps the monthly code path and prod data unchanged, where a per-group setting would add a group field and UI. Anchoring weekly cycles on their open time, rather than on publication, keeps one schedule model for both cadences. Month names can't tell weekly editions apart, and the publication date is the date members know an edition by.
 
 **Where.** [`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence), [`api.md` §2.1](design/api.md#21-get-config), [`frontend.md` §14a](design/frontend.md#14a-client-derived-display-data-not-api-fields), [`infrastructure.md` §2](design/infrastructure.md#2-configpy).
+
+<a id="first-cycle-by-tick"></a>
+### The cycle tick creates a group's first cycle (2026-11-01)
+
+**Decision.** `scripts/bootstrap_admin.py` and `scripts/seed_dev_data.py` write a new group with a marker on its `META` row (`gsi2pk = GROUP_STATUS#awaiting_first_cycle`) and no Newsletter row. The next cycle tick creates the group's first `voting` cycle at the deployment's cadence and removes the marker in the same transaction. The seed script writes no deadlines: to fast-forward a cycle, call `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
+
+**Why.** The scripts held a Python copy of the scheduling rules, which had already drifted from the Rust copy (window caps), and they had to guess the deployed cadence from stack outputs. With one implementation, a script can't create a first cycle that the Lambdas would schedule differently. The cost is a wait of up to 5 minutes for the first cycle, or one dev tick call.
+
+**Where.** [`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group), [`data-model.md` §2](design/data-model.md#2-entities), [`environments.md`](development/environments.md).
 
 ---
 

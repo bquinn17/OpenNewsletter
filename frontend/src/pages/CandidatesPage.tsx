@@ -40,7 +40,7 @@ export function CandidatesPage() {
   const { groupId = "" } = useParams();
   const membership = useMembership(groupId);
   const timezone = membership?.timezone ?? "UTC";
-  const { frequency } = useCycleCadence();
+  const cadence = useCycleCadence();
   const [sort, setSort] = useState<CandidateSort>("top");
   const [showVotePanel, setShowVotePanel] = useState(false);
   const pushToast = useToasts((s) => s.push);
@@ -73,7 +73,7 @@ export function CandidatesPage() {
     );
   }
 
-  if (candidates.isLoading || newsletters.isLoading) {
+  if (candidates.isLoading || newsletters.isLoading || !cadence) {
     return (
       <div className="pb-12">
         <PageHeader title="Loading…" eyebrow="Upcoming" back="/" phase="voting" />
@@ -85,6 +85,8 @@ export function CandidatesPage() {
       </div>
     );
   }
+
+  const { frequency } = cadence;
 
   const cycleNotVoting =
     candidates.isError &&

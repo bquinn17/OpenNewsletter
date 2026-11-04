@@ -5,7 +5,6 @@ import {
   groups,
   hasOtherAdmin,
   MOCK_CYCLE_CADENCE,
-  newsletters,
   NO_MOCK_ROUTE,
   validationFailed,
   type MockRequest,
@@ -224,23 +223,6 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
     notificationSettings = next;
   }
 
-  // D10 (`docs/design/lifecycle.md` §6): a window change moves the open
-  // cycle's close, but only to an instant still in the future — else 422.
-  const openCycle = newsletters[groupId]?.find((n) => n.status === "open");
-  let openCycleCloseAt: string | null = null;
-  if (openCycle && cycleSettings.responseWindowDays !== group.cycleSettings.responseWindowDays) {
-    const closeMs =
-      new Date(openCycle.responseOpenAt).getTime() + cycleSettings.responseWindowDays * DAY_MS;
-    if (closeMs <= Date.now()) {
-      validationFailed(
-        "responseWindowDays",
-        `responseWindowDays ${cycleSettings.responseWindowDays} would close the open cycle in the past`,
-        "CLOSES_IN_PAST",
-      );
-    }
-    openCycleCloseAt = new Date(closeMs).toISOString();
-  }
-
   if (request.memberSoftCap !== undefined) {
     if (request.memberSoftCap < group.memberCount) {
       validationFailed(
@@ -256,7 +238,6 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
   group.cycleSettings = cycleSettings;
   group.notificationSettings = notificationSettings;
   if (request.memberSoftCap !== undefined) group.memberSoftCap = request.memberSoftCap;
-  if (openCycle && openCycleCloseAt) openCycle.responseCloseAt = openCycleCloseAt;
 
   return { ...group, members: [...group.members] };
 }

@@ -18,7 +18,6 @@ pub struct AppState {
     pub avatar_deleter: MediaDeleter,
     /// This deployment's cycle cadence (`docs/design/lifecycle.md` §13),
     /// read once at cold start from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START`.
-    /// Echoed by `GET /config` and used to cap `responseWindowDays` and to
-    /// reschedule the current `voting` cycle (§6).
+    /// Echoed by `GET /config` and used to cap/clamp `responseWindowDays`.
     pub cadence: CycleCadence,
 }

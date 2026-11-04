@@ -213,6 +213,15 @@ describe("SuggestPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/check back soon/i);
   });
 
+  it("shows no cadence wording while /config hasn't loaded", () => {
+    vi.mocked(api.getConfig).mockReturnValue(new Promise(() => {}));
+
+    renderPage();
+
+    expect(screen.queryByText(/For next/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Your question")).toBeInTheDocument();
+  });
+
   it("weekly: the eyebrow invites next week's question instead of next month's", async () => {
     vi.mocked(api.getConfig).mockResolvedValue({
       ...baseConfig(),

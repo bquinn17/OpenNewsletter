@@ -36,7 +36,6 @@ pub fn test_state(repo: Repo, sender: Arc<FakePushSender>, env: &str) -> AppStat
         "arn:aws:secretsmanager:us-east-1:111111111111:secret:unused".to_owned(),
         sender,
         env.to_owned(),
-        shared::cycle_time::CycleCadence::Monthly,
     );
     state.set_vapid_keys_for_test(make_test_vapid_keys());
     state

@@ -45,9 +45,10 @@ export function NewsletterPage() {
   const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
   const membership = useMembership(groupId);
   const timezone = membership?.timezone ?? "UTC";
-  const { frequency } = useCycleCadence();
+  const cadence = useCycleCadence();
 
-  if (isLoading) return <LoadingShell />;
+  if (isLoading || !cadence) return <LoadingShell />;
+  const { frequency } = cadence;
 
   if (isError) {
     if (error instanceof ApiError && error.status === 410) {

@@ -1,6 +1,6 @@
 import { useAuth } from "../auth/useAuth";
 import { DEMO_BASENAME } from "../demo";
-import { useConfig, useCycleCadence, useNewsletters } from "../api/queries";
+import { useConfig, useNewsletters } from "../api/queries";
 import { JoinForm } from "../components/join/JoinForm";
 import { InstallPwaPrompt } from "../components/pwa/InstallPwaPrompt";
 import { Button } from "../components/ui/Button";
@@ -58,7 +58,6 @@ function SignedInHome() {
   // the render before `AppShell` defaults the selection.
   const current = memberships.find((m) => m.groupId === currentGroupId) ?? memberships[0];
   const { data, isLoading, isError } = useNewsletters(current?.groupId);
-  const { frequency } = useCycleCadence();
 
   const greeting = config?.displayName ? `Hey ${config.displayName} 👋` : "Hey there 👋";
 
@@ -115,7 +114,7 @@ function SignedInHome() {
           <GroupEditions
             groupId={current.groupId}
             timezone={current.timezone}
-            frequency={frequency}
+            frequency={config.cycleCadence.frequency}
             items={data.items}
           />
         )}

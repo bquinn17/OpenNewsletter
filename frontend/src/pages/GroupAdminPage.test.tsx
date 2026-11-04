@@ -500,49 +500,37 @@ describe("GroupAdminPage", () => {
       expect(await screen.findByText("That name is taken.")).toBeInTheDocument();
     });
 
-    it("says settings apply to the current cycle, not just future ones (D10)", async () => {
+    it("says settings apply from the next new cycle, not the current one (B)", async () => {
       await openSettingsTab();
 
       expect(
-        screen.getByText("Changes apply to the current cycle where possible."),
+        screen.getByText(
+          "Timezone and response window changes apply from the next new cycle. Cycles already scheduled keep their dates.",
+        ),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("Timezone changes affect the current voting cycle's open time."),
-      ).toBeInTheDocument();
-      expect(screen.queryByText(/future cycles/i)).not.toBeInTheDocument();
+        screen.queryByText("Changes apply to the current cycle where possible."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Timezone changes affect the current voting cycle's open time."),
+      ).not.toBeInTheDocument();
     });
 
-    it("shows the open-cycle 422 on the response window field (D10)", async () => {
-      const { user } = await openSettingsTab();
-      vi.mocked(api.patchGroup).mockRejectedValue(
-        new ApiError(422, "VALIDATION_FAILED", {
-          type: "https://api.opennewsletter.example.com/errors/validation-failed",
-          title: "Validation failed",
-          status: 422,
-          detail: "responseWindowDays 1 would close the open cycle in the past",
-          code: "VALIDATION_FAILED",
-          correlationId: "corr-2",
-          fieldErrors: [
-            {
-              field: "responseWindowDays",
-              code: "CLOSES_IN_PAST",
-              message: "responseWindowDays 1 would close the open cycle in the past",
-            },
-          ],
-        }),
-      );
+    it("disables the response window field and Save while /config hasn't loaded", async () => {
+      vi.mocked(api.getConfig).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("tab", { name: "Settings" }));
 
-      const windowInput = screen.getByLabelText("Response window (days)");
-      await user.clear(windowInput);
-      await user.type(windowInput, "1");
-      await user.click(screen.getByRole("button", { name: "Save" }));
+      const windowInput = await screen.findByLabelText("Response window (days)");
+      expect(windowInput).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      // No monthly-cadence copy or 28-day limit guessed while the cadence is unknown.
+      expect(screen.queryByText(/28 days max/)).not.toBeInTheDocument();
 
-      const message = await screen.findByText("Would close the open cycle in the past.");
-      // Rendered under the response window field, not as a form-level banner.
-      expect(message.parentElement).toContainElement(windowInput);
-      expect(api.patchGroup).toHaveBeenCalledWith("g1", {
-        cycleSettings: expect.objectContaining({ responseWindowDays: 1 }),
-      });
+      await user.clear(screen.getByLabelText("Group name"));
+      await user.type(screen.getByLabelText("Group name"), "Trailblazers");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     });
 
     it("invalidates the config query on a successful save", async () => {

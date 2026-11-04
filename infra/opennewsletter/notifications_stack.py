@@ -151,7 +151,3 @@ class NotificationsStack(cdk.Stack):
             schedule=events.Schedule.rate(cdk.Duration.minutes(15)),
             targets=[events_targets.LambdaFunction(self.notify_tick_fn)],
         )
-
-        # Stack outputs for operational scripts (bootstrap_admin, seed_dev_data)
-        cdk.CfnOutput(self, "CycleFrequency", value=config.cycle_frequency)
-        cdk.CfnOutput(self, "CycleWeeklyStart", value=config.cycle_weekly_start)

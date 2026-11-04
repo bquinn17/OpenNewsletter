@@ -230,7 +230,7 @@ Don't wait for the 5-minute / 15-minute schedule. Two paths:
 
 Path 2 is also what Playwright uses to fast-forward time in E2E tests — see [`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e). The manual invoke and the admin route run the same handler logic, so there's one implementation behind both.
 
-For tests that need to advance wall-clock time (a cycle's deadline is in the future), the seed script accepts `--cycle-close-in 5m` to write deadlines relative to now. Combined with `/admin/dev/tick`, you can walk a cycle from `voting` to `published` in a few seconds.
+`make seed` writes the dev group without a cycle; the next tick creates its first `voting` cycle at the deployed cadence ([`lifecycle.md` §4.2](../design/lifecycle.md#42-default-schedule-per-group)). Run `POST /admin/dev/tick/cycle` right after seeding to create it at once. To fast-forward a cycle whose deadline is in the future, pass `{"groupId": …, "advanceCycleClosesBy": "7d"}` to the same route ([`api.md` §11a.1](../design/api.md#11a1-post-admindevtickcycle)): it rewinds the active cycle's next transition and runs the tick, so a few calls walk a cycle from `voting` to `published`.
 
 ---
 

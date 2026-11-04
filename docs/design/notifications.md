@@ -104,7 +104,7 @@ The service worker reads this, calls `showNotification`, and uses `tag` to coale
 | `deadline_reminder` (96h) | "{groupName}: 4 days left" | "Don't forget — write your answers before {dueDate}." |
 | `deadline_reminder` (48h) | "{groupName}: 2 days left" | "{N} of {total} answers written. {remaining} to go." |
 | `deadline_reminder` (24h) | "{groupName}: due tomorrow" | "Last call — answers lock at {time}." |
-| `publication` | "{groupName}: this month's edition is out" ("this week's" on a weekly deployment, [`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)) | "{N} answers, {polls} polls — go read it." |
+| `publication` | "{groupName}: this month's edition is out" ("this week's" for a weekly `yyyymmdd` cycle; "{groupName}: a new edition is out" for an id in neither format). The wording follows the cycle's id, not the deployment's cadence, so a cycle created before a cadence switch keeps its own period ([`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)) | "{N} answers, {polls} polls — go read it." |
 | `test` | "Test push from OpenNewsletter" | "If you got this, your device is wired up." |
 
 The default response window is **7 days** (`DEFAULT_RESPONSE_WINDOW_DAYS` in `shared/src/config.rs`). The default reminder offsets are `[96, 48, 24]` hours; against a 7-day window all three actually fire (at day 4, day 6, and day 7 of the window — see the moot-offset rule in §7.1).

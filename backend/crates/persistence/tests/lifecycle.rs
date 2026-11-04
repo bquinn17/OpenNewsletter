@@ -241,8 +241,8 @@ async fn settings_change_recomputes_a_voting_cycle_with_no_candidates() {
         .await
         .unwrap();
 
-    // Mirrors lambda-groups' reschedule_voting_cycle_if_needed: no candidates
-    // yet, so a `responseWindowDays` change recomputes the schedule in place.
+    // write_status_transition can rewrite an existing voting row's schedule
+    // in place, keyed by the same cycle id.
     let voting = newsletters::find_voting_cycle(&repo, &group_id)
         .await
         .unwrap()

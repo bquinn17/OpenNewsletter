@@ -3,18 +3,20 @@
 
 Destructive + idempotent: scans and batch-deletes the DynamoDB table, empties
 the originals and processed S3 buckets, then writes a small deterministic
-fixture (one group, the bootstrap admin as sole member, one voting cycle).
+fixture (one group, the bootstrap admin as sole member).
 
 Cognito users created by the real invite/signup flow survive across seed runs —
 only the admin's Cognito user is managed here (created on first run, reused
 thereafter). Its password is reset on every run, to a fresh random one unless
 --admin-password is given, and printed at the end.
 
+The first `voting` cycle is created by the next cycle tick (or immediately via
+`POST /admin/dev/tick/cycle`).
+
 Usage:
     python3 scripts/seed_dev_data.py [--env dev]
         [--admin-email EMAIL] [--admin-password PASSWORD]
         [--admin-sub SUB]        # skip Cognito creation, use this sub directly
-        [--cycle-close-in DUR]   # duration until response window closes, e.g. '5m', '2h', '4d'
 
 Requires: boto3 installed, AWS credentials configured for the dev account.
 Reads:    infra/cdk.out/{env}-outputs.json  (written by 'cdk deploy --outputs-file').
@@ -28,14 +30,9 @@ import secrets
 import string
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-if sys.version_info >= (3, 9):
-    from zoneinfo import ZoneInfo
-else:  # the WSL2 venv runs 3.8
-    from backports.zoneinfo import ZoneInfo
 
 # Not `datetime.UTC`: that needs Python 3.11, and the WSL2 venv runs 3.8.
 UTC = timezone.utc
@@ -72,42 +69,8 @@ def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
     return str(val)
 
 
-def parse_duration(s: str) -> timedelta:
-    """Parse a compact duration string like '5m', '2h', '4d' into a timedelta."""
-    unit_map = {"m": "minutes", "h": "hours", "d": "days"}
-    if not s or s[-1] not in unit_map:
-        sys.exit(
-            f"Invalid duration '{s}': expected a number followed by m/h/d (e.g. '5m', '2h', '4d')"
-        )
-    try:
-        n = int(s[:-1])
-    except ValueError:
-        sys.exit(f"Invalid duration '{s}': the numeric part must be an integer")
-    return timedelta(**{unit_map[s[-1]]: n})
-
-
 def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def cycle_frequency(outputs: dict[str, Any], env: str) -> str:
-    """The deployed cycle cadence, `monthly` or `weekly` (`docs/design/lifecycle.md` §13).
-    Monthly when the output is missing, as on a stack deployed before it existed."""
-    frequency: str = outputs.get(f"NotificationsStack-{env}", {}).get(
-        "CycleFrequency", "monthly"
-    )
-    return frequency
-
-
-def cycle_id_for(frequency: str, response_open_at: datetime, tz: ZoneInfo) -> str:
-    """cycleId = yyyymm (monthly) or yyyymmdd (weekly) of responseOpenAt in the
-    group's local time zone (`docs/design/lifecycle.md` §4.1, §13.1; mirrors
-    `backend/crates/shared/src/cycle_time.rs::cycle_id_for`).
-    """
-    local = response_open_at.astimezone(tz)
-    if frequency == "weekly":
-        return f"{local.year:04d}{local.month:02d}{local.day:02d}"
-    return f"{local.year:04d}{local.month:02d}"
 
 
 def deterministic_id(seed: str) -> str:
@@ -245,14 +208,13 @@ def write_fixture(
     cognito_sub: str,
     admin_email: str,
     group_id: str,
-    cycle_id: str,
     now: datetime,
-    vote_close: datetime,
-    response_close: datetime,
 ) -> None:
-    response_open = vote_close
-    gsi2sk = f"{iso(vote_close)}#{group_id}#{cycle_id}"
+    """Write the fixture group and admin membership.
 
+    The first `voting` cycle is created by the next cycle tick (or immediately
+    via the dev tick route).
+    """
     items = [
         # --- Cognito sub → internal user_id lookup (AP1 reverse) ---
         {
@@ -276,9 +238,12 @@ def write_fixture(
             "last_login_at": iso(now),
         },
         # --- Group metadata (AP4) ---
+        # Marked as awaiting its first cycle, which is created by the cycle tick Lambda.
         {
             "pk": f"GROUP#{group_id}",
             "sk": "META",
+            "gsi2pk": "GROUP_STATUS#awaiting_first_cycle",
+            "gsi2sk": f"{iso(now)}#{group_id}",
             "entity": "Group",
             "group_id": group_id,
             "name": "Dev Group",
@@ -312,26 +277,6 @@ def write_fixture(
             "joined_at": iso(now),
             "editions_answered": 0,
         },
-        # --- Newsletter in voting status (AP7/AP8) ---
-        {
-            "pk": f"GROUP#{group_id}",
-            "sk": f"NL#{cycle_id}",
-            "gsi2pk": "NL_STATUS#voting",
-            "gsi2sk": gsi2sk,
-            "entity": "Newsletter",
-            "group_id": group_id,
-            "cycle_id": cycle_id,
-            "status": "voting",
-            "vote_window_open_at": iso(now),
-            "vote_window_close_at": iso(vote_close),
-            "response_open_at": iso(response_open),
-            "response_close_at": iso(response_close),
-            "published_at": None,
-            "next_transition_at": iso(response_open),
-            "locked_question_ids": [],
-            "notified_offsets_hours": [],
-            "notified_on_open": False,
-        },
     ]
 
     with table.batch_writer() as batch:
@@ -361,12 +306,6 @@ def main() -> None:
     parser.add_argument(
         "--admin-sub",
         help="Cognito sub to use directly (skip Cognito user creation/lookup)",
-    )
-    parser.add_argument(
-        "--cycle-close-in",
-        default="4d",
-        metavar="DUR",
-        help="Time until the response window closes, relative to now (e.g. '5m', '2h', '4d'). Default: 4d",
     )
     args = parser.parse_args()
     password = args.admin_password or random_password()
@@ -420,18 +359,10 @@ def main() -> None:
 
     print("[5/5] Writing fixture data…")
     now = datetime.now(UTC)
-    frequency = cycle_frequency(outputs, args.env)
-    # A voting window of about one period.
-    vote_close = now + timedelta(days=6 if frequency == "weekly" else 27)
-    response_close = vote_close + parse_duration(args.cycle_close_in)
 
     # Derive stable IDs from known seeds so re-running seed gives the same IDs.
     user_id = deterministic_id(f"seed:user:{cognito_sub}")
     group_id = deterministic_id("seed:dev-group")
-    # cycleId is a real "yyyymm" or "yyyymmdd" (it's the Newsletter row's sort
-    # key, not an opaque id), derived from response_open_at (== vote_close) in
-    # the fixture group's timezone, matching every other Newsletter writer.
-    cycle_id = cycle_id_for(frequency, vote_close, ZoneInfo("America/New_York"))
 
     write_fixture(
         table,
@@ -439,10 +370,7 @@ def main() -> None:
         cognito_sub=cognito_sub,
         admin_email=args.admin_email,
         group_id=group_id,
-        cycle_id=cycle_id,
         now=now,
-        vote_close=vote_close,
-        response_close=response_close,
     )
 
     print(
@@ -450,7 +378,9 @@ def main() -> None:
 === Fixture written ===
   User ID:   {user_id}
   Group ID:  {group_id}
-  Cycle ID:  {cycle_id}
+
+The first `voting` cycle appears on the next cycle tick (within 5 minutes),
+or immediately via: POST /admin/dev/tick/cycle
 
 === Sign-in credentials (bootstrap admin) ===
   Email:     {args.admin_email}

@@ -172,6 +172,26 @@ fn parse_cycle_id(cycle_id: &CycleId) -> Option<NaiveDate> {
     }
 }
 
+/// Which period a `cycleId` encodes, independent of this deployment's own
+/// cadence (`docs/design/lifecycle.md` §13) — a notification's "this
+/// week's"/"this month's" wording follows the cycle it's about, not the
+/// deployment that happens to be running today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CyclePeriod {
+    Month,
+    Week,
+}
+
+/// The period a `cycleId` encodes: a 6-digit valid id is a month, an 8-digit
+/// valid id is a week. `None` if `cycle_id` isn't valid under either format.
+pub fn cycle_period(cycle_id: &CycleId) -> Option<CyclePeriod> {
+    match cycle_id.as_str().len() {
+        6 => parse_cycle_id(cycle_id).map(|_| CyclePeriod::Month),
+        8 => parse_cycle_id(cycle_id).map(|_| CyclePeriod::Week),
+        _ => None,
+    }
+}
+
 /// The anchor §5.4/§13 schedules a cycle's successor from, in UTC. `None` if
 /// `cycle_id` isn't a valid id under either format.
 ///
@@ -220,8 +240,11 @@ pub fn next_cycle_schedule(
     response_window_days: u32,
 ) -> CycleSchedule {
     let response_open_at = next_period_start(cadence, after, tz);
-    let response_close_at =
-        response_open_at + Duration::days(cadence.clamp_window(response_window_days).into());
+    let response_close_at = add_local_days(
+        response_open_at,
+        cadence.clamp_window(response_window_days),
+        tz,
+    );
     CycleSchedule {
         cycle_id: cycle_id_for(cadence, response_open_at, tz),
         response_open_at,
@@ -268,8 +291,11 @@ pub fn successor_schedule(
             let floor_from_id = local_to_utc(tz, id_date + Duration::days(7), NaiveTime::MIN);
             let floor = floor_from_id.max(current_close);
             let response_open_at = weekly_instant(floor, tz, weekday, at, true);
-            let response_close_at = response_open_at
-                + Duration::days(cadence.clamp_window(response_window_days).into());
+            let response_close_at = add_local_days(
+                response_open_at,
+                cadence.clamp_window(response_window_days),
+                tz,
+            );
             Some(CycleSchedule {
                 cycle_id: cycle_id_for(cadence, response_open_at, tz),
                 response_open_at,
@@ -321,6 +347,20 @@ fn next_month_first_day(date: NaiveDate) -> NaiveDate {
     // runtime failure.
     NaiveDate::from_ymd_opt(year, month, 1)
         .unwrap_or_else(|| unreachable!("day 1 is invalid in {year:04}-{month:02}"))
+}
+
+/// `start`'s local date advanced by `days`, keeping its local time-of-day,
+/// then resolved back to UTC — never a fixed UTC duration, so a DST
+/// transition inside the span can't shift the close by an hour relative to
+/// whatever instant anchors the next period (the bug this guards against:
+/// a weekly close computed as `response_open_at + Duration::days(n)` in UTC
+/// could land an hour after the next period's own local start across a
+/// spring-forward week, pushing `successor_schedule`'s `max()` floor a whole
+/// week late).
+fn add_local_days(start: DateTime<Utc>, days: u32, tz: Tz) -> DateTime<Utc> {
+    let local = start.with_timezone(&tz);
+    let date = local.date_naive() + Duration::days(days.into());
+    local_to_utc(tz, date, local.time())
 }
 
 /// Resolve `date` at `time`, local to `tz`, to a UTC instant, without ever
@@ -625,6 +665,22 @@ mod tests {
         assert_eq!(successor.cycle_id, CycleId::new("202703"));
     }
 
+    // -- cycle_period -----------------------------------------------------------
+
+    #[test]
+    fn cycle_period_classifies_by_id_format() {
+        assert_eq!(
+            cycle_period(&CycleId::new("202611")),
+            Some(CyclePeriod::Month)
+        );
+        assert_eq!(
+            cycle_period(&CycleId::new("20261108")),
+            Some(CyclePeriod::Week)
+        );
+        assert_eq!(cycle_period(&CycleId::new("bogus")), None);
+        assert_eq!(cycle_period(&CycleId::new("20261301")), None); // month 13
+    }
+
     // -- malformed ids --------------------------------------------------------
 
     #[test]
@@ -817,6 +873,90 @@ mod tests {
 
         assert!(successor.response_open_at >= current_close);
         assert_eq!(successor.cycle_id, CycleId::new("20261122")); // Sun Nov 22 21:00 EST
+    }
+
+    /// The DST bug this file now guards against: a weekly cycle opening the
+    /// Sunday before US spring-forward (2026-03-08) with a 7-day window must
+    /// close exactly when its successor opens, not an hour later — otherwise
+    /// `successor_schedule`'s `max()` floor pushes the next id a whole week.
+    #[test]
+    fn weekly_close_lands_exactly_on_the_next_periods_open_across_spring_forward() {
+        let tz = America::New_York;
+        // Sun Feb 22 2026 21:00 EST — one week before the cycle under test.
+        let after = local_to_utc(
+            tz,
+            NaiveDate::from_ymd_opt(2026, 2, 22).unwrap(),
+            hms(21, 0, 0),
+        );
+        let first = next_cycle_schedule(weekly_sun_2100(), after, tz, 7);
+        assert_eq!(first.cycle_id, CycleId::new("20260301"));
+        // Sun Mar 8 2026 21:00 EDT — the local close time is preserved.
+        assert_eq!(first.response_close_at, utc(2026, 3, 9, 1, 0, 0));
+
+        let successor = successor_schedule(
+            weekly_sun_2100(),
+            &first.cycle_id,
+            first.response_close_at,
+            tz,
+            7,
+        )
+        .unwrap();
+        assert_eq!(successor.cycle_id, CycleId::new("20260308"));
+        assert_eq!(successor.response_open_at, first.response_close_at);
+    }
+
+    /// Walking weekly successors across both the US spring-forward
+    /// (2026-03-08) and fall-back (2026-11-01) weeks must produce consecutive
+    /// Sundays with no gap or repeat, and each close must equal the next
+    /// cycle's open.
+    #[test]
+    fn weekly_successor_chain_has_no_gap_across_spring_forward_and_fall_back() {
+        let tz = America::New_York;
+        let start = local_to_utc(
+            tz,
+            NaiveDate::from_ymd_opt(2026, 2, 15).unwrap(),
+            hms(21, 0, 0),
+        );
+        let mut schedule = next_cycle_schedule(weekly_sun_2100(), start, tz, 7);
+        for _ in 0..40 {
+            let successor = successor_schedule(
+                weekly_sun_2100(),
+                &schedule.cycle_id,
+                schedule.response_close_at,
+                tz,
+                7,
+            )
+            .unwrap();
+            assert_eq!(
+                successor.response_open_at, schedule.response_close_at,
+                "gap/overlap after {}",
+                schedule.cycle_id
+            );
+            let prev_date = parse_cycle_id(&schedule.cycle_id).unwrap();
+            let next_date = parse_cycle_id(&successor.cycle_id).unwrap();
+            assert_eq!(
+                next_date,
+                prev_date + Duration::days(7),
+                "non-consecutive Sunday after {}",
+                schedule.cycle_id
+            );
+            schedule = successor;
+        }
+    }
+
+    /// A monthly window measured in calendar days, not UTC hours: NY Mar 2026
+    /// with a 14-day window closes at local midnight Mar 15, i.e. after US
+    /// spring-forward (Mar 8) the day is still 24 wall-clock hours but one
+    /// fewer UTC hour, so the naive `Duration::days(14)` addition from a
+    /// pre-DST open would have landed an hour early.
+    #[test]
+    fn monthly_window_close_is_local_midnight_based() {
+        let tz = America::New_York;
+        let schedule =
+            next_cycle_schedule(CycleCadence::Monthly, utc(2026, 2, 15, 0, 0, 0), tz, 14);
+        assert_eq!(schedule.cycle_id, CycleId::new("202603"));
+        assert_eq!(schedule.response_open_at, utc(2026, 3, 1, 5, 0, 0)); // EST
+        assert_eq!(schedule.response_close_at, utc(2026, 3, 15, 4, 0, 0)); // EDT
     }
 
     #[test]
