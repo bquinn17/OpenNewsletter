@@ -272,7 +272,9 @@ setsid nohup ~/bin/dockerd-rootless.sh > /tmp/dockerd.log 2>&1 < /dev/null & dis
 export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
 ```
 
-If Colima isn't running: `colima start` (it doesn't survive a reboot on its own).
+If Colima isn't running: `colima start` (it doesn't survive a reboot on its own). Colima's VM costs CPU and memory while it runs, so `colima stop` when you're not running the Rust tests.
+
+Each integration test starts its own DynamoDB Local container and removes it when the test ends. The `testcontainers` `watchdog` feature also removes them when a run is interrupted (`gtimeout` firing, Ctrl-C). A run killed with SIGKILL still leaves its containers running; `make clean-test-containers` removes every container labelled `org.testcontainers.managed-by=testcontainers`. Don't run it while a test run is in progress, since it removes that run's containers too.
 
 Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError` panics out of `backend/crates/persistence/tests/common/mod.rs`. Verify with `docker info | grep "Server Version"` before blaming the tests.
 

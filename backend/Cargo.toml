@@ -51,7 +51,9 @@ chrono-tz = "0.9"
 async-trait = "0.1"
 futures = "0.3"
 pretty_assertions = "1"
-testcontainers = "0.23"
+# `watchdog` removes a test's containers when the run is interrupted
+# (SIGTERM from `timeout`, Ctrl-C), so they don't pile up in Docker.
+testcontainers = { version = "0.23", features = ["watchdog"] }
 testcontainers-modules = { version = "0.11", features = ["dynamodb"] }
 lambda_runtime = "1"
 lambda_http = "1"

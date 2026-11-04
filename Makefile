@@ -1,6 +1,6 @@
 SHELL = /bin/bash
 
-.PHONY: help build-lambdas deploy-dev seed redeploy-volatile reset-all deploy-lambda fe
+.PHONY: help build-lambdas deploy-dev seed redeploy-volatile reset-all deploy-lambda fe clean-test-containers
 
 # Volatile stacks can be destroyed and redeployed freely; persistent stacks are left alone.
 VOLATILE_STACKS = DataStack-dev MediaPipelineStack-dev MonitoringStack-dev
@@ -70,3 +70,10 @@ deploy-lambda: ## Fast-update one Lambda binary: make deploy-lambda LAMBDA=<bina
 
 fe: ## Start frontend dev server pointing at the dev API
 	cd frontend && npm run dev -- --mode dev
+
+# The testcontainers `watchdog` feature cleans up after an interrupted test run,
+# but nothing can clean up after a SIGKILL. Those leftovers keep running in the
+# Docker VM until removed.
+clean-test-containers: ## Remove DynamoDB Local containers left behind by killed test runs
+	@ids=$$(docker ps -aq --filter label=org.testcontainers.managed-by=testcontainers); \
+	    if [ -n "$$ids" ]; then docker rm -f $$ids; else echo "No test containers running."; fi
