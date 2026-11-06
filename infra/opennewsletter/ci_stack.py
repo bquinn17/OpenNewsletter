@@ -53,20 +53,21 @@ class CiStack(cdk.Stack):
             resource_name="cdk-hnb659fds-*",
         )
 
-        # Assumed by both deploy.yml jobs on push to main. GitHub sets the
-        # OIDC `sub` claim per job: the `dev` job's is the `main` ref, but a
-        # job that declares an environment (`promote-prod` runs under
-        # `production`) gets `environment:production` instead of its ref. So
-        # the trust names exactly those two subjects: a PR build (even from
-        # this repo) can never assume it, and a prod promotion can only come
-        # through the `production` environment's required reviewer.
+        # Assumed by deploy.yml's dev job (push to main) and release.yml's
+        # prod job (push to release). GitHub sets the OIDC `sub` claim per
+        # job: the dev job's is the `main` ref, but a job that declares an
+        # environment (the prod job runs under `production`) gets
+        # `environment:production` instead of its ref. So the trust names
+        # exactly those two subjects: a PR build (even from this repo) can
+        # never assume it, and a prod deploy can only come from the branch
+        # the `production` environment admits, `release`.
         self.deploy_role = iam.Role(
             self,
             "GithubDeployRole",
             role_name="OpenNewsletter-GithubDeploy",
             description=(
-                "Assumed by GitHub Actions on push to main (dev job) and by "
-                "the production environment (promote-prod); can only assume "
+                "Assumed by GitHub Actions on push to main (dev deploy) and by "
+                "the production environment (release); can only assume "
                 "the CDK bootstrap roles, which do the real deploy work."
             ),
             max_session_duration=cdk.Duration.hours(1),

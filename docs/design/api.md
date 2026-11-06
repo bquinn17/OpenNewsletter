@@ -488,7 +488,7 @@ Returns `PushPreferenceListResponse`, one per membership of the caller, defaults
 
 **Lambda**: `lambda-groups`. **Auth**: required (so it stays inside the protected stage; idle backend principle).
 
-Response 200: `HealthResponse` in `shared/openapi.yaml`. `version` and `buildAt` are baked in at compile time from `BUILD_SHA`/`BUILD_AT`, which `make build-lambdas` sets. A local build reports `"unknown"` and `null`.
+Response 200: `HealthResponse` in `shared/openapi.yaml`. `version` and `buildAt` are baked in at compile time from `BUILD_SHA`/`BUILD_AT`, which `make build-lambdas` and `deploy.yml` set. A local build reports `"unknown"` and `null`. `deploy.yml` reuses the binaries from an earlier push when `backend/` and the toolchain are unchanged, so `version` is the commit the running binaries were built at, which can be older than the deployed frontend's `VITE_BUILD_SHA`.
 
 ---
 

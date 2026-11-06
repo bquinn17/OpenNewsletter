@@ -2,7 +2,7 @@
 
 Run this after every deploy to `dev` that touches more than one stack, and after every `prod` deploy ([`testing-and-ci.md` §13](../development/testing-and-ci.md#13-manual-smoke-runbook)). It takes about 15 minutes and two accounts. Tick off each step; if one fails, stop and look at CloudWatch Logs for the Lambda behind it before going further.
 
-The `promote-prod` gate makes **dev first, then prod** the normal order ([D6](../decisions.md#d6)): run this checklist against `dev` before approving the promotion, then run it again against `prod` once that promotion ships. Set `ENV=dev` for the first pass and `ENV=prod` for the second.
+Prod only deploys a commit that has already deployed to dev, so **dev first, then prod** is the normal order ([D6](../decisions.md#d6)): run this checklist against `dev` before pushing `release`, then run it again against `prod` once the release deploys. Set `ENV=dev` for the first pass and `ENV=prod` for the second.
 
 Set these once per run (`ENV` is `dev` or `prod`):
 

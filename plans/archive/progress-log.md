@@ -1230,7 +1230,7 @@ Every image in the demo was a black box: the mock served one 1×1 black PNG for 
 
 ## Dev auto-deploy with a hosted dev site (2026-10-31)
 
-Every push to `main` now deploys dev end to end; prod stays behind the `production` reviewer. Decision in [`decisions.md`](../../docs/decisions.md#hosted-dev-frontend), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion).
+Every push to `main` now deploys dev end to end; prod stays behind the `production` reviewer. Decision in [`decisions.md`](../../docs/decisions.md#hosted-dev-frontend), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release).
 
 **What landed.**
 - `deploy.yml`'s `dev` job, after its `cdk deploy`, writes `frontend/.env.dev` from the stack outputs (`write_frontend_env.py --strict`, a new flag that fails on any empty value), builds with `--mode dev` and the `dev.betterloop.site` sign-in redirect, and publishes to this repo's `gh-pages`. It fails fast without `DEV_ROOT_DOMAIN`.
@@ -1269,6 +1269,27 @@ Each deployment now chooses monthly or weekly cycles. Dev is weekly; prod stays 
 **Found in review.** `local_to_utc` (generalized from `midnight_local_to_utc`) stopped searching at midnight and reached `unreachable!` when a configured weekly time fell in a DST gap that runs past midnight. It now steps forward by the hour into the next day. Rare in practice: it needs a late start time in a zone that springs forward late in the evening.
 
 **Tests.** Backend 526 (+30), CDK 181 (+28), Vitest 404 (+15), Playwright 16 (unchanged).
+
+## Prod deploys on a push to `release` (2026-11-01)
+
+The owner's sign-off for prod is now a push to the `release` branch, not an approval on every `main` run. Decision in [D6](../../docs/decisions.md#d6), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release).
+
+**What landed.**
+- `promote-prod` moved out of `deploy.yml` into a new `release.yml` (`prod` job, push to `release`). It refuses a SHA that isn't on `main`, waits for `deploy.yml`'s dev job on the same SHA and refuses unless it succeeded, then downloads that run's `lambda-binaries` artifact (`run-id`, `actions: read`).
+- The prod deploy targets `'*-prod'` instead of `--all`, so only the dev deploy updates the account-wide `CiStack`. That let each workflow take its own concurrency group (`deploy-dev`, `deploy-prod`), so a dev deploy never waits on prod.
+- GitHub settings: the `production` environment admits only `release` and has no required reviewer. Ruleset `release: owner only` restricts creating and updating `release` to the admin role (only the owner, on a personal repo); `release: no rewrites` blocks force pushes and deletion with no bypass. The `release` branch doesn't exist yet.
+- `GithubDeployRole`'s trust is unchanged (`environment:production`); its description now names `release`.
+
+**Found on the way.**
+- The first CI deploy of dev (run 41322503828, `a1482c8`) passed. Its `promote-prod` sat waiting for approval, and the workflow-wide `deploy` concurrency group would have queued the next dev deploy behind it. That's what prompted this change; the waiting run was cancelled.
+- `.github/workflows/README.md`'s `DEV_ROOT_DOMAIN` note sat inside the variables table, cutting off the `E2E_BASE_URL` row. Moved below the table.
+
+**Tests.** `actionlint` clean; `infra` pytest 153 passed, `ruff`, `mypy --strict`, `cdk synth` dev + prod clean. `cdk ls --context env=prod '*-prod'` lists the eight prod stacks and not `CiStack`.
+
+**Faster dev deploys (same PR).** The first CI deploy of dev took 16½ minutes: 10m 12s building the Lambdas on a cold Rust cache, 4m 05s in `cdk deploy`. A warm cache doesn't fix the build: `backend-ci`'s warm release build recompiles only the 14 workspace crates and still takes 6m 47s.
+- The `dev` job caches `backend/target/lambda` under a hash of `backend/**` and `rust-toolchain.toml`. A push that leaves those alone restores the binaries and skips rust-cache, cargo-lambda and the build; the artifact is still uploaded for `release.yml`. Identical binaries also leave every Lambda unchanged for CDK. `GET /healthz`'s `version` is now the commit the running binaries were built at ([`api.md` §11.1](../../docs/design/api.md#111-get-healthz)).
+- Both deploys pass `--concurrency 4`, so independent stacks deploy side by side (the 9 dev stacks ran strictly one at a time, ~25s each). The only cross-stack link CDK can't infer, `MonitoringStack`'s SSM read of `ApiStack`, already has an explicit dependency.
+- Not done: running `npm ci` and `pip install` alongside the Rust build (~75s, and nothing on a cached run), and splitting the build across runners (gain unmeasured: each runner would still compile `domain`/`shared`/`persistence`).
 
 ## Cycle cadence code-review fixes — what landed (2026-11-03)
 

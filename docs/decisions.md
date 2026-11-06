@@ -56,13 +56,13 @@ A full read-through of the design after the hardening milestone turned up twelve
 **Where.** [`auth.md` §9](design/auth.md#9-bootstrap-admin--first-group), the bound-email check in [`auth.md` §4.2](design/auth.md#42-algorithm), and "Bootstrap the production admin" in [`operations/runbook.md`](operations/runbook.md).
 
 <a id="d6"></a>
-### D6 — One deploy workflow with a gated production promotion
+### D6 — Dev deploys on every merge; prod deploys when the owner pushes `release`
 
-**Decision.** A single `deploy.yml` deploys `main` to dev. A `promote-prod` job behind the `production` environment's required reviewer then deploys the backend, then the frontend, from the same commit. API changes are expand → contract. The service worker activates new builds promptly (`skipWaiting` plus `clients.claim`).
+**Decision.** `deploy.yml` deploys every push to `main` to dev. `release.yml` deploys every push to the `release` branch to prod, and that push is the manual gate (`git push origin main:release`, updated 2026-11-01). Only the owner can update `release`, it can't be force-pushed or deleted, and only it can deploy through the `production` environment. Prod refuses a commit that isn't on `main` or hasn't deployed to dev, and deploys dev's Lambda build for that commit unchanged. Each deploy ships the backend, then the frontend, from one commit. API changes are expand → contract. The service worker activates new builds promptly (`skipWaiting` plus `clients.claim`).
 
-**Why.** One build is promoted unchanged, so what reached prod is exactly what ran in dev. An installed PWA keeps running its old code until its service worker updates, so the backend must keep serving the previous frontend release for a while. Prompt activation keeps that window short without reloading the page mid-session, which `autoUpdate` would do.
+**Why.** One build ships unchanged, so what reached prod is exactly what ran in dev. A branch push, rather than an approval on every `main` run, means no prod run sits waiting after each merge, the tip of `release` always shows what's in prod, and releasing is one deliberate command. An installed PWA keeps running its old code until its service worker updates, so the backend must keep serving the previous frontend release for a while. Prompt activation keeps that window short without reloading the page mid-session, which `autoUpdate` would do.
 
-**Where.** [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion), the pre-flight checklist in [`coding-standards.md` §8](development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task), and [`.github/workflows/README.md`](../.github/workflows/README.md).
+**Where.** [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release), the pre-flight checklist in [`coding-standards.md` §8](development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task), and [`.github/workflows/README.md`](../.github/workflows/README.md#the-release-branch-and-the-production-environment).
 
 <a id="d7"></a>
 ### D7 — Run for about $1–2 a month
@@ -183,9 +183,9 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 <a id="hosted-dev-frontend"></a>
 ### Every push to `main` deploys dev, frontend included; prod's site lives in its own repo (2026-10-31)
 
-`deploy.yml` deploys dev, backend and frontend, on every push to `main` (`DEPLOY_ENABLED=true`). The dev frontend is built from the outputs of the stacks it just deployed and served from this repo's GitHub Pages site at `dev.betterloop.site`. Prod still waits for the owner's approval ([D6](#d6)). Its frontend publishes to the `gh-pages` branch of a separate repo (`PROD_PAGES_REPO`, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site)), pushed with a deploy key.
+`deploy.yml` deploys dev, backend and frontend, on every push to `main` (`DEPLOY_ENABLED=true`). The dev frontend is built from the outputs of the stacks it just deployed and served from this repo's GitHub Pages site at `dev.betterloop.site`. Prod deploys when the owner pushes `release` ([D6](#d6)). Its frontend publishes to the `gh-pages` branch of a separate repo (`PROD_PAGES_REPO`, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site)), pushed with a deploy key.
 
-**Why.** A merged change should be live on dev without anyone running `make deploy-dev`, and a hosted dev site is what the owner and testers actually use. A repo hosts only one Pages site, so dev and prod can't both be served from this one. Moving prod to its own repo keeps the live dev site where it is, and keeps prod on free GitHub Pages, consistent with the idle-backend principle. See [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml--dev-auto-deploy--gated-prod-promotion) and [`operator-setup.md` §10](operations/operator-setup.md#10-prod-frontend-pages-repo).
+**Why.** A merged change should be live on dev without anyone running `make deploy-dev`, and a hosted dev site is what the owner and testers actually use. A repo hosts only one Pages site, so dev and prod can't both be served from this one. Moving prod to its own repo keeps the live dev site where it is, and keeps prod on free GitHub Pages, consistent with the idle-backend principle. See [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release) and [`operator-setup.md` §10](operations/operator-setup.md#10-prod-frontend-pages-repo).
 
 <a id="cycle-cadence"></a>
 ### Cycle cadence is set per deployment: dev weekly, prod monthly (2026-10-29)

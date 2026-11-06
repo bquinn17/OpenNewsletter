@@ -224,7 +224,7 @@ Follow [`smoke-test.md`](smoke-test.md). All steps must pass clean.
 ## Wiring up GitHub Actions (M13 gate)
 
 1. `CiStack` deploys with `--all`. Copy its outputs `GithubDeployRoleArn` and `GithubDiffRoleArn` into the repo variables `AWS_DEPLOY_ROLE_ARN` and `AWS_DIFF_ROLE_ARN`.
-2. Set the remaining repo variables and secrets listed in [`.github/workflows/README.md`](../../.github/workflows/README.md). Create the `production` environment with yourself as required reviewer, then set `DEPLOY_ENABLED=true`: every push to `main` then deploys dev, and prod waits for your approval. Prod's frontend also needs its own Pages repo ([`operator-setup.md` §10](operator-setup.md#10-prod-frontend-pages-repo)).
+2. Set the remaining repo variables and secrets listed in [`.github/workflows/README.md`](../../.github/workflows/README.md). Create the `production` environment and the two `release` rulesets ([the README's `release` section](../../.github/workflows/README.md#the-release-branch-and-the-production-environment)), then set `DEPLOY_ENABLED=true`: every push to `main` then deploys dev, and prod deploys when you push `release`. Prod's frontend also needs its own Pages repo ([`operator-setup.md` §10](operator-setup.md#10-prod-frontend-pages-repo)).
 3. Push a branch and confirm `frontend-ci`, `backend-ci` and `infra-ci` go green.
 
 ---
@@ -243,7 +243,7 @@ Set the GitHub secrets `VITE_MEDIA_BASE_URL` and `VITE_UPLOAD_ORIGINS` ([`operat
 
 ### Deploy prod stacks
 
-Prod deploys go through the `promote-prod` GitHub Actions job ([D6](../decisions.md#d6)), gated by the `production` environment's required reviewer, not a manual `cdk deploy` from an operator's machine — see [`.github/workflows/README.md`](../../.github/workflows/README.md) and [`testing-and-ci.md` §6](../development/testing-and-ci.md#6-github-actions-workflows). The command below is for first bring-up before that workflow has run, or for break-glass recovery:
+Prod deploys go through `release.yml` ([D6](../decisions.md#d6)): push a commit that has deployed to dev with `git push origin main:release`. Not a manual `cdk deploy` from an operator's machine — see [`.github/workflows/README.md`](../../.github/workflows/README.md) and [`testing-and-ci.md` §6](../development/testing-and-ci.md#6-github-actions-workflows). The command below is for first bring-up before that workflow has run, or for break-glass recovery:
 
 ```sh
 cd infra

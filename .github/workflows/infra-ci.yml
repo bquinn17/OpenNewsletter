@@ -68,12 +68,12 @@ jobs:
       id-token: write
       contents: read
       pull-requests: write
-    # Same EnvConfig inputs as deploy.yml's promote-prod job (the unprefixed
-    # repo variables are prod's). Without them config.py falls back to
+    # Same EnvConfig inputs as release.yml's prod job (the unprefixed repo
+    # variables are prod's). Without them config.py falls back to
     # placeholder domains/ARNs and every diff shows prod's real values being
     # replaced. If prod's values live as `production` environment variables
     # instead, mirror them at repo level too: this job has no environment,
-    # since that would put every PR behind the reviewer gate.
+    # since `production` only admits the `release` branch.
     env:
       ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
       API_DOMAIN: ${{ vars.API_DOMAIN }}
