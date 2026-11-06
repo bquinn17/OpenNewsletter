@@ -74,6 +74,8 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &voting)
         .await
@@ -237,6 +239,8 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &open)
         .await

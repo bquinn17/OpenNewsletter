@@ -168,7 +168,9 @@ async fn create_first_cycle(
         group.cycle_settings.response_window_days,
     );
 
-    match newsletters::create_first_voting_cycle(repo, group_id, schedule).await {
+    match newsletters::create_first_voting_cycle(repo, group_id, schedule, &group.cycle_settings)
+        .await
+    {
         Ok(nl) => Some(CycleTransition {
             group_id: group_id.clone(),
             cycle_id: nl.cycle_id,
@@ -240,7 +242,7 @@ async fn promote_and_open(
         }
     };
     chosen.sort_by(CandidateQuestion::promotion_order);
-    chosen.truncate(group.cycle_settings.questions_per_cycle as usize);
+    chosen.truncate(nl.questions_to_promote(&group.cycle_settings) as usize);
 
     let locked: Vec<LockedQuestion> = chosen
         .into_iter()
@@ -378,7 +380,9 @@ async fn create_next_voting_cycle(
         return None;
     };
 
-    match newsletters::create_next_voting_cycle(repo, group_id, schedule).await {
+    match newsletters::create_next_voting_cycle(repo, group_id, schedule, &group.cycle_settings)
+        .await
+    {
         Ok(nl) => Some(nl.cycle_id),
         Err(e) if e.is_lost_race() => {
             tracing::info!(group_id = %group_id, "next voting cycle already created by a concurrent tick");

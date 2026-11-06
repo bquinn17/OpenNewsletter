@@ -139,8 +139,8 @@ export function GroupSettingsForm({ group }: Props) {
       </Field>
 
       <p className="text-xs text-inkmuted">
-        Timezone and response window changes apply from the next new cycle. Cycles already scheduled
-        keep their dates.
+        Cycle setting changes apply from the next new cycle. Cycles already scheduled keep their
+        questions, votes and dates.
       </p>
 
       <fieldset>

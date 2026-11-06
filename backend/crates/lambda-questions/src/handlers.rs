@@ -94,8 +94,8 @@ pub async fn list_candidates(
     }
 
     Ok(CandidateListResponse {
+        votes_per_user_per_cycle: next_cycle.vote_cap(&group.cycle_settings),
         next_cycle_id: next_cycle.cycle_id,
-        votes_per_user_per_cycle: group.cycle_settings.votes_per_user_per_cycle,
         my_vote_count,
         items,
         next_cursor,
@@ -164,7 +164,7 @@ pub async fn cast_vote(
         });
     }
 
-    let cap = group.cycle_settings.votes_per_user_per_cycle;
+    let cap = next_cycle.vote_cap(&group.cycle_settings);
     // Fast path with a helpful detail. The real guard is the tally condition
     // inside `cast_vote_tx`, which concurrent requests can't slip past.
     if my_votes.len() as u32 >= cap {

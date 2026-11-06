@@ -34,6 +34,8 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &voting)
         .await

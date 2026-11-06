@@ -92,11 +92,11 @@ A full read-through of the design after the hardening milestone turned up twelve
 **Where.** [`auth.md` §12](design/auth.md#12-threat-model-considerations), [`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy).
 
 <a id="d10"></a>
-### D10 — Schedule changes apply from the next new cycle (2026-11-01)
+### D10 — Cycle-settings changes apply from the next new cycle (2026-11-01)
 
-**Decision.** When an admin changes `responseWindowDays` or `timezone`, no existing cycle moves. The `open` cycle and the already-scheduled `voting` cycle keep their dates, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. `questionsPerCycle` and `votesPerUserPerCycle` are unaffected by this rule: they are read at promotion and at vote time, as before. The settings form says timezone and window changes "apply from the next new cycle".
+**Decision.** When an admin changes `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` or `timezone`, no existing cycle changes. The `open` cycle and the already-scheduled `voting` cycle keep their dates, question count and vote cap, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. Each cycle copies the question and vote counts onto its own row when it's created (2026-11-03). The settings form says cycle setting changes "apply from the next new cycle".
 
-**Why.** Moving a live cycle's open or close interacted badly with the weekly cadence: a rescheduled `voting` cycle could open before the `open` one closed, leaving two cycles open at once. Rescheduling also needed an error path for closes that would land in the past. Leaving scheduled cycles alone means members never see a date they were told change underneath them, and the scheduling rules live in one place, the tick.
+**Why.** Moving a live cycle's open or close interacted badly with the weekly cadence: a rescheduled `voting` cycle could open before the `open` one closed, leaving two cycles open at once. Rescheduling also needed an error path for closes that would land in the past. Leaving scheduled cycles alone means members never see a date they were told change underneath them, and the scheduling rules live in one place, the tick. Fixing the vote cap per cycle means a lowered cap never strands votes already cast above it, and a cycle's question count is known while members are still voting.
 
 **Where.** [`lifecycle.md` §6](design/lifecycle.md#6-settings-changes-mid-cycle), [`api.md` §4.3](design/api.md#43-patch-groupsgroupid).
 

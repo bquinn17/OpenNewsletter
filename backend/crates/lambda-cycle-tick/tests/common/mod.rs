@@ -66,6 +66,8 @@ pub async fn seed_open_cycle(repo: &Repo, group_id: &str, locked: &[&str]) -> Ne
         locked_question_ids: locked.iter().map(|q| QuestionId::new(*q)).collect(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(repo, &nl)
         .await

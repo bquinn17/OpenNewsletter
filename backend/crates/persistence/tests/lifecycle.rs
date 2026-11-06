@@ -20,6 +20,10 @@ use persistence::{newsletters, questions};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
 
+fn settings() -> domain::CycleSettings {
+    persistence::test_factories::group("unused", "unused").cycle_settings
+}
+
 #[tokio::test]
 async fn tick_promotes_only_the_top_n_candidates_by_vote() {
     let (_c, repo) = common::make_repo().await;
@@ -175,11 +179,12 @@ async fn create_next_voting_cycle_is_idempotent_across_rapid_reruns() {
     let schedule =
         shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
 
-    newsletters::create_next_voting_cycle(&repo, &group_id, schedule.clone())
+    newsletters::create_next_voting_cycle(&repo, &group_id, schedule.clone(), &settings())
         .await
         .unwrap();
 
-    let second = newsletters::create_next_voting_cycle(&repo, &group_id, schedule).await;
+    let second =
+        newsletters::create_next_voting_cycle(&repo, &group_id, schedule, &settings()).await;
     let err = second.expect_err("second create attempt must lose the race");
     assert!(err.is_lost_race());
 }
@@ -370,7 +375,7 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
     let after = Utc.with_ymd_and_hms(2026, 2, 10, 0, 0, 0).unwrap();
     let schedule =
         shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
-    let created = newsletters::create_next_voting_cycle(&repo, &group_id, schedule)
+    let created = newsletters::create_next_voting_cycle(&repo, &group_id, schedule, &settings())
         .await
         .unwrap();
 

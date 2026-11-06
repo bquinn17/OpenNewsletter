@@ -12,7 +12,7 @@ use aws_sdk_dynamodb::types::{AttributeValue, Put, ReturnValue, TransactWriteIte
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
-use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
+use domain::{CycleId, CycleSettings, GroupId, Newsletter, NewsletterStatus};
 use serde_dynamo::{from_item, to_item};
 use shared::cycle_time::CycleSchedule;
 use std::collections::{HashMap, HashSet};
@@ -388,8 +388,14 @@ fn decode_cursor(raw: &str) -> Result<CycleId, RepoError> {
 }
 
 /// A new `voting` cycle per `schedule` (§4.2): voting is open from now until
-/// `responseOpenAt`, which is also when the tick next acts on it.
-fn new_voting_cycle(group_id: &GroupId, schedule: CycleSchedule) -> Newsletter {
+/// `responseOpenAt`, which is also when the tick next acts on it. `settings`
+/// is the group's current cycle settings, whose question and vote counts the
+/// cycle keeps for its whole life (§6).
+fn new_voting_cycle(
+    group_id: &GroupId,
+    schedule: CycleSchedule,
+    settings: &CycleSettings,
+) -> Newsletter {
     Newsletter {
         group_id: group_id.clone(),
         cycle_id: schedule.cycle_id,
@@ -403,6 +409,8 @@ fn new_voting_cycle(group_id: &GroupId, schedule: CycleSchedule) -> Newsletter {
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: Some(settings.questions_per_cycle),
+        votes_per_user_per_cycle: Some(settings.votes_per_user_per_cycle),
     }
 }
 
@@ -417,8 +425,9 @@ pub async fn create_next_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
     schedule: CycleSchedule,
+    settings: &CycleSettings,
 ) -> Result<Newsletter, RepoError> {
-    let nl = new_voting_cycle(group_id, schedule);
+    let nl = new_voting_cycle(group_id, schedule, settings);
     let item = newsletter_item(&nl)?;
 
     repo.client
@@ -448,8 +457,9 @@ pub async fn create_first_voting_cycle(
     repo: &Repo,
     group_id: &GroupId,
     schedule: CycleSchedule,
+    settings: &CycleSettings,
 ) -> Result<Newsletter, RepoError> {
-    let nl = new_voting_cycle(group_id, schedule);
+    let nl = new_voting_cycle(group_id, schedule, settings);
     let item = newsletter_item(&nl)?;
 
     let put_cycle = Put::builder()

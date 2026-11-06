@@ -613,9 +613,11 @@ mod tests {
         assert_eq!(got, Some(utc(2027, 11, 1, 4, 0, 0)));
     }
 
-    /// `lambda-groups` reschedules a `voting` cycle from its own id after a
-    /// timezone change, so the recomputed open must map back to that id in
-    /// any zone, never moving the row's key (`docs/design/lifecycle.md` §6).
+    /// A monthly `successor_schedule` anchors on `period_start` of the current
+    /// id in the group's *current* timezone, which may differ from the one the
+    /// cycle was created under (`docs/design/lifecycle.md` §6). The anchor must
+    /// map back to that same id in any zone, or the successor would skip or
+    /// repeat a month.
     #[test]
     fn period_start_maps_back_to_its_own_cycle_id_monthly() {
         let zones: [Tz; 4] = [America::New_York, Pacific::Honolulu, Pacific::Auckland, UTC];

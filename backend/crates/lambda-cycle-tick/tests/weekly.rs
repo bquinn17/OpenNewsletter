@@ -45,6 +45,8 @@ async fn a_weekly_tick_promotes_a_cycle_and_creates_a_yyyymmdd_successor_at_the_
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &voting)
         .await

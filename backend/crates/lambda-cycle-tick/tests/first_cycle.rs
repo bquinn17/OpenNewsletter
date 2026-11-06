@@ -89,6 +89,14 @@ async fn a_tick_creates_a_groups_first_monthly_voting_cycle_and_clears_the_marke
     assert_eq!(voting.status, NewsletterStatus::Voting);
     assert_eq!(voting.response_open_at, expected.response_open_at);
     assert_eq!(voting.response_close_at, expected.response_close_at);
+    assert_eq!(
+        voting.questions_per_cycle,
+        Some(group.cycle_settings.questions_per_cycle)
+    );
+    assert_eq!(
+        voting.votes_per_user_per_cycle,
+        Some(group.cycle_settings.votes_per_user_per_cycle)
+    );
     assert!(!has_marker(&repo, &group.group_id).await);
 }
 
@@ -145,9 +153,14 @@ async fn a_marked_group_that_already_has_a_voting_cycle_just_clears_the_marker()
         tz,
         existing.cycle_settings.response_window_days,
     );
-    let pre_existing = newsletters::create_next_voting_cycle(&repo, &group.group_id, schedule)
-        .await
-        .unwrap();
+    let pre_existing = newsletters::create_next_voting_cycle(
+        &repo,
+        &group.group_id,
+        schedule,
+        &group.cycle_settings,
+    )
+    .await
+    .unwrap();
 
     run_tick(&repo, CycleCadence::Monthly).await;
 

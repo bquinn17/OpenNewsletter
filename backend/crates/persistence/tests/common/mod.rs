@@ -94,6 +94,8 @@ pub fn voting_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     }
 }
 

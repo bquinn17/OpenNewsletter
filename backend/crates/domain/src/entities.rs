@@ -153,6 +153,29 @@ pub struct Newsletter {
     pub locked_question_ids: Vec<QuestionId>,
     pub notified_offsets_hours: Vec<u32>,
     pub notified_on_open: bool,
+    /// The group's `questionsPerCycle` and `votesPerUserPerCycle` when this
+    /// cycle was created, so a later settings change only reaches cycles
+    /// created after it (`docs/design/lifecycle.md` §6, D10). `None` on rows
+    /// written before the snapshot existed; those read the group's current
+    /// value ([`Newsletter::questions_to_promote`], [`Newsletter::vote_cap`]).
+    #[serde(default)]
+    pub questions_per_cycle: Option<u32>,
+    #[serde(default)]
+    pub votes_per_user_per_cycle: Option<u32>,
+}
+
+impl Newsletter {
+    /// How many candidates promote into this cycle (§5.2).
+    pub fn questions_to_promote(&self, current: &CycleSettings) -> u32 {
+        self.questions_per_cycle
+            .unwrap_or(current.questions_per_cycle)
+    }
+
+    /// How many votes each member may cast on this cycle's candidates.
+    pub fn vote_cap(&self, current: &CycleSettings) -> u32 {
+        self.votes_per_user_per_cycle
+            .unwrap_or(current.votes_per_user_per_cycle)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

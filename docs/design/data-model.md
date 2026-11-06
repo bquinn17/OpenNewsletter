@@ -154,6 +154,8 @@ The unit of an edition for one group.
 | `locked_question_ids` | array<string> (set when transitioning `voting -> open`) |
 | `notified_offsets_hours` | array<number> (records which reminder fan-outs have completed) |
 | `notified_on_open` | bool |
+| `questions_per_cycle` | number — the group's `questionsPerCycle` when this cycle was created; promotion locks this many (D10, [`lifecycle.md` §6](lifecycle.md#6-settings-changes-mid-cycle)). Absent on rows written before 2026-11-03, which read the group's current value. |
+| `votes_per_user_per_cycle` | number — the group's `votesPerUserPerCycle` when this cycle was created: the vote cap on this cycle's candidates (§2.7, same rule). |
 
 State machine fully specified in [`lifecycle.md`](lifecycle.md).
 
@@ -207,7 +209,7 @@ Records that a user upvoted a candidate question.
 | `question_id` | UUIDv7 |
 | `voted_at` | ISO-8601 |
 
-The `votes_per_user_per_cycle` cap is enforced inside the vote transactions by the voter's `VoterTally` row (§2.7a, §4 #1). The handler also pre-reads the voter partition, but only to build a helpful `VOTE_CAP_REACHED` detail; it isn't the guard.
+The `votes_per_user_per_cycle` cap (the voting cycle's own copy, §2.5) is enforced inside the vote transactions by the voter's `VoterTally` row (§2.7a, §4 #1). The handler also pre-reads the voter partition, but only to build a helpful `VOTE_CAP_REACHED` detail; it isn't the guard.
 
 Access patterns:
 - "List my votes this cycle" → `Query pk=GROUP#{g}#CYCLE#{c}#VOTER#{u} AND begins_with(sk, QC#)` (the prefix skips the tally row)
