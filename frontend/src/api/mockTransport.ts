@@ -12,6 +12,7 @@ import {
   hasOtherAdmin,
   imageRows,
   isAdminOf,
+  MOCK_CYCLE_CADENCE,
   MOCK_IMAGE_DATA_URL,
   newsletters,
   NO_MOCK_ROUTE,
@@ -74,6 +75,7 @@ function handleGetConfig(): S["ConfigResponse"] {
     vapidPublicKey:
       "BJTfWJoykcXuskzxVht3DnGpI07IIX8QCxj668lx_G0GgtvMi_mAFvD0_r6Z5Hvy3QRzrVQJrXo7NUUc9Nnix40",
     groupDefaults: {},
+    cycleCadence: MOCK_CYCLE_CADENCE,
     // The real server computes these fields from the live group row rather
     // than a denormalized copy (`docs/design/api.md` §4) — read `groups` live
     // here too, so a `patchGroup` is immediately visible after invalidating

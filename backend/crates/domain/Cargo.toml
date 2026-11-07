@@ -23,5 +23,7 @@ unicode-properties = { version = "0.1", default-features = false, features = ["e
 # enums against `shared::config`, since `domain` can't take it as a normal dependency
 # (`shared` already depends on `domain`).
 shared = { path = "../shared" }
-serde_yaml = "0.9"
+# Pure-Rust YAML parser. `serde_yaml` is deprecated and its `unsafe-libyaml`
+# is unmaintained (RUSTSEC-2024-0449).
+serde-saphyr = "2"
 pretty_assertions.workspace = true

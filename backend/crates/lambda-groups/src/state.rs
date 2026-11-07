@@ -3,6 +3,7 @@
 use media_delete::MediaDeleter;
 use media_urls::MediaUrls;
 use persistence::Repo;
+use shared::cycle_time::CycleCadence;
 
 pub struct AppState {
     pub repo: Repo,
@@ -15,4 +16,8 @@ pub struct AppState {
     pub media_urls: MediaUrls,
     /// Deletes the avatar a `PATCH /me` replaces (`docs/design/media.md` §11.4).
     pub avatar_deleter: MediaDeleter,
+    /// This deployment's cycle cadence (`docs/design/lifecycle.md` §13),
+    /// read once at cold start from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START`.
+    /// Echoed by `GET /config` and used to cap/clamp `responseWindowDays`.
+    pub cadence: CycleCadence,
 }

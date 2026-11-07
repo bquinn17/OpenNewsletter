@@ -1,26 +1,46 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import clsx from "clsx";
-import { useCandidates, useMembership, useNewsletters, type CandidateSort } from "../api/queries";
+import {
+  useCandidates,
+  useCycleCadence,
+  useMembership,
+  useNewsletters,
+  type CandidateSort,
+} from "../api/queries";
 import { useToggleVote } from "../api/mutations";
 import { ApiError } from "../api/client";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { CandidateList } from "../components/candidates/CandidateList";
 import { useToasts } from "../state/toast";
-import { countdownTo, cycleLabels } from "../utils/dates";
+import { countdownTo, cycleLabels, editionLabel } from "../utils/dates";
+import type { components } from "../types/api";
 
-function opensLabel(responseOpenAt: string, timezone: string): string {
-  const { days, expired } = countdownTo(responseOpenAt);
-  const { monthLabel } = cycleLabels(responseOpenAt, timezone);
-  if (expired || days <= 0) return `The ${monthLabel} newsletter opens today`;
-  return `${days} day${days === 1 ? "" : "s"} until the ${monthLabel} newsletter opens`;
+type NewsletterSummary = components["schemas"]["NewsletterSummary"];
+type CycleFrequency = components["schemas"]["CycleCadence"]["frequency"];
+
+/**
+ * "The {next edition} opens today" / "{N} days until {next edition} opens". Monthly names
+ * the opening month (from `responseOpenAt`); weekly names the voting cycle's scheduled
+ * publication date (`responseCloseAt`) — the countdown itself always counts down to
+ * `responseOpenAt` (`docs/design/frontend.md` §7.4).
+ */
+function opensLabel(votingCycle: NewsletterSummary, timezone: string, frequency: CycleFrequency) {
+  const { days, expired } = countdownTo(votingCycle.responseOpenAt);
+  const edition =
+    frequency === "weekly"
+      ? `${editionLabel(votingCycle, timezone, "weekly").short} edition`
+      : `${cycleLabels(votingCycle.responseOpenAt, timezone).monthLabel} newsletter`;
+  if (expired || days <= 0) return `The ${edition} opens today`;
+  return `${days} day${days === 1 ? "" : "s"} until the ${edition} opens`;
 }
 
 export function CandidatesPage() {
   const { groupId = "" } = useParams();
   const membership = useMembership(groupId);
   const timezone = membership?.timezone ?? "UTC";
+  const cadence = useCycleCadence();
   const [sort, setSort] = useState<CandidateSort>("top");
   const [showVotePanel, setShowVotePanel] = useState(false);
   const pushToast = useToasts((s) => s.push);
@@ -53,7 +73,7 @@ export function CandidatesPage() {
     );
   }
 
-  if (candidates.isLoading || newsletters.isLoading) {
+  if (candidates.isLoading || newsletters.isLoading || !cadence) {
     return (
       <div className="pb-12">
         <PageHeader title="Loading…" eyebrow="Upcoming" back="/" phase="voting" />
@@ -65,6 +85,8 @@ export function CandidatesPage() {
       </div>
     );
   }
+
+  const { frequency } = cadence;
 
   const cycleNotVoting =
     candidates.isError &&
@@ -111,7 +133,7 @@ export function CandidatesPage() {
               Vote on the questions
             </div>
             <h1 className="mt-1 font-display text-xl font-bold leading-tight">
-              {opensLabel(votingCycle.responseOpenAt, timezone)}
+              {opensLabel(votingCycle, timezone, frequency)}
             </h1>
           </div>
         )}
@@ -121,8 +143,11 @@ export function CandidatesPage() {
             to={`/g/${groupId}/n/${openCycle.cycleId}`}
             className="block rounded-3xl border border-line bg-white p-4 text-sm font-semibold text-ink shadow-soft hover:border-coral"
           >
-            The {cycleLabels(openCycle.responseOpenAt, timezone).monthLabel} edition is open —
-            answer now
+            The{" "}
+            {frequency === "weekly"
+              ? editionLabel(openCycle, timezone, "weekly").short
+              : cycleLabels(openCycle.responseOpenAt, timezone).monthLabel}{" "}
+            edition is open — answer now
           </Link>
         )}
       </div>

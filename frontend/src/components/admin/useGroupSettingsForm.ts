@@ -3,6 +3,7 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { usePatchGroup } from "../../api/mutations";
+import { useCycleCadence } from "../../api/queries";
 import { ApiError, apiErrorMessage } from "../../api/client";
 import { useToasts } from "../../state/toast";
 import { GRADIENT_SLUGS } from "../../utils/gradient";
@@ -18,52 +19,69 @@ export const MAX_NAME_CHARS = 40;
 const MIN_QUESTIONS_PER_CYCLE = 1;
 const MAX_QUESTIONS_PER_CYCLE = 20;
 const MIN_RESPONSE_WINDOW_DAYS = 1;
-const MAX_RESPONSE_WINDOW_DAYS = 28;
 const MAX_REMINDER_OFFSET_HOURS = 168;
 
-const baseSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Name can't be empty.")
-    .max(MAX_NAME_CHARS, `${MAX_NAME_CHARS} characters max.`),
-  gradient: z.enum(GRADIENT_SLUGS),
-  timezone: z.string().min(1, "Pick a timezone."),
-  questionsPerCycle: z.coerce
+/**
+ * `maxResponseWindowDays` comes from `/config`'s `cycleCadence` — 28 monthly, 7
+ * weekly. `undefined` while `/config` is still loading: the max validation is
+ * then left off rather than guessed, and the form disables the field and Save
+ * until it's known (`docs/design/frontend.md` §14a).
+ */
+function buildBaseSchema(maxResponseWindowDays: number | undefined) {
+  let responseWindowDays = z.coerce
     .number({ invalid_type_error: "Enter a number." })
     .int("Whole numbers only.")
-    .min(MIN_QUESTIONS_PER_CYCLE, `At least ${MIN_QUESTIONS_PER_CYCLE}.`)
-    .max(MAX_QUESTIONS_PER_CYCLE, `${MAX_QUESTIONS_PER_CYCLE} max.`),
-  votesPerUserPerCycle: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(1, "At least 1."),
-  responseWindowDays: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(MIN_RESPONSE_WINDOW_DAYS, `At least ${MIN_RESPONSE_WINDOW_DAYS} day.`)
-    .max(MAX_RESPONSE_WINDOW_DAYS, `${MAX_RESPONSE_WINDOW_DAYS} days max.`),
-  memberSoftCap: z.coerce
-    .number({ invalid_type_error: "Enter a number." })
-    .int("Whole numbers only.")
-    .min(0, "Can't be negative."),
-  onCycleOpen: z.boolean(),
-  reminderOffsets: z
-    .array(
-      z.object({
-        hours: z.coerce
-          .number({ invalid_type_error: "Enter a number." })
-          .int("Whole hours only.")
-          .min(1, "At least 1 hour.")
-          .max(MAX_REMINDER_OFFSET_HOURS, `${MAX_REMINDER_OFFSET_HOURS} hours max.`),
-      }),
-    )
-    .min(1, "Add at least one reminder."),
-});
+    .min(MIN_RESPONSE_WINDOW_DAYS, `At least ${MIN_RESPONSE_WINDOW_DAYS} day.`);
+  if (maxResponseWindowDays !== undefined) {
+    responseWindowDays = responseWindowDays.max(
+      maxResponseWindowDays,
+      `${maxResponseWindowDays} days max.`,
+    );
+  }
 
-/** `memberCount` is the group's current member count, not a fixed bound — only known per-group at render time. */
-function buildSchema(memberCount: number) {
-  return baseSchema.superRefine((val, ctx) => {
+  return z.object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Name can't be empty.")
+      .max(MAX_NAME_CHARS, `${MAX_NAME_CHARS} characters max.`),
+    gradient: z.enum(GRADIENT_SLUGS),
+    timezone: z.string().min(1, "Pick a timezone."),
+    questionsPerCycle: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(MIN_QUESTIONS_PER_CYCLE, `At least ${MIN_QUESTIONS_PER_CYCLE}.`)
+      .max(MAX_QUESTIONS_PER_CYCLE, `${MAX_QUESTIONS_PER_CYCLE} max.`),
+    votesPerUserPerCycle: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(1, "At least 1."),
+    responseWindowDays,
+    memberSoftCap: z.coerce
+      .number({ invalid_type_error: "Enter a number." })
+      .int("Whole numbers only.")
+      .min(0, "Can't be negative."),
+    onCycleOpen: z.boolean(),
+    reminderOffsets: z
+      .array(
+        z.object({
+          hours: z.coerce
+            .number({ invalid_type_error: "Enter a number." })
+            .int("Whole hours only.")
+            .min(1, "At least 1 hour.")
+            .max(MAX_REMINDER_OFFSET_HOURS, `${MAX_REMINDER_OFFSET_HOURS} hours max.`),
+        }),
+      )
+      .min(1, "Add at least one reminder."),
+  });
+}
+
+/**
+ * `memberCount` is the group's current member count, not a fixed bound — only known per-group
+ * at render time. `maxResponseWindowDays` is likewise only known once `/config` has loaded.
+ */
+function buildSchema(memberCount: number, maxResponseWindowDays: number | undefined) {
+  return buildBaseSchema(maxResponseWindowDays).superRefine((val, ctx) => {
     if (val.votesPerUserPerCycle > val.questionsPerCycle) {
       ctx.addIssue({
         code: "custom",
@@ -92,7 +110,7 @@ function buildSchema(memberCount: number) {
   });
 }
 
-export type FormValues = z.infer<typeof baseSchema>;
+export type FormValues = z.infer<ReturnType<typeof buildBaseSchema>>;
 
 /** The fields that compare and patch as a single `cycleSettings` sub-object. */
 type CycleFields = Pick<
@@ -100,14 +118,24 @@ type CycleFields = Pick<
   "questionsPerCycle" | "votesPerUserPerCycle" | "responseWindowDays"
 >;
 
-function toFormValues(group: GroupResponse): FormValues {
+/**
+ * A stale cached `group` can carry a `responseWindowDays` above the current
+ * `maxResponseWindowDays` (e.g. after a cadence change) — clamp the default
+ * so the admin isn't trapped behind a validation error on a field they never
+ * touched.
+ */
+function toFormValues(group: GroupResponse, maxResponseWindowDays: number | undefined): FormValues {
+  const responseWindowDays =
+    maxResponseWindowDays === undefined
+      ? group.cycleSettings.responseWindowDays
+      : Math.min(group.cycleSettings.responseWindowDays, maxResponseWindowDays);
   return {
     name: group.name,
     gradient: group.gradient,
     timezone: group.timezone,
     questionsPerCycle: group.cycleSettings.questionsPerCycle,
     votesPerUserPerCycle: group.cycleSettings.votesPerUserPerCycle,
-    responseWindowDays: group.cycleSettings.responseWindowDays,
+    responseWindowDays,
     memberSoftCap: group.memberSoftCap,
     onCycleOpen: group.notificationSettings.onCycleOpen,
     reminderOffsets: group.notificationSettings.offsetsHoursBeforeClose.map((hours) => ({
@@ -203,18 +231,12 @@ const SERVER_FIELD_TO_FORM_FIELD: Record<string, keyof FormValues> = {
   memberSoftCap: "memberSoftCap",
 };
 
-/**
- * Copy for the `CLOSES_IN_PAST` field error: a `responseWindowDays` change
- * that would close the already-open cycle in the past
- * (`docs/design/lifecycle.md` §6, D10). The form shows its own copy
- * (`docs/design/frontend.md` §7.7) rather than the server's detail.
- */
-const CLOSES_IN_PAST_MESSAGE = "Would close the open cycle in the past.";
-
 /** Form state, validation and submit wiring for the group settings form (`docs/design/frontend.md` §7.7). */
 export function useGroupSettingsForm(group: GroupResponse) {
   const patchGroup = usePatchGroup(group.groupId);
   const pushToast = useToasts((s) => s.push);
+  const cadence = useCycleCadence();
+  const maxResponseWindowDays = cadence?.maxResponseWindowDays;
 
   const {
     register,
@@ -226,8 +248,8 @@ export function useGroupSettingsForm(group: GroupResponse) {
     control,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(group.memberCount)),
-    defaultValues: toFormValues(group),
+    resolver: zodResolver(buildSchema(group.memberCount, maxResponseWindowDays)),
+    defaultValues: toFormValues(group, maxResponseWindowDays),
   });
   const { fields, append, remove } = useFieldArray({ control, name: "reminderOffsets" });
 
@@ -235,15 +257,18 @@ export function useGroupSettingsForm(group: GroupResponse) {
   // this form's own save (`usePatchGroup` writes the response into the
   // cache), so the "unsaved changes" comparison below starts fresh.
   useEffect(() => {
-    reset(toFormValues(group));
-  }, [group, reset]);
+    reset(toFormValues(group, maxResponseWindowDays));
+  }, [group, maxResponseWindowDays, reset]);
 
   const values = watch();
-  const patchPreview = buildPatch(toFormValues(group), normalizeForComparison(values));
+  const patchPreview = buildPatch(
+    toFormValues(group, maxResponseWindowDays),
+    normalizeForComparison(values),
+  );
   const hasChanges = Object.keys(patchPreview).length > 0;
 
   const onSubmit = handleSubmit(async (parsed) => {
-    const patch = buildPatch(toFormValues(group), parsed);
+    const patch = buildPatch(toFormValues(group, maxResponseWindowDays), parsed);
     if (Object.keys(patch).length === 0) return;
     try {
       await patchGroup.mutateAsync(patch);
@@ -253,9 +278,7 @@ export function useGroupSettingsForm(group: GroupResponse) {
         const fieldErrors = error.problem?.fieldErrors ?? [];
         for (const fieldError of fieldErrors) {
           const formField = SERVER_FIELD_TO_FORM_FIELD[fieldError.field];
-          if (fieldError.code === "CLOSES_IN_PAST") {
-            setError("responseWindowDays", { message: CLOSES_IN_PAST_MESSAGE });
-          } else if (formField === "reminderOffsets") {
+          if (formField === "reminderOffsets") {
             setError("reminderOffsets", { message: fieldError.message });
           } else if (formField) {
             setError(formField, { message: fieldError.message });
@@ -281,6 +304,7 @@ export function useGroupSettingsForm(group: GroupResponse) {
     append,
     remove,
     hasChanges,
+    cadenceLoaded: maxResponseWindowDays !== undefined,
     isSaving: patchGroup.isPending,
     onSubmit,
   };

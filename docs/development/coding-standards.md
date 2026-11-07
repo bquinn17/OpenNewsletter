@@ -120,8 +120,8 @@ These apply regardless of language.
 - Unit tests in the same file under `#[cfg(test)] mod tests`.
 - Integration tests in `crate-name/tests/*.rs` (one file per scenario suite).
 - Test factory functions live in `persistence/src/test_factories.rs`, gated `#[cfg(any(test, feature = "test-utils"))]` so other crates' tests can pull them via the `test-utils` feature.
-- Run integration tests against DDB-local via `testcontainers`. Each test gets a unique table name; no shared state.
-- These need a reachable Docker daemon; on WSL2 the socket is rootless, so export `DOCKER_HOST` inline on every invocation. Exact command per platform: [`environments.md` §10.1](environments.md#101-docker-socket-by-platform-required-for-any-docker-backed-test).
+- Run integration tests against the shared DynamoDB Local (`make dynamodb-local`). Each test gets its own uniquely named table, deleted when the test ends; no shared state.
+- Starting DynamoDB Local needs Docker; on WSL2 the socket is rootless, so export `DOCKER_HOST` inline for `make dynamodb-local`. Exact command per platform: [`environments.md` §10.1](environments.md#101-docker-and-dynamodb-local-by-platform).
 - Use `pretty_assertions::assert_eq` for non-trivial comparisons (better diff output).
 
 ### 2.8 Logging

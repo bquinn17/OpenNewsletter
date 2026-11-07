@@ -12,6 +12,16 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export const CALLER_ID = "u_quinn";
 
+/**
+ * This mock deployment's cycle cadence (`docs/design/frontend.md` §14a). Mock fixtures stay
+ * monthly (`docs/design/lifecycle.md` §13); `mockAdmin.ts` validates `responseWindowDays`
+ * against this same max rather than a second hardcoded constant.
+ */
+export const MOCK_CYCLE_CADENCE: S["CycleCadence"] = {
+  frequency: "monthly",
+  maxResponseWindowDays: 28,
+};
+
 // 1x1 black PNG, for an upload with no file kept in memory (`mockUploads.ts`) — only under
 // jsdom, which has no `blob:` URLs. Renders without any network request.
 export const MOCK_IMAGE_DATA_URL =

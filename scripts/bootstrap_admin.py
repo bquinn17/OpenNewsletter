@@ -6,16 +6,18 @@ has to come from outside the API. This script is that door. Dev and prod use
 different flows (`docs/design/auth.md` §9):
 
 dev  (§9.1)  — creates a password-auth Cognito user, then writes the user, the
-               group, an admin membership and the first `voting` cycle.
+               group and an admin membership. The first `voting` cycle is created
+               by the next cycle tick (within 5 minutes; on dev, `POST /admin/dev/tick/cycle`
+               runs it immediately).
                Idempotent: re-running with the same `--admin-email` and
                `--group-name` reuses the existing Cognito user and rewrites the
                same DynamoDB rows. A different `--group-name` creates an
                additional group with the same admin.
-prod (§9.1a) — creates no Cognito user. Writes the group (`memberCount = 0`), its
-               first `voting` cycle and an admin invite bound to
-               BOOTSTRAP_ADMIN_EMAIL, then prints the `/join?code=…` URL. The
-               operator redeems it by signing in with Google as that email.
-               Refuses to overwrite an existing group of the same name.
+prod (§9.1a) — creates no Cognito user. Writes the group (`memberCount = 0`) and an
+               admin invite bound to BOOTSTRAP_ADMIN_EMAIL, then prints the
+               `/join?code=…` URL. The operator redeems it by signing in with Google
+               as that email. The first `voting` cycle is created by the next cycle
+               tick. Refuses to overwrite an existing group of the same name.
 
 Usage:
     python3 scripts/bootstrap_admin.py --env dev \\
@@ -117,39 +119,6 @@ def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# --- Cycle schedule math, mirroring backend/crates/shared/src/cycle_time.rs ---
-#
-# Only the "very first cycle" case matters here (`after` is always "now"), so
-# this doesn't need chrono-tz's ambiguous/nonexistent-local-midnight handling:
-# `zoneinfo` never raises for those, it just resolves them per PEP 495, which
-# is close enough for a bootstrap script that only ever runs against today's
-# date in an active IANA zone.
-
-
-def first_day_of_next_month_local(after_utc: datetime, tz: ZoneInfo) -> datetime:
-    local = after_utc.astimezone(tz)
-    year, month = (
-        (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
-    )
-    local_midnight = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
-    return local_midnight.astimezone(UTC)
-
-
-def cycle_id_for(response_open_at: datetime, tz: ZoneInfo) -> str:
-    """cycleId = yyyymm of responseOpenAt in the group's local time zone (§4.1)."""
-    local = response_open_at.astimezone(tz)
-    return f"{local.year:04d}{local.month:02d}"
-
-
-def next_cycle_schedule(
-    after: datetime, tz: ZoneInfo, response_window_days: int
-) -> tuple[str, datetime, datetime]:
-    """Returns (cycle_id, response_open_at, response_close_at) per §4.2/§5.4."""
-    response_open_at = first_day_of_next_month_local(after, tz)
-    response_close_at = response_open_at + timedelta(days=response_window_days)
-    return cycle_id_for(response_open_at, tz), response_open_at, response_close_at
-
-
 def deterministic_id(seed: str) -> str:
     """UUID5 under a private namespace — stable across runs for the same seed."""
     namespace = uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
@@ -220,10 +189,16 @@ def group_meta_item(
     created_by: str,
     timestamp: str,
 ) -> dict[str, Any]:
-    """The Group META row (`docs/design/data-model.md` §2.3)."""
+    """The Group META row (`docs/design/data-model.md` §2.3).
+
+    New groups are marked with gsi2pk/gsi2sk attributes so the cycle-tick Lambda
+    can find them and create their first voting cycle.
+    """
     return {
         "pk": {"S": f"GROUP#{group_id}"},
         "sk": {"S": "META"},
+        "gsi2pk": {"S": "GROUP_STATUS#awaiting_first_cycle"},
+        "gsi2sk": {"S": f"{timestamp}#{group_id}"},
         "entity": {"S": "Group"},
         "group_id": {"S": group_id},
         "name": {"S": group_name},
@@ -262,36 +237,6 @@ def group_meta_item(
         "gradient": {"S": DEFAULT_GRADIENT},
         "created_at": {"S": timestamp},
         "created_by": {"S": created_by},
-    }
-
-
-def first_newsletter_item(
-    *, group_id: str, tz: ZoneInfo, now: datetime
-) -> tuple[str, dict[str, Any]]:
-    """The group's very first `voting` Newsletter (`docs/design/lifecycle.md` §4.2's "very first
-    cycle" case — `after` is always "now" here). Returns (cycle_id, item)."""
-    cycle_id, response_open_at, response_close_at = next_cycle_schedule(
-        now, tz, DEFAULT_CYCLE_SETTINGS["response_window_days"]
-    )
-    response_open_at_iso = iso(response_open_at)
-    return cycle_id, {
-        "pk": {"S": f"GROUP#{group_id}"},
-        "sk": {"S": f"NL#{cycle_id}"},
-        "gsi2pk": {"S": "NL_STATUS#voting"},
-        "gsi2sk": {"S": f"{response_open_at_iso}#{group_id}#{cycle_id}"},
-        "entity": {"S": "Newsletter"},
-        "group_id": {"S": group_id},
-        "cycle_id": {"S": cycle_id},
-        "status": {"S": "voting"},
-        "vote_window_open_at": {"S": iso(now)},
-        "vote_window_close_at": {"S": response_open_at_iso},
-        "response_open_at": {"S": response_open_at_iso},
-        "response_close_at": {"S": iso(response_close_at)},
-        "published_at": {"NULL": True},
-        "next_transition_at": {"S": response_open_at_iso},
-        "locked_question_ids": {"L": []},
-        "notified_offsets_hours": {"L": []},
-        "notified_on_open": {"BOOL": False},
     }
 
 
@@ -339,15 +284,12 @@ def prod_bootstrap_transact_items(
     bound_email: str,
     invite_code: str,
     now: datetime,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     """The one TransactWriteItems for `--env prod` (`docs/design/auth.md` §9.1a): Group META with
-    `memberCount = 0`, the first `voting` Newsletter, and the bound admin
+    `memberCount = 0` (marked awaiting its first cycle) and the bound admin
     Invite. Every put is conditional on the row not existing, so a re-run can
-    never reset a live group's member count. Returns (cycle_id, items)."""
+    never reset a live group's member count."""
     timestamp = iso(now)
-    cycle_id, newsletter = first_newsletter_item(
-        group_id=group_id, tz=parse_timezone(tz_name), now=now
-    )
     group = group_meta_item(
         group_id=group_id,
         group_name=group_name,
@@ -359,9 +301,8 @@ def prod_bootstrap_transact_items(
     invite = bound_admin_invite_item(
         code=invite_code, group_id=group_id, bound_email=bound_email, now=now
     )
-    return cycle_id, [
+    return [
         _put(table_name, group, new=True),
-        _put(table_name, newsletter, new=True),
         _put(table_name, invite, new=True),
     ]
 
@@ -441,14 +382,13 @@ def write_group(
     group_name: str,
     tz_name: str,
     now: datetime,
-) -> str:
-    """Write the User, sub lookup, Group, admin GroupMembership, and the
-    group's very first `voting` Newsletter cycle, atomically.
+) -> None:
+    """Write the User, sub lookup, Group, and admin GroupMembership atomically.
+
+    The group is marked awaiting its first cycle, which will be created by the
+    next cycle tick.
     """
     timestamp = iso(now)
-    cycle_id, newsletter = first_newsletter_item(
-        group_id=group_id, tz=parse_timezone(tz_name), now=now
-    )
     items: list[dict[str, Any]] = [
         {
             "pk": {"S": f"COGNITO_SUB#{cognito_sub}"},
@@ -490,12 +430,10 @@ def write_group(
             "joined_at": {"S": timestamp},
             "editions_answered": {"N": "0"},
         },
-        newsletter,
     ]
     dynamodb.transact_write_items(
         TransactItems=[_put(table_name, item, new=False) for item in items]
     )
-    return cycle_id
 
 
 def bootstrap_dev(args: argparse.Namespace) -> None:
@@ -528,7 +466,7 @@ def bootstrap_dev(args: argparse.Namespace) -> None:
     user_id = deterministic_id(f"user:{cognito_sub}")
     group_id = deterministic_id(f"group:{cognito_sub}:{args.group_name}")
 
-    cycle_id = write_group(
+    write_group(
         dynamodb,
         table_name,
         user_id=user_id,
@@ -546,7 +484,7 @@ def bootstrap_dev(args: argparse.Namespace) -> None:
     print("\nDone.")
     print(f"  Group    : {args.group_name} ({group_id})")
     print(f"  Admin    : {args.admin_email} ({user_id})")
-    print(f"  Cycle    : {cycle_id} (voting)")
+    print("  Cycle    : created by the next cycle tick (within 5 minutes)")
     print(f"  Table    : {table_name}")
     print("\nSign in for a token:")
     print(
@@ -599,7 +537,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
     group_id = deterministic_id(f"group:{bound_email}:{args.group_name}")
     invite_code = generate_invite_code()
 
-    cycle_id, items = prod_bootstrap_transact_items(
+    items = prod_bootstrap_transact_items(
         table_name=table_name,
         group_id=group_id,
         group_name=args.group_name,
@@ -622,7 +560,7 @@ def bootstrap_prod(args: argparse.Namespace) -> None:
     join_url = f"https://{config.domain}/join?code={format_invite_code(invite_code)}"
     print("\nDone.")
     print(f"  Group    : {args.group_name} ({group_id})")
-    print(f"  Cycle    : {cycle_id} (voting)")
+    print("  Cycle    : created by the next cycle tick (within 5 minutes)")
     print(
         f"  Invite   : admin, bound to {bound_email}, "
         f"expires in {BOOTSTRAP_INVITE_TTL_DAYS} days"

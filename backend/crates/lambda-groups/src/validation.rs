@@ -6,9 +6,9 @@ use domain::{ApiError, CycleSettings, Group, NotificationSettings};
 use persistence::groups::GroupPatch;
 use shared::config::{
     AVATAR_COLOR_SLUGS, GRADIENT_SLUGS, MAX_DISPLAY_NAME_CHARS, MAX_QUESTIONS_PER_CYCLE,
-    MAX_REMINDER_OFFSET_HOURS, MAX_RESPONSE_WINDOW_DAYS, MIN_QUESTIONS_PER_CYCLE,
-    MIN_RESPONSE_WINDOW_DAYS,
+    MAX_REMINDER_OFFSET_HOURS, MIN_QUESTIONS_PER_CYCLE, MIN_RESPONSE_WINDOW_DAYS,
 };
+use shared::cycle_time::CycleCadence;
 
 pub fn display_name(raw: &str) -> Result<String, ApiError> {
     name_field(raw, "displayName")
@@ -72,6 +72,7 @@ fn timezone(raw: &str) -> Result<(), ApiError> {
 fn cycle_settings(
     current: &CycleSettings,
     patch: &CycleSettingsPatch,
+    cadence: CycleCadence,
 ) -> Result<CycleSettings, ApiError> {
     let merged = CycleSettings {
         questions_per_cycle: patch
@@ -80,9 +81,13 @@ fn cycle_settings(
         votes_per_user_per_cycle: patch
             .votes_per_user_per_cycle
             .unwrap_or(current.votes_per_user_per_cycle),
+        // An omitted `responseWindowDays` self-heals a value stored above the
+        // current cadence's cap (e.g. a monthly deployment's value inherited
+        // across a later switch to weekly); an explicit over-cap value is
+        // still rejected below.
         response_window_days: patch
             .response_window_days
-            .unwrap_or(current.response_window_days),
+            .unwrap_or_else(|| cadence.clamp_window(current.response_window_days)),
         auto_publish: current.auto_publish,
     };
 
@@ -91,10 +96,11 @@ fn cycle_settings(
             "questionsPerCycle must be between {MIN_QUESTIONS_PER_CYCLE} and {MAX_QUESTIONS_PER_CYCLE}"
         )));
     }
-    if !(MIN_RESPONSE_WINDOW_DAYS..=MAX_RESPONSE_WINDOW_DAYS).contains(&merged.response_window_days)
+    let max_response_window_days = cadence.max_response_window_days();
+    if !(MIN_RESPONSE_WINDOW_DAYS..=max_response_window_days).contains(&merged.response_window_days)
     {
         return Err(ApiError::invalid_field("responseWindowDays", format!(
-            "responseWindowDays must be between {MIN_RESPONSE_WINDOW_DAYS} and {MAX_RESPONSE_WINDOW_DAYS}"
+            "responseWindowDays must be between {MIN_RESPONSE_WINDOW_DAYS} and {max_response_window_days}"
         )));
     }
     // Each (voter, question) pair is unique, so a member can never cast more
@@ -147,7 +153,11 @@ fn notification_settings(
     Ok(merged)
 }
 
-pub fn group_patch(current: &Group, request: PatchGroupRequest) -> Result<GroupPatch, ApiError> {
+pub fn group_patch(
+    current: &Group,
+    request: PatchGroupRequest,
+    cadence: CycleCadence,
+) -> Result<GroupPatch, ApiError> {
     let mut patch = GroupPatch::default();
 
     if let Some(name) = request.name {
@@ -162,7 +172,7 @@ pub fn group_patch(current: &Group, request: PatchGroupRequest) -> Result<GroupP
         patch.gradient = Some(slug);
     }
     if let Some(settings) = request.cycle_settings {
-        patch.cycle_settings = Some(cycle_settings(&current.cycle_settings, &settings)?);
+        patch.cycle_settings = Some(cycle_settings(&current.cycle_settings, &settings, cadence)?);
     }
     if let Some(settings) = request.notification_settings {
         patch.notification_settings = Some(notification_settings(
@@ -222,7 +232,8 @@ mod tests {
         let group = persistence::test_factories::group("g_name", "u_admin");
         let request: PatchGroupRequest =
             serde_json::from_str(r#"{"name": "   "}"#).expect("valid request JSON");
-        let err = group_patch(&group, request).expect_err("blank group name");
+        let err =
+            group_patch(&group, request, CycleCadence::Monthly).expect_err("blank group name");
         assert_eq!(err.field_errors[0].field, "name");
     }
 
@@ -251,18 +262,40 @@ mod tests {
             votes_per_user_per_cycle: None,
             response_window_days: None,
         };
-        let err = cycle_settings(&settings(), &patch).expect_err("3 votes over 2 questions");
+        let err = cycle_settings(&settings(), &patch, CycleCadence::Monthly)
+            .expect_err("3 votes over 2 questions");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
     }
 
     #[test]
-    fn response_window_beyond_the_cap_is_rejected() {
+    fn response_window_beyond_the_monthly_cap_is_rejected() {
         let patch = CycleSettingsPatch {
             questions_per_cycle: None,
             votes_per_user_per_cycle: None,
-            response_window_days: Some(MAX_RESPONSE_WINDOW_DAYS + 1),
+            response_window_days: Some(shared::config::MAX_RESPONSE_WINDOW_DAYS + 1),
         };
-        assert!(cycle_settings(&settings(), &patch).is_err());
+        assert!(cycle_settings(&settings(), &patch, CycleCadence::Monthly).is_err());
+    }
+
+    #[test]
+    fn response_window_beyond_the_weekly_cap_is_rejected_but_seven_days_is_accepted() {
+        let weekly = CycleCadence::Weekly {
+            weekday: chrono::Weekday::Sun,
+            at: chrono::NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        };
+        let too_long = CycleSettingsPatch {
+            questions_per_cycle: None,
+            votes_per_user_per_cycle: None,
+            response_window_days: Some(8),
+        };
+        assert!(cycle_settings(&settings(), &too_long, weekly).is_err());
+
+        let exactly_the_period = CycleSettingsPatch {
+            questions_per_cycle: None,
+            votes_per_user_per_cycle: None,
+            response_window_days: Some(7),
+        };
+        assert!(cycle_settings(&settings(), &exactly_the_period, weekly).is_ok());
     }
 
     #[test]

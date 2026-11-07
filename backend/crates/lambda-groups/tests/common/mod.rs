@@ -7,6 +7,7 @@ use groups::state::AppState;
 use media_delete::fakes::{fake_deleter, RecordingObjectStore};
 use persistence::keys::{attr, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk};
 use persistence::{groups as group_repo, test_factories, users, Repo};
+use shared::cycle_time::CycleCadence;
 use std::sync::Arc;
 
 pub const AVATARS_ORIGINALS: &str = "test-avatars-originals";
@@ -14,6 +15,15 @@ pub const PROCESSED: &str = "test-processed";
 
 pub fn state(repo: Repo) -> AppState {
     state_with_fakes(repo).0
+}
+
+/// A monthly `state`, but with its cadence overridden — e.g. to weekly, for
+/// `docs/design/lifecycle.md` §13 tests.
+pub fn state_with_cadence(repo: Repo, cadence: CycleCadence) -> AppState {
+    AppState {
+        cadence,
+        ..state(repo)
+    }
 }
 
 /// An `AppState` whose avatar deleter records into the returned fake.
@@ -25,6 +35,7 @@ pub fn state_with_fakes(repo: Repo) -> (AppState, Arc<RecordingObjectStore>) {
         vapid_public_key: String::new(),
         media_urls: media_urls::MediaUrls::for_tests(PROCESSED),
         avatar_deleter,
+        cadence: CycleCadence::Monthly,
     };
     (state, store)
 }

@@ -266,7 +266,7 @@ api.opennewsletter.example.com  CNAME  <apigw-id>.execute-api.us-east-1.amazonaw
 
 ### Bootstrap the production admin
 
-In prod ([D5](../decisions.md#d5)), `scripts/bootstrap_admin.py` creates no Cognito user: it writes the Group, the first `voting` Newsletter, and an admin invite bound to `BOOTSTRAP_ADMIN_EMAIL` (`Invite.bound_email`, lowercased; `role_on_redeem=admin`; 30-day TTL), then prints the `/join?code=…` URL.
+In prod ([D5](../decisions.md#d5)), `scripts/bootstrap_admin.py` creates no Cognito user: it writes the Group (marked as awaiting its first cycle, which the next cycle tick creates within 5 minutes; [`lifecycle.md` §4.2](../design/lifecycle.md#42-default-schedule-per-group)) and an admin invite bound to `BOOTSTRAP_ADMIN_EMAIL` (`Invite.bound_email`, lowercased; `role_on_redeem=admin`; 30-day TTL), then prints the `/join?code=…` URL.
 
 ```sh
 python scripts/bootstrap_admin.py \

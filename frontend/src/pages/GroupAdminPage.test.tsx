@@ -116,6 +116,7 @@ beforeEach(() => {
     displayName: ME.displayName,
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [],
   });
   vi.mocked(api.getMe).mockResolvedValue(ME);
@@ -499,62 +500,76 @@ describe("GroupAdminPage", () => {
       expect(await screen.findByText("That name is taken.")).toBeInTheDocument();
     });
 
-    it("says settings apply to the current cycle, not just future ones (D10)", async () => {
+    it("says settings apply from the next new cycle, not the current one (B)", async () => {
       await openSettingsTab();
 
       expect(
-        screen.getByText("Changes apply to the current cycle where possible."),
+        screen.getByText(
+          "Cycle setting changes apply from the next new cycle. Cycles already scheduled keep their questions, votes and dates.",
+        ),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("Timezone changes affect the current voting cycle's open time."),
-      ).toBeInTheDocument();
-      expect(screen.queryByText(/future cycles/i)).not.toBeInTheDocument();
+        screen.queryByText("Changes apply to the current cycle where possible."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Timezone changes affect the current voting cycle's open time."),
+      ).not.toBeInTheDocument();
     });
 
-    it("shows the open-cycle 422 on the response window field (D10)", async () => {
-      const { user } = await openSettingsTab();
-      vi.mocked(api.patchGroup).mockRejectedValue(
-        new ApiError(422, "VALIDATION_FAILED", {
-          type: "https://api.opennewsletter.example.com/errors/validation-failed",
-          title: "Validation failed",
-          status: 422,
-          detail: "responseWindowDays 1 would close the open cycle in the past",
-          code: "VALIDATION_FAILED",
-          correlationId: "corr-2",
-          fieldErrors: [
-            {
-              field: "responseWindowDays",
-              code: "CLOSES_IN_PAST",
-              message: "responseWindowDays 1 would close the open cycle in the past",
-            },
-          ],
-        }),
-      );
+    it("disables the response window field and Save while /config hasn't loaded", async () => {
+      vi.mocked(api.getConfig).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("tab", { name: "Settings" }));
 
-      const windowInput = screen.getByLabelText("Response window (days)");
-      await user.clear(windowInput);
-      await user.type(windowInput, "1");
-      await user.click(screen.getByRole("button", { name: "Save" }));
+      const windowInput = await screen.findByLabelText("Response window (days)");
+      expect(windowInput).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      // No monthly-cadence copy or 28-day limit guessed while the cadence is unknown.
+      expect(screen.queryByText(/28 days max/)).not.toBeInTheDocument();
 
-      const message = await screen.findByText("Would close the open cycle in the past.");
-      // Rendered under the response window field, not as a form-level banner.
-      expect(message.parentElement).toContainElement(windowInput);
-      expect(api.patchGroup).toHaveBeenCalledWith("g1", {
-        cycleSettings: expect.objectContaining({ responseWindowDays: 1 }),
-      });
+      await user.clear(screen.getByLabelText("Group name"));
+      await user.type(screen.getByLabelText("Group name"), "Trailblazers");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     });
 
     it("invalidates the config query on a successful save", async () => {
-      const { user, queryClient } = await openSettingsTab();
-      queryClient.setQueryData(["config"], { userId: "u_me" });
+      const { user } = await openSettingsTab();
       vi.mocked(api.patchGroup).mockResolvedValue(baseGroup({ name: "Trailblazers" }));
+      // The settings form itself now reads `/config` for the cadence's response-window max
+      // (`docs/design/frontend.md` §14a), so it's an active subscriber — invalidating refetches
+      // it rather than just flagging it stale, which is the more robust thing to assert on.
+      const fetchesBeforeSave = vi.mocked(api.getConfig).mock.calls.length;
 
       await user.clear(screen.getByLabelText("Group name"));
       await user.type(screen.getByLabelText("Group name"), "Trailblazers");
       await user.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => expect(api.patchGroup).toHaveBeenCalled());
-      await waitFor(() => expect(queryClient.getQueryState(["config"])?.isInvalidated).toBe(true));
+      await waitFor(() =>
+        expect(vi.mocked(api.getConfig).mock.calls.length).toBeGreaterThan(fetchesBeforeSave),
+      );
+    });
+
+    it("caps the response window at the deployment's cadence max (weekly: 7 days)", async () => {
+      vi.mocked(api.getConfig).mockResolvedValue({
+        userId: ME.userId,
+        email: ME.email,
+        displayName: ME.displayName,
+        vapidPublicKey: "",
+        groupDefaults: {},
+        cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+        memberships: [],
+      });
+      const { user } = await openSettingsTab();
+
+      const windowInput = screen.getByLabelText("Response window (days)");
+      await user.clear(windowInput);
+      await user.type(windowInput, "10");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("7 days max.")).toBeInTheDocument();
+      expect(api.patchGroup).not.toHaveBeenCalled();
     });
   });
 });

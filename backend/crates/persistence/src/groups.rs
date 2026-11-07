@@ -4,7 +4,8 @@ use crate::batch::batch_get_items;
 use crate::error::{self, RepoError};
 use crate::expr::set_fields;
 use crate::keys::{
-    attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk, GROUP_META_SK,
+    attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk,
+    GROUP_AWAITING_FIRST_CYCLE_GSI2PK, GROUP_META_SK,
 };
 use crate::query::query_all;
 use crate::repo::Repo;
@@ -12,6 +13,58 @@ use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Delete, TransactWr
 use domain::{CycleSettings, Group, GroupId, GroupMembership, NotificationSettings, Role, UserId};
 use serde_dynamo::{from_item, to_attribute_value, to_item};
 use std::collections::HashMap;
+
+/// `docs/design/lifecycle.md` §4.2 — every group whose META row still
+/// carries [`GROUP_AWAITING_FIRST_CYCLE_GSI2PK`] (the bootstrap/seed scripts'
+/// marker for a group that has no cycle yet). GSI2's projection is `ALL`, so
+/// this reads full `Group` items, but only `group_id` is needed here.
+pub async fn list_groups_awaiting_first_cycle(repo: &Repo) -> Result<Vec<GroupId>, RepoError> {
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_values(
+            ":pk",
+            AttributeValue::S(GROUP_AWAITING_FIRST_CYCLE_GSI2PK.into()),
+        );
+    query_all(request)
+        .await?
+        .into_iter()
+        .map(|item| match item.get("group_id") {
+            Some(AttributeValue::S(id)) => Ok(GroupId::new(id)),
+            _ => Err(RepoError::Serde(
+                "a group awaiting its first cycle has no group_id".into(),
+            )),
+        })
+        .collect()
+}
+
+/// Clears a group's "awaiting first cycle" marker without creating a cycle —
+/// for a marked group that, on inspection, already has a `voting` or `open`
+/// cycle. Conditioned on the marker still being present, so a concurrent tick
+/// clearing it (or creating the first cycle, which clears it too) is a lost
+/// race, not a failure.
+pub async fn clear_awaiting_first_cycle_marker(
+    repo: &Repo,
+    group_id: &GroupId,
+) -> Result<(), RepoError> {
+    repo.client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(GROUP_META_SK.into()))
+        .update_expression("REMOVE #g2pk, #g2sk")
+        .condition_expression("attribute_exists(#g2pk)")
+        .expression_attribute_names("#g2pk", attr::GSI2PK)
+        .expression_attribute_names("#g2sk", attr::GSI2SK)
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
+}
 
 /// AP4 — Get group meta.
 pub async fn get_group(repo: &Repo, group_id: &GroupId) -> Result<Option<Group>, RepoError> {

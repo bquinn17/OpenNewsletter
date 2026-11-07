@@ -18,6 +18,7 @@ async fn main() -> Result<(), Error> {
 
     let avatar_deleter =
         MediaDeleter::from_env(&aws_config, "AVATARS_ORIGINALS_BUCKET", "PROCESSED_BUCKET")?;
+    let cadence = shared::cycle_time::CycleCadence::from_env()?;
 
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
@@ -25,6 +26,7 @@ async fn main() -> Result<(), Error> {
         vapid_public_key: std::env::var("VAPID_PUBLIC_KEY").unwrap_or_default(),
         media_urls: MediaUrls::from_env(&aws_config)?,
         avatar_deleter,
+        cadence,
     });
 
     lambda_http::run(service_fn(move |req| {

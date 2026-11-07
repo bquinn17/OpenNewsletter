@@ -4,7 +4,7 @@ import {
   fail,
   groups,
   hasOtherAdmin,
-  newsletters,
+  MOCK_CYCLE_CADENCE,
   NO_MOCK_ROUTE,
   validationFailed,
   type MockRequest,
@@ -22,7 +22,6 @@ type S = components["schemas"];
 const MIN_QUESTIONS_PER_CYCLE = 1;
 const MAX_QUESTIONS_PER_CYCLE = 20;
 const MIN_RESPONSE_WINDOW_DAYS = 1;
-const MAX_RESPONSE_WINDOW_DAYS = 28;
 const MAX_REMINDER_OFFSET_HOURS = 168;
 const MAX_DISPLAY_NAME_CHARS = 40;
 const INVITE_MAX_TTL_DAYS = 90;
@@ -179,13 +178,18 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
         `questionsPerCycle must be between ${MIN_QUESTIONS_PER_CYCLE} and ${MAX_QUESTIONS_PER_CYCLE}`,
       );
     }
+    // Read at call time, not module load: `MOCK_CYCLE_CADENCE` and this module
+    // sit in an import cycle through `client.ts` (mock-mode routing) and
+    // `mockTransport.ts`, so a module-level read here can observe it before
+    // `mockShared.ts` finishes initializing.
+    const maxResponseWindowDays = MOCK_CYCLE_CADENCE.maxResponseWindowDays;
     if (
       next.responseWindowDays < MIN_RESPONSE_WINDOW_DAYS ||
-      next.responseWindowDays > MAX_RESPONSE_WINDOW_DAYS
+      next.responseWindowDays > maxResponseWindowDays
     ) {
       validationFailed(
         "responseWindowDays",
-        `responseWindowDays must be between ${MIN_RESPONSE_WINDOW_DAYS} and ${MAX_RESPONSE_WINDOW_DAYS}`,
+        `responseWindowDays must be between ${MIN_RESPONSE_WINDOW_DAYS} and ${maxResponseWindowDays}`,
       );
     }
     if (next.votesPerUserPerCycle < 1 || next.votesPerUserPerCycle > next.questionsPerCycle) {
@@ -219,23 +223,6 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
     notificationSettings = next;
   }
 
-  // D10 (`docs/design/lifecycle.md` §6): a window change moves the open
-  // cycle's close, but only to an instant still in the future — else 422.
-  const openCycle = newsletters[groupId]?.find((n) => n.status === "open");
-  let openCycleCloseAt: string | null = null;
-  if (openCycle && cycleSettings.responseWindowDays !== group.cycleSettings.responseWindowDays) {
-    const closeMs =
-      new Date(openCycle.responseOpenAt).getTime() + cycleSettings.responseWindowDays * DAY_MS;
-    if (closeMs <= Date.now()) {
-      validationFailed(
-        "responseWindowDays",
-        `responseWindowDays ${cycleSettings.responseWindowDays} would close the open cycle in the past`,
-        "CLOSES_IN_PAST",
-      );
-    }
-    openCycleCloseAt = new Date(closeMs).toISOString();
-  }
-
   if (request.memberSoftCap !== undefined) {
     if (request.memberSoftCap < group.memberCount) {
       validationFailed(
@@ -251,7 +238,6 @@ function handlePatchGroup(groupId: string, body: unknown): S["GroupResponse"] {
   group.cycleSettings = cycleSettings;
   group.notificationSettings = notificationSettings;
   if (request.memberSoftCap !== undefined) group.memberSoftCap = request.memberSoftCap;
-  if (openCycle && openCycleCloseAt) openCycle.responseCloseAt = openCycleCloseAt;
 
   return { ...group, members: [...group.members] };
 }

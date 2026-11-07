@@ -121,7 +121,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update group settings. Admin only. A `responseWindowDays` change applies to the current cycles (`docs/design/lifecycle.md` §6): the `voting` cycle is rescheduled, and an `open` cycle's close moves to `responseOpenAt + days` if that is still in the future, else the request is refused with a 422 whose field error is `responseWindowDays` with code `CLOSES_IN_PAST`, and nothing changes. */
+        /** Update group settings. Admin only. A `timezone`/`responseWindowDays` change (`docs/design/lifecycle.md` §6) never reschedules or moves any existing cycle — the group's current `voting` and `open` cycles keep their dates. Only a cycle created after the change (the next cycle the tick creates) reads the new settings. */
         patch: operations["patchGroup"];
         trace?: never;
     };
@@ -584,10 +584,10 @@ export interface components {
             message: string;
         };
         /**
-         * @description Why the field failed. `INVALID` covers almost everything, and `message` says what's wrong. `CLOSES_IN_PAST`: a `responseWindowDays` change would close the group's open cycle in the past. Clients should treat an unknown code as `INVALID`.
+         * @description Why the field failed. `INVALID` covers almost everything today, and `message` says what's wrong. A more specific code may be added later for a reason a client must react to programmatically; clients should treat an unknown code as `INVALID`.
          * @enum {string}
          */
-        FieldErrorCode: "INVALID" | "CLOSES_IN_PAST";
+        FieldErrorCode: "INVALID";
         ProblemDetails: {
             /** Format: uri */
             type: string;
@@ -613,7 +613,15 @@ export interface components {
             displayName: string | null;
             vapidPublicKey: string;
             groupDefaults: Record<string, never>;
+            cycleCadence: components["schemas"]["CycleCadence"];
             memberships: components["schemas"]["MembershipSummary"][];
+        };
+        /** @description How often this deployment runs a cycle (`docs/design/lifecycle.md` §13). Set per deployment, not per group. The SPA labels editions by month when `monthly` and by publication date when `weekly`. */
+        CycleCadence: {
+            /** @enum {string} */
+            frequency: "monthly" | "weekly";
+            /** @description Upper bound on `cycleSettings.responseWindowDays` for this cadence: 28 when monthly, 7 when weekly, so a window never outlasts its period. */
+            maxResponseWindowDays: number;
         };
         UserResponse: {
             userId: string;
@@ -1256,7 +1264,10 @@ export interface components {
         GroupIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
         UserIdPath: string;
-        /** @example 202606 */
+        /**
+         * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+         * @example 202606
+         */
         CycleIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
         QuestionIdPath: string;
@@ -1317,6 +1328,10 @@ export interface operations {
                      *       "displayName": "Quinn",
                      *       "vapidPublicKey": "BPV_example_vapid_public_key",
                      *       "groupDefaults": {},
+                     *       "cycleCadence": {
+                     *         "frequency": "monthly",
+                     *         "maxResponseWindowDays": 28
+                     *       },
                      *       "memberships": []
                      *     }
                      */
@@ -1711,14 +1726,14 @@ export interface operations {
                      *       "type": "https://api.opennewsletter.example.com/errors/validation-failed",
                      *       "title": "Validation failed",
                      *       "status": 422,
-                     *       "detail": "responseWindowDays 2 would close the open cycle in the past",
+                     *       "detail": "responseWindowDays must be between 1 and 28",
                      *       "code": "VALIDATION_FAILED",
                      *       "correlationId": "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
                      *       "fieldErrors": [
                      *         {
                      *           "field": "responseWindowDays",
-                     *           "code": "CLOSES_IN_PAST",
-                     *           "message": "responseWindowDays 2 would close the open cycle in the past"
+                     *           "code": "INVALID",
+                     *           "message": "responseWindowDays must be between 1 and 28"
                      *         }
                      *       ]
                      *     }
@@ -1857,7 +1872,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
             };
             cookie?: never;
@@ -2175,7 +2193,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2239,7 +2260,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2290,7 +2314,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2353,7 +2380,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2386,7 +2416,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2443,7 +2476,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2495,7 +2531,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];
@@ -2548,7 +2587,10 @@ export interface operations {
             path: {
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
                 groupId: components["parameters"]["GroupIdPath"];
-                /** @example 202606 */
+                /**
+                 * @description Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a weekly one (`docs/design/lifecycle.md` §13).
+                 * @example 202606
+                 */
                 cycleId: components["parameters"]["CycleIdPath"];
                 /** @example 018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f */
                 questionId: components["parameters"]["QuestionIdPath"];

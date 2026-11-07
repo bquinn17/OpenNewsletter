@@ -72,6 +72,9 @@ paths:
                 displayName: "Quinn"
                 vapidPublicKey: "BPV_example_vapid_public_key"
                 groupDefaults: {}
+                cycleCadence:
+                  frequency: monthly
+                  maxResponseWindowDays: 28
                 memberships: []
         "401":
           $ref: "#/components/responses/Unauthenticated"
@@ -310,12 +313,11 @@ paths:
       operationId: patchGroup
       tags: [groups]
       summary: >
-        Update group settings. Admin only. A `responseWindowDays` change applies
-        to the current cycles (`docs/design/lifecycle.md` §6): the `voting`
-        cycle is rescheduled, and an `open` cycle's close moves to
-        `responseOpenAt + days` if that is still in the future, else the request
-        is refused with a 422 whose field error is `responseWindowDays` with
-        code `CLOSES_IN_PAST`, and nothing changes.
+        Update group settings. Admin only. A `timezone`/`responseWindowDays`
+        change (`docs/design/lifecycle.md` §6) never reschedules or moves any
+        existing cycle — the group's current `voting` and `open` cycles keep
+        their dates. Only a cycle created after the change (the next cycle the
+        tick creates) reads the new settings.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
       requestBody:
@@ -372,13 +374,13 @@ paths:
                 type: "https://api.opennewsletter.example.com/errors/validation-failed"
                 title: "Validation failed"
                 status: 422
-                detail: "responseWindowDays 2 would close the open cycle in the past"
+                detail: "responseWindowDays must be between 1 and 28"
                 code: "VALIDATION_FAILED"
                 correlationId: "01952f3e-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
                 fieldErrors:
                   - field: "responseWindowDays"
-                    code: "CLOSES_IN_PAST"
-                    message: "responseWindowDays 2 would close the open cycle in the past"
+                    code: "INVALID"
+                    message: "responseWindowDays must be between 1 and 28"
 
   /groups/{groupId}/members/{userId}:
     delete:
@@ -1695,6 +1697,9 @@ components:
       name: cycleId
       in: path
       required: true
+      description: >
+        Opaque to clients. `yyyymm` on a monthly deployment, `yyyymmdd` on a
+        weekly one (`docs/design/lifecycle.md` §13).
       schema:
         type: string
       example: "202606"
@@ -1938,12 +1943,12 @@ components:
 
     FieldErrorCode:
       description: >-
-        Why the field failed. `INVALID` covers almost everything, and `message`
-        says what's wrong. `CLOSES_IN_PAST`: a `responseWindowDays` change would
-        close the group's open cycle in the past. Clients should treat an
-        unknown code as `INVALID`.
+        Why the field failed. `INVALID` covers almost everything today, and
+        `message` says what's wrong. A more specific code may be added later
+        for a reason a client must react to programmatically; clients should
+        treat an unknown code as `INVALID`.
       type: string
-      enum: [INVALID, CLOSES_IN_PAST]
+      enum: [INVALID]
 
     ProblemDetails:
       type: object
@@ -1988,7 +1993,7 @@ components:
 
     ConfigResponse:
       type: object
-      required: [userId, email, displayName, vapidPublicKey, groupDefaults, memberships]
+      required: [userId, email, displayName, vapidPublicKey, groupDefaults, cycleCadence, memberships]
       properties:
         userId:
           type: [string, "null"]
@@ -2000,10 +2005,29 @@ components:
           type: string
         groupDefaults:
           type: object
+        cycleCadence:
+          $ref: "#/components/schemas/CycleCadence"
         memberships:
           type: array
           items:
             $ref: "#/components/schemas/MembershipSummary"
+
+    CycleCadence:
+      type: object
+      description: >
+        How often this deployment runs a cycle (`docs/design/lifecycle.md` §13).
+        Set per deployment, not per group. The SPA labels editions by month
+        when `monthly` and by publication date when `weekly`.
+      required: [frequency, maxResponseWindowDays]
+      properties:
+        frequency:
+          type: string
+          enum: [monthly, weekly]
+        maxResponseWindowDays:
+          type: integer
+          description: >
+            Upper bound on `cycleSettings.responseWindowDays` for this cadence:
+            28 when monthly, 7 when weekly, so a window never outlasts its period.
 
     UserResponse:
       type: object

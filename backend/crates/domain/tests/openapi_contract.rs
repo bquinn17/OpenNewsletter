@@ -574,7 +574,8 @@ const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
 fn load_spec() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../shared/openapi.yaml");
     let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-    serde_yaml::from_str(&content).unwrap_or_else(|e| panic!("failed to parse {path} as YAML: {e}"))
+    serde_saphyr::from_str(&content)
+        .unwrap_or_else(|e| panic!("failed to parse {path} as YAML: {e}"))
 }
 
 /// Follows a single `$ref` (this spec only uses local, one-level refs into

@@ -209,6 +209,45 @@ async fn vote_cap_is_enforced() {
     assert_eq!(second.code, ApiErrorCode::VoteCapReached);
 }
 
+/// The cap is the one the cycle was created with: raising the group's
+/// `votesPerUserPerCycle` afterwards only reaches later cycles
+/// (`docs/design/lifecycle.md` §6).
+#[tokio::test]
+async fn vote_cap_comes_from_the_cycle_not_the_groups_current_setting() {
+    let (_c, repo) = common::make_repo().await;
+    let mut group = common::group("gvs", "u1");
+    group.cycle_settings.votes_per_user_per_cycle = 3;
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    let mut voting = common::voting_newsletter("gvs", "202606");
+    voting.votes_per_user_per_cycle = Some(1);
+    newsletters::write_status_transition(&repo, &voting)
+        .await
+        .unwrap();
+    questions::put_candidate(&repo, &common::candidate("gvs", "202606", "q1", "u2", 0))
+        .await
+        .unwrap();
+    questions::put_candidate(&repo, &common::candidate("gvs", "202606", "q2", "u2", 0))
+        .await
+        .unwrap();
+
+    let state = state(repo);
+    let caller = UserId::new("u1");
+    let group_id = GroupId::new("gvs");
+
+    let listed = handlers::list_candidates(&state, &caller, &group_id, Sort::Top, 20, None)
+        .await
+        .unwrap();
+    assert_eq!(listed.votes_per_user_per_cycle, 1);
+
+    handlers::cast_vote(&state, &caller, &group_id, &QuestionId::new("q1"))
+        .await
+        .expect("first vote is within the cycle's cap");
+    let second = handlers::cast_vote(&state, &caller, &group_id, &QuestionId::new("q2"))
+        .await
+        .expect_err("the cycle's cap of 1 applies, not the group's 3");
+    assert_eq!(second.code, ApiErrorCode::VoteCapReached);
+}
+
 #[tokio::test]
 async fn casting_the_same_vote_twice_is_idempotent() {
     let (_c, repo) = common::make_repo().await;

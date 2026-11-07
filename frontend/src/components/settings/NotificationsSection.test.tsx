@@ -56,6 +56,7 @@ function baseConfig(overrides: Partial<S["ConfigResponse"]> = {}): S["ConfigResp
     displayName: "Sam",
     vapidPublicKey: "AAEC",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [],
     ...overrides,
   };

@@ -4,17 +4,17 @@
 use crate::error::{self, RepoError};
 use crate::keys::{
     attr, group_pk, index, key_timestamp, newsletter_gsi2pk, newsletter_gsi2sk,
-    newsletter_gsi2sk_sentinel, newsletter_sk, TICK_CYCLE_SK, TICK_PK,
+    newsletter_gsi2sk_sentinel, newsletter_sk, GROUP_META_SK, TICK_CYCLE_SK, TICK_PK,
 };
 use crate::query::query_all;
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
+use aws_sdk_dynamodb::types::{AttributeValue, Put, ReturnValue, TransactWriteItem, Update};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
-use chrono_tz::Tz;
-use domain::{CycleId, GroupId, Newsletter, NewsletterStatus};
+use domain::{CycleId, CycleSettings, GroupId, Newsletter, NewsletterStatus};
 use serde_dynamo::{from_item, to_item};
+use shared::cycle_time::CycleSchedule;
 use std::collections::{HashMap, HashSet};
 
 /// AP7 — list newsletters in a group, newest first.
@@ -206,25 +206,6 @@ pub async fn write_status_transition(repo: &Repo, nl: &Newsletter) -> Result<(),
     Ok(())
 }
 
-/// Rewrite a `voting` cycle's schedule (`docs/design/lifecycle.md` §6, a settings change), as
-/// [`write_status_transition`] does but conditioned on the row still being
-/// `voting`. A tick that promoted it in the meantime would otherwise be
-/// undone by this copy read before the promotion; that lost race is
-/// `RepoError::ConditionalCheckFailed`.
-pub async fn reschedule_voting_cycle(repo: &Repo, nl: &Newsletter) -> Result<(), RepoError> {
-    repo.client
-        .put_item()
-        .table_name(&repo.table)
-        .set_item(Some(newsletter_item(nl)?))
-        .condition_expression("#s = :voting")
-        .expression_attribute_names("#s", "status")
-        .expression_attribute_values(":voting", AttributeValue::S("voting".into()))
-        .send()
-        .await
-        .map_err(error::from_put_item_error)?;
-    Ok(())
-}
-
 fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, RepoError> {
     let mut item: HashMap<String, AttributeValue> = to_item(nl)?;
     item.insert(attr::PK.into(), AttributeValue::S(group_pk(&nl.group_id)));
@@ -243,46 +224,6 @@ fn newsletter_item(nl: &Newsletter) -> Result<HashMap<String, AttributeValue>, R
     item.insert(attr::GSI2SK.into(), AttributeValue::S(gsi2sk));
     item.insert(attr::ENTITY.into(), AttributeValue::S("Newsletter".into()));
     Ok(item)
-}
-
-/// Move an `open` cycle's close (`docs/design/lifecycle.md` §6, `responseWindowDays` applied to the
-/// current cycle): `response_close_at`, `next_transition_at` (which equals it
-/// while open) and the GSI2 sort key change together. Conditioned on the row
-/// still being `open` and its current close still in the future, so neither a
-/// tick that published it in the meantime is undone nor a window that has
-/// already closed reopens; either lost race is
-/// `RepoError::ConditionalCheckFailed`.
-pub async fn reschedule_open_cycle_close(
-    repo: &Repo,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    new_close: DateTime<Utc>,
-) -> Result<(), RepoError> {
-    let close_av = serde_dynamo::to_attribute_value(new_close)?;
-    let now = Utc::now();
-    repo.client
-        .update_item()
-        .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
-        .key(attr::SK, AttributeValue::S(newsletter_sk(cycle_id)))
-        .update_expression(
-            "SET response_close_at = :close, next_transition_at = :close, #g2sk = :g2sk",
-        )
-        // Same comparison as `save_response`'s cycle check.
-        .condition_expression("#s = :open AND response_close_at > :now")
-        .expression_attribute_names("#s", "status")
-        .expression_attribute_names("#g2sk", attr::GSI2SK)
-        .expression_attribute_values(":close", close_av)
-        .expression_attribute_values(":now", AttributeValue::S(key_timestamp(now)))
-        .expression_attribute_values(
-            ":g2sk",
-            AttributeValue::S(newsletter_gsi2sk(new_close, group_id, cycle_id)),
-        )
-        .expression_attribute_values(":open", AttributeValue::S("open".into()))
-        .send()
-        .await
-        .map_err(error::from_update_item_error)?;
-    Ok(())
 }
 
 /// §5.3 — record one auto-publish sweep that left drafts unpublished, and
@@ -322,13 +263,17 @@ pub async fn record_failed_sweep(
 /// The group's 3 most-recent `NL#` rows, newest first.
 ///
 /// Invariant this relies on (`docs/design/data-model.md` §3, decided
-/// 2026-10-08): cycle ids are `yyyymm` and a group gains a new cycle only
-/// when the tick creates the month after the one it just opened (§5.4 of
-/// `docs/design/lifecycle.md`). So a group's non-terminal cycles are always its newest rows: the
-/// `voting` cycle (if any) is the newest, the `open` cycle (if any) is the
-/// month before it, and every `published`/`archived` cycle is older still.
-/// Three rows leave one row of slack. [`find_voting_cycle`] and
-/// [`find_open_cycle`] read this fixed-size window instead of the group's
+/// 2026-10-08, extended for weekly cadence §2026-10-29): a group gains a new
+/// cycle only when the tick creates its successor, one at a time (§5.4/§13 of
+/// `docs/design/lifecycle.md`), and `cycleId`s — `yyyymm` under monthly,
+/// `yyyymmdd` under weekly — sort chronologically as plain strings regardless
+/// of which format produced them, because both are left-padded
+/// year/month/[day] fields and a shorter id is always a prefix of any longer
+/// id sharing its leading digits. So a group's non-terminal cycles are always
+/// its newest rows: the `voting` cycle (if any) is the newest, the `open`
+/// cycle (if any) is the one just before it, and every `published`/`archived`
+/// cycle is older still. Three rows leave one row of slack. [`find_voting_cycle`]
+/// and [`find_open_cycle`] read this fixed-size window instead of the group's
 /// entire history.
 async fn recent_newsletters(repo: &Repo, group_id: &GroupId) -> Result<Vec<Newsletter>, RepoError> {
     let resp = repo
@@ -442,20 +387,16 @@ fn decode_cursor(raw: &str) -> Result<CycleId, RepoError> {
     Ok(CycleId::new(cycle_id))
 }
 
-/// §5.4 — put-if-not-exists the next `voting` cycle after `after`, per the
-/// default-schedule formula in `shared::cycle_time`. Returns the newsletter
-/// that now exists — either the one this call just created, or (when
-/// `RepoError::ConditionalCheckFailed`, i.e. a concurrent tick already won the
-/// race) the caller should treat that as a no-op, not a failure (§8).
-pub async fn create_next_voting_cycle(
-    repo: &Repo,
+/// A new `voting` cycle per `schedule` (§4.2): voting is open from now until
+/// `responseOpenAt`, which is also when the tick next acts on it. `settings`
+/// is the group's current cycle settings, whose question and vote counts the
+/// cycle keeps for its whole life (§6).
+fn new_voting_cycle(
     group_id: &GroupId,
-    tz: Tz,
-    response_window_days: u32,
-    after: DateTime<Utc>,
-) -> Result<Newsletter, RepoError> {
-    let schedule = shared::cycle_time::next_cycle_schedule(after, tz, response_window_days);
-    let nl = Newsletter {
+    schedule: CycleSchedule,
+    settings: &CycleSettings,
+) -> Newsletter {
+    Newsletter {
         group_id: group_id.clone(),
         cycle_id: schedule.cycle_id,
         status: NewsletterStatus::Voting,
@@ -468,27 +409,26 @@ pub async fn create_next_voting_cycle(
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
-    };
+        questions_per_cycle: Some(settings.questions_per_cycle),
+        votes_per_user_per_cycle: Some(settings.votes_per_user_per_cycle),
+    }
+}
 
-    let mut item: HashMap<String, AttributeValue> = to_item(&nl)?;
-    item.insert(attr::PK.into(), AttributeValue::S(group_pk(group_id)));
-    item.insert(
-        attr::SK.into(),
-        AttributeValue::S(newsletter_sk(&nl.cycle_id)),
-    );
-    item.insert(
-        attr::GSI2PK.into(),
-        AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Voting)),
-    );
-    item.insert(
-        attr::GSI2SK.into(),
-        AttributeValue::S(newsletter_gsi2sk(
-            nl.response_open_at,
-            group_id,
-            &nl.cycle_id,
-        )),
-    );
-    item.insert(attr::ENTITY.into(), AttributeValue::S("Newsletter".into()));
+/// §5.4/§13 — put-if-not-exists the next `voting` cycle per `schedule`, which
+/// the caller computes via `shared::cycle_time::successor_schedule` (a
+/// cycle's successor) or `next_cycle_schedule` (a group's very first cycle).
+/// Returns the newsletter that now exists — either the one this call just
+/// created, or (when `RepoError::ConditionalCheckFailed`, i.e. a concurrent
+/// tick already won the race) the caller should treat that as a no-op, not a
+/// failure (§8).
+pub async fn create_next_voting_cycle(
+    repo: &Repo,
+    group_id: &GroupId,
+    schedule: CycleSchedule,
+    settings: &CycleSettings,
+) -> Result<Newsletter, RepoError> {
+    let nl = new_voting_cycle(group_id, schedule, settings);
+    let item = newsletter_item(&nl)?;
 
     repo.client
         .put_item()
@@ -499,6 +439,55 @@ pub async fn create_next_voting_cycle(
         .send()
         .await
         .map_err(error::from_put_item_error)?;
+    Ok(nl)
+}
+
+/// §4.2 — a group's very first cycle, created by `lambda-cycle-tick`'s
+/// first-cycle pass for a group the bootstrap/seed scripts left "awaiting
+/// first cycle" (`persistence::groups::list_groups_awaiting_first_cycle`).
+/// One `TransactWriteItems` both puts the `voting` Newsletter — exactly as
+/// [`create_next_voting_cycle`] does, conditioned on
+/// `attribute_not_exists(pk)` — and clears the group META row's
+/// `GROUP_AWAITING_FIRST_CYCLE_GSI2PK` marker, conditioned on it still being
+/// present, so the two can never partially apply. A lost race (a concurrent
+/// tick already created the cycle, or already cleared the marker) is
+/// `RepoError::TransactionCancelled`, which [`RepoError::is_lost_race`]
+/// covers.
+pub async fn create_first_voting_cycle(
+    repo: &Repo,
+    group_id: &GroupId,
+    schedule: CycleSchedule,
+    settings: &CycleSettings,
+) -> Result<Newsletter, RepoError> {
+    let nl = new_voting_cycle(group_id, schedule, settings);
+    let item = newsletter_item(&nl)?;
+
+    let put_cycle = Put::builder()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .condition_expression("attribute_not_exists(#pk)")
+        .expression_attribute_names("#pk", attr::PK)
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    let clear_marker = Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(group_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(GROUP_META_SK.into()))
+        .update_expression("REMOVE #g2pk, #g2sk")
+        .condition_expression("attribute_exists(#g2pk)")
+        .expression_attribute_names("#g2pk", attr::GSI2PK)
+        .expression_attribute_names("#g2sk", attr::GSI2SK)
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    repo.client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().put(put_cycle).build())
+        .transact_items(TransactWriteItem::builder().update(clear_marker).build())
+        .send()
+        .await
+        .map_err(error::from_transact_write_error)?;
     Ok(nl)
 }
 
