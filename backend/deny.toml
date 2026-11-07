@@ -10,30 +10,6 @@ feature-depth = 1
 
 # This section is considered when running `cargo deny check advisories`.
 [advisories]
-ignore = [
-    # Dev-only: both reached via `bollard`, the Docker client `testcontainers`
-    # uses to start DynamoDB Local for integration tests. Neither ships in a
-    # Lambda artifact. `tokio-tar`'s flaw is in parsing attacker-supplied tar
-    # files; the only tar content ours ever reads is the pinned, trusted
-    # `amazon/dynamodb-local` image layer.
-    { id = "RUSTSEC-2025-0111", reason = "tokio-tar has no maintained fix; reached only via bollard/testcontainers (dev-only), never parses untrusted tar input" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is unmaintained with no drop-in fix yet adopted by bollard; reached only via bollard/testcontainers (dev-only)" },
-
-    # Not a vulnerability — `paste` (a proc-macro crate) is archived/
-    # unmaintained upstream with no safe-upgrade alternative yet adopted by
-    # its dependents (`pulp`/`rav1e`, both pulled in transitively by
-    # `image`'s AVIF support). No known advisory beyond "unmaintained".
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained (no vulnerability); pulled in transitively via image's AVIF support (pulp/rav1e), no fix adopted upstream yet" },
-
-    # Not a vulnerability — `unsafe-libyaml` (the C2Rust translation of
-    # libyaml used by `serde_yaml`) is archived/unmaintained upstream. The
-    # maintained fork, `serde_yaml_ng`, still depends on the same
-    # `unsafe-libyaml` crate internally, so switching to it would not remove
-    # this advisory. `domain`'s dependency on `serde_yaml` is a dev-only
-    # test-dependency (`tests/openapi_contract.rs` parses `shared/openapi.yaml`
-    # into `serde_json::Value`), never part of a deployed Lambda artifact.
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (no vulnerability); reached only via serde_yaml, a dev-only test-dependency of domain used to parse shared/openapi.yaml, never shipped in a Lambda" },
-]
 
 # This section is considered when running `cargo deny check licenses`.
 [licenses]

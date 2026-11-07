@@ -29,6 +29,4 @@ tracing.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 persistence = { path = "../persistence", features = ["test-utils"] }
-testcontainers.workspace = true
-testcontainers-modules.workspace = true
 serde_dynamo.workspace = true

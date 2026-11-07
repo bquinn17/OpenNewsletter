@@ -13,26 +13,26 @@ The rest of the documentation is indexed in [`docs/README.md`](docs/README.md): 
 
 ## Running the Rust tests (read this before `cargo test`)
 
-The `persistence` integration tests start a DynamoDB Local container via `testcontainers`, so they need a reachable Docker daemon whose socket is *not* `/var/run/docker.sock`. The repo is developed on two machines with different setups — **check `uname` to see which one you're on**. Agent shells are non-login and non-interactive, so they don't read shell profiles: **every** test command must set `PATH`/`DOCKER_HOST` inline.
+The integration tests share one DynamoDB Local at `http://127.0.0.1:8000` (override with `DYNAMODB_LOCAL_ENDPOINT`); each test creates and deletes its own table in it. **Start it before `cargo test`** with `make dynamodb-local` from the repo root, which needs Docker. It keeps running until `make dynamodb-local-stop`. The repo is developed on two machines with different setups — **check `uname` to see which one you're on**. Agent shells are non-login and non-interactive, so they don't read shell profiles: **every** command must set `PATH`/`DOCKER_HOST` inline.
 
 **macOS (Apple Silicon)** — Rust via rustup (`~/.cargo/bin`), Docker via Colima, Python 3.12 via Homebrew, Node 24 via nvm (pinned in `.nvmrc`):
 
 ```bash
-export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH" DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH" && make dynamodb-local && cd backend && gtimeout 1800 cargo test --workspace 2>&1
 ```
 
-macOS has no `timeout`; use `gtimeout` (Homebrew `coreutils`). If `docker info` fails, the Colima VM is stopped: `colima start`.
+macOS has no `timeout`; use `gtimeout` (Homebrew `coreutils`). If `docker info` fails, the Colima VM is stopped: `colima start`. Colima uses CPU while it runs, so stop it (`make dynamodb-local-stop && colima stop`) when you're done, if it wasn't running before.
 
-**Windows (WSL2, Ubuntu 20.04)** — Docker runs rootless under WSL2:
+**Windows (WSL2, Ubuntu 20.04)** — Docker runs rootless under WSL2, so the `docker` CLI needs `DOCKER_HOST`:
 
 ```bash
-export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
+export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && make dynamodb-local && cd backend && timeout 1800 cargo test --workspace 2>&1
 ```
 
 Notes:
 - Env vars do not persist between tool calls — repeat the `export` in each command, don't run it once on its own.
-- Always wrap in `timeout` (the suite pulls an image on a cold cache and can otherwise hang).
-- Sanity-check the daemon first with the same exports plus `docker info | grep "Server Version"`. `SocketNotFoundError` panics from `tests/common/mod.rs` mean the daemon is down or `DOCKER_HOST` is wrong, not that the tests are broken.
+- Always wrap in `timeout`, so a hung run can't block forever.
+- A `DynamoDB Local isn't answering at …` panic means the container isn't running (or Docker isn't), not that the tests are broken. `cargo test -p domain` and `cargo test --lib` need neither.
 
 **Frontend checks** (from `frontend/`; no Docker needed; on macOS prefix the nvm loader below):
 

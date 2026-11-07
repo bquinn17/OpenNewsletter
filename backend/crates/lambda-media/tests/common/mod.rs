@@ -1,5 +1,5 @@
 //! Shared test setup for `lambda-media` integration tests. Reuses
-//! `persistence`'s DDB-local container/table setup via the `test-utils`
+//! `persistence`'s DDB-local table setup via the `test-utils`
 //! feature rather than duplicating it.
 #![allow(dead_code, unused_imports)]
 
@@ -18,10 +18,7 @@ use std::sync::Arc;
 
 pub use test_factories::{candidate, group, locked_question, membership, user, vote};
 
-pub async fn make_repo() -> (
-    testcontainers::ContainerAsync<testcontainers_modules::dynamodb_local::DynamoDb>,
-    Repo,
-) {
+pub async fn make_repo() -> (persistence::test_factories::TestTable, Repo) {
     test_factories::make_test_repo().await
 }
 

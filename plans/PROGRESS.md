@@ -18,7 +18,7 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30; review fixes 2026-11-03) | ✅ code-complete; reaches dev with the merge's auto-deploy, then needs `make seed` and one `POST /admin/dev/tick/cycle` (or a 5-minute wait) to start weekly ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group), §13.2) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-11-03):** backend 532 (`cargo test --workspace`), CDK 174 (`pytest infra/tests`), Vitest 404, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+**Test baselines (2026-11-07):** backend 532 (`cargo test --workspace`, against `make dynamodb-local`), CDK 174 (`pytest infra/tests`), Vitest 404, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 
@@ -96,7 +96,6 @@ Backend and ops:
 - `lambda-cycle-tick` needs `#![recursion_limit = "256"]`. If it creeps up, box the dispatch futures.
 - The account-level Lambda error alarm also counts dev's errors (one account, [`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
 - `CiStack` deploys with every `--all`, including `make deploy-dev`. It's account-wide and idempotent.
-- `cargo deny` still ignores one advisory with no upstream fix (`tokio-tar`, test-only via testcontainers) and three unmaintained-crate notices (`rustls-pemfile`, `paste`, `unsafe-libyaml`). Re-check after dependency bumps.
 
 Testing:
 - `make seed` resets the bootstrap admin's password to a new random one on every run, so `E2E_USERNAME`/`E2E_PASSWORD` for the `dev` E2E project can't be the seeded admin. Use a separate Cognito user, or seed with `--admin-password` taken from the same secret.

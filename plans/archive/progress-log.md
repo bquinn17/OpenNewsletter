@@ -1308,3 +1308,17 @@ A code review of the cadence branch found nine issues; the owner settled each on
 **Not changed (owner's call).** A 7-day weekly window still gives two `open` rows for one tick at the handover; the newer one is only open for voting, so it's left as is. The Python and Rust weekly-start parsers still differ on surrounding whitespace.
 
 **Tests.** Backend 532 (+6), CDK 174 (−7, script scheduling tests removed), Vitest 404 (unchanged; CLOSES_IN_PAST tests replaced by not-loaded-cadence tests).
+
+## Dependency advisories fixed, no ignores (2026-11-07)
+
+CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-utils` unmaintained). The owner asked for every finding to be fixed rather than ignored, so `deny.toml`'s `[advisories]` ignore list is now empty and `cargo deny check` passes.
+
+**What landed.**
+- **`pin-utils`** came from `aws-smithy-http` 0.63. Updating the AWS SDK crates (`aws-sdk-dynamodb` 1.137 and the rest, `cargo update`) moves to `aws-smithy-http` 0.64, which dropped it.
+- **`paste`** (RUSTSEC-2024-0436) came from `image`'s default AVIF and EXR codecs. `lambda-image-process` now enables only the codecs it decodes: GIF, JPEG, PNG, WebP.
+- **`unsafe-libyaml`** (RUSTSEC-2024-0449) came from `serde_yaml`, a dev-dependency of `domain` for the OpenAPI contract test. Replaced with `serde-saphyr`, a pure-Rust parser.
+- **`tokio-tar`, `rustls-pemfile`** (RUSTSEC-2025-0111, -0134), and **`astral-tokio-tar`** (RUSTSEC-2026-0440, published 2026-11-03) all came from `testcontainers` and its Docker client. Every `testcontainers` release depends on one of the two tar crates, so `testcontainers` is gone (owner's choice). The integration tests now share one in-memory DynamoDB Local (`make dynamodb-local` locally, a `services:` container in `backend-ci`) at `DYNAMODB_LOCAL_ENDPOINT` (default `http://127.0.0.1:8000`). `persistence::test_factories::make_test_repo` creates a uniquely named table per test and returns a `TestTable` guard that deletes it on drop, so call sites (`let (_c, repo) = …`) are unchanged. This also replaces the earlier `testcontainers` `watchdog` and `make clean-test-containers` fix: there are no per-test containers left to leak.
+
+**Effect.** The full suite runs in about 106 s on the Mac with one container, against several minutes and hundreds of container starts before, and leaves no tables behind. `cargo test` no longer needs `DOCKER_HOST` or `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; only `make dynamodb-local` touches Docker. Docs: CLAUDE.md, [`environments.md` §10.1](../../docs/development/environments.md#101-docker-and-dynamodb-local-by-platform), [`testing-and-ci.md` §2.4](../../docs/development/testing-and-ci.md#24-running-locally).
+
+**Tests.** Backend 532 (unchanged), all passing against the shared DynamoDB Local.

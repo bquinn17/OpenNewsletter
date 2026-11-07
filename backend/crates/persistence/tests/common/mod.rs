@@ -1,17 +1,16 @@
 //! Shared helpers for DDB-local integration tests.
 #![allow(dead_code)]
 //!
-//! Each test calls `make_repo()` which starts a fresh DynamoDB-local container
-//! and creates a uniquely-named table. The caller must keep the returned
-//! `ContainerAsync` alive for the duration of the test (prefix it with `_`).
+//! Each test calls `make_repo()`, which creates a uniquely-named table on the
+//! shared DynamoDB Local. The caller must keep the returned
+//! `TestTable` alive for the duration of the test (prefix it with `_`).
 
 use chrono::{Duration, TimeZone, Utc};
 use domain::*;
+use persistence::test_factories::TestTable;
 use persistence::Repo;
-use testcontainers::ContainerAsync;
-use testcontainers_modules::dynamodb_local::DynamoDb;
 
-pub async fn make_repo() -> (ContainerAsync<DynamoDb>, Repo) {
+pub async fn make_repo() -> (TestTable, Repo) {
     persistence::test_factories::make_test_repo().await
 }
 

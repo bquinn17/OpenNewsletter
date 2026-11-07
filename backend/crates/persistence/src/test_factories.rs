@@ -3,59 +3,35 @@
 use chrono::{TimeZone, Utc};
 use domain::*;
 
-/// Starts a fresh DynamoDB Local container and creates a uniquely-named table
-/// shaped like `OpenNewsletter` (base table + `gsi1` + `gsi2`). Mirrors
-/// `persistence/tests/common/mod.rs::make_repo`, exposed here so downstream
-/// crates' integration tests (e.g. `lambda-questions/tests/`) don't duplicate
-/// the table-shape setup. The caller must keep the returned `ContainerAsync`
-/// alive for the duration of the test (prefix it with `_`).
-pub async fn make_test_repo() -> (
-    testcontainers::ContainerAsync<testcontainers_modules::dynamodb_local::DynamoDb>,
-    crate::Repo,
-) {
-    use aws_sdk_dynamodb::{
-        config::{timeout::TimeoutConfig, BehaviorVersion, Credentials, Region},
-        types::{
-            AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType,
-            Projection, ProjectionType, ScalarAttributeType,
-        },
-        Client,
+/// Where the integration tests find DynamoDB Local when
+/// `DYNAMODB_LOCAL_ENDPOINT` is unset: the shared container `make
+/// dynamodb-local` starts (`docs/development/testing-and-ci.md` §2.4).
+pub const DEFAULT_DYNAMODB_LOCAL_ENDPOINT: &str = "http://127.0.0.1:8000";
+
+/// Creates a uniquely-named table shaped like `OpenNewsletter` (base table +
+/// `gsi1` + `gsi2`) on the shared DynamoDB Local at `DYNAMODB_LOCAL_ENDPOINT`.
+/// Mirrors `persistence/tests/common/mod.rs::make_repo`, exposed here so
+/// downstream crates' integration tests (e.g. `lambda-questions/tests/`) don't
+/// duplicate the table-shape setup. The caller must keep the returned
+/// [`TestTable`] alive for the duration of the test (prefix it with `_`); the
+/// table is deleted when it drops.
+pub async fn make_test_repo() -> (TestTable, crate::Repo) {
+    use aws_sdk_dynamodb::types::{
+        AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType,
+        Projection, ProjectionType, ScalarAttributeType,
     };
-    use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::dynamodb_local::DynamoDb;
 
-    // Held until the table exists. Released when this function returns.
-    let _slot = STARTUP_SLOTS
-        .acquire()
-        .await
-        .expect("startup semaphore is never closed");
-    let container = DynamoDb::default()
-        .start()
-        .await
-        .expect("DynamoDB local started");
-    let port = container
-        .get_host_port_ipv4(8000)
-        .await
-        .expect("DDB port available");
-
-    let endpoint = format!("http://localhost:{port}");
-    let creds = Credentials::new("fake", "fake", None, None, "test");
-    let config = aws_sdk_dynamodb::Config::builder()
-        .behavior_version(BehaviorVersion::latest())
-        .endpoint_url(&endpoint)
-        .region(Region::new("us-east-1"))
-        .credentials_provider(creds)
-        // No SDK default: a connection the port forwarder accepts but the
-        // container never answers would otherwise hang the test forever.
-        .timeout_config(
-            TimeoutConfig::builder()
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .operation_attempt_timeout(std::time::Duration::from_secs(10))
-                .build(),
-        )
-        .build();
-    let client = Client::from_conf(config);
-    wait_until_serving(&client).await;
+    let endpoint = std::env::var("DYNAMODB_LOCAL_ENDPOINT")
+        .ok()
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| DEFAULT_DYNAMODB_LOCAL_ENDPOINT.to_owned());
+    let client = local_client(&endpoint);
+    if let Err(e) = client.list_tables().limit(1).send().await {
+        panic!(
+            "DynamoDB Local isn't answering at {endpoint}: start it with `make dynamodb-local`, \
+             or set DYNAMODB_LOCAL_ENDPOINT ({e:?})"
+        );
+    }
 
     let table = format!("test-{}", uuid::Uuid::new_v4());
 
@@ -118,43 +94,71 @@ pub async fn make_test_repo() -> (
         .await
         .expect("create table");
 
-    (container, crate::Repo::new(client, table))
+    let guard = TestTable {
+        endpoint,
+        table: table.clone(),
+    };
+    (guard, crate::Repo::new(client, table))
 }
 
-/// At most this many DynamoDB Local containers start at once per test process.
-/// A test binary runs one test per CPU in parallel, and each test starts its own
-/// container. A burst of simultaneous JVM start-ups starves the Docker VM, so
-/// starts time out or the first request gets a dropped connection. Only
-/// start-up is throttled. Running containers don't count, so tests still run
-/// in parallel. A tokio `Semaphore` isn't tied to one runtime, so it works
-/// across the separate runtimes `#[tokio::test]` creates.
-const MAX_CONCURRENT_STARTUPS: usize = 4;
-static STARTUP_SLOTS: tokio::sync::Semaphore =
-    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_STARTUPS);
+/// One test's table on the shared DynamoDB Local, deleted when this drops
+/// (including when the test panics), so the in-memory database doesn't grow
+/// across runs.
+pub struct TestTable {
+    endpoint: String,
+    table: String,
+}
 
-/// How long [`wait_until_serving`] waits for a new DynamoDB Local container.
-/// Matches the image's own 60s start-up wait.
-const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-const READY_POLL: std::time::Duration = std::time::Duration::from_millis(200);
-
-/// Poll until DynamoDB Local answers a request. `start()` can return before
-/// that. The image's wait condition is a log line printed before the server
-/// listens, and Docker's port forwarding (Colima's especially) accepts TCP
-/// connections before the container is listening. Under load, with many
-/// containers starting at once, the first request then gets a dropped
-/// connection (`DispatchFailure`/`IncompleteMessage`), more than the SDK's
-/// three quick retries can cover.
-async fn wait_until_serving(client: &aws_sdk_dynamodb::Client) {
-    let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
-    loop {
-        match client.list_tables().limit(1).send().await {
-            Ok(_) => return,
-            Err(e) if tokio::time::Instant::now() >= deadline => {
-                panic!("DynamoDB Local not serving after {READY_TIMEOUT:?}: {e:?}")
-            }
-            Err(_) => tokio::time::sleep(READY_POLL).await,
+impl Drop for TestTable {
+    fn drop(&mut self) {
+        let endpoint = std::mem::take(&mut self.endpoint);
+        let table = std::mem::take(&mut self.table);
+        // `drop` runs inside the test's runtime, which can't block on a
+        // future itself. A runtime of its own on another thread can, with a
+        // fresh client, since the test's client keeps connections bound to
+        // the test's runtime.
+        let deleted = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build the table-cleanup runtime");
+            runtime.block_on(async {
+                local_client(&endpoint)
+                    .delete_table()
+                    .table_name(&table)
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{table}: {e:?}"))
+            })
+        })
+        .join();
+        // Best effort: a leftover table only costs memory until DynamoDB
+        // Local restarts, so it never fails the test.
+        if let Ok(Err(e)) = deleted {
+            eprintln!("could not delete test table {e}");
         }
     }
+}
+
+fn local_client(endpoint: &str) -> aws_sdk_dynamodb::Client {
+    use aws_sdk_dynamodb::config::{timeout::TimeoutConfig, BehaviorVersion, Credentials, Region};
+
+    let config = aws_sdk_dynamodb::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .endpoint_url(endpoint)
+        .region(Region::new("us-east-1"))
+        .credentials_provider(Credentials::new("fake", "fake", None, None, "test"))
+        // No SDK default: a port that accepts connections but never answers
+        // would otherwise hang the test forever.
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .operation_attempt_timeout(std::time::Duration::from_secs(10))
+                .build(),
+        )
+        .build();
+    aws_sdk_dynamodb::Client::from_conf(config)
 }
 
 pub fn user(user_id: &str) -> User {

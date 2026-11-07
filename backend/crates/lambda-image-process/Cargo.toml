@@ -32,11 +32,11 @@ aws_lambda_events = { version = "0.15", default-features = false, features = ["s
 # `image`'s own WebP encoder is lossless-only; `webp` wraps libwebp (via
 # libwebp-sys, which vendors libwebp's C source) for quality-controlled lossy
 # encoding (`docs/design/media.md` §5.3, decided semantics: lossy WebP).
-image = "0.25"
+# Only the codecs `process.rs` decodes. The default set adds AVIF and EXR,
+# which pull in the unmaintained `paste` (RUSTSEC-2024-0436).
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 webp = "0.3"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
 persistence = { path = "../persistence", features = ["test-utils"] }
-testcontainers.workspace = true
-testcontainers-modules.workspace = true
