@@ -15,7 +15,7 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
 | — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
 | — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
-| — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30; review fixes 2026-11-03) | ✅ code-complete; reaches dev with the merge's auto-deploy, then needs `make seed` and one `POST /admin/dev/tick/cycle` (or a 5-minute wait) to start weekly ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group), §13.2) |
+| — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30; review fixes 2026-11-03) | ✅ done; live on dev since 2026-11-08 (weekly, reseeded; first cycle `20261108` opens Sun 21:00 New York). Walkthrough §16.2 not yet run ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group), §13.2) |
 | M14 | Production deploy | ⬜ **next** |
 
 **Test baselines (2026-11-07):** backend 532 (`cargo test --workspace`, against `make dynamodb-local`), CDK 174 (`pytest infra/tests`), Vitest 404, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
@@ -58,6 +58,15 @@ These block M14 (and the Facebook checks), not code work or the other dev gates.
      - after the first release pushes its `gh-pages`, point that repo's Pages at `gh-pages` with custom domain `betterloop.site`, and add GitHub's apex `A`/`AAAA` records at Namecheap.
 3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Push a branch so the CI workflows run for real. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
 4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
+5. **Address the frontend design review** ([`docs/frontend_design_review.md`](../docs/frontend_design_review.md), 2026-10-20). None of it is implemented. Its §1 lists real defects, which are worth fixing before M14:
+   - markdown in answers renders unformatted
+   - the palette fails WCAG AA
+   - the Respond page's bottom bar overflows
+   - no safe-area insets or `prefers-reduced-motion` handling
+   - danger dialogs focus the confirm button
+   - the avatar fallback has no background
+
+   After that, follow its §7 order: reading, then motion, then polish. Each step updates [`frontend.md`](../docs/design/frontend.md) in the same change, including the drift its §6 lists. Doesn't block M14.
 
 Workstation setup for either machine: [`environments.md` §0](../docs/development/environments.md#0-workstation-setup).
 

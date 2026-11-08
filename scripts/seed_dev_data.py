@@ -389,11 +389,11 @@ or immediately via: POST /admin/dev/tick/cycle
   Sign in via the /admin/bootstrap-login page (VITE_ENV=dev),
   or use the AWS CLI:
 
-    aws cognito-idp admin-initiate-auth \\
-      --user-pool-id {user_pool_id} \\
+    aws cognito-idp initiate-auth \\
       --client-id {user_pool_bootstrap_client} \\
-      --auth-flow ADMIN_USER_PASSWORD_AUTH \\
-      --auth-parameters USERNAME={args.admin_email},PASSWORD={shown_password}
+      --auth-flow USER_PASSWORD_AUTH \\
+      --auth-parameters USERNAME={args.admin_email},PASSWORD={shown_password} \\
+      --query AuthenticationResult.IdToken --output text
 """
     )
 
