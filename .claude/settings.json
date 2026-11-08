@@ -5,7 +5,8 @@
       "Bash(cargo add *)",
       "Bash(timeout 300 cargo fetch)",
       "Bash(ls ~/.cargo/registry/src/*/ | grep -E \"^lambda_http|^lambda_runtime|^aws_lambda_events\" | head)",
-      "Read(//home/bquinn/.cargo/registry/src/**)"
+      "Read(//home/bquinn/.cargo/registry/src/**)",
+      "Edit(.claude/worktrees/**)"
     ]
   }
 }
