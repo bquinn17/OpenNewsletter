@@ -55,7 +55,7 @@ This wipes the dev table and media buckets, keeps Cognito users, and writes one 
 - reminders at 96, 48 and 24 hours before close, cycle-open notifications on
 - a member soft cap of 50
 - A as its only member and admin
-- one `voting` cycle that opens in about 27 days
+- no cycle yet: the next cycle tick creates the first `voting` cycle at the deployed cadence, within 5 minutes, or at once via `POST /admin/dev/tick/cycle` with no body (§0.5). On weekly dev it opens the coming Sunday at 21:00 group time
 
 `make seed` resets A's password to a new random one on every run and prints it. To keep a fixed password:
 
