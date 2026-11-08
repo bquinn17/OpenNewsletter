@@ -21,6 +21,7 @@ pub mod groups;
 pub mod invites;
 pub mod media;
 pub mod media_status;
+pub mod member_stats;
 pub mod newsletters;
 pub mod push;
 pub mod questions;

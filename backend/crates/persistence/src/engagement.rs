@@ -2,15 +2,21 @@
 
 use crate::error::{self, RepoError};
 use crate::keys::{
-    attr, comment_sk, engagement_pk, reaction_sk, COMMENT_SK_PREFIX, REACTION_SK_PREFIX,
+    attr, comment_sk, engagement_pk, reacted_gsi2pk, reacted_gsi2sk, reaction_sk, response_pk,
+    response_sk, COMMENT_SK_PREFIX, REACTION_SK_PREFIX,
 };
 use crate::media;
+use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
+use aws_sdk_dynamodb::error::SdkError;
+use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem, Update};
 use chrono::{DateTime, Utc};
-use domain::{Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, UserId};
+use domain::{
+    Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId, UserId,
+};
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
 
@@ -186,8 +192,9 @@ pub struct NewComment<'a> {
     pub created_at: DateTime<Utc>,
 }
 
-/// `POST .../comments` (§8.2) — puts the comment row and, if an image is
-/// attached, claims it in the same `TransactWriteItems` (decided M10). A
+/// `POST .../comments` (§8.2) — puts the comment row, bumps the author's
+/// `comments_written` (§2.17, §4 #9) and, if an image is attached, claims it,
+/// all in the same `TransactWriteItems` (the image claim decided M10). A
 /// cancelled transaction (`RepoError::is_lost_race`) means the image lost a
 /// race to another comment — the caller maps that to 422 on `imageMediaId`.
 pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment, RepoError> {
@@ -226,7 +233,17 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
         .set_item(Some(item))
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
-    let mut items = vec![TransactWriteItem::builder().put(put).build()];
+    let bump = member_stats::add_update(
+        repo,
+        new.group_id,
+        new.author_user_id,
+        "comments_written",
+        1,
+    )?;
+    let mut items = vec![
+        TransactWriteItem::builder().put(put).build(),
+        TransactWriteItem::builder().update(bump).build(),
+    ];
 
     if let Some(image_id) = new.image_media_id {
         let attach = media::attach_image_to_comment_update(
@@ -377,26 +394,41 @@ pub async fn update_comment(
 /// `DELETE .../comments/{commentId}` (§8.4) — soft delete. `image_id` is the
 /// image the handler read on the comment (if any), released in the same
 /// transaction. The delete only applies while the comment still holds
-/// exactly that image; a cancelled transaction means an edit changed it (or
-/// another delete already landed) and the handler should re-read and retry.
+/// exactly that image AND isn't already deleted — the latter condition is
+/// what makes a repeated delete decrement `comments_written` (§2.17, §4 #9)
+/// at most once, even if two deletes of the same comment land concurrently. A
+/// cancelled transaction means an edit changed the image, the comment was
+/// already deleted, or another delete just landed; the handler should
+/// re-read and decide which (its own idempotent-204 check, re-run against
+/// the fresh row, tells it apart from a genuine image race).
 pub async fn soft_delete_comment(
     repo: &Repo,
     loc: &CommentLocation<'_>,
+    author_user_id: &UserId,
     deleted_at: DateTime<Utc>,
     image_id: Option<&ImageId>,
 ) -> Result<(), RepoError> {
     let (image_condition, expected_image) = image_unchanged_condition(image_id);
     let comment_update = comment_update_builder(repo, loc)
         .update_expression("SET deleted_at = :t, body = :empty REMOVE image_media_id")
-        .condition_expression(format!("attribute_exists(#pk) AND {image_condition}"))
+        .condition_expression(format!(
+            "attribute_exists(#pk) AND (attribute_not_exists(deleted_at) OR deleted_at = :null) \
+             AND {image_condition}"
+        ))
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":t", AttributeValue::S(deleted_at.to_rfc3339()))
         .expression_attribute_values(":empty", AttributeValue::S("".into()))
+        .expression_attribute_values(":null", AttributeValue::Null(true))
         .expression_attribute_values(":expected_image", expected_image)
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+    let bump =
+        member_stats::add_update(repo, loc.group_id, author_user_id, "comments_written", -1)?;
 
-    let mut items = vec![TransactWriteItem::builder().update(comment_update).build()];
+    let mut items = vec![
+        TransactWriteItem::builder().update(comment_update).build(),
+        TransactWriteItem::builder().update(bump).build(),
+    ];
     if let Some(image_id) = image_id {
         let detach =
             media::detach_image_from_comment_update(repo, loc.group_id, loc.cycle_id, image_id)?;
@@ -494,6 +526,9 @@ pub async fn list_engagement(
     Ok((comments, reactions))
 }
 
+/// Plain, uncounted Put of a reaction row — used only for a **self-reaction**
+/// (reactor == answer author), which counts nowhere (`docs/design/data-model.md`
+/// §4 #8). Every other reaction goes through [`put_reaction_counted`].
 pub async fn put_reaction(repo: &Repo, r: &Reaction) -> Result<(), RepoError> {
     let mut item: std::collections::HashMap<String, AttributeValue> = to_item(r)?;
     item.insert(
@@ -520,6 +555,9 @@ pub async fn put_reaction(repo: &Repo, r: &Reaction) -> Result<(), RepoError> {
     Ok(())
 }
 
+/// Plain, uncounted Delete of a reaction row — the self-reaction counterpart
+/// of [`put_reaction`]. Every other reaction removal goes through
+/// [`delete_reaction_counted`].
 pub async fn delete_reaction(
     repo: &Repo,
     group_id: &GroupId,
@@ -548,4 +586,251 @@ pub async fn delete_reaction(
         .send()
         .await?;
     Ok(())
+}
+
+/// Why a counted-reaction transaction (§4 #8) was cancelled. Mirrors
+/// `questions::VoteTxError`.
+#[derive(Debug)]
+pub enum ReactionTxError {
+    /// The `Reaction` row's condition failed: a duplicate PUT, or a DELETE of
+    /// a reaction that isn't there. Both are idempotent successes.
+    Duplicate,
+    /// The answer's `reaction_count` condition failed: lost race against
+    /// another counted write to the same answer. Re-read the answer and retry
+    /// with the fresh count.
+    CountRace,
+    /// Only `TransactionConflict`s, no condition failure: safe to retry
+    /// unchanged.
+    Conflict,
+    Repo(RepoError),
+}
+
+/// Builds the Response-row `Update` shared by [`put_reaction_counted`] and
+/// [`delete_reaction_counted`]: sets `reaction_count` to `new_count` and
+/// rewrites the GSI2 most-reacted ranking (§2.9), conditioned on the row's
+/// prior count being `old_count` (or absent, when `old_count == 0`).
+#[allow(clippy::too_many_arguments)]
+fn reaction_count_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    answer_user_id: &UserId,
+    response_id: &ResponseId,
+    old_count: u32,
+    new_count: u32,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+        )
+        .key(attr::SK, AttributeValue::S(response_sk(answer_user_id)))
+        .update_expression("SET reaction_count = :new, #g2pk = :g2pk, #g2sk = :g2sk")
+        .condition_expression("attribute_not_exists(reaction_count) OR reaction_count = :old")
+        .expression_attribute_names("#g2pk", attr::GSI2PK)
+        .expression_attribute_names("#g2sk", attr::GSI2SK)
+        .expression_attribute_values(":new", AttributeValue::N(new_count.to_string()))
+        .expression_attribute_values(":old", AttributeValue::N(old_count.to_string()))
+        .expression_attribute_values(":g2pk", AttributeValue::S(reacted_gsi2pk(group_id)))
+        .expression_attribute_values(
+            ":g2sk",
+            AttributeValue::S(reacted_gsi2sk(new_count, response_id)),
+        )
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+/// Transaction §4 #8, add — another member's reaction on a published text
+/// answer:
+/// 1. Put `Reaction`, conditioned on `attribute_not_exists(sk)`.
+/// 2. Update the Response row: `reaction_count = old_count + 1` plus the GSI2
+///    rewrite, conditioned on the row's prior count being `old_count`.
+/// 3. `ADD reactions_received 1` on the author's `MemberStats`.
+/// 4. `ADD reactions_given 1` on the reactor's `MemberStats`.
+///
+/// `old_count` is the caller's last-known `reaction_count` for the answer —
+/// on [`ReactionTxError::CountRace`], the caller re-reads the answer and
+/// retries with its fresh count (`docs/design/data-model.md` §4 #8; 3
+/// attempts total, mirroring the vote transaction).
+pub async fn put_reaction_counted(
+    repo: &Repo,
+    reaction: &Reaction,
+    response_id: &ResponseId,
+    old_count: u32,
+) -> Result<(), ReactionTxError> {
+    let mut item: HashMap<String, AttributeValue> =
+        to_item(reaction).map_err(|e| ReactionTxError::Repo(e.into()))?;
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(engagement_pk(
+            &reaction.group_id,
+            &reaction.cycle_id,
+            &reaction.question_id,
+            &reaction.answer_user_id,
+        )),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(reaction_sk(&reaction.reactor_user_id, &reaction.emoji)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("Reaction".into()));
+
+    let put_reaction = Put::builder()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .condition_expression("attribute_not_exists(#sk)")
+        .expression_attribute_names("#sk", attr::SK)
+        .build()
+        .map_err(|e| ReactionTxError::Repo(RepoError::Dynamo(format!("{e:?}"))))?;
+
+    let count_update = reaction_count_update(
+        repo,
+        &reaction.group_id,
+        &reaction.cycle_id,
+        &reaction.question_id,
+        &reaction.answer_user_id,
+        response_id,
+        old_count,
+        old_count + 1,
+    )
+    .map_err(ReactionTxError::Repo)?;
+
+    let author_bump = member_stats::add_update(
+        repo,
+        &reaction.group_id,
+        &reaction.answer_user_id,
+        "reactions_received",
+        1,
+    )
+    .map_err(ReactionTxError::Repo)?;
+    let reactor_bump = member_stats::add_update(
+        repo,
+        &reaction.group_id,
+        &reaction.reactor_user_id,
+        "reactions_given",
+        1,
+    )
+    .map_err(ReactionTxError::Repo)?;
+
+    repo.client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().put(put_reaction).build())
+        .transact_items(TransactWriteItem::builder().update(count_update).build())
+        .transact_items(TransactWriteItem::builder().update(author_bump).build())
+        .transact_items(TransactWriteItem::builder().update(reactor_bump).build())
+        .send()
+        .await
+        .map_err(|e| {
+            classify_reaction_tx_error(e, [ReactionTxError::Duplicate, ReactionTxError::CountRace])
+        })?;
+    Ok(())
+}
+
+/// Transaction §4 #8, remove — the counterpart of [`put_reaction_counted`]:
+/// Delete `Reaction` (conditioned on `attribute_exists(sk)`), decrement the
+/// Response row's `reaction_count` (never below 0) with the same GSI2
+/// rewrite, and `ADD -1` to both members' `MemberStats`. `old_count` is the
+/// caller's last-known count, used the same way as in `put_reaction_counted`.
+pub async fn delete_reaction_counted(
+    repo: &Repo,
+    reaction: &Reaction,
+    response_id: &ResponseId,
+    old_count: u32,
+) -> Result<(), ReactionTxError> {
+    let delete = Delete::builder()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(engagement_pk(
+                &reaction.group_id,
+                &reaction.cycle_id,
+                &reaction.question_id,
+                &reaction.answer_user_id,
+            )),
+        )
+        .key(
+            attr::SK,
+            AttributeValue::S(reaction_sk(&reaction.reactor_user_id, &reaction.emoji)),
+        )
+        .condition_expression("attribute_exists(#sk)")
+        .expression_attribute_names("#sk", attr::SK)
+        .build()
+        .map_err(|e| ReactionTxError::Repo(RepoError::Dynamo(format!("{e:?}"))))?;
+
+    let new_count = old_count.saturating_sub(1);
+    let count_update = reaction_count_update(
+        repo,
+        &reaction.group_id,
+        &reaction.cycle_id,
+        &reaction.question_id,
+        &reaction.answer_user_id,
+        response_id,
+        old_count,
+        new_count,
+    )
+    .map_err(ReactionTxError::Repo)?;
+
+    let author_bump = member_stats::add_update(
+        repo,
+        &reaction.group_id,
+        &reaction.answer_user_id,
+        "reactions_received",
+        -1,
+    )
+    .map_err(ReactionTxError::Repo)?;
+    let reactor_bump = member_stats::add_update(
+        repo,
+        &reaction.group_id,
+        &reaction.reactor_user_id,
+        "reactions_given",
+        -1,
+    )
+    .map_err(ReactionTxError::Repo)?;
+
+    repo.client
+        .transact_write_items()
+        .transact_items(TransactWriteItem::builder().delete(delete).build())
+        .transact_items(TransactWriteItem::builder().update(count_update).build())
+        .transact_items(TransactWriteItem::builder().update(author_bump).build())
+        .transact_items(TransactWriteItem::builder().update(reactor_bump).build())
+        .send()
+        .await
+        .map_err(|e| {
+            classify_reaction_tx_error(e, [ReactionTxError::Duplicate, ReactionTxError::CountRace])
+        })?;
+    Ok(())
+}
+
+/// Map a counted-reaction transaction's failure to the item whose condition
+/// failed. `labels[0]`/`labels[1]` name the outcome for the reaction
+/// row/count update (transact items 0 and 1); the two `MemberStats` bumps
+/// (items 2, 3) carry no condition and never fail this way. Mirrors
+/// `questions::classify_vote_tx_error`.
+fn classify_reaction_tx_error<R: std::fmt::Debug>(
+    err: SdkError<TransactWriteItemsError, R>,
+    labels: [ReactionTxError; 2],
+) -> ReactionTxError {
+    let Some(TransactWriteItemsError::TransactionCanceledException(cancel)) =
+        err.as_service_error()
+    else {
+        return ReactionTxError::Repo(error::from_transact_write_error(err));
+    };
+    let reasons = cancel.cancellation_reasons();
+    if let Some(i) = reasons
+        .iter()
+        .position(|r| r.code() == Some("ConditionalCheckFailed"))
+    {
+        if let Some(label) = labels.into_iter().nth(i) {
+            return label;
+        }
+    }
+    if reasons
+        .iter()
+        .any(|r| r.code() == Some("TransactionConflict"))
+    {
+        return ReactionTxError::Conflict;
+    }
+    ReactionTxError::Repo(RepoError::TransactionCancelled(format!("{cancel:?}")))
 }

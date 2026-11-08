@@ -143,6 +143,23 @@ export interface paths {
         patch: operations["patchMember"];
         trace?: never;
     };
+    "/groups/{groupId}/leaderboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Raw leaderboard stats for every current member, plus the group's most-reacted answers (`docs/design/api.md` §4.4). Caller must be a member. The client joins `members` with `GET /groups/{groupId}` for names and avatars, and builds and orders the boards itself. */
+        get: operations["getLeaderboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/groups/{groupId}/newsletters": {
         parameters: {
             query?: never;
@@ -693,6 +710,34 @@ export interface components {
             /** Format: date-time */
             joinedAt: string;
             editionsAnswered: number;
+        };
+        LeaderboardResponse: {
+            /** @description One entry per current member, in no particular order. A member with no stats yet gets zeros. */
+            members: components["schemas"]["MemberStatsResponse"][];
+            /** @description Up to 3 answers by current members with at least one reaction, most reactions first. */
+            topAnswers: components["schemas"]["TopAnswerResponse"][];
+        };
+        MemberStatsResponse: {
+            userId: string;
+            editionsAnswered: number;
+            /** @description Reactions from other members on this member's answers. */
+            reactionsReceived: number;
+            /** @description Reactions this member gave to other members' answers. */
+            reactionsGiven: number;
+            /** @description Comments written and not deleted. */
+            commentsWritten: number;
+            /** @description Promoted questions this member suggested without anonymity. */
+            questionsAsked: number;
+            currentStreak: number;
+            longestStreak: number;
+        };
+        TopAnswerResponse: {
+            responseId: string;
+            userId: string;
+            cycleId: string;
+            questionId: string;
+            questionPrompt: string;
+            reactionCount: number;
         };
         CycleSettingsResponse: {
             questionsPerCycle: number;
@@ -1815,6 +1860,56 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getLeaderboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The group's leaderboard stats. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "members": [
+                     *         {
+                     *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *           "editionsAnswered": 4,
+                     *           "reactionsReceived": 17,
+                     *           "reactionsGiven": 22,
+                     *           "commentsWritten": 9,
+                     *           "questionsAsked": 2,
+                     *           "currentStreak": 3,
+                     *           "longestStreak": 4
+                     *         }
+                     *       ],
+                     *       "topAnswers": [
+                     *         {
+                     *           "responseId": "018f2b6b-6c1b-7c3a-9d4e-5a6b7c8d9e0f",
+                     *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *           "cycleId": "202605",
+                     *           "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *           "questionPrompt": "What was the best thing you ate this month?",
+                     *           "reactionCount": 8
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["LeaderboardResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     listNewsletters: {

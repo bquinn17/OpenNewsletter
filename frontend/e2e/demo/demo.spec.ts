@@ -142,6 +142,19 @@ test("an image uploaded to a comment shows the picture that was picked", async (
   expect(await renderedWidth(posted)).toBe(3);
 });
 
+test("the published edition links to a populated group leaderboard", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+
+  await page.getByRole("link", { name: "Group leaderboard" }).click();
+
+  await expect(page).toHaveURL(/\/leaderboard$/);
+  await expect(page.getByText("Most-reacted answer")).toBeVisible();
+});
+
 test("exiting the demo returns to the real, signed-out home", async ({ page }) => {
   await page.goto("/demo");
   await expectInDemo(page);

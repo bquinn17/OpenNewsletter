@@ -274,9 +274,13 @@ A user's reply to one locked question.
 | `image_media_ids` | array<string> (≤10) — only when `kind=text` |
 | `updated_at` | ISO-8601 |
 | `published_at` | ISO-8601 \| null |
+| `reaction_count` | number \| absent (absent reads as 0). Reactions on this answer from members other than its author, kept by the reaction transaction (§4 #8). Self-reactions aren't counted. Only published text answers can have reactions. |
+| `gsi2pk` | `GROUP#{group_id}#REACTED`. Set the first time the answer gets a counted reaction; absent until then. |
+| `gsi2sk` | `{reaction_count zero-padded}#{response_id}`, padded like `candidate_gsi1sk` (§2.6) and rewritten with every count change |
 
 Access patterns:
 - "List answers to a question (after publish)" → `Query pk=GROUP#{g}#NL#{c}#Q#{q} AND begins_with(sk, A#)`
+- "Most-reacted answers in a group" (AP24) → `Query GSI2 gsi2pk=GROUP#{g}#REACTED`, `ScanIndexForward=false`. The tick's GSI2 queries match `gsi2pk = NL_STATUS#…` exactly, so these rows never show up in them (§9).
 - "List my drafts in this cycle" → `Query GSI1 gsi1pk=USER#{u}#NL#{c}`
 - "Get my draft for a question" → `GetItem pk=GROUP#{g}#NL#{c}#Q#{q} sk=A#{u}`
 
@@ -335,7 +339,7 @@ Access patterns:
 
 ### 2.12 Reaction
 
-Emoji reaction. Last-write-wins per `(answer, reactor, emoji)`.
+Emoji reaction. One row per `(answer, reactor, emoji)`; re-reacting with the same emoji is a no-op that keeps the first `created_at` (§4 #8).
 
 | Attr | Value |
 |---|---|
@@ -422,6 +426,33 @@ User avatars are uploaded via a dedicated pipeline (separate from the per-questi
 
 The processed avatar lives under the `avatar/*` prefix of the same processed bucket images use ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), served the same way as any other image — a presigned GET minted by the handler ([`media.md` §4](media.md#4-serving-presigned-s3-gets), §11.3). Avatars are not tenant-scoped, so a leaked avatar URL exposes little, but signing them costs nothing extra and keeps the bucket free of any public path. Cache-control: `private, max-age=7776000, immutable` (90 days, [`media.md` §11.3](media.md#113-serving)); changing avatars produces a new `avatar_id`, so it never collides with the old one in caches.
 
+### 2.17 MemberStats
+
+One member's leaderboard counters in one group ([`api.md` §4.4](api.md#44-get-groupsgroupidleaderboard)). Counters are kept at write time, because computing them on read would mean reading every edition's engagement partitions on each page view.
+
+| Attr | Value |
+|---|---|
+| `pk` | `GROUP#{group_id}#STATS` |
+| `sk` | `MEMBER#{user_id}` |
+| `entity` | `MemberStats` |
+| `group_id` / `user_id` | UUIDv7 |
+| `reactions_received` | number. Reactions from other members on this member's answers (§4 #8). |
+| `reactions_given` | number. Reactions this member gave to other members' answers. |
+| `comments_written` | number. Comments written, minus ones soft-deleted (§4 #9). |
+| `questions_asked` | number. Promoted questions this member suggested without anonymity, counted in the promotion transaction (§4 #3), so the count can't unmask an anonymous suggester. |
+| `current_streak` | number. Consecutive editions, up to the last one settled, in which the member published at least one answer. |
+| `longest_streak` | number. The highest `current_streak` has reached. |
+| `streak_cycle` | `yyyymm` \| absent. The edition the streak was last settled for ([`lifecycle.md` §5.3](lifecycle.md#53-publishnl)). |
+
+A missing attribute reads as 0. Every writer upserts with `UpdateItem` (`SET entity, group_id, user_id` plus its own counters), so the row appears on its first write and none of them needs to read it first. The Rust counters are signed (`i64`): an `ADD -1` against history from before the counters existed can dip below 0 until `scripts/backfill_member_stats.py` runs, and the API clamps every value at 0.
+
+The row is separate from `GroupMembership` (§2.2) for two reasons: the stats survive a leave and rejoin, and an `ADD` upsert can't recreate a membership row that a leave deleted. Leaving resets `current_streak` and keeps the rest (§4 #6).
+
+Access patterns:
+- "All members' stats in a group" (AP23) → `Query pk=GROUP#{g}#STATS AND begins_with(sk, MEMBER#)`
+
+**Backfill.** `scripts/backfill_member_stats.py` recomputes every counter, streak and answer `reaction_count` from history and writes absolute values, so it's safe to run again. It runs once when the leaderboard ships, and again to repair a missed streak settlement.
+
 ---
 
 ## 3. Access patterns ⇄ index map
@@ -450,8 +481,10 @@ The processed avatar lives under the `avatar/*` prefix of the same processed buc
 | AP20 | Push subs for a user | Query | base |
 | AP21 | Notification prefs for user × group | GetItem | base |
 | AP22 | Groups awaiting their first cycle | Query `gsi2pk = GROUP_STATUS#awaiting_first_cycle` | GSI2 |
+| AP23 | All members' stats in a group (§2.17) | Query | base |
+| AP24 | Most-reacted answers in a group (§2.9) | Query | GSI2 (Limit, ScanIndexForward=false) |
 
-**Every "list everything" Query paginates.** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, AP22, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's `Limit`, and the current-cycle lookup below.
+**Every "list everything" Query paginates.** DynamoDB returns at most 1 MB per Query page, and a reader that ignores `LastEvaluatedKey` silently loses the rest; 50 answers at the 20,000-char body cap are already about 1 MB. Every AP above that returns a whole set (AP2, AP3, AP6, AP7, AP9, AP10, AP12–AP15, AP17–AP20, AP22, AP23, and the cycle- and notify-tick GSI2 queries) goes through `persistence::query::query_all`, which follows `LastEvaluatedKey` to the end. The exceptions are the deliberately bounded reads: cursor-paged routes (`newsletters::list_recent`, `engagement::list_comments_page`), AP11's and AP24's `Limit`, and the current-cycle lookup below.
 
 **The current-cycle lookup reads 3 rows.** `find_voting_cycle`/`find_open_cycle` ([`lifecycle.md` §10](lifecycle.md#10-read-side-helpers)) run AP7 newest-first with `Limit=3` instead of reading the group's whole history. That's safe because cycle ids sort chronologically and a group gains a cycle only when the tick creates the period after the one it just opened ([`lifecycle.md` §5.4](lifecycle.md#54-create_next_voting_cyclegroup-after)). Ids are `yyyymm` on a monthly deployment and `yyyymmdd` on a weekly one, and the two formats sort correctly against each other across a cadence change ([`lifecycle.md` §13.2](lifecycle.md#132-cycle-ids-across-a-cadence-change)). So the `voting` cycle, if any, is always the newest `NL#` row and the `open` cycle, if any, is the one before it; every published or archived cycle is older. On a weekly deployment with a 7-day window, a group briefly has two `open` rows at a handover. `find_open_cycle` returns the newer one ([`lifecycle.md` §13.3](lifecycle.md#133-window-limits-and-overlap)).
 
@@ -472,7 +505,7 @@ The following operations MUST use `TransactWriteItems`:
 
    The cancellation reason says which condition failed. A vote row means a concurrent duplicate request (idempotent success); a candidate count means a lost race (retry once); the tally means `VOTE_CAP_REACHED`.
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `vote_count -= 1` AND new `gsi1sk` AND `ADD votes_cast -1` on the tally (`votes_cast > 0`). The admin candidate delete removes each voter's vote together with the same tally decrement.
-3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items).
+3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items). It also carries one `MemberStats` update (§2.17) per distinct suggester of a promoted, non-anonymous question: `ADD questions_asked :n`, where n is how many of that member's questions were promoted. One update per suggester, because a transaction can't touch the same item twice. That's at most 2 × `questions_per_cycle` + 1 = 41 items. Being in the same transaction means a lost promotion race can't count anything.
 4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky ([`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. The transaction also increments `GroupMembership.editions_answered` by 1 IFF this is the user's first published response in this cycle (precondition: query AP15 for the user × cycle returns zero `published` rows before this write). Republishing or publishing additional answers in the same cycle does not double-count.
 
    **The pre-read alone isn't enough:** two concurrent first publishes to different questions could both see zero published rows and both bump (`editions_answered` = 2). The bump `Update` also sets `last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
@@ -483,11 +516,20 @@ The following operations MUST use `TransactWriteItems`:
 4a. **Auto-publish non-empty drafts at cycle close** ([D2](../decisions.md#d2); [`lifecycle.md` §5.3](lifecycle.md#53-publishnl)). When `lambda-cycle-tick`'s `publish(nl)` runs, it first auto-publishes every non-empty draft **before** flipping the Newsletter to `published`: for each locked question it queries its answers (AP14), and for each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it runs one `TransactWriteItems` — the response row conditioned on `status = draft`, setting `status = published`, `published_at = response_close_at`, plus the same `editions_answered`/`last_answered_cycle` bump as #4. **One transaction per draft, not one big one**: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. This is crash-safe because it runs before the status flip: a tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the remaining drafts; rows it already flipped fail their `status = draft` condition harmlessly and are skipped. The cancellation reasons are read as in #4: if only the bump's `last_answered_cycle` condition failed (the member already published another answer this cycle), the draft is retried **without** the bump; it must not be skipped. Empty drafts are left untouched and stay `draft` forever, same as today.
 
 5. **Join group via invite** — Update `Invite` from `pending` to `consumed` AND Put `GroupMembership` AND Update `Group.member_count += 1` (with member-cap check).
-6. **Leave group** — Delete `GroupMembership` AND Update `Group.member_count -= 1`.
+6. **Leave group** — Delete `GroupMembership` AND Update `Group.member_count -= 1` AND upsert the member's `MemberStats` (§2.17) with `current_streak = 0`, so a member who rejoins doesn't pick up a stale streak. `longest_streak` and the counters are kept. Kicks go through the same transaction.
 7. **Last-admin guard** (leave, kick, or demote a member who is currently an admin) — the write also carries a `ConditionCheck` that a *witness*, a different member, still has `role = admin`.
    - **Choosing the witness:** an admin acting on someone else is their own witness. An admin acting on themselves names any other admin, or gets `LAST_ADMIN` if there is none.
    - **Why it holds:** transactions are serializable, so every committed removal leaves its witness an admin, and no interleaving of concurrent requests can reach zero admins. A pre-read of the admin count alone could (two admins demoting each other).
    - **Losing the race:** a failed witness check returns `LAST_ADMIN`.
+8. **Add or remove a reaction** (another member's answer) — four items:
+   - Put `Reaction` with `attribute_not_exists(sk)`, or for a removal, Delete it with `attribute_exists(sk)`.
+   - Update the answer's `Response` row: `SET reaction_count = :new`, with `gsi2pk`/`gsi2sk` rewritten for the new count (§2.9), conditioned on the prior count (`reaction_count = :old`, or `attribute_not_exists(reaction_count)` when the row has none). A removal never takes the count below 0.
+   - `ADD reactions_received ±1` on the author's `MemberStats`, and `ADD reactions_given ±1` on the reactor's (§2.17).
+
+   The cancellation reasons are read as in #1. If the reaction row's condition failed, the request is a duplicate PUT or a DELETE of a reaction that isn't there, and it returns success. If the count's condition failed, the request lost a race: it re-reads the answer and retries (3 attempts in total), as it also does on a plain `TransactionConflict`. Because a duplicate PUT writes nothing, re-reacting no longer refreshes the reaction's `created_at`.
+
+   **Self-reactions count nowhere.** A reaction on your own answer is a plain Put or Delete of the reaction row, with no count or stats change. That keeps a member from boosting their own leaderboard, and the transaction above would otherwise touch the same `MemberStats` row twice, which DynamoDB refuses.
+9. **Write or soft-delete a comment** — creating a comment adds `ADD comments_written 1` on the author's `MemberStats` to the comment's transaction (the image claim, when there is one). A soft delete, by the author or an admin, adds `ADD comments_written -1` on the comment author's row, and the delete is conditioned on the comment not already being deleted, so deleting twice never decrements twice.
 
 **No `ClientRequestToken`.** An earlier draft asked for one derived from `x-correlation-id`. It is deliberately not used: a single request can issue several transactions, and the vote retry re-sends with a different expected count. A reused token with different parameters fails with `IdempotentParameterMismatch`. Retry safety comes from the condition expressions and from handlers treating "already done" outcomes as success.
 

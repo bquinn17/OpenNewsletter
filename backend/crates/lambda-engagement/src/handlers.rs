@@ -10,13 +10,18 @@ use domain::api::{
 };
 use domain::{
     ApiError, ApiErrorCode, Comment, CommentId, CycleId, GroupId, GroupMembership, ImageId,
-    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, ResponseId,
-    ResponseStatus, Role, User, UserId,
+    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, Response,
+    ResponseId, ResponseStatus, Role, User, UserId,
 };
-use persistence::engagement::{self, CommentLocation, NewComment};
+use persistence::engagement::{self, CommentLocation, NewComment, ReactionTxError};
 use persistence::{auth, keys, media, newsletters, responses, users};
 use shared::config::COMMENT_WRITE_ATTEMPTS;
 use std::collections::HashMap;
+
+/// How many times a counted-reaction transaction retries after losing a race
+/// (`docs/design/data-model.md` §4 #8, mirroring the vote transaction's
+/// `questions::cast_vote_with_retry`).
+const REACTION_WRITE_ATTEMPTS: u32 = 3;
 
 /// `GET .../comments` (§8.1). AP18.
 // Args mirror the route's own path + query parameters; bundling them into a
@@ -33,9 +38,10 @@ pub async fn list_comments(
     limit: i32,
     cursor: Option<&str>,
 ) -> Result<CommentListResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
+    let answer_user_id = answer.user_id;
 
     let exclusive_start_key = match cursor {
         Some(c) => {
@@ -85,9 +91,10 @@ pub async fn create_comment(
     response_id: &ResponseId,
     request: CreateCommentRequest,
 ) -> Result<CommentResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
+    let answer_user_id = answer.user_id;
 
     let body = match &request.body {
         Some(raw) => Some(validation::body(raw)?),
@@ -152,9 +159,10 @@ pub async fn patch_comment(
     comment_id: &CommentId,
     request: PatchCommentRequest,
 ) -> Result<CommentResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
+    let answer_user_id = answer.user_id;
 
     // Read-compute-write, retried when the write lost a race to a concurrent
     // image change on this comment (its transaction is conditioned on the
@@ -300,9 +308,10 @@ pub async fn delete_comment(
     response_id: &ResponseId,
     comment_id: &CommentId,
 ) -> Result<(), ApiError> {
-    let (answer_user_id, membership) =
+    let (answer, membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
+    let answer_user_id = answer.user_id;
 
     // Retried when the soft delete lost a race to a concurrent edit that
     // changed the comment's image: its transaction is conditioned on the
@@ -348,6 +357,7 @@ pub async fn delete_comment(
         match engagement::soft_delete_comment(
             &state.repo,
             &loc,
+            &existing.author_user_id,
             Utc::now(),
             existing.image_media_id.as_ref(),
         )
@@ -366,6 +376,24 @@ pub async fn delete_comment(
             }
         }
     }
+}
+
+/// Re-reads an answer's current `reaction_count`, strongly consistent, after a
+/// counted-reaction write lost a race to another one on the same answer.
+async fn reload_reaction_count(state: &AppState, answer: &Response) -> Result<u32, ApiError> {
+    responses::get_reaction_count_consistent(
+        &state.repo,
+        &answer.group_id,
+        &answer.cycle_id,
+        &answer.question_id,
+        &answer.user_id,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, group_id = %answer.group_id, "answer reload failed during reaction retry");
+        ApiError::internal("failed to save reaction")
+    })?
+    .ok_or_else(|| ApiError::internal("answer disappeared during reaction retry"))
 }
 
 /// Permanently delete an image a comment just released (`docs/design/engagement.md`
@@ -401,7 +429,7 @@ pub async fn get_reactions(
     question_id: &QuestionId,
     response_id: &ResponseId,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     build_reactions_response(
@@ -409,7 +437,7 @@ pub async fn get_reactions(
         group_id,
         cycle_id,
         question_id,
-        &answer_user_id,
+        &answer.user_id,
         caller,
     )
     .await
@@ -426,7 +454,7 @@ pub async fn put_reaction(
     response_id: &ResponseId,
     raw_emoji: &str,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let emoji = validation::emoji(raw_emoji)?;
@@ -435,27 +463,69 @@ pub async fn put_reaction(
         group_id: group_id.clone(),
         cycle_id: cycle_id.clone(),
         question_id: question_id.clone(),
-        answer_user_id: answer_user_id.clone(),
+        answer_user_id: answer.user_id.clone(),
         reactor_user_id: caller.clone(),
         emoji,
         created_at: Utc::now(),
     };
-    engagement::put_reaction(&state.repo, &reaction)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, group_id = %group_id, "reaction put failed");
-            ApiError::internal("failed to save reaction")
-        })?;
+
+    if *caller == answer.user_id {
+        // Self-reactions count nowhere (`docs/design/data-model.md` §4 #8):
+        // plain, uncounted put.
+        engagement::put_reaction(&state.repo, &reaction)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, group_id = %group_id, "reaction put failed");
+                ApiError::internal("failed to save reaction")
+            })?;
+    } else {
+        put_reaction_counted_with_retry(state, &reaction, &answer).await?;
+    }
 
     build_reactions_response(
         state,
         group_id,
         cycle_id,
         question_id,
-        &answer_user_id,
+        &answer.user_id,
         caller,
     )
     .await
+}
+
+/// Drives [`engagement::put_reaction_counted`] through its retries
+/// (`docs/design/data-model.md` §4 #8): a lost race against another counted
+/// write to the same answer re-reads its fresh `reaction_count` and retries;
+/// a duplicate PUT is an idempotent success; anything else is a 500.
+async fn put_reaction_counted_with_retry(
+    state: &AppState,
+    reaction: &Reaction,
+    answer: &Response,
+) -> Result<(), ApiError> {
+    let mut known_count = answer.reaction_count;
+    for attempt in 1..=REACTION_WRITE_ATTEMPTS {
+        match engagement::put_reaction_counted(
+            &state.repo,
+            reaction,
+            &answer.response_id,
+            known_count,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            // A concurrent duplicate PUT already added this reaction.
+            Err(ReactionTxError::Duplicate) => return Ok(()),
+            Err(ReactionTxError::CountRace) if attempt < REACTION_WRITE_ATTEMPTS => {
+                known_count = reload_reaction_count(state, answer).await?;
+            }
+            Err(ReactionTxError::Conflict) if attempt < REACTION_WRITE_ATTEMPTS => {}
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %answer.group_id, "counted reaction put failed");
+                return Err(ApiError::internal("failed to save reaction"));
+            }
+        }
+    }
+    unreachable!("the loop above always returns within REACTION_WRITE_ATTEMPTS attempts")
 }
 
 /// `DELETE .../reactions/{emoji}` (§8.7). Idempotent.
@@ -469,35 +539,81 @@ pub async fn delete_reaction(
     response_id: &ResponseId,
     raw_emoji: &str,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer_user_id, _membership) =
+    let (answer, _membership) =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let emoji = validation::emoji(raw_emoji)?;
 
-    engagement::delete_reaction(
-        &state.repo,
-        group_id,
-        cycle_id,
-        question_id,
-        &answer_user_id,
-        caller,
-        &emoji,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = ?e, group_id = %group_id, "reaction delete failed");
-        ApiError::internal("failed to remove reaction")
-    })?;
+    if *caller == answer.user_id {
+        // Self-reactions count nowhere: plain, uncounted delete.
+        engagement::delete_reaction(
+            &state.repo,
+            group_id,
+            cycle_id,
+            question_id,
+            &answer.user_id,
+            caller,
+            &emoji,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "reaction delete failed");
+            ApiError::internal("failed to remove reaction")
+        })?;
+    } else {
+        let reaction = Reaction {
+            group_id: group_id.clone(),
+            cycle_id: cycle_id.clone(),
+            question_id: question_id.clone(),
+            answer_user_id: answer.user_id.clone(),
+            reactor_user_id: caller.clone(),
+            emoji,
+            created_at: Utc::now(),
+        };
+        delete_reaction_counted_with_retry(state, &reaction, &answer).await?;
+    }
 
     build_reactions_response(
         state,
         group_id,
         cycle_id,
         question_id,
-        &answer_user_id,
+        &answer.user_id,
         caller,
     )
     .await
+}
+
+/// [`put_reaction_counted_with_retry`]'s counterpart for DELETE. A duplicate
+/// (nothing to remove) is an idempotent success, same as the uncounted path.
+async fn delete_reaction_counted_with_retry(
+    state: &AppState,
+    reaction: &Reaction,
+    answer: &Response,
+) -> Result<(), ApiError> {
+    let mut known_count = answer.reaction_count;
+    for attempt in 1..=REACTION_WRITE_ATTEMPTS {
+        match engagement::delete_reaction_counted(
+            &state.repo,
+            reaction,
+            &answer.response_id,
+            known_count,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(ReactionTxError::Duplicate) => return Ok(()),
+            Err(ReactionTxError::CountRace) if attempt < REACTION_WRITE_ATTEMPTS => {
+                known_count = reload_reaction_count(state, answer).await?;
+            }
+            Err(ReactionTxError::Conflict) if attempt < REACTION_WRITE_ATTEMPTS => {}
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %answer.group_id, "counted reaction delete failed");
+                return Err(ApiError::internal("failed to remove reaction"));
+            }
+        }
+    }
+    unreachable!("the loop above always returns within REACTION_WRITE_ATTEMPTS attempts")
 }
 
 // ---------- shared helpers ----------
@@ -505,9 +621,9 @@ pub async fn delete_reaction(
 /// Check order shared by all seven routes (`docs/design/api.md` §8, GETs
 /// included): membership (403) -> cycle exists (404) -> not archived (410)
 /// -> published (409) -> answer resolves to a published text response
-/// (404). Returns the answer's `userId` (the engagement partition's
-/// addressing component) and the caller's membership (for the admin check
-/// on delete).
+/// (404). Returns the whole answer `Response` — reaction handlers need its
+/// author and current `reaction_count` — and the caller's membership (for
+/// the admin check on delete).
 async fn require_published_text_answer(
     state: &AppState,
     caller: &UserId,
@@ -515,7 +631,7 @@ async fn require_published_text_answer(
     cycle_id: &CycleId,
     question_id: &QuestionId,
     response_id: &ResponseId,
-) -> Result<(UserId, GroupMembership), ApiError> {
+) -> Result<(Response, GroupMembership), ApiError> {
     let membership = auth::require_membership(&state.repo, caller, group_id, false).await?;
 
     let nl = newsletters::get_newsletter(&state.repo, group_id, cycle_id)
@@ -552,7 +668,7 @@ async fn require_published_text_answer(
         .filter(|r| r.kind == QuestionKind::Text && r.status == ResponseStatus::Published)
         .ok_or_else(|| ApiError::not_found("response not found"))?;
 
-    Ok((answer.user_id, membership))
+    Ok((answer, membership))
 }
 
 /// Looks up a comment by id and 404s if it's missing or already

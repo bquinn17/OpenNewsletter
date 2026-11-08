@@ -3,9 +3,15 @@
 
 use crate::state::AppState;
 use crate::validation;
-use domain::api::{GroupResponse, MemberResponse, PatchGroupRequest, PatchMemberRequest};
-use domain::{ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Role, UserId};
-use persistence::{auth, groups, users, RepoError};
+use domain::api::{
+    GroupResponse, LeaderboardResponse, MemberResponse, MemberStatsResponse, PatchGroupRequest,
+    PatchMemberRequest, TopAnswerResponse,
+};
+use domain::{
+    ApiError, ApiErrorCode, CycleId, Group, GroupId, GroupMembership, QuestionId, Role, UserId,
+};
+use persistence::{auth, groups, member_stats, questions, responses, users, RepoError};
+use std::collections::HashSet;
 
 pub async fn get_group(
     state: &AppState,
@@ -19,6 +25,110 @@ pub async fn get_group(
         clamp_response_window(state, group),
         members,
     ))
+}
+
+/// `GET /groups/{groupId}/leaderboard` (`docs/design/api.md` §4.4). Open to
+/// any member. `members` is one row per *current* member — a departed
+/// member's stats row, if any, is never returned — with `editionsAnswered`
+/// from `GroupMembership` and the rest from `MemberStats` (§2.17), zeroed
+/// when the member has no stats row yet.
+pub async fn get_leaderboard(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+) -> Result<LeaderboardResponse, ApiError> {
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
+
+    let memberships = list_members(state, group_id).await?;
+    let stats_by_user: std::collections::HashMap<_, _> =
+        member_stats::list_stats_for_group(&state.repo, group_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, group_id = %group_id, "member stats listing failed");
+                ApiError::internal("failed to load member stats")
+            })?
+            .into_iter()
+            .map(|s| (s.user_id.clone(), s))
+            .collect();
+
+    let members = memberships
+        .iter()
+        .map(|m| {
+            MemberStatsResponse::new(
+                m.user_id.clone(),
+                m.editions_answered,
+                stats_by_user.get(&m.user_id),
+            )
+        })
+        .collect();
+
+    let current_member_ids: HashSet<UserId> = memberships.into_iter().map(|m| m.user_id).collect();
+    let top_answers = load_top_answers(state, group_id, &current_member_ids).await?;
+
+    Ok(LeaderboardResponse {
+        members,
+        top_answers,
+    })
+}
+
+/// `LeaderboardResponse.topAnswers` (§4.4): the group's most-reacted
+/// published text answers, filtered to current members and a positive
+/// count, capped at [`shared::config::LEADERBOARD_TOP_ANSWERS`]. Reads
+/// `shared::config::LEADERBOARD_TOP_ANSWERS_SCAN` candidates off GSI2 before
+/// filtering, so a few departed-member or (after a correction) zero-count
+/// rows at the top don't starve the cap. An answer whose locked question row
+/// is missing (e.g. pruned by archival) is dropped rather than failing the
+/// whole request.
+async fn load_top_answers(
+    state: &AppState,
+    group_id: &GroupId,
+    current_member_ids: &HashSet<UserId>,
+) -> Result<Vec<TopAnswerResponse>, ApiError> {
+    let candidates = responses::list_top_reacted_answers(
+        &state.repo,
+        group_id,
+        shared::config::LEADERBOARD_TOP_ANSWERS_SCAN,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, group_id = %group_id, "top-reacted answer listing failed");
+        ApiError::internal("failed to load top answers")
+    })?;
+
+    let filtered: Vec<_> = candidates
+        .into_iter()
+        .filter(|r| r.reaction_count > 0 && current_member_ids.contains(&r.user_id))
+        .take(shared::config::LEADERBOARD_TOP_ANSWERS)
+        .collect();
+    if filtered.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let refs: Vec<(CycleId, QuestionId)> = filtered
+        .iter()
+        .map(|r| (r.cycle_id.clone(), r.question_id.clone()))
+        .collect();
+    let locked = questions::get_locked_questions_batch(&state.repo, group_id, &refs)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "locked question batch lookup failed");
+            ApiError::internal("failed to load question prompts")
+        })?;
+
+    Ok(filtered
+        .into_iter()
+        .filter_map(|r| {
+            let question = locked.get(&(r.cycle_id.clone(), r.question_id.clone()))?;
+            Some(TopAnswerResponse {
+                response_id: r.response_id,
+                user_id: r.user_id,
+                cycle_id: r.cycle_id,
+                question_id: r.question_id,
+                question_prompt: question.prompt.clone(),
+                reaction_count: r.reaction_count,
+            })
+        })
+        .collect())
 }
 
 pub async fn patch_group(

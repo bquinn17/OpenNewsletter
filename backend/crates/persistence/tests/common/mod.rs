@@ -168,6 +168,7 @@ pub fn draft_response(
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
         published_at: None,
+        reaction_count: 0,
     }
 }
 

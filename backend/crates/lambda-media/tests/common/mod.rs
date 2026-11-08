@@ -337,6 +337,7 @@ pub async fn put_response(
         image_media_ids: image_media_ids.iter().map(|i| ImageId::new(*i)).collect(),
         updated_at: Utc::now(),
         published_at: (status == ResponseStatus::Published).then(Utc::now),
+        reaction_count: 0,
     };
 
     let mut item: std::collections::HashMap<String, AttributeValue> =

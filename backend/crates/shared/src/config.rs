@@ -164,6 +164,14 @@ pub const PUSH_SEND_CONCURRENCY: usize = 16;
 /// How many per-answer engagement reads (`GET .../newsletters/{c}` on a
 /// published edition) one request keeps in flight at once.
 pub const EDITION_READ_CONCURRENCY: usize = 16;
+/// `GET /groups/{groupId}/leaderboard` (`docs/design/api.md` §4.4): how many
+/// of the group's most-reacted answers the top-answers board shows, after
+/// filtering out departed members and zero-count rows.
+pub const LEADERBOARD_TOP_ANSWERS: usize = 3;
+/// How many rows the leaderboard's GSI2 "most reacted" query reads before
+/// filtering, so a few departed-member or zero-count rows at the top don't
+/// starve [`LEADERBOARD_TOP_ANSWERS`] of candidates.
+pub const LEADERBOARD_TOP_ANSWERS_SCAN: i32 = 10;
 /// How many members' preference/subscription reads a fan-out (`lambda-push`
 /// and `lambda-notify-tick`) keeps in flight at once, ahead of the send step.
 pub const PUSH_MEMBER_READ_CONCURRENCY: usize = 16;

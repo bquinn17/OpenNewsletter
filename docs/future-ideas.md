@@ -53,35 +53,14 @@ Already designed elsewhere, listed here so this file is the one place to look:
 
 ## 5. Group leaderboard
 
-A page of light-hearted superlatives for each group: the most-reacted answer, the most editions answered, the longest answering streak, and so on. It's for fun in a small group, so each board shows the top few members and never ranks anyone last. Only the group's members can see it.
+A page of light-hearted superlatives for each group: the most-reacted answer, the most editions answered, the longest answering streak, and so on. It's for fun in a small group, so each board shows only the top few values, and members who tie share a place. Only the group's members can see it.
 
-The boards:
-- **Most-reacted answer** (all time): the answers with the most reactions, each linking to its edition.
-- **Most reactions received**: the total across all of a member's answers.
-- **Most editions answered**: `GroupMembership.editions_answered`, which already exists ([`data-model.md` §2.2](design/data-model.md#22-groupmembership-also-serves-as-group--user-index-via-gsi1)).
-- **Longest streak**, with the current streak beside it. A streak counts consecutive editions in which the member published at least one answer.
-- Cheap extras once the counters exist: most questions asked (counting only promoted questions that weren't anonymous, so the board can't unmask anyone), most comments written, most places checked into (§6).
+Built. The design now lives in the owning pages: the `MemberStats` row and the counter transactions in [`data-model.md` §2.17](design/data-model.md#217-memberstats) and §4 #3, #6, #8 and #9, streak settlement in [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), the route in [`api.md` §4.4](design/api.md#44-get-groupsgroupidleaderboard) and the page in [`frontend.md` §7.9](design/frontend.md#79-leaderboardpage-ggleaderboard).
 
-**Counters are kept at write time, not computed on read.** Computing on read would mean reading every edition's engagement partitions on each page view, so the cost would grow with the group's history. One published edition already needs concurrent read waves ([`api.md` §5.2](design/api.md#52-get-groupsgroupidnewsletterscycleid)).
-- **A `MemberStats` row** for each member of each group: `pk=GROUP#{g}#STATS`, `sk=MEMBER#{u}`. It holds `reactions_received`, `reactions_given`, `comments_written`, `questions_asked`, `current_streak`, `longest_streak` and `streak_cycle`. These go on their own row, not on `GroupMembership`, for two reasons: the stats survive a leave and rejoin, and an `ADD` upsert can't recreate a membership row that a leave deleted.
-- **Reactions.** `PUT …/reactions/{emoji}` becomes a transaction:
-  - Put the reaction, conditioned on `attribute_not_exists(sk)`.
-  - `ADD reaction_count 1` on the Response row.
-  - `ADD` on the author's and the reactor's `MemberStats`.
-
-  If the Put's condition fails, the request is a duplicate and returns success, as a duplicate vote does ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #1). `DELETE` does the reverse: it requires `attribute_exists(sk)` and subtracts 1.
-- **Most-reacted answer** needs a top-N across the whole group. The Response row gets `gsi2pk=GROUP#{g}#REACTED` and `gsi2sk={zero-padded reaction_count}#{response_id}`, rewritten in the same transaction and conditioned on the prior count. Candidate questions already rank by vote count in GSI1 the same way ([`data-model.md` §2.6](design/data-model.md#26-candidate-question-in-voting-pool)). A Query with `ScanIndexForward=false` and `Limit=3` returns the top three. The tick's GSI2 queries use `gsi2pk=NL_STATUS#…`, so these rows don't show up in them.
-- **Streaks are settled once per edition**, inside `publish(nl)`, after the auto-publish sweep and before the status flip ([`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl)). At that point the set of authors is final, and the sweep's AP14 reads have already listed them.
-  - For each current member (AP3): a member who answered gets `current_streak + 1`, and `longest_streak` is raised if the new streak beats it. A member who didn't answer gets `current_streak = 0`.
-  - Each write sets `streak_cycle = :c`, conditioned on `streak_cycle <> :c`, so a rerun after a crashed tick skips members it already updated.
-  - An edition with no locked questions ([`lifecycle.md` §9](design/lifecycle.md#9-empty-cycle-edge-cases)) is skipped: it neither extends nor breaks a streak.
-  - Leaving the group resets `current_streak` in the leave transaction, so a member who rejoins doesn't pick up a stale streak.
-- **API.** `GET /groups/{groupId}/leaderboard` in `lambda-groups`, open to any member. It returns each member's raw stats keyed by `userId`, plus the top three answers with their question prompt and cycle ID. The client joins the stats with the member list from `GET /groups/{groupId}` for names and avatars, then builds and orders the boards, so a new board that uses an existing stat needs only a frontend change.
-- **Frontend.** `/g/:groupId/leaderboard`, linked from the members page (§7) and from the published edition's header.
-- **Backfill.** A one-off `scripts/backfill_member_stats.py` recomputes the counters and streaks from history when the feature ships. It sets absolute values, so it's safe to run again.
-- **Open questions.**
-  - Can an admin switch the leaderboard off for their group? That would be a `Group.leaderboard_enabled` flag.
-  - Archival ([`archival.md`](design/archival.md)) prunes old Response rows, and their GSI2 entries go with them. The most-reacted board would then cover only unarchived editions, unless archival snapshots the top answers first.
+Still open:
+- **A "most places checked into" board**, once check-ins (§6) exist. It needs a `places_checked_in` counter on `MemberStats`, kept by the answer-publish transaction.
+- **Can an admin switch the leaderboard off for their group?** That would be a `Group.leaderboard_enabled` flag.
+- **Archived editions.** Archival ([`archival.md` §5](design/archival.md#5-forward-compatibility)) prunes old Response rows, and their GSI2 entries go with them. The most-reacted board would then cover only unarchived editions, unless archival snapshots the top answers first.
 
 ## 6. Check-ins (places on answers)
 

@@ -27,7 +27,7 @@ There is no JWT verifier to test: API Gateway's Cognito authorizer verifies toke
 
 Integration tests live per crate under `crates/<crate>/tests/`, run against a shared DynamoDB Local, and build their repo with `persistence`'s `test-utils` feature (`make_test_repo()`, which creates a table for the test and deletes it when the test ends). Use unique group IDs per test: the membership cache is process-wide.
 
-- **Access patterns:** ≥1 test per pattern AP1–AP22 ([`data-model.md` §3](../design/data-model.md#3-access-patterns--index-map)).
+- **Access patterns:** ≥1 test per pattern AP1–AP24 ([`data-model.md` §3](../design/data-model.md#3-access-patterns--index-map)).
 - **Transactions:** ≥1 test per transaction ([`data-model.md` §4](../design/data-model.md#4-transactional-invariants)). The high-stakes ones (vote, publish-response, redeem-invite) also have `tokio::join!` concurrency tests.
 - **Lifecycle suite:** the list in [`lifecycle.md` §11](../design/lifecycle.md#11-tests).
 - **Image pipeline and deletion:** the list in [`media.md` §10](../design/media.md#10-tests), run against `lambda-image-process` and `media-delete` directly.

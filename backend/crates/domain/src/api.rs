@@ -10,7 +10,7 @@
 
 use crate::{
     AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, ImageMedia,
-    ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, NewsletterStatus,
+    ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, MemberStats, NewsletterStatus,
     NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response, ResponseId,
     ResponseStatus, Role, SubscriptionId, User, UserId,
 };
@@ -326,6 +326,64 @@ pub struct PatchGroupRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PatchMemberRequest {
     pub role: Role,
+}
+
+// ===== `docs/design/api.md` §4.4 — Leaderboard route =====
+
+/// One row of `LeaderboardResponse.members` (§4.4). `editionsAnswered` comes
+/// from the caller's `GroupMembership`; the rest from `MemberStats` (§2.17),
+/// or all zeros when the member has no stats row yet.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberStatsResponse {
+    pub user_id: UserId,
+    pub editions_answered: u32,
+    pub reactions_received: u32,
+    pub reactions_given: u32,
+    pub comments_written: u32,
+    pub questions_asked: u32,
+    pub current_streak: u32,
+    pub longest_streak: u32,
+}
+
+impl MemberStatsResponse {
+    /// `stats` is `None` for a current member with no `MemberStats` row yet —
+    /// every counter is then 0. `MemberStats`'s counters are signed (`i64`,
+    /// transiently negative on history from before the backfill ran); clamped
+    /// at 0 here, per `docs/design/data-model.md` §2.17.
+    pub fn new(user_id: UserId, editions_answered: u32, stats: Option<&MemberStats>) -> Self {
+        let clamp = |n: i64| n.max(0) as u32;
+        Self {
+            user_id,
+            editions_answered,
+            reactions_received: stats.map_or(0, |s| clamp(s.reactions_received)),
+            reactions_given: stats.map_or(0, |s| clamp(s.reactions_given)),
+            comments_written: stats.map_or(0, |s| clamp(s.comments_written)),
+            questions_asked: stats.map_or(0, |s| clamp(s.questions_asked)),
+            current_streak: stats.map_or(0, |s| clamp(s.current_streak)),
+            longest_streak: stats.map_or(0, |s| clamp(s.longest_streak)),
+        }
+    }
+}
+
+/// One row of `LeaderboardResponse.topAnswers` (§4.4).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopAnswerResponse {
+    pub response_id: ResponseId,
+    pub user_id: UserId,
+    pub cycle_id: CycleId,
+    pub question_id: QuestionId,
+    pub question_prompt: String,
+    pub reaction_count: u32,
+}
+
+/// `GET /groups/{groupId}/leaderboard` response (§4.4).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaderboardResponse {
+    pub members: Vec<MemberStatsResponse>,
+    pub top_answers: Vec<TopAnswerResponse>,
 }
 
 // ===== `docs/design/api.md` §5/§6 — Newsletter and candidate-question routes =====

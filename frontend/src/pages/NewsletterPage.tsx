@@ -301,6 +301,15 @@ function PublishedLayout({
         )}
       </div>
 
+      <div className="px-5 pt-2">
+        <Link
+          to={`/g/${groupId}/leaderboard`}
+          className="inline-flex items-center gap-1 text-sm font-semibold text-grape"
+        >
+          🏆 Group leaderboard
+        </Link>
+      </div>
+
       {sorted.map((q) => {
         const isExpanded = !collapsed[q.questionId];
         return (

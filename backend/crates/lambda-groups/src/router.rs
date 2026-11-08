@@ -64,6 +64,13 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
             Ok(http::json_response(200, &group, &correlation_id))
         }
 
+        (&Method::GET, ["groups", group_id, "leaderboard"]) => {
+            let user_id = caller(state, req).await?;
+            let leaderboard =
+                group_routes::get_leaderboard(state, &user_id, &GroupId::new(*group_id)).await?;
+            Ok(http::json_response(200, &leaderboard, &correlation_id))
+        }
+
         (&Method::PATCH, ["groups", group_id]) => {
             let user_id = caller(state, req).await?;
             let group = group_routes::patch_group(

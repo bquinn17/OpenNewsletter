@@ -2,10 +2,14 @@
 #![allow(dead_code)]
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use domain::{GroupMembership, Role};
+use domain::{GroupMembership, LockedQuestion, Response, Role};
 use groups::state::AppState;
 use media_delete::fakes::{fake_deleter, RecordingObjectStore};
-use persistence::keys::{attr, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk};
+use persistence::keys::{
+    attr, locked_pk, locked_sk, membership_gsi1pk, membership_gsi1sk, membership_sk,
+    reacted_gsi2pk, reacted_gsi2sk, response_gsi1pk, response_gsi1sk, response_pk, response_sk,
+    user_pk,
+};
 use persistence::{groups as group_repo, test_factories, users, Repo};
 use shared::cycle_time::CycleCadence;
 use std::sync::Arc;
@@ -51,6 +55,71 @@ pub async fn seed(repo: &Repo, group_id: &str, members: &[(&str, Role)]) {
             .unwrap();
         put_membership(repo, &test_factories::membership(user_id, group_id, *role)).await;
     }
+}
+
+/// Writes a published text `Response` row with its `reaction_count` and GSI2
+/// "most reacted" keys already set, the shape the counted-reaction
+/// transaction leaves behind (`docs/design/data-model.md` §2.9) — for
+/// leaderboard `topAnswers` fixtures, which read GSI2 directly rather than
+/// exercising the reaction transaction itself.
+pub async fn put_reacted_response(repo: &Repo, r: &Response) {
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(r).expect("response serializes");
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(response_pk(&r.group_id, &r.cycle_id, &r.question_id)),
+    );
+    item.insert(attr::SK.into(), AttributeValue::S(response_sk(&r.user_id)));
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(response_gsi1pk(&r.user_id, &r.cycle_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(response_gsi1sk(&r.question_id)),
+    );
+    item.insert(
+        attr::GSI2PK.into(),
+        AttributeValue::S(reacted_gsi2pk(&r.group_id)),
+    );
+    item.insert(
+        attr::GSI2SK.into(),
+        AttributeValue::S(reacted_gsi2sk(r.reaction_count, &r.response_id)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("Response".into()));
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("response written");
+}
+
+/// Writes a `LockedQuestion` row so a `topAnswers` entry can hydrate its
+/// `questionPrompt`.
+pub async fn put_locked_question(repo: &Repo, q: &LockedQuestion) {
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(q).expect("locked question serializes");
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(locked_pk(&q.group_id, &q.cycle_id)),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(locked_sk(&q.question_id)),
+    );
+    item.insert(
+        attr::ENTITY.into(),
+        AttributeValue::S("LockedQuestion".into()),
+    );
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("locked question written");
 }
 
 async fn put_membership(repo: &Repo, m: &GroupMembership) {

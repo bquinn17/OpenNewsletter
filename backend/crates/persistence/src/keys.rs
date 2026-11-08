@@ -9,7 +9,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use domain::{
     AvatarId, CognitoSub, CycleId, GroupId, ImageId, InviteCode, NewsletterStatus, QuestionId,
-    UserId,
+    ResponseId, UserId,
 };
 use shared::config::VOTE_COUNT_PAD_WIDTH;
 
@@ -221,6 +221,26 @@ pub fn response_gsi1sk(question_id: &QuestionId) -> String {
     format!("Q#{}", question_id)
 }
 
+/// `gsi2pk` for a published text answer's most-reacted ranking (§2.9). Set
+/// the first time the answer gets a counted reaction. Distinct from the
+/// cycle-tick's `gsi2pk = NL_STATUS#…` values, so these rows never show up in
+/// its due-cycle queries (§9).
+pub fn reacted_gsi2pk(group_id: &GroupId) -> String {
+    format!("GROUP#{}#REACTED", group_id)
+}
+
+/// `{reaction_count zero-padded}#{response_id}`, padded like
+/// [`candidate_gsi1sk`] so lexicographic sort matches numeric. Rewritten with
+/// every `reaction_count` change (§4 #8).
+pub fn reacted_gsi2sk(reaction_count: u32, response_id: &ResponseId) -> String {
+    format!(
+        "{:0>width$}#{}",
+        reaction_count,
+        response_id,
+        width = VOTE_COUNT_PAD_WIDTH
+    )
+}
+
 // ---------- ImageMedia (§2.10) ----------
 
 pub fn image_pk(group_id: &GroupId, cycle_id: &CycleId) -> String {
@@ -307,6 +327,19 @@ pub const TICK_NOTIFY_SK: &str = "NOTIFY";
 pub fn avatar_sk(avatar_id: &AvatarId) -> String {
     format!("AVATAR#{}", avatar_id)
 }
+
+// ---------- MemberStats (§2.17) ----------
+
+pub fn member_stats_pk(group_id: &GroupId) -> String {
+    format!("GROUP#{}#STATS", group_id)
+}
+
+pub fn member_stats_sk(user_id: &UserId) -> String {
+    format!("MEMBER#{}", user_id)
+}
+
+/// Every `MemberStats` sk starts with this; AP23's query filters on it.
+pub const MEMBER_STATS_SK_PREFIX: &str = "MEMBER#";
 
 // ---------- Attribute names (centralised so handler code doesn't fight typos) ----------
 
@@ -460,6 +493,16 @@ mod tests {
     }
 
     #[test]
+    fn reacted_gsi2_keys_and_padding() {
+        let rid = ResponseId::new("01HR9");
+        assert_eq!(reacted_gsi2pk(&gid()), "GROUP#01HG2#REACTED");
+        assert_eq!(reacted_gsi2sk(7, &rid), "000007#01HR9");
+        assert_eq!(reacted_gsi2sk(0, &rid), "000000#01HR9");
+        assert!(reacted_gsi2sk(9, &rid) < reacted_gsi2sk(10, &rid));
+        assert!(reacted_gsi2sk(99, &rid) < reacted_gsi2sk(100, &rid));
+    }
+
+    #[test]
     fn image_keys() {
         assert_eq!(image_pk(&gid(), &cid()), "GROUP#01HG2#NL#202606");
         assert_eq!(image_sk(&iid()), "IMG#01HI4");
@@ -502,6 +545,13 @@ mod tests {
     fn avatar_keys() {
         let a = AvatarId::new("01HA7");
         assert_eq!(avatar_sk(&a), "AVATAR#01HA7");
+    }
+
+    #[test]
+    fn member_stats_keys() {
+        assert_eq!(member_stats_pk(&gid()), "GROUP#01HG2#STATS");
+        assert_eq!(member_stats_sk(&uid()), "MEMBER#01HX1");
+        assert_eq!(MEMBER_STATS_SK_PREFIX, "MEMBER#");
     }
 
     #[test]

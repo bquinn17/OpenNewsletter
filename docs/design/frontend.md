@@ -128,6 +128,7 @@ React Router v6 (`createBrowserRouter`). Pages fetch through TanStack Query hook
 /g/:groupId                 Redirects to most recent newsletter
 /g/:groupId/upcoming        Candidate questions (vote + suggest)
 /g/:groupId/upcoming/suggest    New candidate form
+/g/:groupId/leaderboard     Group leaderboard (§7.9)
 /g/:groupId/n/:cycleId      Newsletter view (voting/open/published states render different UIs)
 /g/:groupId/n/:cycleId/respond/:questionId   Editor for one question
 /g/:groupId/admin           Admin page (gated by role) — Members / Invites / Settings tabs only (no Curate; see lifecycle.md §7)
@@ -389,6 +390,19 @@ If authenticated: call `POST /invites/redeem` with the code (once, even under St
 On an error, the page shows the reason and the join form again. Redemption happens once per navigation (keyed on `location.key`), not once per code, so submitting the form again retries, even with the same code. That covers a failure that has since been fixed, such as an admin raising the member cap.
 
 If the user leaves the page before the redeem resolves, it still completes, and the stashed invite is cleared and the welcome toast shows, but the page doesn't switch `currentGroup` or navigate, so it never pulls them off the page they went to.
+
+### 7.9 LeaderboardPage `/g/:g/leaderboard`
+
+- `useLeaderboard` fetches `GET /groups/{g}/leaderboard` ([`api.md` §4.4](api.md#44-get-groupsgroupidleaderboard)). The page joins its raw stats with `useGroup`'s `members` for names and avatars.
+- A pure `buildBoards` turns the stats into boards, so a new board that uses an existing stat is a frontend-only change. The boards, in order:
+  1. **Most-reacted answer**: `topAnswers`, each with its author, question prompt and reaction count, linking to its edition.
+  2. **Most reactions received**: `reactionsReceived`.
+  3. **Most editions answered**: `editionsAnswered`.
+  4. **Longest streak**: `longestStreak`, with the current streak beside it when it's above 0. Streaks count published editions, so the value reads "4 in a row", with no month or week, and stays right across a cadence change.
+  5. **Most questions asked**: `questionsAsked`.
+  6. **Most comments written**: `commentsWritten`.
+- Each board ranks densely over the top 3 distinct values above 0: members who tie share a rank, and every member with one of those values is shown, so a board can list more than 3 members, and in a small group everyone with a value above 0. A board where nobody is above 0 is hidden. If every board is hidden, the page shows one empty state: "Superlatives show up once your group's first edition is out."
+- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../future-ideas.md#7-members-page-and-hometown-map) will link to it too, once it's built.
 
 ---
 

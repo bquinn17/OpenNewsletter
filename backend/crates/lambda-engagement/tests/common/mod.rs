@@ -192,6 +192,7 @@ pub async fn put_published_text_answer(
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        reaction_count: 0,
     };
     put_response(repo, &response).await;
 }
@@ -219,6 +220,7 @@ pub async fn put_published_poll_answer(
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        reaction_count: 0,
     };
     put_response(repo, &response).await;
 }
@@ -246,6 +248,7 @@ pub async fn put_draft_text_answer(
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: None,
+        reaction_count: 0,
     };
     put_response(repo, &response).await;
 }

@@ -81,7 +81,7 @@ IaC: AWS CDK in Python.
 
 ## Glossary (use these terms exactly)
 
-Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/Answer, Comment, Reaction, Invite, Push subscription. Definitions in [`docs/overview.md` §5](docs/overview.md#5-glossary-use-these-terms-exactly).
+Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/Answer, Comment, Reaction, Invite, Push subscription, Leaderboard. Definitions in [`docs/overview.md` §5](docs/overview.md#5-glossary-use-these-terms-exactly).
 
 ## Build order
 

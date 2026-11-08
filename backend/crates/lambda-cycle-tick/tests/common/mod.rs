@@ -46,16 +46,26 @@ pub async fn put_membership(repo: &Repo, user_id: &str, group_id: &str) {
         .unwrap();
 }
 
-/// A group, and an `open` cycle with `locked` questions that closes in five
-/// days, dated from the real clock (the tick reads it).
+/// A group, and an `open` monthly cycle with `locked` questions that closes
+/// in five days, dated from the real clock (the tick reads it).
 pub async fn seed_open_cycle(repo: &Repo, group_id: &str, locked: &[&str]) -> Newsletter {
+    seed_open_cycle_with_cadence(repo, group_id, locked, CycleCadence::Monthly).await
+}
+
+/// [`seed_open_cycle`], with the cycle id `cadence` gives today.
+pub async fn seed_open_cycle_with_cadence(
+    repo: &Repo,
+    group_id: &str,
+    locked: &[&str],
+    cadence: CycleCadence,
+) -> Newsletter {
     let group: Group = group(group_id, "u1");
     groups::put_group(repo, &group).await.unwrap();
     let now = Utc::now();
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
     let nl = Newsletter {
         group_id: GroupId::new(group_id),
-        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(cadence, now, tz),
         status: NewsletterStatus::Open,
         vote_window_open_at: now - Duration::days(30),
         vote_window_close_at: now - Duration::days(1),
@@ -231,4 +241,39 @@ pub async fn status(repo: &Repo, group_id: &GroupId, cycle_id: &CycleId) -> News
 
 pub fn seconds(dt: DateTime<Utc>) -> i64 {
     dt.timestamp()
+}
+
+/// A member's `MemberStats` row, or `None` if it has never been written.
+pub async fn member_stats(
+    repo: &Repo,
+    group_id: &str,
+    user_id: &str,
+) -> Option<domain::MemberStats> {
+    persistence::member_stats::list_stats_for_group(repo, &GroupId::new(group_id))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.user_id == UserId::new(user_id))
+}
+
+/// Seeds a member's stats row at an already-settled streak, as if an earlier
+/// edition's settlement had run — the shape `settle_streaks` itself writes.
+pub async fn seed_streak(
+    repo: &Repo,
+    group_id: &str,
+    user_id: &str,
+    current_streak: i64,
+    longest_streak: i64,
+    settled_cycle_id: &str,
+) {
+    persistence::member_stats::settle_streak(
+        repo,
+        &GroupId::new(group_id),
+        &UserId::new(user_id),
+        current_streak,
+        longest_streak,
+        &CycleId::new(settled_cycle_id),
+    )
+    .await
+    .unwrap();
 }

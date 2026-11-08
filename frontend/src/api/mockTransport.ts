@@ -2,6 +2,7 @@ import type { components } from "../types/api";
 import { mockAdminRoute } from "./mockAdmin";
 import { mockCandidateRoute } from "./mockCandidates";
 import { mockEngagementRoute } from "./mockEngagement";
+import { mockLeaderboardRoute } from "./mockLeaderboard";
 import { mockNewsletterRoute } from "./mockNewsletters";
 import { mockPushRoute } from "./mockPush";
 import {
@@ -405,6 +406,7 @@ function routeMockRequest(method: Method, path: string, body: unknown): unknown 
     mockCandidateRoute,
     mockNewsletterRoute,
     mockEngagementRoute,
+    mockLeaderboardRoute,
     mockPushRoute,
     mockAdminRoute,
   ]) {
