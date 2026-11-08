@@ -31,9 +31,9 @@ const TARA: AskedBy = {
 // up live from the `responses` store below so a PUT is reflected on the next
 // GET). ----
 
-type OpenQuestionSeed = Omit<OpenQuestion, "myResponse">;
+export type OpenQuestionSeed = Omit<OpenQuestion, "myResponse">;
 
-const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
+export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
   g_trail: [
     {
       questionId: "q_trail_hike",
@@ -411,7 +411,7 @@ function simplePublishedQuestions(
   ];
 }
 
-const PUBLISHED_QUESTIONS: Record<string, PublishedQuestion[]> = {
+export const PUBLISHED_QUESTIONS: Record<string, PublishedQuestion[]> = {
   [`g_trail|${PUBLISHED_CYCLE_ID}`]: RICH_PUBLISHED_QUESTIONS,
   [`g_trail|${PUBLISHED_CYCLE_ID_2}`]: simplePublishedQuestions(
     "g_trail",

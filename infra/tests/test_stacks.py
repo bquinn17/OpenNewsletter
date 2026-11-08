@@ -608,6 +608,7 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "PATCH /groups/{groupId}",
         "DELETE /groups/{groupId}/members/{userId}",
         "PATCH /groups/{groupId}/members/{userId}",
+        "GET /groups/{groupId}/leaderboard",
         "POST /admin/invites",
         "GET /admin/groups/{groupId}/invites",
         "POST /admin/invites/{code}/revoke",

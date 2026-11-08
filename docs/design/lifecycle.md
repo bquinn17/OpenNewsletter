@@ -180,6 +180,9 @@ items = [
               gsi2sk=f"{nl.responseCloseAt}#{nl.groupId}#{nl.cycleId}"
         Condition: status="voting"),
     *[Put(LockedQuestion(...)) for each in locked],
+    # Leaderboard: one per distinct suggester of a non-anonymous promoted question
+    *[Update(MemberStats(nl.groupId, u), Add: questionsAsked=n)
+      for (u, n) in count_by(submittedBy, [l for l in locked if not l.isAnonymous])],
 ]
 write_transact(items)
 
@@ -226,6 +229,26 @@ for q in locked_questions(nl):
             else:
                 raise
 ```
+
+**Then settle the leaderboard streaks** ([`data-model.md` §2.17](data-model.md#217-memberstats)). By now the set of authors is final:
+
+```
+if nl.lockedQuestionIds is empty:
+    skip   # an empty edition (§9) neither extends nor breaks a streak
+authors = { a.userId for every published answer in the sweep's AP14 reads }
+stats = query AP23   # pk=GROUP#{g}#STATS, one paginated read
+for m in members(nl.groupId):   # AP3; departed authors are ignored
+    s = stats.get(m.userId, zeros)
+    if s.streakCycle == nl.cycleId:
+        continue   # settled by an earlier pass that crashed before the flip
+    current = s.currentStreak + 1 if m.userId in authors else 0
+    longest = max(s.longestStreak, current)
+    Update(MemberStats(nl.groupId, m.userId),
+        Set: currentStreak=current, longestStreak=longest, streakCycle=nl.cycleId,
+        Condition: attribute_not_exists(streakCycle) OR streakCycle <> nl.cycleId)
+```
+
+A failed condition means another pass already settled that member, and it's skipped. Streaks are best-effort: an error on one member, or on the whole step, is logged at ERROR and the edition still publishes. Running `scripts/backfill_member_stats.py` repairs a missed settlement. The step runs only on the path that goes on to the flip, so a sweep that leaves the cycle `open` for a retry settles nothing.
 
 Then the status flip:
 

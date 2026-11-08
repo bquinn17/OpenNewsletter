@@ -3,8 +3,8 @@
 
 use crate::error::{self, RepoError};
 use crate::keys::{
-    attr, group_pk, index, key_timestamp, membership_sk, newsletter_sk, response_gsi1pk,
-    response_gsi1sk, response_pk, response_sk, user_pk,
+    attr, group_pk, index, key_timestamp, membership_sk, newsletter_sk, reacted_gsi2pk,
+    response_gsi1pk, response_gsi1sk, response_pk, response_sk, user_pk,
 };
 use crate::query::query_all;
 use crate::repo::Repo;
@@ -119,6 +119,35 @@ pub async fn list_my_responses_in_cycle(
         .collect())
 }
 
+/// AP24 — the group's most-reacted published text answers, most reactions
+/// first (`docs/design/data-model.md` §2.9, §2.17; `docs/design/api.md`
+/// §4.4). One `Query` page, not [`query_all`]: the leaderboard only ever
+/// wants the top handful, so `limit` bounds the read instead of following
+/// `LastEvaluatedKey` to the group's whole history.
+pub async fn list_top_reacted_answers(
+    repo: &Repo,
+    group_id: &GroupId,
+    limit: i32,
+) -> Result<Vec<Response>, RepoError> {
+    let resp = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .index_name(index::GSI2)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", attr::GSI2PK)
+        .expression_attribute_values(":pk", AttributeValue::S(reacted_gsi2pk(group_id)))
+        .scan_index_forward(false)
+        .limit(limit)
+        .send()
+        .await?;
+    resp.items
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| from_item::<_, Response>(i).map_err(RepoError::from))
+        .collect()
+}
+
 /// AP16 — get my response to a question.
 pub async fn get_my_response(
     repo: &Repo,
@@ -141,6 +170,45 @@ pub async fn get_my_response(
     match resp.item {
         Some(item) => Ok(Some(from_item(item)?)),
         None => Ok(None),
+    }
+}
+
+/// An answer's current `reaction_count` (absent reads as 0), read strongly
+/// consistent. The reaction transaction's retry (`docs/design/data-model.md`
+/// §4 #8) re-reads with this after losing a count race: an eventually
+/// consistent read could return the same stale count and lose again.
+pub async fn get_reaction_count_consistent(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    user_id: &UserId,
+) -> Result<Option<u32>, RepoError> {
+    let resp = repo
+        .client
+        .get_item()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(group_id, cycle_id, question_id)),
+        )
+        .key(attr::SK, AttributeValue::S(response_sk(user_id)))
+        .consistent_read(true)
+        .projection_expression("reaction_count")
+        .send()
+        .await?;
+    let Some(item) = resp.item else {
+        return Ok(None);
+    };
+    match item.get("reaction_count") {
+        None => Ok(Some(0)),
+        Some(AttributeValue::N(n)) => n
+            .parse()
+            .map(Some)
+            .map_err(|e| RepoError::Dynamo(format!("bad reaction_count {n:?}: {e}"))),
+        Some(other) => Err(RepoError::Dynamo(format!(
+            "reaction_count is not a number: {other:?}"
+        ))),
     }
 }
 

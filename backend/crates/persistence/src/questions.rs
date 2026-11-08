@@ -8,6 +8,7 @@ use crate::keys::{
     candidate_vote_sk, group_pk, locked_pk, locked_sk, newsletter_gsi2pk, newsletter_gsi2sk,
     newsletter_gsi2sk_sentinel, newsletter_sk, CANDIDATE_VOTE_SK_PREFIX, VOTER_TALLY_SK,
 };
+use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::error::SdkError;
@@ -160,6 +161,43 @@ pub async fn get_locked_question(
         Some(item) => Ok(Some(from_item(item)?)),
         None => Ok(None),
     }
+}
+
+/// Batched fetch of locked questions addressed by `(cycle_id, question_id)`
+/// pairs, all within one group — used to hydrate `questionPrompt` for the
+/// leaderboard's top answers (`docs/design/api.md` §4.4), which can span many
+/// cycles. Missing questions (e.g. one an archival prune has since removed)
+/// are absent from the result rather than an error.
+pub async fn get_locked_questions_batch(
+    repo: &Repo,
+    group_id: &GroupId,
+    refs: &[(CycleId, QuestionId)],
+) -> Result<HashMap<(CycleId, QuestionId), LockedQuestion>, RepoError> {
+    if refs.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let keys = refs
+        .iter()
+        .map(|(cycle_id, question_id)| {
+            HashMap::from([
+                (
+                    attr::PK.to_owned(),
+                    AttributeValue::S(locked_pk(group_id, cycle_id)),
+                ),
+                (
+                    attr::SK.to_owned(),
+                    AttributeValue::S(locked_sk(question_id)),
+                ),
+            ])
+        })
+        .collect();
+
+    let mut out = HashMap::with_capacity(refs.len());
+    for item in crate::batch::batch_get_items(repo, keys).await? {
+        let q: LockedQuestion = from_item(item)?;
+        out.insert((q.cycle_id.clone(), q.question_id.clone()), q);
+    }
+    Ok(out)
 }
 
 pub async fn put_candidate(repo: &Repo, q: &CandidateQuestion) -> Result<(), RepoError> {
@@ -538,17 +576,20 @@ fn classify_vote_tx_error<R: std::fmt::Debug, const N: usize>(
 }
 
 // `questionsPerCycle` is capped at `MAX_QUESTIONS_PER_CYCLE` (20), so a
-// promotion transaction (locked-question puts + 1 status-flip update) never
-// comes close to TransactWriteItems' 100-item limit. If that config bound
-// ever grows past this, `promote_candidates_tx`'s own `locked.len() > 99`
-// guard below still catches it at runtime — this assertion just makes the
-// invariant visible at compile time.
+// promotion transaction (locked-question puts + at most one `MemberStats`
+// update per distinct non-anonymous suggester + 1 status-flip update) never
+// comes close to TransactWriteItems' 100-item limit: at most
+// 2 * MAX_QUESTIONS_PER_CYCLE + 1 = 41 items. If that config bound ever grows
+// past this, `promote_candidates_tx`'s own item-count guard below still
+// catches it at runtime — this assertion just makes the invariant visible at
+// compile time.
 const _: () = assert!(
-    shared::config::MAX_QUESTIONS_PER_CYCLE < 100,
+    shared::config::MAX_QUESTIONS_PER_CYCLE < 50,
     "promote_candidates_tx's TransactWriteItems must stay under DynamoDB's 100-item cap"
 );
 
-/// Transaction §4 #3 — promote candidates into locked questions and flip the
+/// Transaction §4 #3 — promote candidates into locked questions, bump each
+/// non-anonymous suggester's `questions_asked` (§2.17), and flip the
 /// newsletter status `voting → open`.
 ///
 /// Returns `Err(RepoError::TransactionCancelled)` when the flip lost a race
@@ -559,11 +600,21 @@ pub async fn promote_candidates_tx(
     locked: &[LockedQuestion],
     newsletter: &Newsletter,
 ) -> Result<(), RepoError> {
-    if locked.len() > 99 {
+    // One `MemberStats` update per distinct non-anonymous suggester, counting
+    // how many of their questions were promoted — never more than one update
+    // per suggester, since a transaction can't touch the same item twice
+    // (`docs/design/data-model.md` §4 #3).
+    let mut questions_asked: HashMap<&UserId, i64> = HashMap::new();
+    for q in locked.iter().filter(|q| !q.is_anonymous) {
+        *questions_asked.entry(&q.submitted_by).or_insert(0) += 1;
+    }
+
+    if locked.len() + questions_asked.len() + 1 > 99 {
         return Err(RepoError::Dynamo("transact_write_items cap is 100".into()));
     }
 
-    let mut items: Vec<TransactWriteItem> = Vec::with_capacity(locked.len() + 1);
+    let mut items: Vec<TransactWriteItem> =
+        Vec::with_capacity(locked.len() + questions_asked.len() + 1);
 
     for q in locked {
         let mut item: std::collections::HashMap<String, AttributeValue> = to_item(q)?;
@@ -585,6 +636,17 @@ pub async fn promote_candidates_tx(
             .build()
             .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
         items.push(TransactWriteItem::builder().put(put).build());
+    }
+
+    for (suggester, count) in questions_asked {
+        let bump = member_stats::add_update(
+            repo,
+            &newsletter.group_id,
+            suggester,
+            "questions_asked",
+            count,
+        )?;
+        items.push(TransactWriteItem::builder().update(bump).build());
     }
 
     let ids_av: Vec<AttributeValue> = newsletter

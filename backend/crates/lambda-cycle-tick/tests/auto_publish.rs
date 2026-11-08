@@ -1,8 +1,8 @@
 //! `publish(nl)` auto-publishes non-empty drafts before flipping the cycle
 //! (`docs/design/lifecycle.md` §5.3, `docs/design/data-model.md` §4 #4a).
 //!
-//! Each test starts its own DynamoDB Local, and the tick acts on every due
-//! cycle in the table, so tests can't see each other's cycles.
+//! Each test gets its own table in the shared DynamoDB Local, and the tick
+//! acts on every due cycle in its table, so tests can't see each other's cycles.
 
 mod common;
 

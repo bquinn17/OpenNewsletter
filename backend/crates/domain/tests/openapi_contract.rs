@@ -16,10 +16,11 @@ use domain::api::{
     CreateAvatarResponse, CreateCandidateRequest, CreateCommentRequest, CreateInviteRequest,
     CreateInviteResponse, CreateUploadRequest, CreateUploadResponse, DevTickCycleRequest,
     DevTickCycleResponse, DevTickNotifyResponse, GroupResponse, HealthResponse, ImageMediaResponse,
-    InviteListResponse, MemberResponse, NewsletterDetailResponse, NewsletterListResponse,
-    PatchCommentRequest, PatchGroupRequest, PatchMeRequest, PatchMemberRequest, PatchUploadRequest,
-    ProblemDetails, PushPreferenceListResponse, PushPreferenceResponse, PushSubscribeRequest,
-    PushSubscribeResponse, PushSubscriptionListResponse, PushTestResponse, PushUnsubscribeRequest,
+    InviteListResponse, LeaderboardResponse, MemberResponse, NewsletterDetailResponse,
+    NewsletterListResponse, PatchCommentRequest, PatchGroupRequest, PatchMeRequest,
+    PatchMemberRequest, PatchUploadRequest, ProblemDetails, PushPreferenceListResponse,
+    PushPreferenceResponse, PushSubscribeRequest, PushSubscribeResponse,
+    PushSubscriptionListResponse, PushTestResponse, PushUnsubscribeRequest,
     PutPushPreferenceRequest, ReactionsResponse, RedeemRequest, RedeemResponse, ResponseDto,
     SaveResponseRequest, UserResponse,
 };
@@ -158,6 +159,12 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "/groups/{groupId}/members/{userId}",
         "404",
         round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/groups/{groupId}/leaderboard",
+        "200",
+        round_trip::<LeaderboardResponse>,
     ),
     ("GET", "/healthz", "200", round_trip::<HealthResponse>),
     (

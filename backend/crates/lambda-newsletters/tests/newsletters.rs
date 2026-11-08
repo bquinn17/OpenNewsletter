@@ -96,6 +96,7 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
             image_media_ids: Vec::new(),
             updated_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
             published_at: None,
+            reaction_count: 0,
         },
     )
     .await;
@@ -208,6 +209,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
             image_media_ids: Vec::new(),
             updated_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
             published_at: None,
+            reaction_count: 0,
         },
     )
     .await;
@@ -306,6 +308,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             image_media_ids: Vec::new(),
             updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
             published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+            reaction_count: 0,
         },
     )
     .await;
@@ -324,6 +327,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             image_media_ids: Vec::new(),
             updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
             published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+            reaction_count: 0,
         },
     )
     .await;
@@ -433,6 +437,7 @@ fn published_text(user: &str, response_id: &str, images: &[&str]) -> Response {
         image_media_ids: images.iter().map(|id| ImageId::new(*id)).collect(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        reaction_count: 0,
     }
 }
 

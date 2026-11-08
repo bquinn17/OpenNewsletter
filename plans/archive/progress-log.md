@@ -1322,3 +1322,34 @@ CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-uti
 **Effect.** The full suite runs in about 106 s on the Mac with one container, against several minutes and hundreds of container starts before, and leaves no tables behind. `cargo test` no longer needs `DOCKER_HOST` or `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; only `make dynamodb-local` touches Docker. Docs: CLAUDE.md, [`environments.md` §10.1](../../docs/development/environments.md#101-docker-and-dynamodb-local-by-platform), [`testing-and-ci.md` §2.4](../../docs/development/testing-and-ci.md#24-running-locally).
 
 **Tests.** Backend 532 (unchanged), all passing against the shared DynamoDB Local.
+
+## Group leaderboard — what landed (2026-11-07)
+
+`/g/:groupId/leaderboard`: a page of light-hearted superlatives, built from per-member counters kept at write time ([`future-ideas.md` §5](../../docs/future-ideas.md#5-group-leaderboard) had the sketch). Design in [`data-model.md` §2.17](../../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8, #9, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl), [`api.md` §4.4](../../docs/design/api.md#44-get-groupsgroupidleaderboard) and [`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
+
+**What landed.**
+- `MemberStats` row per member per group (`GROUP#{g}#STATS` / `MEMBER#{u}`), upserted with `UpdateItem` by every writer (`persistence::member_stats`).
+- Reactions on another member's answer are now one transaction: the reaction row, `Response.reaction_count` with a `GROUP#{g}#REACTED` GSI2 entry rewritten on every change, and both members' counters. Lost count races re-read the count strongly consistent and retry (3 attempts).
+- Comment create/soft-delete keep `comments_written`; promotion keeps `questions_asked` in its own transaction; `publish(nl)` settles streaks between the auto-publish sweep and the status flip; leave/kick zeroes `current_streak`.
+- `GET /groups/{groupId}/leaderboard` in `lambda-groups`; `LeaderboardPage` with a pure `buildBoards`, linked from the published edition's header; mock and demo serve it.
+- `scripts/backfill_member_stats.py` recomputes every counter, streak and answer count from history (absolute values, rerunnable).
+
+**Decisions (spec gaps).**
+- **Self-reactions count nowhere**: not in `reaction_count` and not in either member's stats. It stops self-boosting, and the transaction couldn't touch the same `MemberStats` row twice anyway.
+- A duplicate PUT of a reaction now writes nothing, so it no longer refreshes `created_at` (glossary and `engagement.md` §2.1 updated).
+- Counters are signed and clamped at 0 by the API, because `ADD -1` against pre-backfill history can dip below 0.
+- Streak settlement is best-effort: an error is logged and the edition still publishes; the backfill repairs it.
+- The comment soft delete is now conditioned on the comment not being deleted already, so a concurrent double delete can't decrement twice.
+- `topAnswers` scans 10 GSI2 rows and keeps the top 3 by current members with a count above 0.
+- Boards rank densely over the top 3 distinct values: ties share a rank, zeros never show, empty boards are hidden. A board can list more than 3 members, and in a small group everyone above 0; the owner confirmed this over capping at 3 people.
+
+**Noticed, not changed.** `responses::save_response`'s `editions_answered` bump has no `attribute_exists(pk)` guard (auto-publish's has one). Unreachable in production, since every save is membership-gated first.
+
+**Rebased onto the cadence change (2026-11-14).** Written against `86f791f`, before the configurable cadence landed on `main`. The rebase:
+- moved the two new access patterns to AP23 (all members' stats) and AP24 (most-reacted answers), since the cadence change took AP22 for groups awaiting their first cycle;
+- labels the longest-streak board "4 in a row" instead of "4 months": a streak counts published editions, so a weekly group would have been told months;
+- added a test that a streak carries across a monthly-to-weekly switch (`streaks.rs`), and confirmed the backfill's `cycle_id` ordering holds for mixed `yyyymm`/`yyyymmdd` ids.
+
+Streak settlement needed no change for weekly cycles: it never does calendar arithmetic on cycle ids.
+
+**Tests.** Backend +22 (532 → 554), CDK unchanged at 177 (the route-set assertion gained the new route), scripts +17 (new `scripts/tests`), Vitest +19 (404 → 423), Playwright +1 (demo: the edition links to a populated leaderboard).

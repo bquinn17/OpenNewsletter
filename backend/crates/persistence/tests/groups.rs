@@ -185,6 +185,49 @@ async fn leave_group_tx_deletes_membership_and_decrements_count() {
     assert_eq!(updated_group.member_count, 1);
 }
 
+/// §4 #6: leaving resets `current_streak` to 0 but keeps `longest_streak`
+/// (`docs/design/data-model.md` §2.17), so a later rejoin can't inherit a
+/// stale streak.
+#[tokio::test]
+async fn leave_group_tx_resets_current_streak_and_keeps_longest() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-leave-streak");
+    let mut g = common::group("g-leave-streak", "u1");
+    g.member_count = 2;
+    groups::put_group(&repo, &g).await.unwrap();
+    common::put_membership(
+        &repo,
+        &common::membership("u2", "g-leave-streak", Role::Member),
+    )
+    .await;
+
+    // Build up a streak via the same `ADD`-upsert shape production code uses.
+    persistence::member_stats::settle_streak(
+        &repo,
+        &group_id,
+        &UserId::new("u2"),
+        4,
+        5,
+        &domain::CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
+
+    groups::leave_group_tx(&repo, &UserId::new("u2"), &group_id, None)
+        .await
+        .unwrap();
+
+    let stats = persistence::member_stats::list_stats_for_group(&repo, &group_id)
+        .await
+        .unwrap();
+    let u2 = stats
+        .iter()
+        .find(|s| s.user_id == UserId::new("u2"))
+        .expect("u2 keeps a stats row after leaving");
+    assert_eq!(u2.current_streak, 0);
+    assert_eq!(u2.longest_streak, 5, "longest_streak must survive a leave");
+}
+
 #[tokio::test]
 async fn leave_group_tx_fails_when_membership_absent() {
     let (_c, repo) = common::make_repo().await;

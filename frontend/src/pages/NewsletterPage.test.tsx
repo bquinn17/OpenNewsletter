@@ -211,6 +211,10 @@ describe("NewsletterPage", () => {
 
     expect(await screen.findByText("All good here.")).toBeInTheDocument();
     expect(screen.getByText("Your vote")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Group leaderboard/ })).toHaveAttribute(
+      "href",
+      "/g/g1/leaderboard",
+    );
   });
 
   it("shows a friendly archived message on a 410", async () => {

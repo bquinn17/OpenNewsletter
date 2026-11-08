@@ -7,12 +7,13 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use domain::api::{CycleTransition, DevTickCycleResponse};
 use domain::{
-    CandidateQuestion, CycleId, GroupId, LockedQuestion, Newsletter, NewsletterStatus, Response,
-    ResponseStatus,
+    CandidateQuestion, CycleId, GroupId, LockedQuestion, MemberStats, Newsletter, NewsletterStatus,
+    Response, ResponseStatus, UserId,
 };
 use persistence::responses::AutoPublishOutcome;
-use persistence::{groups, newsletters, questions, responses, Repo, RepoError};
+use persistence::{groups, member_stats, newsletters, questions, responses, Repo, RepoError};
 use shared::cycle_time::CycleCadence;
+use std::collections::{HashMap, HashSet};
 
 use crate::notify::{FanoutKind, NoopNotifier, Notifier};
 
@@ -432,6 +433,8 @@ async fn publish(
         }
     }
 
+    settle_streaks(repo, nl, &sweep.authors).await;
+
     match newsletters::publish_cycle(repo, &nl.group_id, &nl.cycle_id, now).await {
         Ok(()) => {
             notifier
@@ -456,13 +459,18 @@ async fn publish(
 }
 
 /// What one auto-publish sweep did.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SweepReport {
     pub published: u32,
     /// Drafts left unpublished by an error. An answer row that won't
     /// deserialize counts as one, and so does a question whose answers
     /// couldn't be listed at all.
     pub failed: u32,
+    /// Every user with at least one `published` answer to a locked question,
+    /// after the sweep — i.e. answers that were already published plus
+    /// drafts this pass just published. Feeds streak settlement (§5.3): the
+    /// AP14 reads this sweep already did are reused instead of re-listing.
+    pub authors: HashSet<UserId>,
 }
 
 /// §5.3's first step (`docs/design/data-model.md` §4 #4a): publish each locked question's non-empty
@@ -492,12 +500,20 @@ pub async fn auto_publish_drafts(repo: &Repo, nl: &Newsletter) -> SweepReport {
             tracing::error!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, question_id = %question_id, sk = %row.sk, error = %row.error, "unreadable answer row; can't auto-publish it");
             report.failed += 1;
         }
+        for answer in &answers {
+            if answer.status == ResponseStatus::Published {
+                report.authors.insert(answer.user_id.clone());
+            }
+        }
         for draft in answers
             .iter()
             .filter(|a| a.status == ResponseStatus::Draft && a.is_non_empty())
         {
             match auto_publish_one(repo, nl, draft).await {
-                Ok(true) => report.published += 1,
+                Ok(true) => {
+                    report.published += 1;
+                    report.authors.insert(draft.user_id.clone());
+                }
                 Ok(false) => {}
                 Err(e) => {
                     tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, response_id = %draft.response_id, "failed to auto-publish draft");
@@ -524,6 +540,84 @@ async fn auto_publish_one(
     }
     let outcome = responses::auto_publish_draft(repo, draft, nl.response_close_at).await?;
     Ok(matches!(outcome, AutoPublishOutcome::Published { .. }))
+}
+
+/// §5.3 — settle every current member's streak for this edition, after the
+/// auto-publish sweep has decided to proceed and before the status flips to
+/// `published` (`docs/design/data-model.md` §4 call-out under §2.17;
+/// `docs/design/lifecycle.md` §5.3). Skipped entirely for an empty edition
+/// (`lifecycle.md` §9: no locked questions) — it neither extends nor breaks a
+/// streak. `authors` is [`SweepReport::authors`]: every user with at least
+/// one published answer to a locked question, after the sweep.
+///
+/// Best-effort: an error settling one member, or listing members/stats for
+/// the whole step, is logged at ERROR and never stops the publish that
+/// follows. `scripts/backfill_member_stats.py` repairs a missed settlement.
+///
+/// `pub` (not just used by `publish`) so integration tests can simulate a
+/// crashed-then-rerun pass the same way `auto_publish_drafts` is exposed for
+/// that purpose.
+pub async fn settle_streaks(repo: &Repo, nl: &Newsletter, authors: &HashSet<UserId>) {
+    if nl.locked_question_ids.is_empty() {
+        return;
+    }
+
+    let members = match groups::list_members_for_group(repo, &nl.group_id).await {
+        Ok(members) => members,
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, "failed to list members for streak settlement; skipping this edition's streaks");
+            return;
+        }
+    };
+
+    let stats: HashMap<UserId, MemberStats> = match member_stats::list_stats_for_group(
+        repo,
+        &nl.group_id,
+    )
+    .await
+    {
+        Ok(rows) => rows.into_iter().map(|s| (s.user_id.clone(), s)).collect(),
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, "failed to list member stats for streak settlement; skipping this edition's streaks");
+            return;
+        }
+    };
+
+    for member in &members {
+        let existing = stats.get(&member.user_id);
+        if existing.and_then(|s| s.streak_cycle.as_ref()) == Some(&nl.cycle_id) {
+            // Already settled by an earlier, crashed pass over this cycle.
+            continue;
+        }
+
+        let prior_current = existing.map_or(0, |s| s.current_streak);
+        let prior_longest = existing.map_or(0, |s| s.longest_streak);
+        let (current, longest) = if authors.contains(&member.user_id) {
+            let current = prior_current + 1;
+            (current, prior_longest.max(current))
+        } else {
+            (0, prior_longest)
+        };
+
+        match member_stats::settle_streak(
+            repo,
+            &nl.group_id,
+            &member.user_id,
+            current,
+            longest,
+            &nl.cycle_id,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(e) if e.is_lost_race() => {
+                tracing::info!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %member.user_id, "member's streak already settled for this cycle by an earlier pass");
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %member.user_id, "failed to settle member's streak");
+            }
+        }
+    }
 }
 
 /// One EMF log line: drafts the sweep gave up on when it published a cycle

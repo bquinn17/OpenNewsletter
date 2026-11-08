@@ -54,7 +54,9 @@ Every comment edit and soft delete is also conditioned on the comment still hold
 
 ### 2.1 Shape
 
-A reaction row carries `reactorUserId`, `emoji`, `createdAt` ([`data-model.md` §2.12](data-model.md#212-reaction)). Its "key" is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op (last-write-wins on `createdAt`).
+A reaction row carries `reactorUserId`, `emoji`, `createdAt` ([`data-model.md` §2.12](data-model.md#212-reaction)). Its "key" is `(answer, reactorUserId, emoji)`. The same user can react to the same answer with multiple distinct emojis. Re-reacting with the same emoji is a no-op that keeps the first `createdAt`.
+
+Adding or removing a reaction on someone else's answer also updates the answer's `reaction_count` and both members' leaderboard counters in the same transaction ([`data-model.md` §4](data-model.md#4-transactional-invariants) #8). Reactions on your own answer show on the answer as usual but count nowhere on the leaderboard.
 
 ### 2.2 Validation
 

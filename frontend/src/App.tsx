@@ -21,6 +21,7 @@ import { RequireGroupAdmin } from "./routes/RequireGroupAdmin";
 import { CandidatesPage } from "./pages/CandidatesPage";
 import { SuggestPage } from "./pages/SuggestPage";
 import { NewsletterPage } from "./pages/NewsletterPage";
+import { LeaderboardPage } from "./pages/LeaderboardPage";
 import { RespondPage } from "./pages/RespondPage";
 import { GroupAdminPage } from "./pages/GroupAdminPage";
 
@@ -48,6 +49,7 @@ const routes: RouteObject[] = [
               { index: true, element: <GroupRedirect /> },
               { path: "upcoming", element: <CandidatesPage /> },
               { path: "upcoming/suggest", element: <SuggestPage /> },
+              { path: "leaderboard", element: <LeaderboardPage /> },
               { path: "n/:cycleId", element: <NewsletterPage /> },
               { path: "n/:cycleId/respond/:questionId", element: <RespondPage /> },
               { path: "n/:cycleId/respond", element: <Navigate to=".." replace /> },

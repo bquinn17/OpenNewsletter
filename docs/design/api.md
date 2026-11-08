@@ -168,6 +168,14 @@ Validation: `responseWindowDays` between 1 and the cadence's maximum: 28 when mo
 
 **A stored window above the maximum** (saved before a switch from monthly to weekly) is reported capped in this response and in `GET /groups/{groupId}`. A `cycleSettings` change that omits `responseWindowDays` saves the capped value instead of failing validation ([`lifecycle.md` §13.3](lifecycle.md#133-window-limits-and-overlap)).
 
+### 4.4 `GET /groups/{groupId}/leaderboard`
+
+**Lambda**: `lambda-groups`. **Role**: member.
+
+Response 200: `LeaderboardResponse` in `shared/openapi.yaml`. It carries raw numbers only. The client joins them with the member list from §4.2 for names and avatars, then builds and orders the boards ([`frontend.md` §7.9](frontend.md#79-leaderboardpage-ggleaderboard)), so a new board that uses an existing stat is a frontend-only change.
+- **`members`**: one `MemberStatsResponse` per current member (AP3). `editionsAnswered` comes from the membership row and the rest from the group's `MemberStats` rows (AP23, [`data-model.md` §2.17](data-model.md#217-memberstats)). A member with no row gets zeros, and every value is clamped at 0. Members who have left aren't returned, although their rows are kept.
+- **`topAnswers`**: up to `LEADERBOARD_TOP_ANSWERS` (3) answers, most reactions first. The handler reads the first `LEADERBOARD_TOP_ANSWERS_SCAN` (10) rows of AP24, keeps those with a count above 0 whose author is a current member, and batch-gets their locked questions for `questionPrompt`. An answer whose locked question is missing is dropped. Both constants are in `shared::config`.
+
 ---
 
 ## 5. Newsletter routes
@@ -359,9 +367,11 @@ Soft delete: sets `deletedAt`, blanks `body` and drops the image attachment, rel
 
 Idempotent toggle-on with an empty body. `emoji` is URL-encoded. The server percent-decodes it if it still contains `%`, because API Gateway's decoding of path parameters isn't relied on. It then validates it against the canonical emoji predicate in [`engagement.md` §2.2](engagement.md#22-validation): NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
 
+On another member's answer, the write is the reaction transaction in [`data-model.md` §4](data-model.md#4-transactional-invariants) #8, which also keeps the leaderboard counters (§4.4). A PUT of a reaction that already exists writes nothing and returns 200.
+
 ### 8.7 `DELETE .../reactions/{emoji}`
 
-Removes the caller's reaction with that emoji. Idempotent, with the same validation as PUT. Response 200: the answer's `ReactionsResponse` after the change.
+Removes the caller's reaction with that emoji. Idempotent, with the same validation as PUT, and the same transaction as §8.6 in reverse. Response 200: the answer's `ReactionsResponse` after the change.
 
 ---
 
@@ -535,6 +545,7 @@ The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in
 | `GET /admin/groups/{g}/invites`, `POST /admin/invites/{code}/revoke` | admin |
 | `POST /invites/redeem` | authenticated |
 | `GET /groups/{g}` | member |
+| `GET /groups/{g}/leaderboard` | member |
 | `PATCH /groups/{g}` | admin |
 | `DELETE /groups/{g}/members/{u}` | self OR admin |
 | `PATCH /groups/{g}/members/{u}` | admin (role only) |

@@ -7,6 +7,7 @@ use crate::keys::{
     attr, group_pk, index, membership_gsi1pk, membership_sk, user_pk,
     GROUP_AWAITING_FIRST_CYCLE_GSI2PK, GROUP_META_SK,
 };
+use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Delete, TransactWriteItem, Update};
@@ -347,7 +348,9 @@ fn admin_witness_condition(
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
 }
 
-/// Transaction §4 #6 — leave group: delete membership + decrement memberCount.
+/// Transaction §4 #6 — leave group: delete membership, decrement memberCount,
+/// and zero the leaver's `current_streak` (§2.17) so a later rejoin doesn't
+/// pick up a stale streak. `longest_streak` and the other counters are kept.
 ///
 /// `admin_witness`, when `Some`, names a *different* member who must
 /// currently hold the admin role, and adds a `ConditionCheck` transact-item
@@ -378,11 +381,14 @@ pub async fn leave_group_tx(
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
+    let streak_reset = member_stats::reset_current_streak_update(repo, group_id, user_id)?;
+
     let mut request = repo
         .client
         .transact_write_items()
         .transact_items(TransactWriteItem::builder().delete(delete).build())
-        .transact_items(TransactWriteItem::builder().update(update).build());
+        .transact_items(TransactWriteItem::builder().update(update).build())
+        .transact_items(TransactWriteItem::builder().update(streak_reset).build());
 
     if let Some(witness) = admin_witness {
         let witness_check = admin_witness_condition(repo, witness, group_id)?;

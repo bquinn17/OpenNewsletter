@@ -299,6 +299,7 @@ async fn put_text_answer(repo: &Repo, ids: [&str; 5], status: domain::ResponseSt
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: is_published.then(|| Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        reaction_count: 0,
     };
     let mut item: HashMap<String, AttributeValue> =
         serde_dynamo::to_item(&response).expect("response serializes");

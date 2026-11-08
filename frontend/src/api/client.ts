@@ -155,6 +155,9 @@ export const api = {
   getGroup: (groupId: string): Promise<S["GroupResponse"]> =>
     apiFetch(`/groups/${encodeURIComponent(groupId)}`),
 
+  getLeaderboard: (groupId: string): Promise<S["LeaderboardResponse"]> =>
+    apiFetch(`${groupPath(groupId)}/leaderboard`),
+
   removeMember: (groupId: string, userId: string): Promise<void> =>
     apiFetch(`/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
       method: "DELETE",

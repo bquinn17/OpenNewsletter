@@ -53,6 +53,7 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("groups", "PATCH", "/groups/{groupId}"),
     ("groups", "DELETE", "/groups/{groupId}/members/{userId}"),
     ("groups", "PATCH", "/groups/{groupId}/members/{userId}"),
+    ("groups", "GET", "/groups/{groupId}/leaderboard"),
     ("invites", "POST", "/admin/invites"),
     ("invites", "GET", "/admin/groups/{groupId}/invites"),
     ("invites", "POST", "/admin/invites/{code}/revoke"),

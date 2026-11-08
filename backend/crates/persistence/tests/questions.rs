@@ -171,6 +171,52 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     assert_eq!(updated_nl.status, NewsletterStatus::Open);
 }
 
+/// Promotion §4 #3: one `MemberStats.questions_asked` bump per distinct
+/// non-anonymous suggester, counting how many of their questions were
+/// promoted; an anonymous suggestion is excluded entirely.
+#[tokio::test]
+async fn promote_candidates_tx_bumps_questions_asked_excluding_anonymous() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = "g-promo-stats";
+    let mut nl = common::voting_newsletter(group_id, "202606");
+    persistence::newsletters::write_status_transition(&repo, &nl)
+        .await
+        .unwrap();
+
+    // u1 suggests two promoted questions; u2's is anonymous and must not count.
+    let mut lq1 = common::locked_question(group_id, "202606", "q1", "u1");
+    let mut lq2 = common::locked_question(group_id, "202606", "q2", "u1");
+    let mut lq3 = common::locked_question(group_id, "202606", "q3", "u2");
+    lq1.question_id = QuestionId::new("q1");
+    lq2.question_id = QuestionId::new("q2");
+    lq3.question_id = QuestionId::new("q3");
+    lq3.is_anonymous = true;
+
+    nl.status = NewsletterStatus::Open;
+    nl.locked_question_ids = vec![
+        lq1.question_id.clone(),
+        lq2.question_id.clone(),
+        lq3.question_id.clone(),
+    ];
+    nl.next_transition_at = Some(Utc::now());
+    questions::promote_candidates_tx(&repo, &[lq1, lq2, lq3], &nl)
+        .await
+        .unwrap();
+
+    let stats = persistence::member_stats::list_stats_for_group(&repo, &GroupId::new(group_id))
+        .await
+        .unwrap();
+    let u1_stats = stats
+        .iter()
+        .find(|s| s.user_id == UserId::new("u1"))
+        .expect("u1 has a stats row");
+    assert_eq!(u1_stats.questions_asked, 2);
+    assert!(
+        !stats.iter().any(|s| s.user_id == UserId::new("u2")),
+        "the anonymous suggester must get no stats row at all"
+    );
+}
+
 #[tokio::test]
 async fn cast_vote_tx_enforces_the_cap_in_the_transaction() {
     let (_c, repo) = common::make_repo().await;

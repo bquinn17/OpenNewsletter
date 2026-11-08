@@ -436,6 +436,44 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /groups/{groupId}/leaderboard:
+    get:
+      operationId: getLeaderboard
+      tags: [groups]
+      summary: >
+        Raw leaderboard stats for every current member, plus the group's
+        most-reacted answers (`docs/design/api.md` §4.4). Caller must be a
+        member. The client joins `members` with `GET /groups/{groupId}` for
+        names and avatars, and builds and orders the boards itself.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "200":
+          description: The group's leaderboard stats.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+              example:
+                members:
+                  - userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    editionsAnswered: 4
+                    reactionsReceived: 17
+                    reactionsGiven: 22
+                    commentsWritten: 9
+                    questionsAsked: 2
+                    currentStreak: 3
+                    longestStreak: 4
+                topAnswers:
+                  - responseId: "018f2b6b-6c1b-7c3a-9d4e-5a6b7c8d9e0f"
+                    userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                    cycleId: "202605"
+                    questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                    questionPrompt: "What was the best thing you ate this month?"
+                    reactionCount: 8
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /groups/{groupId}/newsletters:
     get:
       operationId: listNewsletters
@@ -2192,6 +2230,77 @@ components:
           type: string
           format: date-time
         editionsAnswered:
+          type: integer
+
+    LeaderboardResponse:
+      type: object
+      required: [members, topAnswers]
+      properties:
+        members:
+          description: >
+            One entry per current member, in no particular order. A member
+            with no stats yet gets zeros.
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberStatsResponse"
+        topAnswers:
+          description: >
+            Up to 3 answers by current members with at least one reaction,
+            most reactions first.
+          type: array
+          items:
+            $ref: "#/components/schemas/TopAnswerResponse"
+
+    MemberStatsResponse:
+      type: object
+      required:
+        [
+          userId,
+          editionsAnswered,
+          reactionsReceived,
+          reactionsGiven,
+          commentsWritten,
+          questionsAsked,
+          currentStreak,
+          longestStreak,
+        ]
+      properties:
+        userId:
+          type: string
+        editionsAnswered:
+          type: integer
+        reactionsReceived:
+          description: Reactions from other members on this member's answers.
+          type: integer
+        reactionsGiven:
+          description: Reactions this member gave to other members' answers.
+          type: integer
+        commentsWritten:
+          description: Comments written and not deleted.
+          type: integer
+        questionsAsked:
+          description: Promoted questions this member suggested without anonymity.
+          type: integer
+        currentStreak:
+          type: integer
+        longestStreak:
+          type: integer
+
+    TopAnswerResponse:
+      type: object
+      required: [responseId, userId, cycleId, questionId, questionPrompt, reactionCount]
+      properties:
+        responseId:
+          type: string
+        userId:
+          type: string
+        cycleId:
+          type: string
+        questionId:
+          type: string
+        questionPrompt:
+          type: string
+        reactionCount:
           type: integer
 
     CycleSettingsResponse:

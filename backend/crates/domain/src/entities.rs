@@ -247,6 +247,12 @@ pub struct Response {
     pub image_media_ids: Vec<ImageId>,
     pub updated_at: DateTime<Utc>,
     pub published_at: Option<DateTime<Utc>>,
+    /// Reactions on this answer from members other than its author
+    /// (`docs/design/data-model.md` §2.9). Absent reads as 0; kept by the
+    /// reaction transaction (§4 #8). `#[serde(default)]` so rows written
+    /// before the leaderboard feature load as `0`.
+    #[serde(default)]
+    pub reaction_count: u32,
 }
 
 impl Response {
@@ -368,6 +374,38 @@ pub struct CognitoSubLookup {
     pub user_id: UserId,
 }
 
+/// One member's leaderboard counters in one group (`docs/design/data-model.md`
+/// §2.17). Kept on its own row, not on `GroupMembership`, so the stats survive
+/// a leave + rejoin. Every writer upserts with `UpdateItem`, so a missing row
+/// reads as all zeros.
+///
+/// The counters are signed: an `ADD -1` against history written before this
+/// feature shipped can transiently dip a counter below 0 until
+/// `scripts/backfill_member_stats.py` runs. `#[serde(default)]` on each so a
+/// row written by an earlier, narrower writer (e.g. one that only ever set
+/// `questions_asked`) still deserializes. The API clamps every value at 0.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberStats {
+    pub group_id: GroupId,
+    pub user_id: UserId,
+    #[serde(default)]
+    pub reactions_received: i64,
+    #[serde(default)]
+    pub reactions_given: i64,
+    #[serde(default)]
+    pub comments_written: i64,
+    #[serde(default)]
+    pub questions_asked: i64,
+    #[serde(default)]
+    pub current_streak: i64,
+    #[serde(default)]
+    pub longest_streak: i64,
+    /// `yyyymm` of the edition this member's streak was last settled for;
+    /// absent until the first settlement (`docs/design/lifecycle.md` §5.3).
+    #[serde(default)]
+    pub streak_cycle: Option<CycleId>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +458,7 @@ mod tests {
             image_media_ids: images.iter().map(|i| ImageId::new(*i)).collect(),
             updated_at: Utc::now(),
             published_at: None,
+            reaction_count: 0,
         }
     }
 

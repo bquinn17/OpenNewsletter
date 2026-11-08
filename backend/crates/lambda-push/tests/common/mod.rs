@@ -311,6 +311,7 @@ pub async fn put_published_text_answer(
         image_media_ids: Vec::new(),
         updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
         published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        reaction_count: 0,
     };
     let mut item: HashMap<String, AttributeValue> =
         serde_dynamo::to_item(&response).expect("response serializes");

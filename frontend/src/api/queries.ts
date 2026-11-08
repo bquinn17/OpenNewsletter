@@ -23,6 +23,7 @@ export const queryKeys = {
     ["upload", groupId, cycleId, imageId] as const,
   pushSubscriptions: ["pushSubscriptions"] as const,
   pushPreferences: ["pushPreferences"] as const,
+  leaderboard: (groupId: string) => ["leaderboard", groupId] as const,
 };
 
 export type CandidateSort = "top" | "recent";
@@ -173,6 +174,16 @@ export function usePushPreferences() {
   return useQuery({
     queryKey: queryKeys.pushPreferences,
     queryFn: api.push.listPreferences,
+    staleTime: 30_000,
+  });
+}
+
+/** A group's leaderboard stats (`docs/design/frontend.md` §7.9). */
+export function useLeaderboard(groupId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.leaderboard(groupId ?? ""),
+    queryFn: () => api.getLeaderboard(groupId!),
+    enabled: !!groupId,
     staleTime: 30_000,
   });
 }
