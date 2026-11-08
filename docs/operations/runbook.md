@@ -134,11 +134,7 @@ The script will prompt for a password interactively.
 
 ```sh
 # 1. Authenticate (USER_PASSWORD_AUTH via admin-bootstrap client)
-aws cognito-idp admin-initiate-auth \
-  --user-pool-id $(aws cloudformation describe-stacks \
-      --stack-name AuthStack-dev \
-      --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
-      --output text) \
+aws cognito-idp initiate-auth \
   --client-id BOOTSTRAP_CLIENT_ID \
   --auth-flow USER_PASSWORD_AUTH \
   --auth-parameters "USERNAME=YOUR_EMAIL,PASSWORD=YOUR_PASSWORD"

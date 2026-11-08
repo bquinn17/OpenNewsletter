@@ -157,7 +157,7 @@ The seed deliberately does **not** touch the Cognito user pool. Federated users 
 
 The federated IdP flow (Google/Facebook) works in `dev` and is exercised periodically — but not on every iteration, because OAuth bounces through external services and pollutes the iteration loop.
 
-For inner-loop work, sign in via the `admin-bootstrap` app client described in [`auth.md` §9](../design/auth.md#9-bootstrap-admin--first-group). It supports `ALLOW_USER_PASSWORD_AUTH`, so `aws cognito-idp admin-initiate-auth` returns a real JWT in one round-trip, no browser involved. `seed_dev_data.py` prints the credentials after seeding.
+For inner-loop work, sign in via the `admin-bootstrap` app client described in [`auth.md` §9](../design/auth.md#9-bootstrap-admin--first-group). It supports `ALLOW_USER_PASSWORD_AUTH`, so `aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH` returns a real JWT in one round-trip, no browser involved. `seed_dev_data.py` prints the credentials after seeding.
 
 The frontend's hidden `/admin/bootstrap-login` route (only enabled when `VITE_ENV=dev`) accepts username + password and stores tokens. The resulting JWT goes through the same API Gateway authorizer as a federated user's would — so the auth path is high-fidelity, just without the OAuth dance.
 
