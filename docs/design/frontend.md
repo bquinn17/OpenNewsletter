@@ -170,7 +170,9 @@ Tailwind container choice: stick with `max-w-2xl` on large screens. The "middle 
 
 ### 4.2 Theming
 
-CSS variables on `:root` for `--bg`, `--surface`, `--text`, `--text-muted`, `--accent`, `--border`. Tailwind extended with these via `theme.extend.colors`. Dark mode: driven by `prefers-color-scheme` only. A user-facing toggle is not built.
+The palette is a set of fixed hex colors in `theme.extend.colors` in `tailwind.config.ts`: the neutrals (`cream`, `mist`, `surface`, `line`, `ink`, `inkmuted`), the pastels (`lavender`, `blush`, and the `phase.*` edition tints from `utils/phase.ts`) and the accents (`coral`, `peach`, `grape`, `sky`, `mint`, `sun`). Components use these token classes directly, alongside Tailwind's built-in `white`, such as `bg-white` for cards and the page background set on `body` in `styles/tailwind.css`. There are no CSS variables.
+
+The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../future-ideas.md#13-dark-mode).
 
 ### 4.3 Typography
 
