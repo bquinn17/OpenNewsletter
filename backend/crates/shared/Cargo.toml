@@ -14,3 +14,6 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+# `CadenceError` (`cycle_time.rs`), matching the focused-enum error pattern
+# every other library crate uses (`docs/development/coding-standards.md` §2.3).
+thiserror.workspace = true

@@ -6,6 +6,7 @@ use chrono_tz::Tz;
 use domain::{CycleId, GroupId};
 use serde::Serialize;
 use shared::config::MAX_PUSH_PAYLOAD_BYTES;
+use shared::cycle_time::{cycle_period, CyclePeriod};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,7 +137,11 @@ pub fn format_due_time(at: DateTime<Utc>, tz: Tz) -> String {
 /// `publication` (`docs/design/notifications.md` §8, D6). `answers` is published
 /// responses to text questions across all members; `polls` is the number of
 /// poll questions locked in the cycle. Always-on; no preference, no group
-/// switch.
+/// switch. The title's "week's"/"month's" wording follows the cycle's own id
+/// format, not the deployment's current cadence (`docs/design/lifecycle.md`
+/// §13) — a cycle keeps the wording it was created under even if the
+/// deployment's cadence changes later. An unparseable id (shouldn't happen
+/// outside a test fixture) falls back to neutral wording.
 pub fn publication(
     group_name: &str,
     group_id: &GroupId,
@@ -144,7 +149,6 @@ pub fn publication(
     answers: u32,
     polls: u32,
 ) -> PushPayload {
-    let title = format!("{group_name}: this month's edition is out");
     let answers_part = if answers == 1 {
         "1 answer".to_owned()
     } else {
@@ -159,6 +163,11 @@ pub fn publication(
             format!("{polls} polls")
         };
         format!("{answers_part}, {polls_part} — go read it.")
+    };
+    let title = match cycle_period(cycle_id) {
+        Some(CyclePeriod::Month) => format!("{group_name}: this month's edition is out"),
+        Some(CyclePeriod::Week) => format!("{group_name}: this week's edition is out"),
+        None => format!("{group_name}: a new edition is out"),
     };
     build("publication", title, body, group_name, group_id, cycle_id)
 }
@@ -298,6 +307,24 @@ mod tests {
         assert_eq!(p.body, "1 answer, 1 poll — go read it.");
         let p = publication("G", &gid(), &cid(), 7, 2);
         assert_eq!(p.body, "7 answers, 2 polls — go read it.");
+    }
+
+    #[test]
+    fn publication_title_says_month_for_a_six_digit_cycle_id() {
+        let p = publication("G", &gid(), &CycleId::new("202611"), 7, 0);
+        assert_eq!(p.title, "G: this month's edition is out");
+    }
+
+    #[test]
+    fn publication_title_says_week_for_an_eight_digit_cycle_id() {
+        let p = publication("G", &gid(), &CycleId::new("20261108"), 7, 0);
+        assert_eq!(p.title, "G: this week's edition is out");
+    }
+
+    #[test]
+    fn publication_title_is_neutral_for_an_unparseable_cycle_id() {
+        let p = publication("G", &gid(), &CycleId::new("bogus"), 7, 0);
+        assert_eq!(p.title, "G: a new edition is out");
     }
 
     #[test]

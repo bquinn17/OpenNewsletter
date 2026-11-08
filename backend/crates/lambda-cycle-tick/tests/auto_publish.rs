@@ -11,6 +11,7 @@ use cycle_tick::tick::{auto_publish_drafts, run_tick};
 use domain::{NewsletterStatus, ResponseStatus};
 use persistence::responses::{self, AutoPublishOutcome};
 use pretty_assertions::assert_eq;
+use shared::cycle_time::CycleCadence;
 
 const TEXT_Q: &str = "q-text";
 const POLL_Q: &str = "q-poll";
@@ -47,7 +48,7 @@ async fn the_tick_publishes_non_empty_drafts_at_close_and_leaves_empty_ones() {
     common::save(&repo, &nl, "u5", TEXT_Q, gone, false).await;
     let closed = common::close_cycle(&repo, &nl).await;
 
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     assert_eq!(
         common::status(&repo, &nl.group_id, &nl.cycle_id).await,
@@ -93,7 +94,7 @@ async fn auto_publish_counts_each_member_s_edition_exactly_once() {
     common::save(&repo, &nl, "u3", TEXT_Q, text(" "), false).await;
     common::close_cycle(&repo, &nl).await;
 
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     assert_eq!(
         common::editions_answered(&repo, "u1", "g-count").await,
@@ -136,7 +137,7 @@ async fn a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_co
     );
 
     // Third tick: finds the cycle still due and finishes it.
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     assert_eq!(
         common::status(&repo, &nl.group_id, &nl.cycle_id).await,
@@ -171,7 +172,7 @@ async fn a_departed_member_s_draft_publishes_without_recreating_their_membership
     common::save(&repo, &nl, "u-gone", TEXT_Q, text, false).await;
     common::close_cycle(&repo, &nl).await;
 
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     let answer = common::response(&repo, &nl, "u-gone", TEXT_Q).await;
     assert_eq!(answer.status, ResponseStatus::Published);
@@ -197,7 +198,7 @@ async fn a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped() {
 
     let max = shared::config::AUTO_PUBLISH_MAX_FAILED_SWEEPS;
     for tick in 1..max {
-        run_tick(&repo).await;
+        run_tick(&repo, CycleCadence::Monthly).await;
         assert_eq!(
             common::status(&repo, &nl.group_id, &nl.cycle_id).await,
             NewsletterStatus::Open,
@@ -208,7 +209,7 @@ async fn a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped() {
         assert_eq!(good.status, ResponseStatus::Published, "tick {tick}");
     }
 
-    run_tick(&repo).await;
+    run_tick(&repo, CycleCadence::Monthly).await;
 
     assert_eq!(
         common::status(&repo, &nl.group_id, &nl.cycle_id).await,

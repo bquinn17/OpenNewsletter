@@ -37,6 +37,16 @@ export function useConfig() {
   });
 }
 
+/**
+ * This deployment's cycle cadence (`docs/design/frontend.md` §14a).
+ * `undefined` until `/config` has loaded — callers must not render
+ * cadence-dependent copy or limits before then.
+ */
+export function useCycleCadence(): S["CycleCadence"] | undefined {
+  const { data } = useConfig();
+  return data?.cycleCadence;
+}
+
 export function useMe() {
   // `GET /me` 401s until the caller redeems an invite; `/config` says whether they have.
   const { data: config } = useConfig();

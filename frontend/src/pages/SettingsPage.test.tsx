@@ -64,6 +64,7 @@ function baseConfig() {
     displayName: "Sam",
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly" as const, maxResponseWindowDays: 28 },
     memberships: [],
   };
 }

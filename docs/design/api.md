@@ -13,13 +13,13 @@ This is the full list of every HTTP endpoint OpenNewsletter exposes: handler Lam
 - Correlation: Clients SHOULD send `x-correlation-id: {ulid}`. If absent the API generates one. It is echoed in responses and logged.
 - Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`. A cursor that decodes but doesn't address a row in the listing's own partition and key range (e.g. one taken from another answer's comment list) is a 422 on `cursor`, the same as a malformed one (`persistence::cursor::decode_scoped`).
 - Timestamps: All ISO-8601 UTC.
-- IDs: All UUIDv7 strings except `cycleId` (yyyymm) and `inviteCode` (16-char Crockford base32).
+- IDs: All UUIDv7 strings except `cycleId` (`yyyymm`, or `yyyymmdd` on a weekly deployment; opaque to clients, [`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)) and `inviteCode` (16-char Crockford base32).
 
 ### 1.1 Error format
 
 RFC-7807 Problem Details: `ProblemDetails` in `shared/openapi.yaml` (`type`, `title`, `status`, `detail`, `code`, `correlationId`, plus an optional `fieldErrors: FieldError[]`).
 
-`fieldErrors` is present only on `VALIDATION_FAILED` responses whose problem is one named request field. `field` is the camelCase wire name (query parameters included, e.g. `limit`, `cursor`). Nested request fields use their bare name too (`responseWindowDays`, not `cycleSettings.responseWindowDays`). `code` is a `FieldErrorCode` (`shared/openapi.yaml`, mirrored by `domain::FieldErrorCode`). It is `INVALID` except where a client must react to the specific reason. The one such code so far is `CLOSES_IN_PAST`, for a `responseWindowDays` change that would close the open cycle in the past (§4.3). Clients treat an unknown code as `INVALID`. `message` repeats `detail`. It is omitted for validation failures not tied to one field, such as malformed JSON or a missing `email` claim.
+`fieldErrors` is present only on `VALIDATION_FAILED` responses whose problem is one named request field. `field` is the camelCase wire name (query parameters included, e.g. `limit`, `cursor`). Nested request fields use their bare name too (`responseWindowDays`, not `cycleSettings.responseWindowDays`). `code` is a `FieldErrorCode` (`shared/openapi.yaml`, mirrored by `domain::FieldErrorCode`). It is `INVALID` except where a client must react to the specific reason; no route needs another code yet, so `INVALID` is the only value today. Clients treat an unknown code as `INVALID`. `message` repeats `detail`. It is omitted for validation failures not tied to one field, such as malformed JSON or a missing `email` claim.
 
 Error code catalog (machine-readable codes for the top-level `code`):
 
@@ -59,6 +59,8 @@ Error code catalog (machine-readable codes for the top-level `code`):
 Response 200: `ConfigResponse` in `shared/openapi.yaml`.
 
 `memberships` is a denormalized join. Each entry includes `groupName`, `timezone`, and `gradient`, so the frontend can render the group switcher (gradient swatch) and label cycles in the group's timezone ([`frontend.md` §14a](frontend.md#14a-client-derived-display-data-not-api-fields)) without a follow-up query per group. The handler reads all the group rows in one `BatchGetItem`.
+
+`cycleCadence` is the deployment's cadence ([`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)): `frequency` (`monthly` or `weekly`) tells the SPA whether to label editions by month or by publication date, and `maxResponseWindowDays` (28 or 7) is the cap the admin settings form enforces on `responseWindowDays`.
 
 ### 2.2 `GET /me`
 
@@ -160,9 +162,11 @@ Body (all optional): `PatchGroupRequest` in `shared/openapi.yaml`.
 
 `gradient` must be one of the six preset palette slugs (canonical home: the `GradientSlug` enum in `shared/openapi.yaml`, mirrored in `backend/crates/shared/src/config.rs` and the frontend palette table).
 
-Validation: `responseWindowDays` between 1 and 28; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see [`notifications.md` §7.1](notifications.md#71-algorithm)).
+Validation: `responseWindowDays` between 1 and the cadence's maximum: 28 when monthly, 7 when weekly ([`lifecycle.md` §13.3](lifecycle.md#133-window-limits-and-overlap)), served as `GET /config`'s `cycleCadence.maxResponseWindowDays`; `questionsPerCycle` between 1 and 20; `votesPerUserPerCycle` between 1 and `questionsPerCycle` (each `(voter, question)` pair is unique, so the user can never cast more upvotes than there are candidate questions to vote on); `timezone` must be a valid IANA TZ; `offsetsHoursBeforeClose` non-empty, descending, integers ≥1 and ≤168 (`MAX_REMINDER_OFFSET_HOURS` in `shared/src/config.rs` — the notify-tick's query window is derived from this cap, so an uncapped offset would silently never fire; see [`notifications.md` §7.1](notifications.md#71-algorithm)).
 
-**`responseWindowDays` on a currently-`open` cycle**: the handler recomputes that cycle's `responseCloseAt = responseOpenAt + days` (and its GSI2 keys) only if the new close is still in the future. If the recomputed close would be in the past, the request is rejected with 422 `VALIDATION_FAILED` and a `fieldErrors` entry on `responseWindowDays` with code `CLOSES_IN_PAST`, rather than silently applying to a later cycle. Reminder markers already claimed for that cycle stay claimed — an extended window doesn't re-send a reminder already sent. The current `voting` cycle's `responseWindowDays` (and `questionsPerCycle`, `votesPerUserPerCycle`, `timezone`) also apply immediately, per [`lifecycle.md` §6](lifecycle.md#6-settings-changes-mid-cycle), which has the full per-field rules.
+**Existing cycles never move.** A `responseWindowDays` or `timezone` change applies to cycles created after the change; the `open` and `voting` cycles keep their dates ([D10](../decisions.md#d10); per-field rules in [`lifecycle.md` §6](lifecycle.md#6-settings-changes-mid-cycle)). The handler only validates and saves the group.
+
+**A stored window above the maximum** (saved before a switch from monthly to weekly) is reported capped in this response and in `GET /groups/{groupId}`. A `cycleSettings` change that omits `responseWindowDays` saves the capped value instead of failing validation ([`lifecycle.md` §13.3](lifecycle.md#133-window-limits-and-overlap)).
 
 ---
 

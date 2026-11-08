@@ -31,7 +31,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d3"></a>
 ### D3 — Seven-day response window by default
 
-**Decision.** `responseWindowDays` defaults to 7 (`DEFAULT_RESPONSE_WINDOW_DAYS` in `backend/crates/shared/src/config.rs`), and all three reminder offsets (96, 48 and 24 hours before close) fire. Groups may still choose 1–28 days.
+**Decision.** `responseWindowDays` defaults to 7 (`DEFAULT_RESPONSE_WINDOW_DAYS` in `backend/crates/shared/src/config.rs`), and all three reminder offsets (96, 48 and 24 hours before close) fire. Groups may still choose 1–28 days, or 1–7 on a weekly deployment ([cycle cadence](#cycle-cadence)).
 
 **Why.** The earlier default was 4 days, which left no room for the 96-hour reminder. With 7 days, all three reminders fire. Groups created before the change keep their stored value until an admin edits it.
 
@@ -49,7 +49,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d5"></a>
 ### D5 — Production's first admin is an email-bound invite
 
-**Decision.** `scripts/bootstrap_admin.py --env prod` reads `BOOTSTRAP_ADMIN_EMAIL`. In one conditional transaction it creates the first group, its first cycle and an admin invite that only that email, verified through Google, can redeem. The `admin-bootstrap` password client exists in dev only.
+**Decision.** `scripts/bootstrap_admin.py --env prod` reads `BOOTSTRAP_ADMIN_EMAIL`. In one conditional transaction it creates the first group and an admin invite that only that email, verified through Google, can redeem. The `admin-bootstrap` password client exists in dev only.
 
 **Why.** Production has no password sign-in at all, so there's no password surface to attack, and the first admin signs in the same way every other member does.
 
@@ -92,11 +92,11 @@ A full read-through of the design after the hardening milestone turned up twelve
 **Where.** [`auth.md` §12](design/auth.md#12-threat-model-considerations), [`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy).
 
 <a id="d10"></a>
-### D10 — Settings changes apply to the current cycle where possible
+### D10 — Cycle-settings changes apply from the next new cycle (2026-11-01)
 
-**Decision.** When an admin changes `responseWindowDays` or `timezone`, the current `voting` cycle is rescheduled whether or not it has candidates. An `open` cycle's close moves only if the new close is still in the future; otherwise the request fails with 422, field code `CLOSES_IN_PAST`. A cycle already past its close but not yet published is left alone. The settings form says the change "applies now".
+**Decision.** When an admin changes `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` or `timezone`, no existing cycle changes. The `open` cycle and the already-scheduled `voting` cycle keep their dates, question count and vote cap, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. Each cycle copies the question and vote counts onto its own row when it's created (2026-11-03). The settings form says cycle setting changes "apply from the next new cycle".
 
-**Why.** Admins expect a settings change to take effect now, not next month. Moving a close into the past would publish the cycle unexpectedly, and moving one that has already passed would reopen it to edits after some drafts have auto-published.
+**Why.** Moving a live cycle's open or close interacted badly with the weekly cadence: a rescheduled `voting` cycle could open before the `open` one closed, leaving two cycles open at once. Rescheduling also needed an error path for closes that would land in the past. Leaving scheduled cycles alone means members never see a date they were told change underneath them, and the scheduling rules live in one place, the tick. Fixing the vote cap per cycle means a lowered cap never strands votes already cast above it, and a cycle's question count is known while members are still voting.
 
 **Where.** [`lifecycle.md` §6](design/lifecycle.md#6-settings-changes-mid-cycle), [`api.md` §4.3](design/api.md#43-patch-groupsgroupid).
 
@@ -187,6 +187,24 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 **Why.** A merged change should be live on dev without anyone running `make deploy-dev`, and a hosted dev site is what the owner and testers actually use. A repo hosts only one Pages site, so dev and prod can't both be served from this one. Moving prod to its own repo keeps the live dev site where it is, and keeps prod on free GitHub Pages, consistent with the idle-backend principle. See [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release) and [`operator-setup.md` §10](operations/operator-setup.md#10-prod-frontend-pages-repo).
 
+<a id="cycle-cadence"></a>
+### Cycle cadence is set per deployment: dev weekly, prod monthly (2026-10-29)
+
+**Decision.** The `CYCLE_FREQUENCY` Lambda environment variable (`monthly` or `weekly`) chooses the cadence for a whole deployment. `CYCLE_WEEKLY_START` (default `sun 21:00`, group-local) sets when weekly cycles open. With the default 7-day window, that's also when the previous edition publishes. Weekly cycle ids are `yyyymmdd`. A weekly response window is capped at 7 days. A monthly deployment keeps month-name labels. A weekly one labels each edition by its publication date, the scheduled close until it publishes.
+
+**Why.** Dev needs to exercise a full cycle in days, not a month, and a weekly schedule is the requested behaviour there. A per-deployment setting keeps the monthly code path and prod data unchanged, where a per-group setting would add a group field and UI. Anchoring weekly cycles on their open time, rather than on publication, keeps one schedule model for both cadences. Month names can't tell weekly editions apart, and the publication date is the date members know an edition by.
+
+**Where.** [`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence), [`api.md` §2.1](design/api.md#21-get-config), [`frontend.md` §14a](design/frontend.md#14a-client-derived-display-data-not-api-fields), [`infrastructure.md` §2](design/infrastructure.md#2-configpy).
+
+<a id="first-cycle-by-tick"></a>
+### The cycle tick creates a group's first cycle (2026-11-01)
+
+**Decision.** `scripts/bootstrap_admin.py` and `scripts/seed_dev_data.py` write a new group with a marker on its `META` row (`gsi2pk = GROUP_STATUS#awaiting_first_cycle`) and no Newsletter row. The next cycle tick creates the group's first `voting` cycle at the deployment's cadence and removes the marker in the same transaction. The seed script writes no deadlines: to fast-forward a cycle, call `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
+
+**Why.** The scripts held a Python copy of the scheduling rules, which had already drifted from the Rust copy (window caps), and they had to guess the deployed cadence from stack outputs. With one implementation, a script can't create a first cycle that the Lambdas would schedule differently. The cost is a wait of up to 5 minutes for the first cycle, or one dev tick call.
+
+**Where.** [`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group), [`data-model.md` §2](design/data-model.md#2-entities), [`environments.md`](development/environments.md).
+
 ---
 
 ## Design review, 2026-10-08
@@ -194,7 +212,7 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 A performance, cost and security review before the first production deploy. These decisions came out of it:
 
 - **Whole-set queries paginate.** Every Query that needs the whole set goes through `persistence::query::query_all` and follows `LastEvaluatedKey`. Only cursor-paged routes and deliberately capped reads stop early. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
-- **Current-cycle lookups read three rows.** `find_voting_cycle` and `find_open_cycle` read only a group's three newest `NL#` rows. This relies on `yyyymm` cycle ids and on a group gaining one successor cycle at a time. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
+- **Current-cycle lookups read three rows.** `find_voting_cycle` and `find_open_cycle` read only a group's three newest `NL#` rows. This relies on cycle ids sorting chronologically (`yyyymm`, or `yyyymmdd` when weekly) and on a group gaining one successor cycle at a time. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
 - **The published edition reads in four concurrent waves**, not one round of reads per answer, so its latency doesn't grow with group size. See [`api.md` §5.2](design/api.md#52-get-groupsgroupidnewsletterscycleid).
 - **Group defaults come from code.** `GET /config` serves group defaults from `shared::config::default_group_settings`. The hand-copied `CONFIG_JSON` environment variable is gone, after it drifted once. See [`infrastructure.md` §6.4](design/infrastructure.md#64-group-default-config-json).
 - **Processed-image buckets skip Intelligent-Tiering.** Their objects are below the 128 KB minimum, so transitions would cost money and save nothing. Originals don't live long enough to tier either ([originals are deleted once processed](#originals-deleted-on-success)). See [`infrastructure.md` §5.1](design/infrastructure.md#51-s3-buckets-mediapersistentstack).

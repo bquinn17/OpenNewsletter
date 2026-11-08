@@ -1241,6 +1241,35 @@ Every push to `main` now deploys dev end to end; prod stays behind the `producti
 
 **Tests.** No test changes; `actionlint`, `ruff` and `mypy --strict` on the script are clean.
 
+## Configurable cycle cadence — what landed (2026-10-30)
+
+Each deployment now chooses monthly or weekly cycles. Dev is weekly; prod stays monthly. Design: [`lifecycle.md` §13](../../docs/design/lifecycle.md#13-cycle-cadence); decision: [`decisions.md`](../../docs/decisions.md#cycle-cadence).
+
+**What landed.**
+- **Backend.** `shared::cycle_time::CycleCadence` is read from `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START` at cold start; a malformed value fails it.
+  - `period_start` replaces `cycle_month_start` and parses both `yyyymm` and `yyyymmdd`.
+  - New: `next_period_start` (a group's first cycle) and `successor_schedule` (the tick's promotion and successor repair).
+  - `persistence::newsletters::create_next_voting_cycle` now takes a precomputed `CycleSchedule`.
+  - Cycle-tick, groups and push read the cadence. `lambda-notify-tick` reads it too, only because it shares `push::state::AppState`.
+  - `GET /config` serves `cycleCadence`. `PATCH /groups/{g}` caps `responseWindowDays` at 7 when weekly. The publication push says "this week's edition".
+- **API.** New `CycleCadence` schema and a required `ConfigResponse.cycleCadence`. The change is additive and touches no routes.
+- **Infra.** `EnvConfig.cycle_frequency`/`cycle_weekly_start` default from the env name and are validated at synth (`config.parse_weekly_start`). They're passed to every API Lambda and to the cycle-tick, and exported as `NotificationsStack` outputs.
+- **Scripts.** `bootstrap_admin.py` and `seed_dev_data.py` read the deployed cadence from those outputs (monthly if missing). `bootstrap_admin.py` reuses `config.parse_weekly_start`.
+- **Frontend.**
+  - `useCycleCadence`, plus `utils/dates.ts`'s `editionLabel`, `isCurrentEdition` and `cadenceNoun`.
+  - Weekly editions are labelled by publication date ("Nov 15, 2026"; the scheduled close until published). Copy says "week" where it said "month".
+  - The settings form's window max comes from `/config`. Monthly output is unchanged.
+
+**Decisions.**
+- **Weekly cycles are anchored on their open time.** `sun 21:00` opens one edition and, with a 7-day window, publishes the previous one.
+- **The weekly successor is the configured weekday and time at or after max(`cycleId` date + 7 days at local midnight, the current cycle's `responseCloseAt`).** The plan had "strictly after the anchor". The max() stops a mid-life `CYCLE_WEEKLY_START` change, or a legacy `yyyymm` id, from opening a successor before the current cycle closes.
+- **A window equal to the period is allowed.** For one tick there are two `open` rows, and `find_open_cycle` already returns the newer one. Regression test: `persistence/tests/lifecycle.rs::find_open_cycle_resolves_the_newer_of_two_open_rows`.
+- **A cadence switch takes effect at the next successor.** A monthly `voting` cycle opens as stored, and its successor follows the new cadence (for `202611`, the weekly successor would be `20261108`, opening Sun Nov 8 21:00). Dev's `202611` opened 2026-11-01 under the monthly code before this landed, so dev needs `make seed` after the deploy to start weekly.
+
+**Found in review.** `local_to_utc` (generalized from `midnight_local_to_utc`) stopped searching at midnight and reached `unreachable!` when a configured weekly time fell in a DST gap that runs past midnight. It now steps forward by the hour into the next day. Rare in practice: it needs a late start time in a zone that springs forward late in the evening.
+
+**Tests.** Backend 526 (+30), CDK 181 (+28), Vitest 404 (+15), Playwright 16 (unchanged).
+
 ## Prod deploys on a push to `release` (2026-11-01)
 
 The owner's sign-off for prod is now a push to the `release` branch, not an approval on every `main` run. Decision in [D6](../../docs/decisions.md#d6), design in [`testing-and-ci.md` §6.4](../../docs/development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release).
@@ -1261,3 +1290,35 @@ The owner's sign-off for prod is now a push to the `release` branch, not an appr
 - The `dev` job caches `backend/target/lambda` under a hash of `backend/**` and `rust-toolchain.toml`. A push that leaves those alone restores the binaries and skips rust-cache, cargo-lambda and the build; the artifact is still uploaded for `release.yml`. Identical binaries also leave every Lambda unchanged for CDK. `GET /healthz`'s `version` is now the commit the running binaries were built at ([`api.md` §11.1](../../docs/design/api.md#111-get-healthz)).
 - Both deploys pass `--concurrency 4`, so independent stacks deploy side by side (the 9 dev stacks ran strictly one at a time, ~25s each). The only cross-stack link CDK can't infer, `MonitoringStack`'s SSM read of `ApiStack`, already has an explicit dependency.
 - Not done: running `npm ci` and `pip install` alongside the Rust build (~75s, and nothing on a cached run), and splitting the build across runners (gain unmeasured: each runner would still compile `domain`/`shared`/`persistence`).
+
+## Cycle cadence code-review fixes — what landed (2026-11-03)
+
+A code review of the cadence branch found nine issues; the owner settled each one. Decisions: [D10](../../docs/decisions.md#d10) (rewritten) and [first cycle by tick](../../docs/decisions.md#first-cycle-by-tick).
+
+**What landed.**
+- **DST: response windows count calendar days in the group's timezone** (`shared::cycle_time::add_local_days`). The close was `open + n × 24h` UTC, so in the US spring-forward week a weekly close landed an hour after the next Sunday 21:00, and `successor_schedule`'s `max()` floor skipped a whole week (`20260301` → `20260315`). Monthly closes now keep local midnight too ([`lifecycle.md` §4.2](../../docs/design/lifecycle.md#42-default-schedule-per-group)).
+- **Settings changes never move an existing cycle (D10 rewritten).** `lambda-groups` no longer reschedules the `voting` cycle or moves the `open` cycle's close; cycles created after the change use the new window and timezone. Removed: `reschedule_voting_cycle`, `reschedule_open_cycle_close`, and the `CLOSES_IN_PAST` field error (`FieldErrorCode` is `INVALID` only; safe under expand→contract, since old clients never require it). The settings form says changes "apply from the next new cycle" and no longer refreshes the newsletter list on save.
+- **A stored window above the cadence cap no longer blocks settings saves.** `GET`/`PATCH /groups/{g}` report the capped value; a `cycleSettings` change that omits `responseWindowDays` saves the capped value; only an explicit over-cap value is a 422 ([`lifecycle.md` §13.3](../../docs/design/lifecycle.md#133-window-limits-and-overlap)). The form also caps its default.
+- **Notifications follow the cycle, not the deployment.** `shared::cycle_time::cycle_period` classifies an id as month or week; the publication title uses it (neutral wording for an unparseable id). Push and notify-tick no longer read `CYCLE_FREQUENCY`, which also fixes notify-tick having been silently monthly on weekly dev.
+- **The cycle tick creates a group's first cycle.** The scripts write the group's META row with a sparse GSI2 marker (`GROUP_STATUS#awaiting_first_cycle`, AP22) and no Newsletter; a new first pass in the tick creates the first `voting` cycle and clears the marker in one transaction (`newsletters::create_first_voting_cycle`). A marked group that already has a cycle only has its marker cleared. All Python cycle math is gone from `bootstrap_admin.py` and `seed_dev_data.py`, along with the `CycleFrequency`/`CycleWeeklyStart` stack outputs and seed's `--cycle-close-in` (use the dev tick route's `advanceCycleClosesBy`).
+- **Question and vote counts apply from the next new cycle too (D10 extended).** Each Newsletter row now copies the group's `questionsPerCycle`/`votesPerUserPerCycle` when the tick creates it (`questions_per_cycle`/`votes_per_user_per_cycle`, [`data-model.md` §2.5](../../docs/design/data-model.md#25-newsletter-cycle)); promotion and the vote cap read the cycle's copy (`Newsletter::questions_to_promote`/`vote_cap`), so lowering the cap can no longer leave members holding more votes than it allows. Rows written before this have no copy and read the group's live values. The settings form now says "Cycle setting changes apply from the next new cycle. Cycles already scheduled keep their questions, votes and dates."
+- **The SPA shows no cadence until `/config` loads.** No client-side default cadence: cadence-dependent labels and copy wait for `/config`, and the settings form keeps the window field and Save disabled.
+- **Leaked test containers.** `testcontainers`' `watchdog` feature removes a run's DynamoDB Local containers on SIGTERM/SIGINT (a `gtimeout` firing, Ctrl-C); `make clean-test-containers` removes what a SIGKILL leaves. Four containers leaked three weeks earlier had been running in Colima since.
+
+**Not changed (owner's call).** A 7-day weekly window still gives two `open` rows for one tick at the handover; the newer one is only open for voting, so it's left as is. The Python and Rust weekly-start parsers still differ on surrounding whitespace.
+
+**Tests.** Backend 532 (+6), CDK 174 (−7, script scheduling tests removed), Vitest 404 (unchanged; CLOSES_IN_PAST tests replaced by not-loaded-cadence tests).
+
+## Dependency advisories fixed, no ignores (2026-11-07)
+
+CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-utils` unmaintained). The owner asked for every finding to be fixed rather than ignored, so `deny.toml`'s `[advisories]` ignore list is now empty and `cargo deny check` passes.
+
+**What landed.**
+- **`pin-utils`** came from `aws-smithy-http` 0.63. Updating the AWS SDK crates (`aws-sdk-dynamodb` 1.137 and the rest, `cargo update`) moves to `aws-smithy-http` 0.64, which dropped it.
+- **`paste`** (RUSTSEC-2024-0436) came from `image`'s default AVIF and EXR codecs. `lambda-image-process` now enables only the codecs it decodes: GIF, JPEG, PNG, WebP.
+- **`unsafe-libyaml`** (RUSTSEC-2024-0449) came from `serde_yaml`, a dev-dependency of `domain` for the OpenAPI contract test. Replaced with `serde-saphyr`, a pure-Rust parser.
+- **`tokio-tar`, `rustls-pemfile`** (RUSTSEC-2025-0111, -0134), and **`astral-tokio-tar`** (RUSTSEC-2026-0440, published 2026-11-03) all came from `testcontainers` and its Docker client. Every `testcontainers` release depends on one of the two tar crates, so `testcontainers` is gone (owner's choice). The integration tests now share one in-memory DynamoDB Local (`make dynamodb-local` locally, a `services:` container in `backend-ci`) at `DYNAMODB_LOCAL_ENDPOINT` (default `http://127.0.0.1:8000`). `persistence::test_factories::make_test_repo` creates a uniquely named table per test and returns a `TestTable` guard that deletes it on drop, so call sites (`let (_c, repo) = …`) are unchanged. This also replaces the earlier `testcontainers` `watchdog` and `make clean-test-containers` fix: there are no per-test containers left to leak.
+
+**Effect.** The full suite runs in about 106 s on the Mac with one container, against several minutes and hundreds of container starts before, and leaves no tables behind. `cargo test` no longer needs `DOCKER_HOST` or `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; only `make dynamodb-local` touches Docker. Docs: CLAUDE.md, [`environments.md` §10.1](../../docs/development/environments.md#101-docker-and-dynamodb-local-by-platform), [`testing-and-ci.md` §2.4](../../docs/development/testing-and-ci.md#24-running-locally).
+
+**Tests.** Backend 532 (unchanged), all passing against the shared DynamoDB Local.

@@ -38,10 +38,13 @@ async fn main() -> Result<(), Error> {
         }
     };
 
+    let cadence = shared::cycle_time::CycleCadence::from_env()?;
+
     let state = Arc::new(AppState {
         repo: Repo::new(aws_sdk_dynamodb::Client::new(&aws_config), table),
         env: std::env::var("ENV").unwrap_or_default(),
         notifier,
+        cadence,
     });
 
     run(service_fn(move |event: LambdaEvent<Value>| {

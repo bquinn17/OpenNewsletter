@@ -1,6 +1,6 @@
 SHELL = /bin/bash
 
-.PHONY: help build-lambdas deploy-dev seed redeploy-volatile reset-all deploy-lambda fe
+.PHONY: help build-lambdas deploy-dev seed redeploy-volatile reset-all deploy-lambda fe dynamodb-local dynamodb-local-stop
 
 # Volatile stacks can be destroyed and redeployed freely; persistent stacks are left alone.
 VOLATILE_STACKS = DataStack-dev MediaPipelineStack-dev MonitoringStack-dev
@@ -70,3 +70,17 @@ deploy-lambda: ## Fast-update one Lambda binary: make deploy-lambda LAMBDA=<bina
 
 fe: ## Start frontend dev server pointing at the dev API
 	cd frontend && npm run dev -- --mode dev
+
+# The Rust integration tests share one in-memory DynamoDB Local; each test
+# creates and deletes its own table in it (`persistence::test_factories`).
+DYNAMODB_LOCAL_IMAGE = amazon/dynamodb-local:2.0.0
+DYNAMODB_LOCAL_NAME = opennewsletter-dynamodb-local
+
+dynamodb-local: ## Start the DynamoDB Local the Rust integration tests use (127.0.0.1:8000)
+	@docker start $(DYNAMODB_LOCAL_NAME) >/dev/null 2>&1 || \
+	    docker run -d --name $(DYNAMODB_LOCAL_NAME) -p 127.0.0.1:8000:8000 \
+	        $(DYNAMODB_LOCAL_IMAGE) -jar DynamoDBLocal.jar -inMemory >/dev/null
+	@echo "DynamoDB Local running at http://127.0.0.1:8000"
+
+dynamodb-local-stop: ## Stop and remove the test DynamoDB Local container
+	@docker rm -f $(DYNAMODB_LOCAL_NAME) >/dev/null 2>&1 || true

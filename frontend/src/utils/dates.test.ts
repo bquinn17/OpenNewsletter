@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cycleLabels, countdownTo, formatInZone, formatRelative, shortCountdown } from "./dates";
+import {
+  cadenceNoun,
+  cycleLabels,
+  countdownTo,
+  editionLabel,
+  formatInZone,
+  formatRelative,
+  isCurrentEdition,
+  shortCountdown,
+} from "./dates";
 
 // A UTC instant chosen so the local calendar date — and even the month/year
 // — differs by timezone (`docs/design/frontend.md` §14a: every date on a
@@ -95,5 +104,108 @@ describe("formatRelative (fixed clock)", () => {
 
   it("describes a future instant with an 'in' prefix", () => {
     expect(formatRelative("2026-06-04T12:00:00Z")).toBe("in 3 days");
+  });
+});
+
+describe("editionLabel", () => {
+  it("labels a monthly edition from responseOpenAt, same as cycleLabels", () => {
+    expect(
+      editionLabel(
+        { responseOpenAt: NEW_YEAR_EVE_UTC, responseCloseAt: NEW_YEAR_EVE_UTC, publishedAt: null },
+        "America/New_York",
+        "monthly",
+      ),
+    ).toEqual({ title: "December 2025", tileTop: "Dec", tileBottom: "2025", short: "December" });
+  });
+
+  it("labels a weekly voting/open edition by its scheduled responseCloseAt (not yet published)", () => {
+    expect(
+      editionLabel(
+        { responseCloseAt: "2026-11-15T20:00:00Z", publishedAt: null },
+        "America/New_York",
+        "weekly",
+      ),
+    ).toEqual({ title: "Nov 15, 2026", tileTop: "Nov", tileBottom: "15", short: "Nov 15" });
+  });
+
+  it("labels a weekly published edition by publishedAt, not the scheduled responseCloseAt", () => {
+    expect(
+      editionLabel(
+        { responseCloseAt: "2026-11-08T20:00:00Z", publishedAt: "2026-11-15T20:00:00Z" },
+        "America/New_York",
+        "weekly",
+      ),
+    ).toEqual({ title: "Nov 15, 2026", tileTop: "Nov", tileBottom: "15", short: "Nov 15" });
+  });
+
+  it("uses the group's local calendar date, not UTC's, across a day boundary", () => {
+    // 2026-11-16T02:00:00Z is still Nov 15 in America/New_York (UTC-5 that week).
+    expect(
+      editionLabel(
+        { responseCloseAt: "2026-11-16T02:00:00Z", publishedAt: "2026-11-16T02:00:00Z" },
+        "America/New_York",
+        "weekly",
+      ).title,
+    ).toBe("Nov 15, 2026");
+  });
+});
+
+describe("isCurrentEdition", () => {
+  const now = new Date("2026-11-20T12:00:00Z");
+
+  it("monthly: matches isCurrentCycleMonth (same calendar month in the group's timezone)", () => {
+    expect(
+      isCurrentEdition(
+        { responseOpenAt: "2026-11-01T00:00:00Z", publishedAt: "2026-11-05T00:00:00Z" },
+        "UTC",
+        "monthly",
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isCurrentEdition(
+        { responseOpenAt: "2026-10-01T00:00:00Z", publishedAt: "2026-10-05T00:00:00Z" },
+        "UTC",
+        "monthly",
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("weekly: published within the last 7 days of now", () => {
+    expect(
+      isCurrentEdition(
+        { responseOpenAt: "2026-11-01T00:00:00Z", publishedAt: "2026-11-15T00:00:00Z" },
+        "UTC",
+        "weekly",
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isCurrentEdition(
+        { responseOpenAt: "2026-10-01T00:00:00Z", publishedAt: "2026-11-01T00:00:00Z" },
+        "UTC",
+        "weekly",
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("weekly: never current before it's published", () => {
+    expect(
+      isCurrentEdition(
+        { responseOpenAt: "2026-11-15T00:00:00Z", publishedAt: null },
+        "UTC",
+        "weekly",
+        now,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("cadenceNoun", () => {
+  it("returns the cadence word matching frequency", () => {
+    expect(cadenceNoun("monthly")).toBe("month");
+    expect(cadenceNoun("weekly")).toBe("week");
   });
 });

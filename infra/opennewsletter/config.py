@@ -7,6 +7,7 @@ Placeholder ARNs are used when M1 operator tasks are not yet complete.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,36 @@ def secret_ref(secret_arn: str, json_field: str) -> str:
     return f"{{{{resolve:secretsmanager:{secret_arn}:SecretString:{json_field}}}}}"
 
 
+_WEEKDAYS = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+_WEEKLY_START = re.compile(r"([a-z]+) ([01][0-9]|2[0-3]):([0-5][0-9])")
+
+
+def parse_weekly_start(value: str) -> tuple[int, int, int]:
+    """Parse `CYCLE_WEEKLY_START` (`"<day> <HH>:<MM>"`, e.g. `"sun 21:00"`) into
+    `(weekday, hour, minute)`, weekday 0 = Monday as in `date.weekday()`. The
+    day is a full or 3-letter English name, any case. Same grammar as
+    `CycleCadence::parse` in `backend/crates/shared/src/cycle_time.rs`
+    (`docs/design/lifecycle.md` §13)."""
+    match = _WEEKLY_START.fullmatch(value.lower())
+    if match:
+        day, hour, minute = match.groups()
+        for index, name in enumerate(_WEEKDAYS):
+            if day in (name, name[:3]):
+                return index, int(hour), int(minute)
+    raise ValueError(
+        f"Invalid CYCLE_WEEKLY_START {value!r}: expected '<day> <HH>:<MM>', "
+        "e.g. 'sun 21:00'"
+    )
+
+
 @dataclass(frozen=True)
 class EnvConfig:
     env: str
@@ -52,6 +83,12 @@ class EnvConfig:
     # "owner/repo" slug the GitHub OIDC trust conditions in CiStack match
     # against (`token.actions.githubusercontent.com:sub`).
     github_repo: str
+    # Cycle cadence, passed to the Lambdas as `CYCLE_FREQUENCY` /
+    # `CYCLE_WEEKLY_START` (`docs/design/lifecycle.md` §13): "weekly" in dev,
+    # "monthly" in prod. The weekly start is "<day> <HH>:<MM>", group-local,
+    # and is only read when the frequency is weekly.
+    cycle_frequency: str
+    cycle_weekly_start: str
 
 
 def load_config(env: str) -> EnvConfig:
@@ -83,6 +120,17 @@ def load_config(env: str) -> EnvConfig:
         v = raw.get(key) or os.environ.get(key)
         return v if v else None
 
+    cycle_frequency = get(
+        "CYCLE_FREQUENCY", "weekly" if env == "dev" else "monthly"
+    ).lower()
+    if cycle_frequency not in ("monthly", "weekly"):
+        raise ValueError(
+            f"Invalid CYCLE_FREQUENCY {cycle_frequency!r}: expected 'monthly' or 'weekly'"
+        )
+    cycle_weekly_start = get("CYCLE_WEEKLY_START", "sun 21:00")
+    # Checked even when monthly, so a typo fails synth before it matters.
+    parse_weekly_start(cycle_weekly_start)
+
     return EnvConfig(
         env=env,
         domain=get("ROOT_DOMAIN", f"{env}.opennewsletter.example.com"),
@@ -97,4 +145,6 @@ def load_config(env: str) -> EnvConfig:
             get_opt("BOOTSTRAP_ADMIN_EMAIL") if env == "prod" else None
         ),
         github_repo=get("GITHUB_REPO", "bquinn17/OpenNewsletter"),
+        cycle_frequency=cycle_frequency,
+        cycle_weekly_start=cycle_weekly_start,
     )

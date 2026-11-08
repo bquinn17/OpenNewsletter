@@ -253,9 +253,10 @@ Flow:
 6. Issues a `TransactWriteItems` against DynamoDB with:
    - Put `CognitoSubLookup` (`COGNITO_SUB#{sub}` → `userId`)
    - Put `User` (PROFILE)
-   - Put `Group` (META) with the chosen settings + `memberCount=1`
+   - Put `Group` (META) with the chosen settings + `memberCount=1`, marked as awaiting its first cycle ([`data-model.md` §2.3](data-model.md#23-group))
    - Put `GroupMembership` (role=admin)
-   - Put the group's first `voting` Newsletter ([`lifecycle.md` §4.2](lifecycle.md#42-default-schedule-per-group))
+
+   No Newsletter row: the next cycle tick creates the group's first `voting` cycle ([`lifecycle.md` §4.2](lifecycle.md#42-default-schedule-per-group)).
 
    IDs are UUID5-derived from the Cognito sub, so re-running the script is idempotent.
 7. Prints the group ID and a sign-in URL.
@@ -267,8 +268,7 @@ Inputs: `--env prod`, `--group-name`, `--timezone`; the admin's email comes from
 Flow:
 1. Reads CDK outputs the same way as dev.
 2. Creates **no Cognito user**. Issues a `TransactWriteItems` against DynamoDB with:
-   - Put `Group` (META) with the chosen settings + **`memberCount = 0`** (there's no member yet — redemption bumps it, same as any other invite join)
-   - Put the group's first `voting` Newsletter ([`lifecycle.md` §4.2](lifecycle.md#42-default-schedule-per-group))
+   - Put `Group` (META) with the chosen settings + **`memberCount = 0`** (there's no member yet — redemption bumps it, same as any other invite join), marked as awaiting its first cycle; the next cycle tick creates it ([`lifecycle.md` §4.2](lifecycle.md#42-default-schedule-per-group))
    - Put an `Invite` ([`data-model.md` §2.4](data-model.md#24-invite)) with `bound_email = BOOTSTRAP_ADMIN_EMAIL.lower()`, `role_on_redeem = admin`, `ttlDays = 30`
 3. Prints the `/join?code=…` URL for that invite.
 4. The operator opens the URL and signs in with **Google**, using the bootstrap admin email. The normal redeem path (§4) creates the `User` row and `GroupMembership` exactly as it would for any other invite — the bound-email check (§4.2 step 2) passes because it's the same email, and Google supplies `email_verified` ([`infrastructure.md` §4.2](infrastructure.md#42-identity-providers-federated)). No special-cased bootstrap code runs on the redeem side at all; §9.1a's only job is minting the right invite.

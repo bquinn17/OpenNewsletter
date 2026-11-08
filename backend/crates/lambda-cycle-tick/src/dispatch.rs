@@ -50,7 +50,7 @@ pub fn classify_event(event: &Value) -> IncomingEvent {
 /// Handle the scheduled invocation: run the tick globally, return the summary
 /// for CloudWatch Logs (EventBridge itself ignores the return value).
 pub async fn handle_scheduled(state: &AppState) -> Value {
-    let summary = run_tick_with(&state.repo, state.notifier.as_ref()).await;
+    let summary = run_tick_with(&state.repo, state.notifier.as_ref(), state.cadence).await;
     tracing::info!(
         transition_count = summary.transitions.len(),
         "scheduled tick complete"
@@ -138,7 +138,7 @@ async fn handle_http_inner(
         }
     }
 
-    Ok(run_tick_with(&state.repo, state.notifier.as_ref()).await)
+    Ok(run_tick_with(&state.repo, state.notifier.as_ref(), state.cadence).await)
 }
 
 async fn require_admin_of_any_group(

@@ -15,9 +15,10 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
 | — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
 | — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
+| — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30; review fixes 2026-11-03) | ✅ code-complete; reaches dev with the merge's auto-deploy, then needs `make seed` and one `POST /admin/dev/tick/cycle` (or a 5-minute wait) to start weekly ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group), §13.2) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-10-29):** backend 496 (`cargo test --workspace`), CDK 153 (`pytest infra/tests`), Vitest 389, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+**Test baselines (2026-11-07):** backend 532 (`cargo test --workspace`, against `make dynamodb-local`), CDK 174 (`pytest infra/tests`), Vitest 404, Playwright 16 (8 `mock`, 8 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/`, plus `scripts/` run by hand, since CI doesn't cover it), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 
@@ -90,13 +91,11 @@ Frontend:
 - `ResponseEditor`'s preview refreshes an expired image URL itself (`refreshPreviewImage`), duplicating the always-mounted `ImageUploader`'s own `refreshImage` for the same thumb. One expired thumb costs two `GET /uploads/{id}`, and the uploader's next `onChange` overwrites whatever the preview fetched. The fix is for `ImageUploader` to expose its refresh to the parent, which changes its props. Do it when the editor is next touched.
 
 Backend and ops:
-- The D10 open-cycle close move is best-effort: it runs after the group update, and a write error is logged rather than returned. The 422 check runs before any write.
 - A crash mid-fan-out loses the rest of that fan-out (markers are claimed first, at-most-once, [`notifications.md` §7.1](../docs/design/notifications.md#71-algorithm)).
 - Comment author names aren't cached across requests (one deduped `BatchGetItem` per request; [`engagement.md` §1.5](../docs/design/engagement.md#15-author-display-name-resolution)); `get_comment_by_id` walks the answer's `C#` range because there's no index on `comment_id`. Revisit if either gets hot.
 - `lambda-cycle-tick` needs `#![recursion_limit = "256"]`. If it creeps up, box the dispatch futures.
 - The account-level Lambda error alarm also counts dev's errors (one account, [`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
 - `CiStack` deploys with every `--all`, including `make deploy-dev`. It's account-wide and idempotent.
-- `cargo deny` still ignores one advisory with no upstream fix (`tokio-tar`, test-only via testcontainers) and three unmaintained-crate notices (`rustls-pemfile`, `paste`, `unsafe-libyaml`). Re-check after dependency bumps.
 
 Testing:
 - `make seed` resets the bootstrap admin's password to a new random one on every run, so `E2E_USERNAME`/`E2E_PASSWORD` for the `dev` E2E project can't be the seeded admin. Use a separate Cognito user, or seed with `--admin-password` taken from the same secret.

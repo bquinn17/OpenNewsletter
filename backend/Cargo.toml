@@ -51,8 +51,6 @@ chrono-tz = "0.9"
 async-trait = "0.1"
 futures = "0.3"
 pretty_assertions = "1"
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["dynamodb"] }
 lambda_runtime = "1"
 lambda_http = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

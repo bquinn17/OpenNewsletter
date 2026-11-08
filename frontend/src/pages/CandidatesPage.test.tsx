@@ -39,6 +39,7 @@ function baseConfig(): S["ConfigResponse"] {
     displayName: "Quinn",
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [
       {
         groupId: "g_test",
@@ -271,5 +272,44 @@ describe("CandidatesPage", () => {
     const toasts = useToasts.getState().toasts;
     expect(toasts.some((t) => t.message.includes("votes this cycle"))).toBe(true);
     expect(toasts.some((t) => t.message.includes("cq_2"))).toBe(false);
+  });
+
+  it("weekly: names the voting and open cycles by their scheduled publication date", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue({
+      ...baseConfig(),
+      cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+    });
+    vi.mocked(api.listNewsletters).mockResolvedValue(
+      newsletters([
+        {
+          cycleId: "202611w3",
+          status: "voting",
+          responseOpenAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+          // The countdown counts down to `responseOpenAt`; the edition is still named
+          // by its scheduled publication date, `responseCloseAt`.
+          responseCloseAt: "2026-11-15T20:00:00Z",
+          publishedAt: null,
+          questionCount: 0,
+          myDraftCount: 0,
+          myPublishedCount: 0,
+        },
+        {
+          cycleId: "202611w2",
+          status: "open",
+          responseOpenAt: "2026-11-01T12:00:00Z",
+          responseCloseAt: "2026-11-08T20:00:00Z",
+          publishedAt: null,
+          questionCount: 4,
+          myDraftCount: 0,
+          myPublishedCount: 0,
+        },
+      ]),
+    );
+    vi.mocked(api.listCandidates).mockResolvedValue(candidateList([item({})]));
+
+    renderPage();
+
+    expect(await screen.findByText(/days until the Nov 15 edition opens/)).toBeInTheDocument();
+    expect(screen.getByText(/The Nov 8 edition is open — answer now/)).toBeInTheDocument();
   });
 });

@@ -111,7 +111,12 @@ function SignedInHome() {
           <p className="text-sm text-coral">Couldn&apos;t load this group&apos;s editions.</p>
         )}
         {data && (
-          <GroupEditions groupId={current.groupId} timezone={current.timezone} items={data.items} />
+          <GroupEditions
+            groupId={current.groupId}
+            timezone={current.timezone}
+            frequency={config.cycleCadence.frequency}
+            items={data.items}
+          />
         )}
       </section>
     </div>

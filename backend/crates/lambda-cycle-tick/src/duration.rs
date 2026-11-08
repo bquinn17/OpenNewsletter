@@ -27,7 +27,8 @@ pub fn parse_duration(raw: &str) -> Result<Duration, String> {
     // The `try_` constructors reject amounts chrono can't represent instead of
     // panicking, and the cap keeps the caller's `DateTime - duration` far from
     // chrono's range limits (that subtraction panics on overflow too). A dev
-    // fast-forward of a monthly cycle never needs more than a year.
+    // fast-forward of a cycle never needs more than a year, under either
+    // cadence (`docs/design/lifecycle.md` §13).
     let duration = match unit {
         'm' => Duration::try_minutes(n),
         'h' => Duration::try_hours(n),

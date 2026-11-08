@@ -1,5 +1,5 @@
 //! Shared test setup for `lambda-image-process` integration tests. Reuses
-//! `persistence`'s DDB-local container/table setup via the `test-utils`
+//! `persistence`'s DDB-local table setup via the `test-utils`
 //! feature rather than duplicating it.
 #![allow(dead_code)]
 
@@ -9,10 +9,7 @@ use domain::{ImagePurpose, MediaStatus, QuestionId, UserId};
 use persistence::{test_factories, Repo};
 use serde_json::json;
 
-pub async fn make_repo() -> (
-    testcontainers::ContainerAsync<testcontainers_modules::dynamodb_local::DynamoDb>,
-    Repo,
-) {
+pub async fn make_repo() -> (persistence::test_factories::TestTable, Repo) {
     test_factories::make_test_repo().await
 }
 

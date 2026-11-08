@@ -1522,3 +1522,75 @@ def test_notify_tick_reads_the_app_secret_and_cycle_tick_does_not(
         )
         == []
     )
+
+
+# ---------------------------------------------------------------------------
+# Cycle cadence configuration (cycle_frequency and cycle_weekly_start)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def prod_notifications_template() -> assertions.Template:
+    app = cdk.App()
+    config = load_config("prod")
+    data_stack = DataStack(app, "ProdDataStack2", config=config, env=AWS_ENV)
+    stack = NotificationsStack(
+        app,
+        "ProdNotificationsStack2",
+        config=config,
+        table=data_stack.table,
+        env=AWS_ENV,
+    )
+    return assertions.Template.from_stack(stack)
+
+
+def test_dev_cycle_tick_has_weekly_frequency(
+    notifications_template: assertions.Template,
+) -> None:
+    notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-CycleTick-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"CYCLE_FREQUENCY": "weekly", "CYCLE_WEEKLY_START": "sun 21:00"}
+                )
+            },
+        },
+    )
+
+
+def test_prod_cycle_tick_has_monthly_frequency(
+    prod_notifications_template: assertions.Template,
+) -> None:
+    prod_notifications_template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-CycleTick-prod",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {"CYCLE_FREQUENCY": "monthly"}
+                )
+            },
+        },
+    )
+
+
+def test_api_handlers_have_cycle_frequency_env_vars(
+    api_template: assertions.Template,
+) -> None:
+    for function_name in (
+        "OpenNewsletter-Groups-dev",
+        "OpenNewsletter-Push-dev",
+    ):
+        api_template.has_resource_properties(
+            "AWS::Lambda::Function",
+            {
+                "FunctionName": function_name,
+                "Environment": {
+                    "Variables": assertions.Match.object_like(
+                        {"CYCLE_FREQUENCY": "weekly", "CYCLE_WEEKLY_START": "sun 21:00"}
+                    )
+                },
+            },
+        )

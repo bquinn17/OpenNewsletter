@@ -24,12 +24,7 @@ A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `py
    ```bash
    nvm install && nvm alias default 24
    ```
-3. `colima start --cpu 4 --memory 6 --vm-type vz`. Colima points the `docker` CLI at itself automatically, but `testcontainers` (used by the Rust integration tests) needs its own env vars — add both to `~/.zshrc`:
-   ```bash
-   export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
-   export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
-   ```
-   Colima doesn't survive a reboot on its own — run `colima start` again afterward.
+3. `colima start --cpu 4 --memory 6 --vm-type vz`. Colima points the `docker` CLI at itself automatically, so no env vars are needed. The Rust integration tests reach DynamoDB Local over HTTP (§10.1), not through the Docker socket. Colima doesn't survive a reboot on its own — run `colima start` again afterward.
 4. `cargo-lambda` — only needed for deploy builds (`make build-lambdas` / `make deploy-*`), not for running tests. Homebrew refuses the tap unless it's explicitly trusted:
    ```bash
    brew tap cargo-lambda/cargo-lambda && brew trust cargo-lambda/cargo-lambda && brew install cargo-lambda
@@ -49,7 +44,7 @@ cargo --version
 docker info | grep "Server Version"
 node --version
 (cd infra && .venv/bin/pytest tests -q)        # expect all passed
-(cd backend && export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1)
+make dynamodb-local && (cd backend && gtimeout 1800 cargo test --workspace 2>&1)
 ```
 
 ### 0.2 Windows / WSL2 (Ubuntu 20.04)
@@ -77,10 +72,10 @@ This is the machine the repo was originally built on. Docker runs rootless under
 **Verify your setup**
 ```bash
 cargo --version
-docker info | grep "Server Version"     # SocketNotFoundError means DOCKER_HOST is wrong or the daemon is down, not a test bug
+docker info | grep "Server Version"     # needs DOCKER_HOST (below); an error means it's wrong or the daemon is down
 node --version
 (cd infra && .venv/bin/pytest tests -q)
-(cd backend && export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1)
+export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && make dynamodb-local && (cd backend && timeout 1800 cargo test --workspace 2>&1)
 ```
 
 ---
@@ -106,6 +101,8 @@ node --version
 | `dev` | Shared sandbox for manual testing, exploratory work, E2E target | Long-lived; data wiped routinely | Cognito user pool with bootstrap-admin client + federated IdPs | Raw AWS endpoints for actual traffic (`ROOT_DOMAIN`/`API_DOMAIN` only register `dev.{domain}` on the shared ACM cert — see decision below) |
 | `ci-pr-{n}` | *Not built* — per-PR ephemeral stack for E2E (§11) | Spun up per PR, torn down on merge/close | Reuses `dev` Cognito user pool | Raw AWS endpoints |
 | `prod` | The real thing | Permanent | Federated IdPs only | Custom domains (bare apex) |
+
+**Dev runs weekly cycles, prod monthly.** `config.py` defaults `cycle_frequency` from the env name. Dev's weekly cycles open, and with the default 7-day window publish, every Sunday at 21:00 group-local. To try another cadence or start time in dev, set `CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START` in `.env.local` and deploy locally. CI's dev deploy doesn't read `.env.local`, so the next push to `main` puts dev back on the default. Like the other `.env.local` overrides, these also apply to a local prod synth, so remove them before one. See [`lifecycle.md` §13](../design/lifecycle.md#13-cycle-cadence).
 
 `dev` is shared today because the project is solo. To split into per-developer stacks later, change the env suffix from `dev` to `dev-{username}` in `--context env=...` and the rest of CDK falls into place.
 
@@ -228,7 +225,7 @@ Don't wait for the 5-minute / 15-minute schedule. Two paths:
 
 Path 2 is also what Playwright uses to fast-forward time in E2E tests — see [`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e). The manual invoke and the admin route run the same handler logic, so there's one implementation behind both.
 
-For tests that need to advance wall-clock time (a cycle's deadline is in the future), the seed script accepts `--cycle-close-in 5m` to write deadlines relative to now. Combined with `/admin/dev/tick`, you can walk a cycle from `voting` to `published` in a few seconds.
+`make seed` writes the dev group without a cycle; the next tick creates its first `voting` cycle at the deployed cadence ([`lifecycle.md` §4.2](../design/lifecycle.md#42-default-schedule-per-group)). Run `POST /admin/dev/tick/cycle` right after seeding to create it at once. To fast-forward a cycle whose deadline is in the future, pass `{"groupId": …, "advanceCycleClosesBy": "7d"}` to the same route ([`api.md` §11a.1](../design/api.md#11a1-post-admindevtickcycle)): it rewinds the active cycle's next transition and runs the tick, so a few calls walk a cycle from `voting` to `published`.
 
 ---
 
@@ -242,20 +239,20 @@ The test pyramid in [`testing-and-ci.md`](testing-and-ci.md) stands; this sectio
 | Frontend unit (Vitest, `vi.mock` of `api/client`) | ✅ default | ✅ | Co-located `*.test.ts(x)` files; see [`testing-and-ci.md` §4.1](testing-and-ci.md#41-vitest). |
 | Contract test (OpenAPI ↔ Rust struct round-trip) | ✅ default | ✅ | Pure; runs under `cargo test`. |
 | CDK assertions (`pytest infra/tests/`) | ✅ default | ✅ | Pure synth, no AWS calls. |
-| Rust integration (DDB-local via `testcontainers`) | ✅ part of `cargo test --workspace` (needs Docker, §10.1) | ✅ | No feature flag ([`testing-and-ci.md` §2.4](testing-and-ci.md#24-running-locally)). |
+| Rust integration (a table each on a shared DynamoDB Local) | ✅ part of `cargo test --workspace` (needs `make dynamodb-local`, §10.1) | ✅ | No feature flag ([`testing-and-ci.md` §2.4](testing-and-ci.md#24-running-locally)). |
 | Playwright E2E | ✅ `npm run e2e` (mock project, no backend) | ✅ nightly + on demand | `mock` project runs against a mock-mode production build; the `dev` project needs `E2E_BASE_URL` and a deployed stack ([`testing-and-ci.md` §4.3](testing-and-ci.md#43-playwright-e2e)). |
 | Manual smoke | Required against your `dev` stack before merging risky changes | — | The seed → click-through → tick → verify loop. |
 
-`cargo test --workspace` runs everything, so local runs need Docker (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
+`cargo test --workspace` runs everything, so local runs need DynamoDB Local running (§10.1). Use `cargo test -p domain` or `cargo test --lib` for a Docker-free inner loop.
 
-### 10.1 Docker socket by platform (required for any Docker-backed test)
+### 10.1 Docker and DynamoDB Local by platform
 
-Neither machine this repo is developed on uses the conventional `/var/run/docker.sock`, so `testcontainers` needs to be pointed at the right socket explicitly. Full first-time setup for each is in §0.
+The integration tests share one in-memory DynamoDB Local, reached over HTTP at `http://127.0.0.1:8000` (`DYNAMODB_LOCAL_ENDPOINT` overrides it). Each test creates its own uniquely named table and deletes it when the test ends, so tests stay isolated and nothing piles up between runs (`persistence::test_factories::make_test_repo`). `make dynamodb-local` starts the container (`opennewsletter-dynamodb-local`, image `amazon/dynamodb-local:2.0.0`), or restarts it if it exists; `make dynamodb-local-stop` removes it. Restarting it wipes every table, which is harmless. In CI it's a `services:` container on the job ([`testing-and-ci.md` §6.2](testing-and-ci.md#62-backend-ciyml)). Full first-time setup for each machine is in §0.
 
-**Windows/WSL2**: Docker runs **rootless** under WSL2 and binds `unix:///mnt/wslg/runtime-dir/docker.sock`. `~/.profile` exports `DOCKER_HOST` for interactive terminals, but non-login/non-interactive shells — which is what CI steps and AI coding agents get — never source it. Export it inline on every command that touches Docker:
+**Windows/WSL2**: Docker runs **rootless** under WSL2 and binds `unix:///mnt/wslg/runtime-dir/docker.sock`. `~/.profile` exports `DOCKER_HOST` for interactive terminals, but non-login/non-interactive shells — which is what CI steps and AI coding agents get — never source it. Export it inline on every command that touches Docker; `cargo test` itself doesn't need it:
 
 ```bash
-export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && timeout 1800 cargo test --workspace 2>&1
+export DOCKER_HOST=unix:///mnt/wslg/runtime-dir/docker.sock && make dynamodb-local && (cd backend && timeout 1800 cargo test --workspace 2>&1)
 ```
 
 If the daemon isn't running, start it detached (a plain backgrounded `nohup` dies when the caller's process group is reaped):
@@ -264,15 +261,15 @@ If the daemon isn't running, start it detached (a plain backgrounded `nohup` die
 setsid nohup ~/bin/dockerd-rootless.sh > /tmp/dockerd.log 2>&1 < /dev/null & disown
 ```
 
-**macOS**: Docker runs inside Colima. `docker` CLI is pointed there automatically, but `testcontainers` needs both `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set (§0.1 has the one-time `~/.zshrc` addition); macOS also has no `timeout`, so use coreutils' `gtimeout`:
+**macOS**: Docker runs inside Colima, and the `docker` CLI is pointed there automatically. macOS has no `timeout`, so use coreutils' `gtimeout`:
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock && gtimeout 1800 cargo test --workspace 2>&1
+make dynamodb-local && (cd backend && gtimeout 1800 cargo test --workspace 2>&1)
 ```
 
-If Colima isn't running: `colima start` (it doesn't survive a reboot on its own).
+If Colima isn't running: `colima start` (it doesn't survive a reboot on its own). Colima's VM costs CPU and memory while it runs, so `colima stop` when you're not running the Rust tests.
 
-Symptom of a missing/misdirected socket on either platform: `SocketNotFoundError` panics out of `backend/crates/persistence/tests/common/mod.rs`. Verify with `docker info | grep "Server Version"` before blaming the tests.
+Symptom of DynamoDB Local not running on either platform: tests panic with `DynamoDB Local isn't answering at http://127.0.0.1:8000`. Run `make dynamodb-local` (after `docker info | grep "Server Version"` confirms Docker is up) before blaming the tests.
 
 ---
 

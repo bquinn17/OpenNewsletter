@@ -56,6 +56,7 @@ function baseConfig(): S["ConfigResponse"] {
     displayName: "Quinn",
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [],
   };
 }

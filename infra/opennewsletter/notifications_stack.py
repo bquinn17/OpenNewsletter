@@ -79,6 +79,8 @@ class NotificationsStack(cdk.Stack):
                 # Fan-out target, addressed by name rather than by construct:
                 # ApiStack depends on this stack, so the reverse ref would cycle.
                 "PUSH_FUNCTION_NAME": f"OpenNewsletter-Push-{config.env}",
+                "CYCLE_FREQUENCY": config.cycle_frequency,
+                "CYCLE_WEEKLY_START": config.cycle_weekly_start,
             },
             log_group=cycle_tick_log_group,
         )

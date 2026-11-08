@@ -1,5 +1,5 @@
-//! Strongly-typed identifier newtypes. All UUIDv7 strings except `CycleId` (yyyymm)
-//! and `InviteCode` (16-char Crockford base32).
+//! Strongly-typed identifier newtypes. All UUIDv7 strings except `CycleId`
+//! (`yyyymm` or `yyyymmdd`) and `InviteCode` (16-char Crockford base32).
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -66,7 +66,8 @@ id_newtype!(SubscriptionId);
 
 id_newtype!(CognitoSub);
 
-/// `yyyymm` (e.g. `202605`).
+/// `yyyymm` (monthly, e.g. `202605`) or `yyyymmdd` (weekly, e.g. `20260607`)
+/// (`docs/design/lifecycle.md` §13).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CycleId(pub String);

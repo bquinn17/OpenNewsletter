@@ -26,5 +26,3 @@ tracing.workspace = true
 chrono.workspace = true
 pretty_assertions.workspace = true
 persistence = { path = "../persistence", features = ["test-utils"] }
-testcontainers.workspace = true
-testcontainers-modules.workspace = true

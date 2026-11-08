@@ -29,6 +29,7 @@ function config(memberships: S["MembershipSummary"][]): S["ConfigResponse"] {
     displayName: "Sam",
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships,
   };
 }

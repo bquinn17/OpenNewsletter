@@ -2,7 +2,7 @@
 # shared/openapi.yaml (the contract test), rust-toolchain.toml, or this
 # workflow file.
 # Purpose: fmt, clippy, cargo-deny, the full test suite (including the
-# DynamoDB-Local-backed integration tests via testcontainers) and a Lambda
+# DynamoDB-Local-backed integration tests) and a Lambda
 # build sanity check — the PR gate for anything under backend/.
 name: backend-ci
 
@@ -36,6 +36,15 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # The integration tests share one in-memory DynamoDB Local and each
+    # creates its own table in it (`persistence::test_factories::make_test_repo`).
+    # The image's default command already runs it with `-inMemory`, and the
+    # tests' default endpoint is http://127.0.0.1:8000.
+    services:
+      dynamodb-local:
+        image: amazon/dynamodb-local:2.0.0
+        ports:
+          - 8000:8000
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -55,11 +64,9 @@ jobs:
 
       - run: cargo deny check
 
-      # testcontainers starts DynamoDB Local itself against the runner's
-      # stock Docker daemon — no DOCKER_HOST override and no service-container
-      # setup needed (unlike the two dev machines in CLAUDE.md). There is no
-      # `integration` feature flag: this single `cargo test` runs the unit,
-      # contract and DynamoDB-Local integration suites together.
+      # There is no `integration` feature flag: this single `cargo test` runs
+      # the unit, contract and DynamoDB-Local integration suites together,
+      # against the `dynamodb-local` service above.
       - run: cargo test --workspace
 
       # ubuntu-latest's system Python refuses `pip install` (PEP 668).

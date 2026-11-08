@@ -29,6 +29,7 @@ function baseConfig(): S["ConfigResponse"] {
     displayName: "Quinn",
     vapidPublicKey: "",
     groupDefaults: {},
+    cycleCadence: { frequency: "monthly", maxResponseWindowDays: 28 },
     memberships: [
       {
         groupId: "g1",
@@ -219,5 +220,58 @@ describe("NewsletterPage", () => {
     render_("/g/g1/n/c1");
 
     expect(await screen.findByText("This edition has been archived.")).toBeInTheDocument();
+  });
+
+  it("weekly: titles the open layout's header by the scheduled responseCloseAt date", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue({
+      ...baseConfig(),
+      cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+    });
+    vi.mocked(api.getNewsletter).mockResolvedValue({
+      status: "open",
+      cycleId: "c1",
+      responseOpenAt: "2026-11-08T00:00:00Z",
+      responseCloseAt: "2026-11-15T20:00:00Z",
+      questions: [],
+    });
+
+    render_("/g/g1/n/c1");
+
+    expect(await screen.findByText("Nov 15, 2026")).toBeInTheDocument();
+  });
+
+  it("weekly: titles the published layout and footer by publishedAt, not the scheduled close", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue({
+      ...baseConfig(),
+      cycleCadence: { frequency: "weekly", maxResponseWindowDays: 7 },
+    });
+    vi.mocked(api.getGroup).mockResolvedValue(baseGroup());
+    vi.mocked(api.listNewsletters).mockResolvedValue({
+      items: [
+        {
+          cycleId: "c1",
+          status: "published",
+          responseOpenAt: "2026-11-01T00:00:00Z",
+          responseCloseAt: "2026-11-08T20:00:00Z",
+          publishedAt: "2026-11-15T20:00:00Z",
+          questionCount: 1,
+          myDraftCount: 0,
+          myPublishedCount: 1,
+        },
+      ],
+      nextCursor: null,
+    });
+    vi.mocked(api.getNewsletter).mockResolvedValue({
+      status: "published",
+      cycleId: "c1",
+      responseCloseAt: "2026-11-08T20:00:00Z",
+      publishedAt: "2026-11-15T20:00:00Z",
+      questions: [],
+    });
+
+    render_("/g/g1/n/c1");
+
+    expect(await screen.findByText("Nov 15, 2026")).toBeInTheDocument();
+    expect(screen.getByText("That's a wrap on the Nov 15 edition 🎈")).toBeInTheDocument();
   });
 });

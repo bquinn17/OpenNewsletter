@@ -1,5 +1,5 @@
 //! Shared test setup for `lambda-notify-tick` integration tests. Reuses
-//! `persistence`'s DDB-local container/table setup and entity factories via
+//! `persistence`'s DDB-local table setup and entity factories via
 //! the `test-utils` feature, and a scripted [`FakePushSender`] so no test
 //! ever makes a real network call.
 #![allow(dead_code, unused_imports)]
@@ -22,10 +22,7 @@ use std::sync::{Arc, Mutex};
 
 pub use test_factories::{group, locked_question, user, voting_newsletter};
 
-pub async fn make_repo() -> (
-    testcontainers::ContainerAsync<testcontainers_modules::dynamodb_local::DynamoDb>,
-    Repo,
-) {
+pub async fn make_repo() -> (persistence::test_factories::TestTable, Repo) {
     test_factories::make_test_repo().await
 }
 

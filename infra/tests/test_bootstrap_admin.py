@@ -1,7 +1,8 @@
 """Unit tests for `scripts/bootstrap_admin.py`'s DynamoDB item builders.
 
 Covers prod mode (`docs/design/auth.md` §9.1a): the one TransactWriteItems
-with the Group, first Newsletter and email-bound admin Invite. Nothing here
+with the Group (marked as awaiting its first cycle) and the email-bound
+admin Invite. Nothing here
 touches AWS; the builders are pure, and boto3 is imported only inside the
 script's `main` path.
 
@@ -61,8 +62,8 @@ def script() -> ModuleType:
 
 
 @pytest.fixture(scope="module")
-def prod_items(script: ModuleType) -> tuple[str, list[dict[str, Any]]]:
-    cycle_id, items = script.prod_bootstrap_transact_items(
+def prod_items(script: ModuleType) -> list[dict[str, Any]]:
+    items = script.prod_bootstrap_transact_items(
         table_name="OpenNewsletter-prod",
         group_id=_GROUP_ID,
         group_name="Founders",
@@ -71,8 +72,8 @@ def prod_items(script: ModuleType) -> tuple[str, list[dict[str, Any]]]:
         invite_code=_CODE,
         now=_NOW,
     )
-    assert isinstance(cycle_id, str)
-    return cycle_id, items
+    assert isinstance(items, list)
+    return items
 
 
 def _item(items: list[dict[str, Any]], entity: str) -> dict[str, Any]:
@@ -85,25 +86,23 @@ def _item(items: list[dict[str, Any]], entity: str) -> dict[str, Any]:
     return item
 
 
-def test_prod_writes_group_newsletter_and_invite_conditionally(
-    prod_items: tuple[str, list[dict[str, Any]]],
+def test_prod_writes_group_and_invite_conditionally(
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    _, items = prod_items
-    assert [put["Put"]["Item"]["entity"]["S"] for put in items] == [
+    assert [put["Put"]["Item"]["entity"]["S"] for put in prod_items] == [
         "Group",
-        "Newsletter",
         "Invite",
     ]
-    for put in items:
+    for put in prod_items:
         assert put["Put"]["TableName"] == "OpenNewsletter-prod"
         # A re-run must never overwrite a live group's member count.
         assert put["Put"]["ConditionExpression"] == "attribute_not_exists(pk)"
 
 
 def test_prod_group_has_no_members_yet(
-    prod_items: tuple[str, list[dict[str, Any]]],
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    group = _item(prod_items[1], "Group")
+    group = _item(prod_items, "Group")
     assert group["pk"] == {"S": f"GROUP#{_GROUP_ID}"}
     assert group["sk"] == {"S": "META"}
     assert group["member_count"] == {"N": "0"}
@@ -111,24 +110,19 @@ def test_prod_group_has_no_members_yet(
     assert group["cycle_settings"]["M"]["response_window_days"] == {"N": "7"}
 
 
-def test_prod_first_cycle_is_voting(
-    prod_items: tuple[str, list[dict[str, Any]]],
+def test_prod_group_is_marked_awaiting_first_cycle(
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    cycle_id, items = prod_items
-    newsletter = _item(items, "Newsletter")
-    # Next month's 1st in New York is 2026-11-01T04:00:00Z.
-    assert cycle_id == "202611"
-    assert newsletter["sk"] == {"S": "NL#202611"}
-    assert newsletter["status"] == {"S": "voting"}
-    assert newsletter["gsi2pk"] == {"S": "NL_STATUS#voting"}
-    assert newsletter["gsi2sk"] == {"S": f"2026-11-01T04:00:00Z#{_GROUP_ID}#202611"}
-    assert newsletter["response_close_at"] == {"S": "2026-11-08T04:00:00Z"}
+    group = _item(prod_items, "Group")
+    assert group["gsi2pk"] == {"S": "GROUP_STATUS#awaiting_first_cycle"}
+    # gsi2sk = iso(created_at) + "#" + group_id
+    assert group["gsi2sk"] == {"S": f"2026-10-07T15:30:45Z#{_GROUP_ID}"}
 
 
 def test_prod_invite_matches_the_backend_row_shape(
-    prod_items: tuple[str, list[dict[str, Any]]],
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    invite = _item(prod_items[1], "Invite")
+    invite = _item(prod_items, "Invite")
     assert set(invite) == _INVITE_ATTRIBUTES
     assert invite["pk"] == {"S": f"INVITE#{_CODE}"}
     assert invite["sk"] == {"S": "META"}
@@ -143,16 +137,16 @@ def test_prod_invite_matches_the_backend_row_shape(
 
 
 def test_prod_invite_is_bound_to_the_lowercased_email(
-    prod_items: tuple[str, list[dict[str, Any]]],
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    invite = _item(prod_items[1], "Invite")
+    invite = _item(prod_items, "Invite")
     assert invite["bound_email"] == {"S": "admin@example.com"}
 
 
 def test_prod_invite_expires_in_30_days_and_ttl_adds_the_audit_window(
-    prod_items: tuple[str, list[dict[str, Any]]],
+    prod_items: list[dict[str, Any]],
 ) -> None:
-    invite = _item(prod_items[1], "Invite")
+    invite = _item(prod_items, "Invite")
     assert invite["created_at"] == {"S": "2026-10-07T15:30:45Z"}
     assert invite["expires_at"] == {"S": "2026-11-06T15:30:45Z"}
     ttl = _NOW + timedelta(days=30 + 30)
@@ -191,11 +185,11 @@ def test_dev_group_still_starts_with_its_admin(script: ModuleType) -> None:
         "User",
         "Group",
         "GroupMembership",
-        "Newsletter",
     ]
     group = _item(captured, "Group")
     assert group["member_count"] == {"N": "1"}
     assert group["created_by"] == {"S": "u1"}
+    assert group["gsi2pk"] == {"S": "GROUP_STATUS#awaiting_first_cycle"}
     # Dev keeps its unconditional, idempotent rewrite.
     assert all("ConditionExpression" not in put["Put"] for put in captured)
 

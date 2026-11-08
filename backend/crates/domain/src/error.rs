@@ -129,24 +129,21 @@ pub struct ApiError {
 /// Why one field failed: `fieldErrors[].code` (`docs/design/api.md` §1.1).
 /// Almost every failure is `Invalid`, and its `message` says what's wrong. A
 /// more specific code exists only where a client must react to the reason
-/// itself rather than just show the message.
+/// itself rather than just show the message — none does today, but the
+/// mechanism stays for the next one that will.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldErrorCode {
     Invalid,
-    /// A `responseWindowDays` change would close the group's `open` cycle in
-    /// the past (`docs/design/lifecycle.md` §6, D10).
-    ClosesInPast,
 }
 
 impl FieldErrorCode {
     /// Every code. The OpenAPI contract test checks these against
     /// `shared/openapi.yaml`'s `FieldErrorCode` enum.
-    pub const ALL: [FieldErrorCode; 2] = [FieldErrorCode::Invalid, FieldErrorCode::ClosesInPast];
+    pub const ALL: [FieldErrorCode; 1] = [FieldErrorCode::Invalid];
 
     pub fn as_str(self) -> &'static str {
         match self {
             FieldErrorCode::Invalid => "INVALID",
-            FieldErrorCode::ClosesInPast => "CLOSES_IN_PAST",
         }
     }
 }

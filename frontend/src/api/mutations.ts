@@ -405,9 +405,6 @@ export function usePatchGroup(groupId: string) {
       // Memberships denormalize groupName/gradient/timezone; the server
       // reads the group row live, so a refetch picks up the new values.
       qc.invalidateQueries({ queryKey: queryKeys.config });
-      // A timezone/responseWindowDays change can reschedule the voting
-      // cycle's dates (`docs/design/lifecycle.md` §6).
-      qc.invalidateQueries({ queryKey: queryKeys.newsletters(groupId) });
     },
   });
 }

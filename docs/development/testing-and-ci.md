@@ -25,9 +25,9 @@ There is no JWT verifier to test: API Gateway's Cognito authorizer verifies toke
 
 ### 2.2 Integration
 
-Integration tests live per crate under `crates/<crate>/tests/`, run against DynamoDB Local via `testcontainers`, and build their repo with `persistence`'s `test-utils` feature (`make_test_repo()`). Use unique group IDs per test: the membership cache is process-wide.
+Integration tests live per crate under `crates/<crate>/tests/`, run against a shared DynamoDB Local, and build their repo with `persistence`'s `test-utils` feature (`make_test_repo()`, which creates a table for the test and deletes it when the test ends). Use unique group IDs per test: the membership cache is process-wide.
 
-- **Access patterns:** ≥1 test per pattern AP1–AP21 ([`data-model.md` §3](../design/data-model.md#3-access-patterns--index-map)).
+- **Access patterns:** ≥1 test per pattern AP1–AP22 ([`data-model.md` §3](../design/data-model.md#3-access-patterns--index-map)).
 - **Transactions:** ≥1 test per transaction ([`data-model.md` §4](../design/data-model.md#4-transactional-invariants)). The high-stakes ones (vote, publish-response, redeem-invite) also have `tokio::join!` concurrency tests.
 - **Lifecycle suite:** the list in [`lifecycle.md` §11](../design/lifecycle.md#11-tests).
 - **Image pipeline and deletion:** the list in [`media.md` §10](../design/media.md#10-tests), run against `lambda-image-process` and `media-delete` directly.
@@ -41,18 +41,18 @@ A new or changed route needs a YAML example per request and response body and a 
 
 ### 2.4 Running locally
 
-There is no `integration` feature flag: plain `cargo test --workspace` runs unit, contract and DynamoDB Local tests. It needs a reachable Docker daemon ([`environments.md` §10.1](environments.md#101-docker-socket-by-platform-required-for-any-docker-backed-test) for the per-machine socket).
+There is no `integration` feature flag: plain `cargo test --workspace` runs unit, contract and DynamoDB Local tests. It needs DynamoDB Local running: `make dynamodb-local` from the repo root ([`environments.md` §10.1](environments.md#101-docker-and-dynamodb-local-by-platform) has the per-machine commands).
 
 ```bash
 cd backend
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace                            # unit + contract + DynamoDB Local
-cargo test -p domain                              # contract test only, no Docker
+cargo test -p domain                              # contract test only, no DynamoDB Local
 cargo test -p lambda-questions --test lifecycle   # one suite
 ```
 
-`testcontainers` starts one DynamoDB Local container per test binary. `make_test_repo` waits for the server to answer, sets SDK timeouts and caps concurrent container start-ups, so default parallelism is reliable. CI runs the same command on `ubuntu-latest`, whose stock Docker needs no `DOCKER_HOST`.
+Every test binary shares the one DynamoDB Local, so tests run at default parallelism without starting any containers. `make_test_repo` checks the server answers (and panics with the fix if it doesn't), and sets SDK timeouts so a stuck request fails instead of hanging. CI runs the same `cargo test` with DynamoDB Local as a `services:` container (§6.2).
 
 ---
 
@@ -135,7 +135,7 @@ PRs and pushes to `main` touching `frontend/**` or shared types: `npm ci`, typec
 
 ### 6.2 `backend-ci.yml`
 
-PRs and pushes touching `backend/**`: fmt, clippy, `cargo deny`, `cargo test --workspace` (the runner's Docker hosts DynamoDB Local), `cargo lambda build --release --arm64`.
+PRs and pushes touching `backend/**`: fmt, clippy, `cargo deny`, `cargo test --workspace` (against a DynamoDB Local `services:` container, image `amazon/dynamodb-local:2.0.0`), `cargo lambda build --release --arm64`.
 
 ### 6.3 `infra-ci.yml`
 

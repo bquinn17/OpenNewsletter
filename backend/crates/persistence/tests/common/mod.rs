@@ -1,17 +1,16 @@
 //! Shared helpers for DDB-local integration tests.
 #![allow(dead_code)]
 //!
-//! Each test calls `make_repo()` which starts a fresh DynamoDB-local container
-//! and creates a uniquely-named table. The caller must keep the returned
-//! `ContainerAsync` alive for the duration of the test (prefix it with `_`).
+//! Each test calls `make_repo()`, which creates a uniquely-named table on the
+//! shared DynamoDB Local. The caller must keep the returned
+//! `TestTable` alive for the duration of the test (prefix it with `_`).
 
 use chrono::{Duration, TimeZone, Utc};
 use domain::*;
+use persistence::test_factories::TestTable;
 use persistence::Repo;
-use testcontainers::ContainerAsync;
-use testcontainers_modules::dynamodb_local::DynamoDb;
 
-pub async fn make_repo() -> (ContainerAsync<DynamoDb>, Repo) {
+pub async fn make_repo() -> (TestTable, Repo) {
     persistence::test_factories::make_test_repo().await
 }
 
@@ -94,6 +93,8 @@ pub fn voting_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     }
 }
 

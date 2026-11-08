@@ -15,6 +15,7 @@ use persistence::newsletters;
 use pretty_assertions::assert_eq;
 use questions::handlers;
 use questions::state::AppState;
+use shared::cycle_time::CycleCadence;
 use std::sync::Mutex;
 
 /// Records every fan-out the tick triggers, in order.
@@ -58,7 +59,8 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
     // make that next cycle already due, so the second tick would open it too.
     let now = Utc::now();
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
-    let cycle_id = shared::cycle_time::cycle_id_for(now + Duration::days(10), tz);
+    let cycle_id =
+        shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now + Duration::days(10), tz);
     let voting = Newsletter {
         group_id: GroupId::new("g1"),
         cycle_id: cycle_id.clone(),
@@ -72,6 +74,8 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &voting)
         .await
@@ -127,7 +131,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
 
     // 4. Run the tick — this is exactly what the EventBridge schedule invokes.
     let notifier = RecordingNotifier::default();
-    let summary = run_tick_with(&state.repo, &notifier).await;
+    let summary = run_tick_with(&state.repo, &notifier, CycleCadence::Monthly).await;
     assert!(
         summary.transitions.iter().any(|t| t.cycle_id == cycle_id
             && t.from == Some(NewsletterStatus::Voting)
@@ -152,10 +156,11 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .unwrap()
         .expect("tick creates the next voting cycle alongside promotion");
     // ...for the month right after this one (`docs/design/lifecycle.md` §5.4).
-    let following = shared::cycle_time::first_day_of_next_month_local(now + Duration::days(10), tz);
+    let following =
+        shared::cycle_time::next_period_start(CycleCadence::Monthly, now + Duration::days(10), tz);
     assert_eq!(
         next_voting.cycle_id,
-        shared::cycle_time::cycle_id_for(following, tz)
+        shared::cycle_time::cycle_id_for(CycleCadence::Monthly, following, tz)
     );
 
     // 6. Rewind the (now open) cycle's response deadline and tick again.
@@ -163,7 +168,7 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .await
         .unwrap()
         .expect("group has an active (open) cycle to rewind");
-    let summary = run_tick_with(&state.repo, &notifier).await;
+    let summary = run_tick_with(&state.repo, &notifier, CycleCadence::Monthly).await;
     assert!(
         summary.transitions.iter().any(|t| t.cycle_id == cycle_id
             && t.from == Some(NewsletterStatus::Open)
@@ -220,7 +225,7 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
     // nor has a voting cycle to promote — the state a failed create leaves.
     let now = Utc::now();
     let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
-    let cycle_id = shared::cycle_time::cycle_id_for(now, tz);
+    let cycle_id = shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz);
     let open = Newsletter {
         group_id: group_id.clone(),
         cycle_id: cycle_id.clone(),
@@ -234,6 +239,8 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
     };
     newsletters::write_status_transition(&repo, &open)
         .await
@@ -244,10 +251,10 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
         .is_none());
 
     let notifier = RecordingNotifier::default();
-    let summary = run_tick_with(&repo, &notifier).await;
+    let summary = run_tick_with(&repo, &notifier, CycleCadence::Monthly).await;
 
-    let following = shared::cycle_time::first_day_of_next_month_local(now, tz);
-    let next_id = shared::cycle_time::cycle_id_for(following, tz);
+    let following = shared::cycle_time::next_period_start(CycleCadence::Monthly, now, tz);
+    let next_id = shared::cycle_time::cycle_id_for(CycleCadence::Monthly, following, tz);
     assert_eq!(
         summary.transitions,
         vec![CycleTransition {
@@ -264,7 +271,7 @@ async fn a_tick_recreates_a_missing_next_voting_cycle_for_an_open_cycle() {
     assert_eq!(voting.cycle_id, next_id);
 
     // Once the successor exists, the repair is a no-op.
-    let summary = run_tick_with(&repo, &notifier).await;
+    let summary = run_tick_with(&repo, &notifier, CycleCadence::Monthly).await;
     assert_eq!(summary.transitions, Vec::new());
     assert!(notifier.0.lock().unwrap().is_empty());
 }

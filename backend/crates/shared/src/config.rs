@@ -7,6 +7,10 @@ pub const DEFAULT_MEMBER_SOFT_CAP: u32 = 50;
 pub const DEFAULT_TIMEZONE: &str = "America/New_York";
 pub const DEFAULT_NOTIFY_OFFSETS_HOURS: &[u32] = &[96, 48, 24];
 
+/// `CYCLE_WEEKLY_START` when unset or empty (`shared::cycle_time::CycleCadence::parse`,
+/// `docs/design/lifecycle.md` §13): grammar `<day> <HH>:<MM>`, group-local.
+pub const DEFAULT_WEEKLY_CYCLE_START: &str = "sun 21:00";
+
 /// The notify-tick's query window is derived from this cap, so an offset above it
 /// would silently never fire (`docs/design/notifications.md` §7.1).
 pub const MAX_REMINDER_OFFSET_HOURS: u32 = 168;
@@ -46,7 +50,13 @@ pub const AUTO_PUBLISH_MAX_FAILED_SWEEPS: u32 = 3;
 pub const MIN_QUESTIONS_PER_CYCLE: u32 = 1;
 pub const MAX_QUESTIONS_PER_CYCLE: u32 = 20;
 pub const MIN_RESPONSE_WINDOW_DAYS: u32 = 1;
+/// Upper bound on `responseWindowDays` for a **monthly** cadence deployment
+/// (`shared::cycle_time::CycleCadence::Monthly`).
 pub const MAX_RESPONSE_WINDOW_DAYS: u32 = 28;
+/// Upper bound on `responseWindowDays` for a **weekly** cadence deployment
+/// (`shared::cycle_time::CycleCadence::Weekly`), so a window never outlasts
+/// its own period.
+pub const MAX_WEEKLY_RESPONSE_WINDOW_DAYS: u32 = 7;
 
 pub const MAX_PROMPT_CHARS: usize = 500;
 pub const MIN_PROMPT_CHARS: usize = 5;
