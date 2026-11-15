@@ -172,21 +172,46 @@ describe("JoinPage", () => {
 
     await waitFor(() =>
       expect(useToasts.getState().toasts).toContainEqual(
-        expect.objectContaining({ message: "Welcome to New" }),
+        expect.objectContaining({ message: "Welcome to New 🎉" }),
       ),
     );
     expect(useCurrentGroup.getState().currentGroupId).toBe("g_old");
   });
 
-  it("sends a signed-out visitor to login with the invite attached", () => {
+  it("shows a signed-out visitor their invite, and signs in with it attached", async () => {
     const login = vi.fn().mockResolvedValue(undefined);
 
     renderJoin({ ...signedIn, status: "unauthenticated", user: null, login });
 
+    expect(screen.getByRole("heading", { name: /We saved you a seat/ })).toBeInTheDocument();
+    expect(screen.getByText("ABCD-EFGH")).toBeInTheDocument();
+    expect(login).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /Continue with Google/ }));
+
     expect(login).toHaveBeenCalledWith({
+      provider: "Google",
       returnTo: "/join?code=ABCD-EFGH",
       invite: "ABCD-EFGH",
     });
     expect(api.redeemInvite).not.toHaveBeenCalled();
+  });
+
+  it("starts a signed-out visitor without a code at the sign-up form", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthContext.Provider value={{ ...signedIn, status: "unauthenticated", user: null }}>
+          <MemoryRouter initialEntries={["/join"]}>
+            <Routes>
+              <Route path="/join" element={<JoinPage />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Join your group" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Invite code")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/signin");
   });
 });

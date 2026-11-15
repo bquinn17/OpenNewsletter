@@ -15,6 +15,7 @@ import { renewSession } from "./renewSession";
 import { revokeRefreshToken } from "./revokeToken";
 import { userManager } from "./userManager";
 import { stashInvite } from "./inviteStash";
+import { rememberProvider } from "./lastProvider";
 import { disablePush } from "../pwa/pushSetup";
 import { assignLocation } from "../utils/navigation";
 
@@ -121,11 +122,17 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
-  const login = useCallback(async (opts?: LoginOptions): Promise<void> => {
-    // Not `isMockMode`: the demo's "Sign in" starts a real sign-in, which leaves the demo.
+  const login = useCallback(async ({ provider, invite, returnTo }: LoginOptions): Promise<void> => {
     if (env.useMocks || !userManager) return;
-    if (opts?.invite) stashInvite(opts.invite);
-    await userManager.signinRedirect({ state: { invite: opts?.invite, returnTo: opts?.returnTo } });
+    rememberProvider(provider);
+    if (invite) stashInvite(invite);
+    await userManager.signinRedirect({
+      state: { invite, returnTo },
+      // Cognito skips its own hosted page and sends the browser straight to
+      // the IdP; the app's `/signin` page is where the user picks one
+      // (`docs/design/frontend.md` §6).
+      extraQueryParams: { identity_provider: provider },
+    });
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {

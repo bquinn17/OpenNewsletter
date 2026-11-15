@@ -23,17 +23,23 @@ const variants: Record<Variant, string> = {
   soft: "bg-cream text-ink hover:bg-line/60",
 };
 
-export function Button({ variant = "primary", size = "md", className, children, ...rest }: Props) {
+/** `Button`'s look, for a router `Link` or `<a>` that should read as a button. */
+export function buttonClassName({
+  variant = "primary",
+  size = "md",
+  className,
+}: { variant?: Variant; size?: Size; className?: string } = {}): string {
+  return clsx(
+    "inline-flex items-center justify-center gap-1.5 rounded-full font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+    sizes[size],
+    variants[variant],
+    className,
+  );
+}
+
+export function Button({ variant, size, className, children, ...rest }: Props) {
   return (
-    <button
-      {...rest}
-      className={clsx(
-        "inline-flex items-center justify-center gap-1.5 rounded-full font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
-        sizes[size],
-        variants[variant],
-        className,
-      )}
-    >
+    <button {...rest} className={buttonClassName({ variant, size, className })}>
       {children}
     </button>
   );

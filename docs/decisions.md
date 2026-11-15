@@ -205,6 +205,15 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 **Where.** [`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group), [`data-model.md` §2](design/data-model.md#2-entities), [`environments.md`](development/environments.md).
 
+<a id="own-signin-page"></a>
+### The app has its own sign-in and sign-up pages; Cognito's hosted page is never shown (2026-11-15)
+
+**Decision.** Sign-in starts on the app's `/signin` page, and signing up on `/join`, both in the app's theme. Each IdP button calls Cognito's `/oauth2/authorize` with `identity_provider`, so Cognito forwards straight to Google or Facebook and its hosted page never appears. Home, signed out, offers **Sign up** (an invite code, then an IdP) and **Sign in** side by side. An invite link shows a "You're invited" page rather than redirecting.
+
+**Why.** Cognito's classic hosted page is a plain grey box that doesn't match the app, and there was no visible way to sign up. It also cost a redirect hop. Since self-signup is disabled and every account is federated, the hosted page only ever offered the two IdP buttons, which the app can draw itself. Cognito's newer branded "managed login" was the alternative. It still means a page on Cognito's domain, and it needs CDK and domain changes, with no gain over drawing two buttons.
+
+**Where.** [`frontend.md` §6](design/frontend.md#6-auth-in-the-spa), [§7.1](design/frontend.md#71-homepage-), [§7.8](design/frontend.md#78-joinpage-joincode), [§7.10](design/frontend.md#710-signinpage-signinreturnto), [`auth.md` §2](design/auth.md#2-end-to-end-first-signup-flow).
+
 ---
 
 ## Design review, 2026-10-08

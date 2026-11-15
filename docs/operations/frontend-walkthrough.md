@@ -40,7 +40,7 @@ aws cognito-idp admin-set-user-password --user-pool-id "$POOL" --username "$EMAI
   --password '<choose one>' --permanent
 ```
 
-Password users sign in at `http://localhost:5173/admin/bootstrap-login`. The Cognito hosted UI only offers Google and Facebook.
+Password users sign in at `http://localhost:5173/admin/bootstrap-login`. The app's sign-in page only offers Google and Facebook.
 
 ### 0.3 Reset the data
 
@@ -114,12 +114,15 @@ The token is now on your clipboard. It expires after an hour; copy a fresh one w
 
 ## 1. Signed-out pages and sign-in
 
-- [ ] As a signed-out visitor (a fresh profile, or after signing out), open `/`. It shows "Your group's newsletter, together.", "Sign in to see your group's newsletters.", a **Sign in** button, and a card "Have an invite code?" with an invite code field. The header shows the "O" logo and a **Sign in** button.
-- [ ] Open `/settings` while signed out. You're sent straight to the Cognito hosted UI, which offers Google (and Facebook, if configured). Type `localhost:5173` in the address bar to leave it. §2.2 checks that sign-in returns you to the page you asked for.
+- [ ] As a signed-out visitor (a fresh profile, or after signing out), open `/`. It shows a tilted stack of editions, "Your group's newsletter, together.", **Sign up** and **Sign in** buttons, a 🔒 "Invite only" notice ("You can't create an account without an invite code from a group."), **See a demo**, and three "How it works" cards. The header shows the "O" logo and a **Sign in** button.
+- [ ] **Sign up** opens `/join`: steps "Invite code → Sign in → You're in!" with step 1 current, "Join your group", the invite code field, the "Invite only" notice telling you to ask a group admin for an invite link, and a **Sign in** link. **Sign in** there opens `/signin`.
+- [ ] Open `/settings` while signed out. You land on `/signin?returnTo=%2Fsettings`: a greeting for the time of day, "Welcome back", **Continue with Google** and **Continue with Facebook**, and the "Invite only" notice ("Signing in is for members. New here? Sign up with your invite code", linking to `/join`). The header's **Sign in** is hidden. No Cognito page appears anywhere in this section.
+- [ ] Click **Continue with Google**. The button reads "Opening Google…", then Google's own account picker opens directly. Press Back: the buttons work again. §2.2 checks that sign-in returns you to the page you asked for. Back on `/signin` afterwards, the Google button has a **Last used** pill.
+- [ ] With DevTools → Network set to Offline, click a provider button on `/signin`. The buttons come back and "Couldn't reach sign-in. Check your connection and try again." shows. Set it back to Online.
 - [ ] Open `/admin/bootstrap-login`. Submit it empty: "Username is required" and "Password is required". Submit a wrong password: Cognito's error message appears under the fields. Submit A's real credentials: the button shows "Signing in…", then Home loads with "Hey Dev Admin 👋".
-- [ ] In B's profile, sign in with Google (B isn't in any group yet). `/auth/callback` shows a spinner, then Home says "You haven't joined a group yet — paste your invite code below." with the join form. Open `/settings`: you're redirected back to Home. The avatar menu still offers **Sign out**. Sign B out.
+- [ ] In B's profile, sign in with Google (B isn't in any group yet). `/auth/callback` shows a spinner, then Home says "You haven't joined a group yet. Groups are invite-only: ask an admin of the group for an invite code, then paste it below." with the join form. Open `/settings`: you're redirected back to Home. The avatar menu still offers **Sign out**. Sign B out.
 - [ ] Optional, if the Facebook IdP is configured: sign in once with Facebook the same way.
-- [ ] Open `/auth/callback` directly with no query string. It shows "Something went wrong finishing sign-in." and a **Try signing in again** button.
+- [ ] Open `/auth/callback` directly with no query string. On the app's gradient backdrop it shows "That didn't quite work", "Something went wrong finishing sign-in. Give it another go." and a **Try again** button that opens `/signin`.
 - [ ] Reload any page while signed in: you stay signed in. Close the tab, open the app again: still signed in.
 - [ ] Optional, needs an hour: leave a signed-in tab idle for more than an hour, then do something that calls the API (open an edition). It works without a sign-in prompt, because the refresh token renews the session.
 - [ ] Avatar menu (top right) → **Sign out**. A "Signing out…" overlay shows, then Cognito's logout, then the signed-out Home. In DevTools → Application → Local Storage, no `oidc.user:` key remains.
@@ -138,10 +141,10 @@ The token is now on your clipboard. It expires after an hour; copy a fresh one w
 
 ### 2.2 Joining through the OAuth redirect (B, Google)
 
-- [ ] In B's profile, signed out, open B's invite URL. You're sent straight to the Cognito hosted UI.
-- [ ] Sign in with Google. You come back through `/auth/callback` and `/join?code=…`, then see the toast "Welcome to Dev Group" and land on `/g/<GROUP_ID>/upcoming`. The header's group switcher shows "Dev Group" with its gradient.
+- [ ] In B's profile, signed out, open B's invite URL. It doesn't redirect: a "You're invited" ticket, "We saved you a seat 🎉", shows B's code, with step 2 of 3 current and the Google and Facebook buttons.
+- [ ] **Continue with Google**. Google's page opens directly. You come back through `/auth/callback` ("Signing you in…") and `/join?code=…` ("Saving your seat…"), then confetti falls, the toast "Welcome to Dev Group 🎉" shows, and you land on `/g/<GROUP_ID>/upcoming`. The header's group switcher shows "Dev Group" with its gradient. With the OS's reduce-motion setting on, the toast shows but no confetti.
 - [ ] As A, reload Admin → **Members**: B is listed with "joined … ago · pending first answer", and the count reads "2 of 50 members". Under **Invites**, B's code reads "used by {B's name} · … ago".
-- [ ] Sign B out, then open `/g/<GROUP_ID>/upcoming`. You're sent to the hosted UI, and after signing in with Google you land back on Upcoming, not Home.
+- [ ] Sign B out, then open `/g/<GROUP_ID>/upcoming`. You're sent to `/signin`, and after **Continue with Google** you land back on Upcoming, not Home.
 
 ### 2.3 Joining while signed in (C), and the member cap
 
@@ -149,7 +152,7 @@ The token is now on your clipboard. It expires after an hour; copy a fresh one w
 - [ ] As A, set Admin → Settings → **Member soft cap** to 2 (the current count) and save.
 - [ ] As C, type C's code in lowercase and press **Join**. The URL shows the code upper-cased, and the page says "Couldn't join" and "That group is full."
 - [ ] Enter the same code and press **Join** again: a spinner, then "That group is full." again. It retried rather than doing nothing.
-- [ ] As A, set the cap back to 50. As C, submit the same code once more: "Welcome to Dev Group" and the Upcoming page.
+- [ ] As A, set the cap back to 50. As C, submit the same code once more: "Welcome to Dev Group 🎉" and the Upcoming page.
 
 ### 2.4 Invite errors
 
@@ -158,7 +161,7 @@ Use C (signed in) for each, pasting into Settings → Your groups → **Join wit
 - [ ] A made-up code such as `ABCD-EFGH`: "Couldn't join" and "That invite code isn't valid." The join form is shown again below.
 - [ ] The revoked code from §2.1: "That invite code isn't valid."
 - [ ] B's code, already used: "That invite has already been used."
-- [ ] The spare Member invite, redeemed by B, who is already a member: still "Welcome to Dev Group" and the Upcoming page. As A, that invite is still active (an existing member doesn't consume it).
+- [ ] The spare Member invite, redeemed by B, who is already a member: still "Welcome to Dev Group 🎉" and the Upcoming page. As A, that invite is still active (an existing member doesn't consume it).
 - [ ] Optional: an expired invite. Create a 1-day invite and come back after 24 hours. A's list shows it greyed out as "expired". Redeeming it shows "That invite has expired — ask for a new one."
 
 ## 3. App shell and navigation

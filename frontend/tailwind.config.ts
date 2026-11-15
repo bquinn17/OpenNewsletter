@@ -44,9 +44,29 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "none" },
         },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-6px)" },
+        },
+        wiggle: {
+          "0%, 100%": { transform: "rotate(-6deg)" },
+          "50%": { transform: "rotate(6deg)" },
+        },
+        // `ConfettiBurst` sets each piece's drift and spin.
+        confetti: {
+          "0%": { transform: "translate3d(0, 0, 0) rotate(0deg)", opacity: "1" },
+          "85%": { opacity: "1" },
+          "100%": {
+            transform: "translate3d(var(--confetti-drift), 105vh, 0) rotate(var(--confetti-spin))",
+            opacity: "0",
+          },
+        },
       },
       animation: {
         pop: "pop .25s ease-out both",
+        float: "float 4s ease-in-out infinite",
+        wiggle: "wiggle 1.2s ease-in-out infinite",
+        confetti: "confetti 3s cubic-bezier(.25,.6,.4,1) both",
       },
     },
   },

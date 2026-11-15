@@ -1,15 +1,15 @@
 import { useAuth } from "../auth/useAuth";
-import { DEMO_BASENAME } from "../demo";
 import { useConfig, useNewsletters } from "../api/queries";
 import { JoinForm } from "../components/join/JoinForm";
 import { InstallPwaPrompt } from "../components/pwa/InstallPwaPrompt";
 import { Button } from "../components/ui/Button";
 import { Spinner } from "../components/ui/Spinner";
 import { GroupEditions } from "../components/home/GroupEditions";
+import { Landing } from "../components/home/Landing";
 import { useCurrentGroup } from "../state/currentGroup";
 
 export function HomePage() {
-  const { status, login } = useAuth();
+  const { status } = useAuth();
 
   if (status === "loading") {
     return (
@@ -19,31 +19,7 @@ export function HomePage() {
     );
   }
 
-  if (status !== "authenticated") {
-    return (
-      <div className="px-5 py-10">
-        <h1 className="font-display text-3xl font-bold leading-tight">
-          Your group&apos;s newsletter, together.
-        </h1>
-        <p className="mt-2 text-inkmuted">Sign in to see your group&apos;s newsletters.</p>
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Button onClick={() => void login({ returnTo: "/" })}>Sign in</Button>
-          {/* A plain link, not a router `Link`: the demo is decided when a page loads, so
-              entering it has to be a full page load (`docs/design/frontend.md` §17). */}
-          <a
-            href={DEMO_BASENAME}
-            className="inline-flex items-center justify-center rounded-full border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:border-ink"
-          >
-            See a demo
-          </a>
-        </div>
-        <div className="mt-8 rounded-3xl border border-line bg-white p-5 shadow-soft">
-          <p className="mb-3 text-sm text-inkmuted">Have an invite code?</p>
-          <JoinForm />
-        </div>
-      </div>
-    );
-  }
+  if (status !== "authenticated") return <Landing />;
 
   return <SignedInHome />;
 }
@@ -88,7 +64,8 @@ function SignedInHome() {
       <div className="px-5 py-10">
         <h1 className="font-display text-2xl font-bold">{greeting}</h1>
         <p className="mt-2 text-inkmuted">
-          You haven&apos;t joined a group yet — paste your invite code below.
+          You haven&apos;t joined a group yet. Groups are invite-only: ask an admin of the group for
+          an invite code, then paste it below.
         </p>
         <div className="mt-5 rounded-3xl border border-line bg-white p-5 shadow-soft">
           <JoinForm />

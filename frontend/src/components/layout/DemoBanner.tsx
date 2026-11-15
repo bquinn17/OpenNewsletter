@@ -1,10 +1,8 @@
-import { useAuth } from "../../auth/useAuth";
 import { useHasStoredSession } from "../../auth/useHasStoredSession";
 import { exitDemo } from "../../demo";
 
 /** Shown on every demo page, so it's never mistaken for a real group (`docs/design/frontend.md` §17). */
 export function DemoBanner() {
-  const { login } = useAuth();
   const hasStoredSession = useHasStoredSession();
 
   return (
@@ -18,13 +16,12 @@ export function DemoBanner() {
           ? "You're still signed in, but these aren't your groups, and nothing you do here is saved."
           : "Sample groups — nothing you do here is saved."}
       </p>
+      {/* A plain link, not a router `Link`: `/signin` lies outside the demo, so
+          it's a full page load that ends the demo (`docs/design/frontend.md` §17). */}
       {!hasStoredSession && (
-        <button
-          onClick={() => void login({ returnTo: "/" })}
-          className="shrink-0 font-semibold underline"
-        >
+        <a href="/signin" className="shrink-0 font-semibold underline">
           Sign in
-        </button>
+        </a>
       )}
       <button
         onClick={exitDemo}

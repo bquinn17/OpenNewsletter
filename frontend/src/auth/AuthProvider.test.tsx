@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "../env";
 import { useCurrentGroup } from "../state/currentGroup";
 import { AuthProvider } from "./AuthProvider";
+import { lastProvider } from "./lastProvider";
 import { useAuth } from "./useAuth";
 import { userManager } from "./userManager";
 
@@ -78,6 +79,41 @@ describe("token storage (D1)", () => {
 
     expect(await screen.findByText("status:authenticated")).toBeInTheDocument();
     await act(() => userManager!.removeUser());
+  });
+});
+
+describe("login", () => {
+  function LoginProbe(): JSX.Element {
+    const { login } = useAuth();
+    return (
+      <button
+        type="button"
+        onClick={() => void login({ provider: "Facebook", invite: "ABCD", returnTo: "/join" })}
+      >
+        Sign in
+      </button>
+    );
+  }
+
+  it("skips Cognito's hosted page for the picked IdP, carrying the invite in state", async () => {
+    const redirect = vi.spyOn(userManager!, "signinRedirect").mockResolvedValue(undefined);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <LoginProbe />
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    screen.getByRole("button", { name: "Sign in" }).click();
+
+    await waitFor(() => expect(redirect).toHaveBeenCalledTimes(1));
+    expect(redirect).toHaveBeenCalledWith({
+      state: { invite: "ABCD", returnTo: "/join" },
+      extraQueryParams: { identity_provider: "Facebook" },
+    });
+    expect(lastProvider()).toBe("Facebook");
+    expect(sessionStorage.getItem("on:pendingInvite")).toBe("ABCD");
   });
 });
 

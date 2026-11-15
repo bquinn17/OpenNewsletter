@@ -34,12 +34,12 @@ Goal: a person with an invite URL becomes a Cognito user AND is added to a group
      │  1. visits /join?code=XYZ      │                             │                          │
      │ ──────────────────────────────►│                             │                          │
      │                                │                             │                          │
-     │                                │  2. stash code in sessionStorage; also attach          │
-     │                                │     { invite, returnTo } as oidc-client-ts state data  │
-     │                                │     (§3.3); redirect to Cognito hosted UI              │
+     │                                │  2. user taps Google or Facebook; stash code in        │
+     │                                │     sessionStorage, attach { invite, returnTo } as     │
+     │                                │     state data (§3.3); redirect with identity_provider │
      │ ◄──────────────────────────────│                             │                          │
      │                                                              │                          │
-     │  3. picks IdP (Google), signs in there, returns to Cognito                              │
+     │  3. Cognito skips its page, forwards to that IdP; signs in, returns to Cognito          │
      │ ────────────────────────────────────────────────────────────►│                          │
      │                                                              │                          │
      │                                                              │  4. PreSignUp trigger    │
