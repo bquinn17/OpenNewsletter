@@ -1,7 +1,8 @@
 """MonitoringStack — CloudWatch dashboard, alarms, and the SNS topic they page.
 
-Per `docs/design/infrastructure.md` §9. Every env gets the dashboard; only
-prod gets alarms (and the SNS topic they page), capped at the 10 alarm metrics
+Per `docs/design/infrastructure.md` §9. Every env gets the dashboard, capped at
+the 50 metrics a free-tier dashboard may reference (§9.1); only prod gets
+alarms (and the SNS topic they page), capped at the 10 alarm metrics
 CloudWatch's free tier covers (§9.2). The cost budget is account-wide and lives
 in `CiStack` (§9.2a), not here. All of this is built from the fixed
 naming scheme other stacks use for their resources (`OpenNewsletter-{Name}-{env}`
@@ -59,6 +60,12 @@ _LAMBDA_NAMES: tuple[str, ...] = (
 # one per metric it reads (`docs/design/infrastructure.md` §9.2). Prod's alarms must fit inside it.
 MAX_ALARM_METRICS = 10
 
+# The free tier also covers three dashboards of up to 50 metrics each. One that
+# references more bills at $3/mo, and metric math counts every metric it reads
+# (`docs/design/infrastructure.md` §9.1). Each env's dashboard must fit; every
+# Lambda added to `_LAMBDA_NAMES` costs three of them.
+MAX_DASHBOARD_METRICS = 50
+
 _FIVE_MIN = cdk.Duration.minutes(5)
 
 
@@ -86,10 +93,13 @@ class MonitoringStack(cdk.Stack):
         table_name = f"OpenNewsletter-{config.env}"
         http_api_id = ssm_dynamic_ref(http_api_id_parameter_name(config.env))
 
+        # Kept as a plain string: `Dashboard.dashboard_name` is a `Ref` token,
+        # which would leave the URL output below unreadable in a synth.
+        dashboard_name = f"OpenNewsletter-{config.env}"
         self.dashboard = cloudwatch.Dashboard(
             self,
             "Dashboard",
-            dashboard_name=f"OpenNewsletter-{config.env}",
+            dashboard_name=dashboard_name,
         )
         self.dashboard.add_widgets(
             cloudwatch.TextWidget(
@@ -99,13 +109,20 @@ class MonitoringStack(cdk.Stack):
             )
         )
         self.dashboard.add_widgets(*self._api_widgets(http_api_id))
-        for lambda_name in _LAMBDA_NAMES:
-            self.dashboard.add_widgets(self._lambda_widget(lambda_name, config.env))
-        self.dashboard.add_widgets(self._dynamo_widget(table_name))
-        self.dashboard.add_widgets(self._s3_widget())
-        self.dashboard.add_widgets(self._push_widget(config.env))
+        self.dashboard.add_widgets(*self._lambda_widgets(config.env))
+        self.dashboard.add_widgets(
+            self._dynamo_widget(table_name), self._push_widget(config.env)
+        )
 
         cdk.CfnOutput(self, "DashboardName", value=self.dashboard.dashboard_name)
+        cdk.CfnOutput(
+            self,
+            "DashboardUrl",
+            value=(
+                f"https://{self.region}.console.aws.amazon.com/cloudwatch/home"
+                f"?region={self.region}#dashboards/dashboard/{dashboard_name}"
+            ),
+        )
 
         # --- Alarms (prod only, `docs/design/infrastructure.md` §9.2) ---
         # Dev has no alarms and so no topic either: nothing would publish to it.
@@ -139,7 +156,13 @@ class MonitoringStack(cdk.Stack):
 
     # --- Dashboard widgets ---
 
+    # Each line on a graph is one of the dashboard's MAX_DASHBOARD_METRICS,
+    # including each statistic of the same metric. The per-widget counts are
+    # noted so the total stays checkable by eye: 5 + 37 + 3 + 2 = 47.
+
     def _api_widgets(self, http_api_id: str) -> list[cloudwatch.IWidget]:
+        # 5 metrics. p50 and p99 bracket latency; at this traffic p95 sits on
+        # top of p99 and adds nothing.
         dims = {"ApiId": http_api_id}
         count = cloudwatch.Metric(
             namespace="AWS/ApiGateway",
@@ -174,7 +197,7 @@ class MonitoringStack(cdk.Stack):
                 period=_FIVE_MIN,
                 label=stat,
             )
-            for stat in ("p50", "p95", "p99")
+            for stat in ("p50", "p99")
         ]
         return [
             cloudwatch.GraphWidget(
@@ -184,39 +207,62 @@ class MonitoringStack(cdk.Stack):
                 height=6,
             ),
             cloudwatch.GraphWidget(
-                title="HTTP API — latency p50/p95/p99",
+                title="HTTP API — latency p50/p99",
                 left=latency_widgets,
                 width=12,
                 height=6,
             ),
         ]
 
-    def _lambda_widget(self, name: str, env: str) -> cloudwatch.GraphWidget:
-        return cloudwatch.GraphWidget(
-            title=f"Lambda — {name}",
-            left=[
-                _lambda_metric(name, env, "Invocations").with_(label="Invocations"),
-                _lambda_metric(name, env, "Errors").with_(label="Errors"),
-                _lambda_metric(name, env, "Throttles").with_(label="Throttles"),
-            ],
-            right=[
-                cloudwatch.Metric(
-                    namespace="AWS/Lambda",
-                    metric_name="Duration",
-                    dimensions_map={"FunctionName": _lambda_function_name(name, env)},
-                    statistic="p95",
-                    period=_FIVE_MIN,
-                    label="Duration p95",
+    def _lambda_widgets(self, env: str) -> list[cloudwatch.IWidget]:
+        # 37 metrics: one graph per metric with a line per function (3 × 12),
+        # so the function that's erroring or slow stands out at a glance.
+        # Throttles are one account-wide line rather than one per function:
+        # concurrency is an account-wide limit shared by dev and prod, and at
+        # this traffic a throttle anywhere is the signal.
+        def per_function(metric_name: str, statistic: str) -> list[cloudwatch.IMetric]:
+            return [
+                _lambda_metric(name, env, metric_name).with_(
+                    statistic=statistic, label=name
                 )
-            ],
-            width=12,
-            height=6,
+                for name in _LAMBDA_NAMES
+            ]
+
+        account_throttles = cloudwatch.Metric(
+            namespace="AWS/Lambda",
+            metric_name="Throttles",
+            statistic=cloudwatch.Stats.SUM,
+            period=_FIVE_MIN,
+            label="Throttles (whole account)",
         )
+        return [
+            cloudwatch.GraphWidget(
+                title="Lambda — invocations",
+                left=per_function("Invocations", cloudwatch.Stats.SUM),
+                width=12,
+                height=6,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda — errors, and throttles across the account",
+                left=[*per_function("Errors", cloudwatch.Stats.SUM), account_throttles],
+                width=12,
+                height=6,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda — duration p95 (ms)",
+                left=per_function("Duration", "p95"),
+                width=24,
+                height=6,
+            ),
+        ]
 
     def _dynamo_widget(self, table_name: str) -> cloudwatch.GraphWidget:
+        # 3 metrics. Throttles are left to the prod alarm (§9.2): an on-demand
+        # table doesn't throttle at this traffic. Conditional-check failures
+        # stay, since a spike in them points at a write race or retry loop.
         dims = {"TableName": table_name}
         return cloudwatch.GraphWidget(
-            title="DynamoDB — capacity, throttles, conditional-check failures",
+            title="DynamoDB — capacity, conditional-check failures",
             left=[
                 cloudwatch.Metric(
                     namespace="AWS/DynamoDB",
@@ -238,22 +284,6 @@ class MonitoringStack(cdk.Stack):
             right=[
                 cloudwatch.Metric(
                     namespace="AWS/DynamoDB",
-                    metric_name="ReadThrottleEvents",
-                    dimensions_map=dims,
-                    statistic=cloudwatch.Stats.SUM,
-                    period=_FIVE_MIN,
-                    label="Read throttles",
-                ),
-                cloudwatch.Metric(
-                    namespace="AWS/DynamoDB",
-                    metric_name="WriteThrottleEvents",
-                    dimensions_map=dims,
-                    statistic=cloudwatch.Stats.SUM,
-                    period=_FIVE_MIN,
-                    label="Write throttles",
-                ),
-                cloudwatch.Metric(
-                    namespace="AWS/DynamoDB",
                     metric_name="ConditionalCheckFailedRequests",
                     dimensions_map=dims,
                     statistic=cloudwatch.Stats.SUM,
@@ -261,42 +291,7 @@ class MonitoringStack(cdk.Stack):
                     label="Conditional check failures",
                 ),
             ],
-            width=24,
-            height=6,
-        )
-
-    def _s3_widget(self) -> cloudwatch.GraphWidget:
-        # S3's daily storage metrics are free. The bucket names follow
-        # MediaPersistentStack's fixed pattern; rebuilding them here keeps this
-        # stack free of cross-stack references.
-        buckets = {
-            kind: f"opennewsletter-{kind}-{self._env}-{cdk.Aws.ACCOUNT_ID}"
-            for kind in ("media-originals", "avatars-originals", "media-processed")
-        }
-
-        def metric(
-            bucket_name: str, metric_name: str, storage_type: str, label: str
-        ) -> cloudwatch.Metric:
-            return cloudwatch.Metric(
-                namespace="AWS/S3",
-                metric_name=metric_name,
-                dimensions_map={"BucketName": bucket_name, "StorageType": storage_type},
-                statistic=cloudwatch.Stats.AVERAGE,
-                period=cdk.Duration.days(1),
-                label=label,
-            )
-
-        return cloudwatch.GraphWidget(
-            title="S3 — bucket size (bytes) / object count",
-            left=[
-                metric(name, "BucketSizeBytes", "StandardStorage", kind)
-                for kind, name in buckets.items()
-            ],
-            right=[
-                metric(name, "NumberOfObjects", "AllStorageTypes", kind)
-                for kind, name in buckets.items()
-            ],
-            width=24,
+            width=12,
             height=6,
         )
 
@@ -322,7 +317,7 @@ class MonitoringStack(cdk.Stack):
                     label="Failed",
                 ),
             ],
-            width=24,
+            width=12,
             height=6,
         )
 
