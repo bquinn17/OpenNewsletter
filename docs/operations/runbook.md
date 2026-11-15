@@ -329,3 +329,24 @@ At a cycle's close, the tick publishes every non-empty draft. A draft that keeps
    ```
 
    A `ConditionalCheckFailedException` here means the edition was already counted. That's fine.
+
+### Viewing the dashboards
+
+Each environment has one CloudWatch dashboard, `OpenNewsletter-{env}` ([`infrastructure.md` §9.1](../design/infrastructure.md#91-dashboard)). Sign in to the AWS console as an account user and open it in either of two ways:
+
+- **Direct link:** <https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/OpenNewsletter-dev>. For prod, change the `-dev` suffix to `-prod`. `MonitoringStack-{env}` outputs the same link as `DashboardUrl`:
+
+  ```sh
+  aws cloudformation describe-stacks --stack-name MonitoringStack-dev \
+    --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue" --output text
+  ```
+
+- **From the console:** CloudWatch → **Dashboards** → **Custom dashboards** → `OpenNewsletter-dev`. The region selector (top right) must be **US East (N. Virginia)**, or the list is empty.
+
+Reading it:
+
+- The time range (top right) defaults to the last 3 hours. Widen it to 1 week to see a whole dev cycle.
+- In the Lambda graphs, each line is one function. Hover a graph to see each function's value, or click a name in the legend to show or hide its line.
+- Click a graph's **⋮** menu → **View in metrics** to explore that metric further, or **View logs** to jump to the matching log groups.
+- Dashboard data is CloudWatch metrics, not logs. Logs are in CloudWatch → **Logs** → **Log groups**, under `/aws/lambda/OpenNewsletter-{Name}-{env}` and `/aws/http-api/OpenNewsletter-{env}`. To follow one from a terminal, run `aws logs tail /aws/lambda/OpenNewsletter-Questions-dev --follow`.
+- S3 bucket size and object count aren't on the dashboard. They're on each bucket's **Metrics** tab in the S3 console.
