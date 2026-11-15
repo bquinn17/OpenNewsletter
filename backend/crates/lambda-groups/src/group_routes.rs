@@ -39,8 +39,10 @@ pub async fn get_leaderboard(
 ) -> Result<LeaderboardResponse, ApiError> {
     auth::require_membership(&state.repo, caller, group_id, false).await?;
 
-    let memberships = list_members(state, group_id).await?;
-    let stats_by_user = load_stats(state, group_id).await?;
+    // AP24 below filters to current members while it pages, so it waits for
+    // the member list; the stats read doesn't.
+    let (memberships, stats_by_user) =
+        tokio::try_join!(list_members(state, group_id), load_stats(state, group_id))?;
 
     let members = memberships
         .iter()

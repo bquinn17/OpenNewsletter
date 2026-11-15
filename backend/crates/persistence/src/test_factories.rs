@@ -161,6 +161,33 @@ fn local_client(endpoint: &str) -> aws_sdk_dynamodb::Client {
     aws_sdk_dynamodb::Client::from_conf(config)
 }
 
+/// Writes a `MemberStats` row as-is, whether or not its user is a member —
+/// unlike `member_stats::settle_streak`, which refuses a non-member. For
+/// seeding a departed member's leftover row.
+pub async fn put_member_stats(repo: &crate::Repo, stats: &MemberStats) {
+    use crate::keys::{attr, member_stats_pk, member_stats_sk};
+    use aws_sdk_dynamodb::types::AttributeValue;
+
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(stats).expect("MemberStats serializes");
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(member_stats_pk(&stats.group_id)),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(member_stats_sk(&stats.user_id)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("MemberStats".into()));
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("put MemberStats");
+}
+
 pub fn user(user_id: &str) -> User {
     User {
         user_id: UserId::new(user_id),

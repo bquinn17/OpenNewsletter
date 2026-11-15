@@ -259,8 +259,9 @@ pub async fn member_stats(
         .find(|s| s.user_id == UserId::new(user_id))
 }
 
-/// Seeds a member's stats row at an already-settled streak, as if an earlier
-/// edition's settlement had run — the shape `settle_streaks` itself writes.
+/// Seeds a stats row at an already-settled streak, as if an earlier edition's
+/// settlement had run — the fields `settle_streaks` itself writes. Written
+/// directly, so it also works for a departed member, whom settlement refuses.
 pub async fn seed_streak(
     repo: &Repo,
     group_id: &str,
@@ -269,14 +270,20 @@ pub async fn seed_streak(
     longest_streak: i64,
     settled_cycle_id: &str,
 ) {
-    persistence::member_stats::settle_streak(
+    test_factories::put_member_stats(
         repo,
-        &GroupId::new(group_id),
-        &UserId::new(user_id),
-        current_streak,
-        longest_streak,
-        &CycleId::new(settled_cycle_id),
+        &domain::MemberStats {
+            group_id: GroupId::new(group_id),
+            user_id: UserId::new(user_id),
+            editions_answered: 0,
+            reactions_received: 0,
+            reactions_given: 0,
+            comments_written: 0,
+            questions_asked: 0,
+            current_streak,
+            longest_streak,
+            streak_cycle: Some(CycleId::new(settled_cycle_id)),
+        },
     )
-    .await
-    .unwrap();
+    .await;
 }
