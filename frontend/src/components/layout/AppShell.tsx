@@ -7,11 +7,13 @@ import { isDemo } from "../../demo";
 import { Avatar } from "../ui/Avatar";
 import { useDismissableMenu } from "../ui/useDismissableMenu";
 import { ToastStack } from "../ui/Toast";
+import { ConfettiBurst } from "../ui/ConfettiBurst";
 import { DemoBanner } from "./DemoBanner";
 import { GroupSwitcher } from "./GroupSwitcher";
 
 export function AppShell() {
-  const { status, user, login, logout } = useAuth();
+  const { status, user, logout } = useAuth();
+  const onSignInPage = useMatch("/signin") !== null;
   const { data: config } = useConfig();
   const memberships = useMemo(() => config?.memberships ?? [], [config]);
   const { currentGroupId, setCurrentGroup } = useCurrentGroup();
@@ -105,13 +107,13 @@ export function AppShell() {
                     </div>
                   )}
                 </>
-              ) : status === "unauthenticated" ? (
-                <button
-                  onClick={() => void login()}
+              ) : status === "unauthenticated" && !onSignInPage ? (
+                <Link
+                  to="/signin"
                   className="rounded-full bg-ink px-3 py-1.5 text-sm font-semibold text-cream"
                 >
                   Sign in
-                </button>
+                </Link>
               ) : null}
             </div>
           </div>
@@ -120,6 +122,7 @@ export function AppShell() {
         <Outlet />
       </div>
       <ToastStack />
+      <ConfettiBurst />
     </div>
   );
 }

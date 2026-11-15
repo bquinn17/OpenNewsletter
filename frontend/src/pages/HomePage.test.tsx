@@ -64,6 +64,13 @@ describe("HomePage", () => {
     expect(screen.getByRole("link", { name: "See a demo" })).toHaveAttribute("href", "/demo");
   });
 
+  it("offers a signed-out visitor both signing up and signing in", () => {
+    renderHome({ ...signedIn, status: "unauthenticated", user: null });
+
+    expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/join");
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/signin");
+  });
+
   it("shows a spinner, not the join form, while /config is loading", () => {
     vi.mocked(api.getConfig).mockReturnValue(new Promise(() => {}));
 
@@ -98,7 +105,7 @@ describe("HomePage", () => {
 
     expect(await screen.findByLabelText("Invite code")).toBeInTheDocument();
     expect(
-      screen.getByText("You haven't joined a group yet — paste your invite code below."),
+      screen.getByText(/You haven't joined a group yet\. Groups are invite-only/),
     ).toBeInTheDocument();
   });
 });

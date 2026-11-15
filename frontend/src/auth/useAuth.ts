@@ -8,7 +8,11 @@ export type AuthUser = {
   name: string | null;
 };
 
+/** The user pool's federated IdPs, by their Cognito provider names. */
+export type IdentityProvider = "Google" | "Facebook";
+
 export type LoginOptions = {
+  provider: IdentityProvider;
   returnTo?: string;
   invite?: string;
 };
@@ -16,7 +20,7 @@ export type LoginOptions = {
 export type AuthValue = {
   status: AuthStatus;
   user: AuthUser | null;
-  login: (opts?: LoginOptions) => Promise<void>;
+  login: (opts: LoginOptions) => Promise<void>;
   logout: () => Promise<void>;
 };
 

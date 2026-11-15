@@ -31,13 +31,12 @@ afterEach(async () => {
 });
 
 describe("DemoBanner", () => {
-  it("offers a signed-out visitor a real sign-in, which leaves the demo", async () => {
+  it("offers a signed-out visitor a real sign-in, which leaves the demo", () => {
     renderBanner();
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-
     expect(screen.getByText(/nothing you do here is saved/)).toBeInTheDocument();
-    expect(demoAuth.login).toHaveBeenCalledWith({ returnTo: "/" });
+    // A plain `/signin` href, outside the demo's `/demo` basename: a full page load.
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/signin");
   });
 
   it("tells a signed-in visitor these aren't their groups, and offers no second sign-in", async () => {

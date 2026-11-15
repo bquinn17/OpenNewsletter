@@ -12,6 +12,7 @@ import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { BootstrapLoginPage } from "./pages/BootstrapLoginPage";
 import { HomePage } from "./pages/HomePage";
 import { JoinPage } from "./pages/JoinPage";
+import { SignInPage } from "./pages/SignInPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { GroupRedirect } from "./pages/GroupRedirect";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -33,6 +34,7 @@ const routes: RouteObject[] = [
     errorElement: <ErrorPage />,
     children: [
       { index: true, element: <HomePage /> },
+      { path: "signin", element: <SignInPage /> },
       { path: "join", element: <JoinPage /> },
       // Dev only, and only with an `admin-bootstrap` client (D5, `docs/design/auth.md` §9.2).
       ...(env.bootstrapLoginEnabled && !isDemo

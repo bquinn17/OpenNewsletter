@@ -54,7 +54,7 @@ See [`docs/design/auth.md`](../docs/design/auth.md) for the full design. In this
 codebase:
 
 - `src/auth/userManager.ts` — the single shared `oidc-client-ts` `UserManager` instance
-  (Authorization Code + PKCE against the Cognito hosted UI). `null` in mock mode. Tokens
+  (Authorization Code + PKCE against Cognito, straight to the IdP). `null` in mock mode. Tokens
   live in `localStorage` so an installed PWA stays signed in (D1).
 - `src/auth/AuthProvider.tsx` / `src/auth/useAuth.ts` — the `{ status, user, login, logout }`
   context every component reads via `useAuth()`. Logout clears storage and caches, then
