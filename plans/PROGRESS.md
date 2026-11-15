@@ -1,6 +1,6 @@
 # Progress & Blockers
 
-Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes and presigned-S3 media serving (with its code-review fixes). Dev is deployed (2026-10-18), but runs that day's build, so it's behind `main`. Of the deploy-shaped gates, M3's deploy and M7 are confirmed. M14 next. This file is read at the start of every session, so it holds only the current state. How the system works is documented in [`docs/`](../docs/README.md). Milestone definitions and gates are in [`build-order.md`](build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
+Snapshot as of 2026-11-14: M0–M13.5 code-complete, plus the design-review fixes, presigned-S3 media serving and the configurable cycle cadence. Every push to `main` deploys dev (`deploy.yml`), so dev runs `main`. Of the deploy-shaped gates, M3's deploy and M7 are confirmed. M14 next. This file is read at the start of every session, so it holds only the current state. How the system works is documented in [`docs/`](../docs/README.md). Milestone definitions and gates are in [`build-order.md`](build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
 
 ---
 
@@ -42,8 +42,7 @@ These block M14 (and the Facebook checks), not code work or the other dev gates.
 ### B6 — Lambda release builds
 
 - **macOS:** builds fine; `make deploy-dev` rebuilds every artifact. A manual `cdk deploy` needs `make build-lambdas` first: `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing (`make deploy-dev` and `deploy.yml` both run `scripts/check_lambda_binaries.sh` to catch that).
-- **Windows/WSL2:** release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain. Debug builds and tests are unaffected.
-- `backend-ci`'s first run is also the first Linux build of `image-process` (`libwebp-sys`).
+- **Windows/WSL2:** release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain. Debug builds and tests are unaffected. CI builds every Lambda on Linux without this problem.
 
 ---
 
@@ -57,8 +56,8 @@ These block M14 (and the Facebook checks), not code work or the other dev gates.
      - add a write-access deploy key to that repo, and store its private half as the secret `PROD_PAGES_DEPLOY_KEY` here;
      - set the repo variable `PROD_PAGES_REPO=bquinn17/betterloop-site`;
      - after the first release pushes its `gh-pages`, point that repo's Pages at `gh-pages` with custom domain `betterloop.site`, and add GitHub's apex `A`/`AAAA` records at Namecheap.
-3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Once the leaderboard merges and its push to `main` deploys dev, run `python3 scripts/backfill_member_stats.py --env dev` while the group is quiet ([`scripts/README.md`](../scripts/README.md)); prod needs the same run after its first deploy that includes it. Push a branch so the CI workflows run for real. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
-4. **M14 prep:** pick the real prod hostnames in place of the `opennewsletter.example.com` placeholders, check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
+3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Once the leaderboard merges and its push to `main` deploys dev, run `python3 scripts/backfill_member_stats.py --env dev` while the group is quiet ([`scripts/README.md`](../scripts/README.md)); prod needs the same run after its first deploy that includes it. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
+4. **M14 prep:** the prod hostnames are chosen: `betterloop.site` and `api.betterloop.site`, set as repo variables that `release.yml` passes in. `config.py`'s `opennewsletter.example.com` values are only fallbacks for when they're unset. Check `config.py`'s other prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
 5. **Address the frontend design review** ([`docs/frontend_design_review.md`](../docs/frontend_design_review.md), 2026-10-20). None of it is implemented. Its §1 lists real defects, which are worth fixing before M14:
    - markdown in answers renders unformatted
    - the palette fails WCAG AA
@@ -106,6 +105,7 @@ Backend and ops:
 - `lambda-cycle-tick` needs `#![recursion_limit = "256"]`. If it creeps up, box the dispatch futures.
 - The account-level Lambda error alarm also counts dev's errors (one account, [`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
 - `CiStack` deploys with every `--all`, including `make deploy-dev`. It's account-wide and idempotent.
+- On dev, `seed_dev_data.py` and `bootstrap_admin.py` derive different user IDs from the same Cognito user (`seed:user:{sub}` vs `user:{sub}`). Running `bootstrap_admin.py` with the seeded admin's email repoints that login's `COGNITO_SUB` lookup at a new user, which isn't a member of the seeded group. The reverse order doesn't arise, because the seed wipes the table first. For now, use a different email for each ([`scripts/README.md`](../scripts/README.md)). The fix is for both to reuse an existing lookup's user ID.
 
 Testing:
 - `make seed` resets the bootstrap admin's password to a new random one on every run, so `E2E_USERNAME`/`E2E_PASSWORD` for the `dev` E2E project can't be the seeded admin. Use a separate Cognito user, or seed with `--admin-password` taken from the same secret.
