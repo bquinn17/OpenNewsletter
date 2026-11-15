@@ -90,7 +90,7 @@ Group, Member, Cycle/Newsletter, Candidate question, Locked question, Response/A
 ## Picking up work
 
 **Start with [`plans/PROGRESS.md`](plans/PROGRESS.md).** It's kept short and records:
-- which milestone is next, and the test baselines
+- which milestone is next
 - active blockers and next steps
 - known gaps carried forward
 
@@ -120,9 +120,9 @@ The owner prefers that work be delegated to cheaper sub-agents, running in paral
    - **Search scope:** "Stay inside this repo directory (or below) for every search, grep, find, ls and read — never `$HOME` or `/`." An earlier agent searched far too widely.
    - **A template to mirror:** point at an existing crate or stack as the pattern.
    - **The platform-correct verify command:** copied from the section above, with env vars inline.
-   - **The baseline test count** to compare against.
+   - **A baseline:** have it run the relevant tests before changing anything, so it can compare against them afterwards.
    - **"Do not commit."**
-   - **What to report back:** files changed, test counts, spec contradictions hit, and anything unfinished.
+   - **What to report back:** files changed, test results, spec contradictions hit, and anything unfinished.
 4. **Lead verifies; don't take an agent's word for it.**
    - Read the diff of the risky core, such as a transaction or a state transition.
    - Re-run `cargo fmt --check`, clippy with `-D warnings`, the full workspace tests, `pytest infra/tests`, `ruff check`/`ruff format --check` and `cdk synth`, plus the frontend checks above when `frontend/` changed.

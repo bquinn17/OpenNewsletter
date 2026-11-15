@@ -1,25 +1,16 @@
 # Progress & Blockers
 
-Snapshot as of 2026-11-14: M0–M13.5 code-complete, plus the design-review fixes, presigned-S3 media serving and the configurable cycle cadence. Every push to `main` deploys dev (`deploy.yml`), so dev runs `main`. Of the deploy-shaped gates, M3's deploy and M7 are confirmed. M14 next. This file is read at the start of every session, so it holds only the current state. How the system works is documented in [`docs/`](../docs/README.md). Milestone definitions and gates are in [`build-order.md`](build-order.md). What each milestone landed (bugs found, per-milestone decisions, test deltas) is in [`archive/progress-log.md`](archive/progress-log.md).
+Where the project stands, what's blocking it, and what's next. It's read at the start of every session, so it stays short and high level. Anything the repo, CI or the deployment already shows (test results, what's deployed, when something landed) is left out. How the system works is in [`docs/`](../docs/README.md); milestone definitions and their gates are in [`build-order.md`](build-order.md); what each finished milestone landed is in [`archive/progress-log.md`](archive/progress-log.md).
 
 ---
 
-## Milestone status
+## Status
 
-| # | Milestone | Status |
-|---|---|---|
-| M0 | Repo skeleton | ✅ done |
-| M1 | Operator prerequisites | 🟡 partial — see B5 |
-| M2 | Domain + persistence | ✅ done |
-| M3–M13 | Infra → Hardening | 🟡 code-complete; dev deployed. Confirmed against dev: M3 (deploy), M7. Every other deploy-shaped gate ([`build-order.md`](build-order.md)) is still to run |
-| M13.5 | Plan-review follow-ups (D1–D12) | ✅ code-complete; deploy-shaped checks join M14 |
-| — | Design review: performance and cost (2026-10-08) | ✅ code-complete; open questions below |
-| — | Media serving via presigned S3 (2026-10-14; code-review fixes 2026-10-18) | ✅ code-complete; deploy checks join M14 (below) |
-| — | Configurable cycle cadence: dev weekly, prod monthly (2026-10-30; review fixes 2026-11-03) | ✅ done; live on dev since 2026-11-08 (weekly, reseeded; first cycle `20261108` opens Sun 21:00 New York). Walkthrough §16.2 not yet run ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group), §13.2) |
-| — | Group leaderboard (2026-11-07; rebased onto the cadence change 2026-11-14) | ✅ code-complete; after it deploys, run `scripts/backfill_member_stats.py` once per env ([`future-ideas.md` §5](../docs/future-ideas.md#5-group-leaderboard)) |
-| M14 | Production deploy | ⬜ **next** |
-
-**Test baselines (2026-11-14):** backend 559 (`cargo test --workspace`, against `make dynamodb-local`), CDK 177 (`pytest infra/tests`), scripts 19 (`pytest scripts/tests`), Vitest 423, Playwright 17 (8 `mock`, 9 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/` and `scripts/`), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard and the app's own sign-in pages.
+- **Dev runs the latest `main`.** Every push to `main` deploys it ([D6](../docs/decisions.md#d6)).
+- **Deploy-shaped gates:** only M3's deploy and M7 are confirmed against dev. The rest are next step 3.
+- **M1** is partly done (B5).
+- **M14, the production deploy, is next.**
 
 ---
 
@@ -27,97 +18,85 @@ Snapshot as of 2026-11-14: M0–M13.5 code-complete, plus the design-review fixe
 
 ### B5 — M1 operator tasks outstanding
 
-Done: domain `betterloop.site` (Namecheap DNS, no Route53 zone, so ACM validation CNAMEs are added at Namecheap by hand); Cognito domain prefix; `aws login` as IAM user `bquinn17` (not root); `cdk bootstrap`; VAPID keys; the combined `opennewsletter/dev` secret, whose Google credentials a real sign-in has proven; `ALARM_EMAIL`. The old per-credential dev secrets are deleted.
+Done:
+- the domain, `betterloop.site`, whose DNS is at Namecheap, so ACM validation records are added there by hand
+- the Cognito domain prefix and `cdk bootstrap`
+- VAPID keys and the dev secret, whose Google sign-in is proven
+- `ALARM_EMAIL`
 
 Still open:
-- **Confirm Facebook sign-in** against dev: the app ID/secret in `opennewsletter/dev` and the redirect `https://<prefix>.auth.us-east-1.amazoncognito.com/oauth2/idpresponse` on the Facebook app. M13.5's Facebook `email_verified` check needs it anyway.
-- **Fill in `opennewsletter/prod`** with the OAuth and VAPID keys: write the full key set with `aws secretsmanager put-secret-value` (M14, [`runbook.md`](../docs/operations/runbook.md)).
-- **`.env.local` overrides environment variables for prod too** (`load_config`), so a workstation prod synth/deploy would pick up the dev `APP_SECRET_ARN`. Make it dev-only or override it before a local prod bring-up (swap `APP_SECRET_ARN`/`ROOT_DOMAIN`/`API_DOMAIN` with the `PROD_*`-prefixed lines next to them, then swap back). CI has no `.env.local`.
-- `aws login` sessions expire. Check `aws sts get-caller-identity` before deploying.
+- **Confirm Facebook sign-in** against dev: the app ID and secret in `opennewsletter/dev`, and the Cognito `idpresponse` redirect on the Facebook app. M13.5's Facebook `email_verified` check needs it.
+- **Fill in `opennewsletter/prod`** with the OAuth and VAPID keys ([`runbook.md`](../docs/operations/runbook.md) M14).
+- **`.env.local` also overrides prod config** (`load_config`), so a prod synth or deploy from a workstation picks up dev values. Before a local prod bring-up, swap in the `PROD_*` lines. CI has no `.env.local`.
 
-**Decision (2026-10-13) — dev gets its own subdomain (`dev.betterloop.site`/`api.dev.betterloop.site`), not prod's apex.** `config.py` has no local dev/prod split for `ROOT_DOMAIN`/`API_DOMAIN`, and the ACM cert covers both names in every env, so dev pointed at the apex would put prod's hostnames on the dev cert. Set in `.env.local`; full writeup in [`docs/development/environments.md` §2](../docs/development/environments.md#2-environments).
+These block M14 and the Facebook checks, not code work or the other dev gates.
 
-These block M14 (and the Facebook checks), not code work or the other dev gates.
+### B6 — Lambda release builds on WSL2
 
-### B6 — Lambda release builds
-
-- **macOS:** builds fine; `make deploy-dev` rebuilds every artifact. A manual `cdk deploy` needs `make build-lambdas` first: `ApiStack`/`NotificationsStack` silently fall back to a shell stub when a binary is missing (`make deploy-dev` and `deploy.yml` both run `scripts/check_lambda_binaries.sh` to catch that).
-- **Windows/WSL2:** release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or `cargo-lambda`'s zig toolchain. Debug builds and tests are unaffected. CI builds every Lambda on Linux without this problem.
+Release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo apt install clang && export CC=clang`, or use `cargo-lambda`'s zig toolchain. Debug builds, tests and CI are unaffected. On any machine, run `make build-lambdas` before a manual `cdk deploy`: a missing binary silently deploys a stub (`make deploy-dev` and `deploy.yml` both run `scripts/check_lambda_binaries.sh` to catch it).
 
 ---
 
 ## Next steps (in order)
 
-1. **Don't push `release` until M14 is ready.** Every push to `main` deploys dev (first CI run green on 2026-11-01); a push to `release` deploys prod ([D6](../docs/decisions.md#d6)). The branch doesn't exist yet: the first `git push origin main:release` creates it and is the first prod deploy.
-2. **Operator, GitHub** ([`.github/workflows/README.md`](../.github/workflows/README.md)). Done: the repo variables, both `AWS_*_ROLE_ARN`s, the `production` environment (admits only `release`, no reviewer), the two `release` rulesets, and the old variables are gone. Still to do:
-   - add the seven prod `VITE_*` secrets. None exist yet, and `release.yml` stops before the frontend build without them ([`operator-setup.md` §6](../docs/operations/operator-setup.md#6-frontend-media-origins) has the two media ones).
-   - `production` holds `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` as environment *secrets*. The deploy workflows read both as repo variables (`vars.*`), so they're unused, and the `DEV_` one doesn't belong in prod. Delete them unless they're meant for something.
-   - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) (created 2026-10-31, empty), when prod is ready ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5). `release.yml` stops before deploying anything until they're done:
-     - add a write-access deploy key to that repo, and store its private half as the secret `PROD_PAGES_DEPLOY_KEY` here;
-     - set the repo variable `PROD_PAGES_REPO=bquinn17/betterloop-site`;
-     - after the first release pushes its `gh-pages`, point that repo's Pages at `gh-pages` with custom domain `betterloop.site`, and add GitHub's apex `A`/`AAAA` records at Namecheap.
-3. **Run every pending gate in [`build-order.md`](build-order.md)** against dev: M3.5, M4–M6 and M8–M13.5 (M3's deploy and M7 are done). Once the leaderboard merges and its push to `main` deploys dev, run `python3 scripts/backfill_member_stats.py --env dev` while the group is quiet ([`scripts/README.md`](../scripts/README.md)); prod needs the same run after its first deploy that includes it. For media serving, first check what tests can't: an uploaded image's API URL loads (200, with `Access-Control-Allow-Origin` for the app origin); its host matches the CSP's `img-src` exactly; the same URL without its query string is a 403; the original is gone from the originals bucket once the row is `ready`; a reload serves images from the SW `media-images` cache and avatars from `media-avatars`; a deleted image's URL 403s ([`smoke-test.md`](../docs/operations/smoke-test.md)).
-4. **M14 prep:** the prod hostnames are chosen: `betterloop.site` and `api.betterloop.site`, set as repo variables that `release.yml` passes in. `config.py`'s `opennewsletter.example.com` values are only fallbacks for when they're unset. Check `config.py`'s other prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14).
-5. **Address the frontend design review** ([`docs/frontend_design_review.md`](../docs/frontend_design_review.md), 2026-10-20). None of it is implemented. Its §1 lists real defects, which are worth fixing before M14:
-   - markdown in answers renders unformatted
-   - the palette fails WCAG AA
-   - the Respond page's bottom bar overflows
-   - no safe-area insets or `prefers-reduced-motion` handling
-   - danger dialogs focus the confirm button
-   - the avatar fallback has no background
-
-   After that, follow its §7 order: reading, then motion, then polish. Each step updates [`frontend.md`](../docs/design/frontend.md) in the same change, including the drift its §6 lists. Doesn't block M14.
+1. **Don't push `release` until M14 is ready.** A push to `release` deploys prod ([D6](../docs/decisions.md#d6)). Until then, nothing reaches prod.
+2. **Operator setup on GitHub** ([`.github/workflows/README.md`](../.github/workflows/README.md)). `release.yml` stops early until it's done:
+   - add the prod `VITE_*` secrets ([`operator-setup.md` §6](../docs/operations/operator-setup.md#6-frontend-media-origins) covers the media ones)
+   - delete the `production` environment's `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` secrets. The workflows read those names as repo variables, so the secrets are unused.
+   - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5)
+3. **Run the pending gates in [`build-order.md`](build-order.md) against dev.** If `scripts/backfill_member_stats.py --env dev` hasn't been run since the leaderboard deployed, run it first, while the group is quiet: until it runs, the leaderboard and `editionsAnswered` count only what happened since that deploy ([`scripts/README.md`](../scripts/README.md)). The gates include the media-serving checks in [`smoke-test.md`](../docs/operations/smoke-test.md) and the cadence settings pass in [`frontend-walkthrough.md`](../docs/operations/frontend-walkthrough.md) §16.2.
+4. **M14:** check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14) and run `scripts/backfill_member_stats.py --env prod` once. The prod hostnames are already set as repo variables.
+5. **Address the [frontend design review](../docs/frontend_design_review.md).** Fix its §1 defects before M14, then follow its §7 order. Each step updates [`frontend.md`](../docs/design/frontend.md) in the same change. The rest of the review doesn't block M14.
 
 Workstation setup for either machine: [`environments.md` §0](../docs/development/environments.md#0-workstation-setup).
 
-### Open owner questions (design review, 2026-10-08)
+### Open owner questions
 
-Not changed in code; each needs the owner's call before or soon after M14. (2 and 4 are settled; the numbers are kept so references stay valid. Originals are deleted once processed: [`decisions.md`](../docs/decisions.md#originals-deleted-on-success).)
-1. **Merge the 8 API Lambdas into one?** Fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and one build artifact, against a broader IAM role (every function already has table read/write).
-3. **Cap cost exposure.** Any Google/Facebook user can get a JWT. Reserved concurrency on the API function (easiest after 1) and/or lower per-route throttles. Rejecting sign-ups without an invite, or deleting accounts that don't redeem one within 24 hours, would also limit it ([`future-ideas.md` §15](../docs/future-ideas.md#15-invite-only-accounts-enforced-at-sign-up)).
-5. **Raise the Lambda account concurrency quota.** It's 50, shared by dev and prod: fine for launch, too low before inviting many groups.
+These came out of the performance and cost review ([archived](archive/design-review-performance-cost.md)). Each needs the owner's call before or soon after M14. Questions 2 and 4 are settled; the numbers are kept so references stay valid.
+1. **Merge the API Lambdas into one?** That gives fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and a single build artifact. The cost is one broader IAM role, though every function already has table read/write.
+3. **Cap cost exposure.** Any Google or Facebook user can get a JWT. Options are reserved concurrency on the API function (easiest after 1), lower per-route throttles, or both. Rejecting sign-ups without an invite, or deleting accounts that don't redeem one within 24 hours, would also limit it ([`future-ideas.md` §15](../docs/future-ideas.md#15-invite-only-accounts-enforced-at-sign-up)).
+5. **Raise the Lambda account concurrency quota.** Dev and prod share it. It's enough for launch, but too low before inviting many groups.
 
 ---
 
 ## Owner decisions
 
-Standing decisions, including D1–D12 that code and docs cite by ID, are in [`docs/decisions.md`](../docs/decisions.md) with their reasoning. New ones go there (its last section says how), not here.
+Standing decisions, including D1–D12, are in [`docs/decisions.md`](../docs/decisions.md) with their reasoning. New ones go there, not here.
 
 ---
 
 ## Known gaps carried forward
 
 Product and UX:
-- A poll pick can't be cleared (`pollOptionId` is required), so a poll pick always auto-publishes at close. Decide whether polls need a "clear" action ([`frontend.md` §7.3](../docs/design/frontend.md#73-respondpage-ggncrespondq)).
-- No markdown formatting toolbar in `RespondPage` (spec only requires Write/Preview); no "hype check" banner or recurring-question helper text ([`frontend.md` §14a](../docs/design/frontend.md#14a-client-derived-display-data-not-api-fields)).
-- No invite pagination: `GET /admin/groups/{g}/invites` returns everything, including consumed/revoked invites until their TTL (expiry + 30 days).
-- `VOTE_CAP_REACHED` lists the already-voted questions in free-text `detail`, not a structured field.
-- PWA icons are generated placeholders (`frontend/scripts/generate-icons.mjs`).
-- Fonts come from Google Fonts, so they aren't available offline and the CSP allows two Google origins ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)).
+- A poll pick can't be cleared, so it always auto-publishes at close ([`frontend.md` §7.3](../docs/design/frontend.md#73-respondpage-ggncrespondq)).
+- `RespondPage` has no markdown toolbar, "hype check" banner or recurring-question helper text ([`frontend.md` §14a](../docs/design/frontend.md#14a-client-derived-display-data-not-api-fields)).
+- No invite pagination: `GET /admin/groups/{g}/invites` returns every invite, including used and revoked ones, until their TTL.
+- `VOTE_CAP_REACHED` lists the already-voted questions in free-text `detail`, not in a structured field.
+- The PWA icons are generated placeholders.
+- Fonts come from Google Fonts, so they aren't available offline ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)).
 
 Frontend:
-- `apiFetch` treats every 401 as an expired token: it renews the session and retries once. The server also returns 401 `UNAUTHENTICATED` for a valid token whose caller hasn't redeemed an invite (`require_user_id`), so those calls cost a pointless refresh-token round trip and log two 401s. Settings avoids it by enabling `useMe` only once `/config` has a `userId` ([`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage)); any other user-scoped call made before an invite is redeemed still hits it. Fix by giving that case its own status or code, or by renewing only when the ID token has actually expired.
-- `ResponseEditor`'s preview refreshes an expired image URL itself (`refreshPreviewImage`), duplicating the always-mounted `ImageUploader`'s own `refreshImage` for the same thumb. One expired thumb costs two `GET /uploads/{id}`, and the uploader's next `onChange` overwrites whatever the preview fetched. The fix is for `ImageUploader` to expose its refresh to the parent, which changes its props. Do it when the editor is next touched.
+- `apiFetch` treats every 401 as an expired token. A valid token from a caller who hasn't redeemed an invite also gets a 401, so those calls cost a pointless token refresh ([`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage)).
+- `ResponseEditor`'s preview and `ImageUploader` each refresh an expired image URL themselves, so one expired thumbnail costs two requests. Fix this the next time the editor is touched.
 
 Backend and ops:
-- A crash mid-fan-out loses the rest of that fan-out (markers are claimed first, at-most-once, [`notifications.md` §7.1](../docs/design/notifications.md#71-algorithm)).
-- Comment author names aren't cached across requests (one deduped `BatchGetItem` per request; [`engagement.md` §1.5](../docs/design/engagement.md#15-author-display-name-resolution)); `get_comment_by_id` walks the answer's `C#` range because there's no index on `comment_id`. Revisit if either gets hot.
-- `lambda-cycle-tick` needs `#![recursion_limit = "256"]`. If it creeps up, box the dispatch futures.
-- The account-level Lambda error alarm also counts dev's errors (one account, [`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
-- `CiStack` deploys with every `--all`, including `make deploy-dev`. It's account-wide and idempotent.
-- On dev, `seed_dev_data.py` and `bootstrap_admin.py` derive different user IDs from the same Cognito user (`seed:user:{sub}` vs `user:{sub}`). Running `bootstrap_admin.py` with the seeded admin's email repoints that login's `COGNITO_SUB` lookup at a new user, which isn't a member of the seeded group. The reverse order doesn't arise, because the seed wipes the table first. For now, use a different email for each ([`scripts/README.md`](../scripts/README.md)). The fix is for both to reuse an existing lookup's user ID.
+- A crash mid-fan-out loses the rest of that push fan-out, because markers are claimed first ([`notifications.md` §7.1](../docs/design/notifications.md#71-algorithm)).
+- Comment author names aren't cached across requests, and `get_comment_by_id` has no index ([`engagement.md` §1.5](../docs/design/engagement.md#15-author-display-name-resolution)). Revisit either if it gets hot.
+- `lambda-cycle-tick` needs a raised `recursion_limit`. If it creeps up, box the dispatch futures.
+- The account-level Lambda error alarm also counts dev's errors ([`infrastructure.md` §9.2](../docs/design/infrastructure.md#92-alarms)).
+- On dev, `seed_dev_data.py` and `bootstrap_admin.py` derive different user IDs for the same Cognito user. Running the bootstrap with the seeded admin's email moves that login to a new user that isn't in the seeded group. Use a different email for now ([`scripts/README.md`](../scripts/README.md)). The fix is for the bootstrap to reuse an existing user ID.
 
 Testing:
-- `make seed` resets the bootstrap admin's password to a new random one on every run, so `E2E_USERNAME`/`E2E_PASSWORD` for the `dev` E2E project can't be the seeded admin. Use a separate Cognito user, or seed with `--admin-password` taken from the same secret.
-- Mock-mode E2E can't cover reload-persistence of saved drafts (the mock transport is in-memory); that's a `dev`-project test.
-- The comment composer's image upload and the `[deleted]` placeholder are only exercised in mock mode and component tests until the M10 gate runs.
+- `make seed` resets the seeded admin's password on every run, so the `dev` E2E project needs its own Cognito user, or a seed with a fixed `--admin-password`. Its tests (`frontend/e2e/dev/`) are still `fixme`.
+- Draft reload-persistence, the comment composer's image upload and the `[deleted]` placeholder are only covered in mock mode until the M10 gate runs on dev.
 
 ---
 
 ## How to update this file
 
-Keep it short (under ~200 lines). At the end of each milestone:
-- update the status table, the snapshot date and the test baselines
-- prune cleared blockers, gaps and next steps; add new ones
+Keep it short and high level. When a milestone finishes:
+- update Status, and prune cleared blockers, gaps and next steps; add new ones
 - add standing owner decisions to [`docs/decisions.md`](../docs/decisions.md), and write each into its owning design page
-- append an "Mn detail — what landed" section to [`archive/progress-log.md`](archive/progress-log.md): what landed, bugs found in review, per-milestone decisions (also written into the owning design page), test deltas
+- append what landed (bugs found in review, per-milestone decisions) to [`archive/progress-log.md`](archive/progress-log.md)
+
+Don't record what the repo or CI already shows: test counts, dates, commit IDs or what's deployed.
