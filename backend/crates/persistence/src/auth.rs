@@ -2,7 +2,7 @@
 //!
 //! Every group-scoped handler calls [`require_membership`] before touching any
 //! group data. Both lookups are memoized for the life of a warm Lambda container,
-//! bounded by [`MEMBERSHIP_CACHE_TTL_SECONDS`].
+//! bounded by [`MEMBERSHIP_CACHE_TTL_SECONDS`]; admin checks skip the cache.
 
 use crate::error::RepoError;
 use crate::repo::Repo;
@@ -70,6 +70,11 @@ pub async fn require_user_id(repo: &Repo, sub: &CognitoSub) -> Result<UserId, Ap
 
 /// The tenant-isolation gate. Returns the caller's membership, or `FORBIDDEN`
 /// when they are not in the group (or not an admin, when `require_admin`).
+///
+/// An admin check always reads DynamoDB, never the cache: another Lambda's
+/// `invalidate_membership` can't reach this container, so a cached row would
+/// let a just-demoted or removed admin keep admin powers (minting invites,
+/// changing roles) for up to the cache TTL.
 pub async fn require_membership(
     repo: &Repo,
     user_id: &UserId,
@@ -77,9 +82,11 @@ pub async fn require_membership(
     require_admin: bool,
 ) -> Result<GroupMembership, ApiError> {
     let key = (user_id.clone(), group_id.clone());
-    if let Some(cached) = MEMBERSHIP_CACHE.get(&key) {
-        if cached.fresh() {
-            return enforce(cached.value.clone(), require_admin);
+    if !require_admin {
+        if let Some(cached) = MEMBERSHIP_CACHE.get(&key) {
+            if cached.fresh() {
+                return enforce(cached.value.clone(), require_admin);
+            }
         }
     }
 

@@ -143,9 +143,9 @@ A 422's `fieldErrors[]` entries carry one plain field name each, and the reason 
 The pull-request `cdk diff` job runs the branch's own code, so its role assumes no CDK bootstrap role and can only read stack templates. Every `uses:` in the workflows is pinned to a full commit SHA, and Dependabot bumps them in one weekly PR. See [`testing-and-ci.md` §6](development/testing-and-ci.md#6-github-actions-workflows) and [`.github/workflows/README.md`](../.github/workflows/README.md).
 
 <a id="membership-cache"></a>
-### Up to 60 seconds of stale access after removal is accepted
+### Up to 60 seconds of stale member access after removal is accepted
 
-Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SECONDS` (60 s). A member who is removed or demoted can keep their old access for up to that long. See [`auth.md` §11](design/auth.md#11-tenant-authorization-helper).
+Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SECONDS` (60 s). A removed member can keep reading the group for up to that long. Admin powers aren't cached: every admin check reads the membership row, so a demoted or removed admin loses them at once and can't, for example, mint an invite to get back in. See [`auth.md` §11](design/auth.md#11-tenant-authorization-helper).
 
 <a id="home-shows-one-group"></a>
 ### Home shows one group, and there is no bottom tab bar

@@ -556,7 +556,7 @@ GetItem pk=USER#{user_id} sk=GROUP#{group_id}
 
 Cached per cold-start for ≤60s, keyed by `(user_id, group_id)`. On miss → 403.
 
-For admin-only operations: the cached membership must have `role=admin`.
+For admin-only operations: the membership must have `role=admin`, read from DynamoDB rather than the cache ([`auth.md` §11](auth.md#11-tenant-authorization-helper)).
 
 ---
 
