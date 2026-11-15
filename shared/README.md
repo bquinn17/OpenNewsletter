@@ -8,7 +8,6 @@ API contract; TypeScript types are generated from it via
 hand-written but contract-tested against it
 ([`docs/development/testing-and-ci.md` §2.3](../docs/development/testing-and-ci.md#23-contract-test)).
 
-It currently covers every route through Milestone 4
-([`docs/design/api.md` §2](../docs/design/api.md#2-bootstrap--metadata-routes)-§4, §13). A route
-added in a later milestone updates this file in the same PR
+It covers every route, and the contract test round-trips its examples through the Rust types. A
+new or changed route updates this file in the same PR
 ([`docs/development/coding-standards.md` §8](../docs/development/coding-standards.md#8-pre-flight-checklist-for-any-code-writing-task)).

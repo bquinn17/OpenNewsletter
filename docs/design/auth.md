@@ -92,7 +92,7 @@ fn handle(event: PreSignUp) -> PreSignUp {
 }
 ```
 
-`auto_verify_email` is always false (changed 2026-10-08, review fix). It was once true for every federated signup, which set `email_verified=true` for Facebook users as well and defeated the Google-only rule for bound invites (§4.2). `email_verified` now comes only from the Google IdP's attribute mapping. Nothing had been deployed when this changed, so no user pool holds users created under the old behaviour.
+`auto_verify_email` is always false. Setting it would mark every federated signup verified, Facebook users included, and defeat the Google-only rule for bound invites (§4.2). `email_verified` comes only from the Google IdP's attribute mapping.
 
 The SPA preserves the invite code across the OAuth round-trip by passing `{ invite, returnTo }` as `oidc-client-ts`'s `signinRedirect({ state })` data. The library keeps that data client-side, keyed by the opaque OIDC `state` nonce, so nothing user-controlled travels through Cognito ([`frontend.md` §6](frontend.md#6-auth-in-the-spa)). A `sessionStorage` stash is the fallback. After token exchange, `/auth/callback` sends the user to `/join?code=…`, which posts the code to `/invites/redeem`.
 
