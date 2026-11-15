@@ -224,11 +224,14 @@ pub async fn response(
     .expect("response exists")
 }
 
-pub async fn editions_answered(repo: &Repo, user_id: &str, group_id: &str) -> Option<u32> {
-    groups::get_membership(repo, &UserId::new(user_id), &GroupId::new(group_id))
+/// The member's `MemberStats.editions_answered`; 0 when they have no stats row.
+pub async fn editions_answered(repo: &Repo, user_id: &str, group_id: &str) -> i64 {
+    persistence::member_stats::list_stats_for_group(repo, &GroupId::new(group_id))
         .await
         .unwrap()
-        .map(|m| m.editions_answered)
+        .into_iter()
+        .find(|s| s.user_id == UserId::new(user_id))
+        .map_or(0, |s| s.editions_answered)
 }
 
 pub async fn status(repo: &Repo, group_id: &GroupId, cycle_id: &CycleId) -> NewsletterStatus {

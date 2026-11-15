@@ -1353,3 +1353,14 @@ CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-uti
 Streak settlement needed no change for weekly cycles: it never does calendar arithmetic on cycle ids.
 
 **Tests.** Backend +22 (532 → 554), CDK unchanged at 177 (the route-set assertion gained the new route), scripts +17 (new `scripts/tests`), Vitest +19 (404 → 423), Playwright +1 (demo: the edition links to a populated leaderboard).
+
+**Code review fixes (2026-11-15).**
+- **Bugs fixed.** Comment create returned the image 422 on any cancelled transaction, including a plain `TransactionConflict` on the author's `MemberStats` row; it now retries conflicts and reserves the 422 for the image claim. A draft another tick published first left its author out of streak settlement, which could break their streak for good; `AlreadyPublished` now counts as answered. The reaction-count update could recreate a deleted answer as a keys-only GSI2 row that 500'd the leaderboard; it's now conditioned on `attribute_exists(pk)`, and a vanished answer is a 404. The backfill dropped an open cycle's promoted questions; it now counts them. The leaderboard 500'd whenever two top answers shared a question, because `get_locked_questions_batch` sent the same key twice; it now dedupes.
+- **Owner decisions.**
+  - Promotion retries a plain `TransactionConflict` 3 times, then waits for the next tick (`data-model.md` §4 #3, `lifecycle.md` §8).
+  - `editions_answered` moved from `GroupMembership` to `MemberStats`, so it survives a leave and rejoin like every other stat. A departed member's auto-published answer now counts too. The API shape is unchanged; the backfill fills it in, so it runs right after the deploy.
+  - `topAnswers` follows the member boards' tie rule: every answer within the top 3 distinct counts, behind a 50-row safety cap that never splits a tie group below the first rank (`api.md` §4.4).
+  - `archival.md` §5 notes the backfill must not run after archival without reading the archive.
+- **Cleanups.** One shared cancellation classifier (`error::classify_transact_write_error`) for the vote, reaction, comment and promotion transactions, and one retry driver for counted reactions. `RepoError::TransactionConflict` marks a transaction that kept conflicting through its retries.
+
+**Tests after the fixes.** Backend 559 (+5: missing answer, rejoin, ties, two cap tests), scripts 19 (+2), CDK 177, Vitest unchanged.

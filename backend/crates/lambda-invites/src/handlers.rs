@@ -235,7 +235,6 @@ pub async fn redeem(
         group_id: invite.group_id.clone(),
         role: invite.role_on_redeem,
         joined_at: now,
-        editions_answered: 0,
     };
 
     invites::join_via_invite_tx(

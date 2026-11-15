@@ -273,6 +273,10 @@ async fn promote_and_open(
             tracing::info!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, "promotion lost the race to a concurrent tick");
             return Vec::new();
         }
+        Err(e @ RepoError::TransactionConflict(_)) => {
+            tracing::warn!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, "promotion kept conflicting with concurrent writes; the next tick retries");
+            return Vec::new();
+        }
         Err(e) => {
             tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, "failed to promote candidates");
             return Vec::new();
@@ -510,11 +514,18 @@ pub async fn auto_publish_drafts(repo: &Repo, nl: &Newsletter) -> SweepReport {
             .filter(|a| a.status == ResponseStatus::Draft && a.is_non_empty())
         {
             match auto_publish_one(repo, nl, draft).await {
-                Ok(true) => {
+                Ok(Some(AutoPublishOutcome::Published { .. })) => {
                     report.published += 1;
                     report.authors.insert(draft.user_id.clone());
                 }
-                Ok(false) => {}
+                // A concurrent pass published it after this one listed it, so
+                // the author did answer: leaving them out would break their
+                // streak, and `streak_cycle` would keep the other pass from
+                // correcting it.
+                Ok(Some(AutoPublishOutcome::AlreadyPublished)) => {
+                    report.authors.insert(draft.user_id.clone());
+                }
+                Ok(None) => {}
                 Err(e) => {
                     tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, response_id = %draft.response_id, "failed to auto-publish draft");
                     report.failed += 1;
@@ -528,18 +539,20 @@ pub async fn auto_publish_drafts(repo: &Repo, nl: &Newsletter) -> SweepReport {
     report
 }
 
-/// Publish one draft if it has live content. True when this call published it.
+/// Publish one draft if it has live content. `None` when it was skipped for
+/// having none.
 async fn auto_publish_one(
     repo: &Repo,
     nl: &Newsletter,
     draft: &Response,
-) -> Result<bool, RepoError> {
+) -> Result<Option<AutoPublishOutcome>, RepoError> {
     if !responses::has_live_content(repo, draft).await? {
         tracing::info!(group_id = %draft.group_id, cycle_id = %draft.cycle_id, response_id = %draft.response_id, "skipping a draft whose only images are gone");
-        return Ok(false);
+        return Ok(None);
     }
-    let outcome = responses::auto_publish_draft(repo, draft, nl.response_close_at).await?;
-    Ok(matches!(outcome, AutoPublishOutcome::Published { .. }))
+    responses::auto_publish_draft(repo, draft, nl.response_close_at)
+        .await
+        .map(Some)
 }
 
 /// §5.3 — settle every current member's streak for this edition, after the

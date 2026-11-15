@@ -19,7 +19,7 @@ Snapshot as of 2026-10-26: M0–M13.5 code-complete plus the design-review fixes
 | — | Group leaderboard (2026-11-07; rebased onto the cadence change 2026-11-14) | ✅ code-complete; after it deploys, run `scripts/backfill_member_stats.py` once per env ([`future-ideas.md` §5](../docs/future-ideas.md#5-group-leaderboard)) |
 | M14 | Production deploy | ⬜ **next** |
 
-**Test baselines (2026-11-14):** backend 554 (`cargo test --workspace`, against `make dynamodb-local`), CDK 177 (`pytest infra/tests`), scripts 17 (`pytest scripts/tests`), Vitest 423, Playwright 17 (8 `mock`, 9 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/` and `scripts/`), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
+**Test baselines (2026-11-14):** backend 559 (`cargo test --workspace`, against `make dynamodb-local`), CDK 177 (`pytest infra/tests`), scripts 19 (`pytest scripts/tests`), Vitest 423, Playwright 17 (8 `mock`, 9 `demo`). fmt, clippy `-D warnings`, ruff, `mypy --strict` (`infra/` and `scripts/`), typecheck, ESLint (0 problems), Prettier, `vite build`, `actionlint`, `cdk synth` (dev + prod) and `cargo deny check` are clean. For `cargo deny`, `lambda-push` moved to `p256` 0.14 and S3 dropped its unused `sigv4a` feature, the only two paths to the vulnerable `crypto-bigint` 0.5 (RUSTSEC-2026-0387).
 
 ---
 

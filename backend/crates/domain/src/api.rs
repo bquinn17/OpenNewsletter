@@ -351,11 +351,11 @@ impl MemberStatsResponse {
     /// every counter is then 0. `MemberStats`'s counters are signed (`i64`,
     /// transiently negative on history from before the backfill ran); clamped
     /// at 0 here, per `docs/design/data-model.md` §2.17.
-    pub fn new(user_id: UserId, editions_answered: u32, stats: Option<&MemberStats>) -> Self {
+    pub fn new(user_id: UserId, stats: Option<&MemberStats>) -> Self {
         let clamp = |n: i64| n.max(0) as u32;
         Self {
             user_id,
-            editions_answered,
+            editions_answered: stats.map_or(0, |s| clamp(s.editions_answered)),
             reactions_received: stats.map_or(0, |s| clamp(s.reactions_received)),
             reactions_given: stats.map_or(0, |s| clamp(s.reactions_given)),
             comments_written: stats.map_or(0, |s| clamp(s.comments_written)),

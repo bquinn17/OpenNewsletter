@@ -235,7 +235,8 @@ for q in locked_questions(nl):
 ```
 if nl.lockedQuestionIds is empty:
     skip   # an empty edition (§9) neither extends nor breaks a streak
-authors = { a.userId for every published answer in the sweep's AP14 reads }
+authors = { a.userId for every published answer in the sweep's AP14 reads,
+            plus every draft the sweep published or found already published }
 stats = query AP23   # pk=GROUP#{g}#STATS, one paginated read
 for m in members(nl.groupId):   # AP3; departed authors are ignored
     s = stats.get(m.userId, zeros)
@@ -360,6 +361,7 @@ The simpler rule is intentional: every member's vote counts equally and the sche
 | Two tick instances run simultaneously | DDB transactions with `Condition: status="X"` ensure only one wins. Loser's transact returns `TransactionCanceledException` and is logged at INFO. |
 | User submits/votes between the tick deciding to promote and the transaction committing | The transaction reads candidate snapshots before `TransactWriteItems`. A new vote that arrives mid-flight is simply not reflected in the chosen set. Users may notice a candidate they voted for "just barely" missed the cut — acceptable UX. |
 | Cycle-tick runs while a user is publishing a draft | `PUT my-response` checks `Newsletter.status = open` **and** `now < responseCloseAt` inside its transaction (one of its precondition reads). If the cycle has just transitioned to `published` — or even while it still reads `open` but the deadline has passed — the user gets `CYCLE_NOT_OPEN` 409. The save that was refused is lost, but that no longer means the answer never appears ([D2](../decisions.md#d2)): the *last save that succeeded* is what `publish(nl)`'s auto-publish sweep (§5.3) picks up, and if that save was non-empty it gets published automatically. SPA shows "This cycle has closed — your edit was not saved" for the refused save itself. |
+| A member's reaction or comment lands on their `MemberStats` row while the tick promotes a question they suggested | The promotion transaction carries that row's `questions_asked` bump, so it can be cancelled by a `TransactionConflict` with no condition failing. It retries 3 times. If the conflicts outlast that, the tick logs a warning and moves on with the newsletter still `voting`, so the next tick promotes it ([`data-model.md` §4](data-model.md#4-transactional-invariants) #3). |
 | Notification fan-out runs twice | Idempotency markers `NOTIFIED#OPEN` / `NOTIFIED#CLOSE#{offset}` / `NOTIFIED#PUBLISH`, claimed before sending, prevent duplicates. See [`notifications.md`](notifications.md). |
 
 ---
@@ -396,7 +398,7 @@ General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). The
 7. Concurrent vote casting + admin candidate deletion produces consistent state: `backend/crates/persistence/tests/lifecycle.rs::concurrent_vote_and_admin_delete_leave_the_store_consistent`.
 8. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary. `backend/crates/shared/src/cycle_time.rs` (`mod tests`) `::dst_spring_forward_boundary_is_respected`; `backend/crates/persistence/tests/lifecycle.rs::create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_dst_boundary`.
 9. A 28-day window opening Feb 1 in a non-leap year seeds a March cycle, not April (§5.4): `backend/crates/shared/src/cycle_time.rs` (`mod tests`) `::a_full_length_february_window_does_not_skip_march`.
-10. Auto-publish ([D2](../decisions.md#d2)): at close, a non-empty text draft and a non-empty poll draft both end up `published` with `publishedAt = responseCloseAt` and the `editionsAnswered` bump applied once; an empty draft stays `draft`; a crash between two drafts' auto-publish transactions (simulated by killing the tick mid-sweep) leaves the cycle `open`, and a re-run completes the remaining drafts without double-bumping `editionsAnswered` for the ones already flipped. `backend/crates/lambda-cycle-tick/tests/auto_publish.rs::auto_publish_counts_each_member_s_edition_exactly_once`, `::a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_counting`, `::a_departed_member_s_draft_publishes_without_recreating_their_membership`, `::a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped`.
+10. Auto-publish ([D2](../decisions.md#d2)): at close, a non-empty text draft and a non-empty poll draft both end up `published` with `publishedAt = responseCloseAt` and the `editionsAnswered` bump applied once; an empty draft stays `draft`; a crash between two drafts' auto-publish transactions (simulated by killing the tick mid-sweep) leaves the cycle `open`, and a re-run completes the remaining drafts without double-bumping `editionsAnswered` for the ones already flipped. `backend/crates/lambda-cycle-tick/tests/auto_publish.rs::auto_publish_counts_each_member_s_edition_exactly_once`, `::a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_counting`, `::a_departed_member_s_draft_publishes_and_counts_without_recreating_their_membership`, `::a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped`.
 
 (There is deliberately no "admin curation override" test — that feature does not exist; see §7.)
 

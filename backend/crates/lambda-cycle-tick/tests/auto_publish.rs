@@ -8,7 +8,7 @@ mod common;
 
 use common::Answer;
 use cycle_tick::tick::{auto_publish_drafts, run_tick};
-use domain::{NewsletterStatus, ResponseStatus};
+use domain::{NewsletterStatus, ResponseStatus, UserId};
 use persistence::responses::{self, AutoPublishOutcome};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
@@ -96,18 +96,9 @@ async fn auto_publish_counts_each_member_s_edition_exactly_once() {
 
     run_tick(&repo, CycleCadence::Monthly).await;
 
-    assert_eq!(
-        common::editions_answered(&repo, "u1", "g-count").await,
-        Some(1)
-    );
-    assert_eq!(
-        common::editions_answered(&repo, "u2", "g-count").await,
-        Some(1)
-    );
-    assert_eq!(
-        common::editions_answered(&repo, "u3", "g-count").await,
-        Some(0)
-    );
+    assert_eq!(common::editions_answered(&repo, "u1", "g-count").await, 1);
+    assert_eq!(common::editions_answered(&repo, "u2", "g-count").await, 1);
+    assert_eq!(common::editions_answered(&repo, "u3", "g-count").await, 0);
 }
 
 #[tokio::test]
@@ -151,18 +142,12 @@ async fn a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_co
             "{user}/{question}"
         );
     }
-    assert_eq!(
-        common::editions_answered(&repo, "u1", "g-crash").await,
-        Some(1)
-    );
-    assert_eq!(
-        common::editions_answered(&repo, "u2", "g-crash").await,
-        Some(1)
-    );
+    assert_eq!(common::editions_answered(&repo, "u1", "g-crash").await, 1);
+    assert_eq!(common::editions_answered(&repo, "u2", "g-crash").await, 1);
 }
 
 #[tokio::test]
-async fn a_departed_member_s_draft_publishes_without_recreating_their_membership() {
+async fn a_departed_member_s_draft_publishes_and_counts_without_recreating_their_membership() {
     let (_c, repo) = common::make_test_repo().await;
     let nl = common::seed_open_cycle(&repo, "g-left", &[TEXT_Q]).await;
     let text = Answer::Text {
@@ -176,10 +161,17 @@ async fn a_departed_member_s_draft_publishes_without_recreating_their_membership
 
     let answer = common::response(&repo, &nl, "u-gone", TEXT_Q).await;
     assert_eq!(answer.status, ResponseStatus::Published);
+    // The count lands on `MemberStats`, which survives a leave, like every
+    // other stat on a departed member's published answer.
     assert_eq!(
         common::editions_answered(&repo, "u-gone", "g-left").await,
-        None
+        1
     );
+    let membership =
+        persistence::groups::get_membership(&repo, &UserId::new("u-gone"), &nl.group_id)
+            .await
+            .unwrap();
+    assert_eq!(membership, None);
 }
 
 #[tokio::test]
@@ -215,8 +207,5 @@ async fn a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped() {
         common::status(&repo, &nl.group_id, &nl.cycle_id).await,
         NewsletterStatus::Published
     );
-    assert_eq!(
-        common::editions_answered(&repo, "u1", "g-broken").await,
-        Some(1)
-    );
+    assert_eq!(common::editions_answered(&repo, "u1", "g-broken").await, 1);
 }

@@ -314,14 +314,14 @@ At a cycle's close, the tick publishes every non-empty draft. A draft that keeps
    ```
 
    Only publish a draft with content: a non-blank `body` or a live image for text, or a `poll_option_id` for polls.
-4. **Count the edition.** If the member has no other published answer in that cycle, bump their membership the same way, so the edition counts once:
+4. **Count the edition.** If the member has no other published answer in that cycle, bump their `MemberStats` row the same way, so the edition counts once:
 
    ```sh
    aws dynamodb update-item --table-name OpenNewsletter-prod \
-     --key '{"pk":{"S":"USER#<u>"},"sk":{"S":"GROUP#<g>"}}' \
-     --update-expression 'SET editions_answered = editions_answered + :one, last_answered_cycle = :c' \
+     --key '{"pk":{"S":"GROUP#<g>#STATS"},"sk":{"S":"MEMBER#<u>"}}' \
+     --update-expression 'SET entity = :e, group_id = :g, user_id = :u, last_answered_cycle = :c ADD editions_answered :one' \
      --condition-expression 'attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :c' \
-     --expression-attribute-values '{":one":{"N":"1"},":c":{"S":"<c>"}}'
+     --expression-attribute-values '{":e":{"S":"MemberStats"},":g":{"S":"<g>"},":u":{"S":"<u>"},":one":{"N":"1"},":c":{"S":"<c>"}}'
    ```
 
    A `ConditionalCheckFailedException` here means the edition was already counted. That's fine.

@@ -90,7 +90,6 @@ pub struct GroupMembership {
     pub group_id: GroupId,
     pub role: Role,
     pub joined_at: DateTime<Utc>,
-    pub editions_answered: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,6 +387,8 @@ pub struct CognitoSubLookup {
 pub struct MemberStats {
     pub group_id: GroupId,
     pub user_id: UserId,
+    #[serde(default)]
+    pub editions_answered: i64,
     #[serde(default)]
     pub reactions_received: i64,
     #[serde(default)]

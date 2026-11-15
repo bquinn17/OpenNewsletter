@@ -428,7 +428,6 @@ def write_group(
             "group_id": {"S": group_id},
             "role": {"S": "admin"},
             "joined_at": {"S": timestamp},
-            "editions_answered": {"N": "0"},
         },
     ]
     dynamodb.transact_write_items(

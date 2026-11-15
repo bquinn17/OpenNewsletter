@@ -24,7 +24,6 @@ pub async fn seed_group_and_membership(repo: &Repo, group: &Group, user_id: &str
         group_id: group.group_id.clone(),
         role,
         joined_at: group.created_at,
-        editions_answered: 0,
     };
     put_membership(repo, &m).await;
 }

@@ -714,7 +714,7 @@ export interface components {
         LeaderboardResponse: {
             /** @description One entry per current member, in no particular order. A member with no stats yet gets zeros. */
             members: components["schemas"]["MemberStatsResponse"][];
-            /** @description Up to 3 answers by current members with at least one reaction, most reactions first. */
+            /** @description Answers by current members whose reaction count is one of the top 3 distinct counts above 0, most reactions first. Tied answers are all included, so this can hold more than 3. A safety cap of 50 drops whole tie groups from the bottom; only the first rank is ever cut. */
             topAnswers: components["schemas"]["TopAnswerResponse"][];
         };
         MemberStatsResponse: {

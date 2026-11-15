@@ -18,6 +18,7 @@ use domain::{
     Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId, UserId,
 };
 use serde_dynamo::{from_item, to_item};
+use shared::config::COMMENT_WRITE_ATTEMPTS;
 use std::collections::HashMap;
 
 /// AP18 — every comment on an answer, oldest first. Unpaginated; used by the
@@ -194,9 +195,12 @@ pub struct NewComment<'a> {
 
 /// `POST .../comments` (§8.2) — puts the comment row, bumps the author's
 /// `comments_written` (§2.17, §4 #9) and, if an image is attached, claims it,
-/// all in the same `TransactWriteItems` (the image claim decided M10). A
-/// cancelled transaction (`RepoError::is_lost_race`) means the image lost a
-/// race to another comment — the caller maps that to 422 on `imageMediaId`.
+/// all in the same `TransactWriteItems` (the image claim decided M10). Only the
+/// image claim carries a condition, so `RepoError::TransactionCancelled` means
+/// the image lost a race to another comment — the caller maps that to 422 on
+/// `imageMediaId`. A `TransactionConflict` with a concurrent writer (most
+/// likely another write to the author's `MemberStats` row) applied nothing,
+/// so it is retried here, up to `COMMENT_WRITE_ATTEMPTS` attempts in all.
 pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment, RepoError> {
     let comment = Comment {
         comment_id: new.comment_id.clone(),
@@ -256,8 +260,56 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
         items.push(TransactWriteItem::builder().update(attach).build());
     }
 
-    send_transaction(repo, items).await?;
-    Ok(comment)
+    for attempt in 1..=COMMENT_WRITE_ATTEMPTS {
+        let sent = repo
+            .client
+            .transact_write_items()
+            .set_transact_items(Some(items.clone()))
+            .send()
+            .await;
+        let Err(err) = sent else {
+            return Ok(comment);
+        };
+        // Items: the comment put and the stats bump (no conditions), then the
+        // image claim when there is one.
+        let outcome = error::classify_transact_write_error(
+            err,
+            [
+                CommentTxError::Unexpected,
+                CommentTxError::Unexpected,
+                CommentTxError::ImageLost,
+            ],
+            CommentTxError::Conflict,
+            CommentTxError::Repo,
+        );
+        match outcome {
+            CommentTxError::Conflict if attempt < COMMENT_WRITE_ATTEMPTS => {}
+            CommentTxError::Conflict => {
+                return Err(RepoError::TransactionConflict(format!(
+                    "comment create, after {COMMENT_WRITE_ATTEMPTS} attempts"
+                )))
+            }
+            CommentTxError::ImageLost => {
+                return Err(RepoError::TransactionCancelled("image claim lost".into()))
+            }
+            CommentTxError::Unexpected => {
+                return Err(RepoError::Dynamo(
+                    "comment create failed an unconditioned item's condition".into(),
+                ))
+            }
+            CommentTxError::Repo(e) => return Err(e),
+        }
+    }
+    unreachable!("the loop above always returns within COMMENT_WRITE_ATTEMPTS attempts")
+}
+
+/// [`create_comment`]'s reading of its transaction's cancellation reasons.
+enum CommentTxError {
+    ImageLost,
+    Conflict,
+    /// A condition failed on an item that has none; can't happen.
+    Unexpected,
+    Repo(RepoError),
 }
 
 /// Addresses one existing comment row — shared by [`update_comment`] and
@@ -607,8 +659,10 @@ pub enum ReactionTxError {
 
 /// Builds the Response-row `Update` shared by [`put_reaction_counted`] and
 /// [`delete_reaction_counted`]: sets `reaction_count` to `new_count` and
-/// rewrites the GSI2 most-reacted ranking (§2.9), conditioned on the row's
-/// prior count being `old_count` (or absent, when `old_count == 0`).
+/// rewrites the GSI2 most-reacted ranking (§2.9), conditioned on the row
+/// existing and its prior count being `old_count` (or absent, when
+/// `old_count == 0`). Without the existence check, an answer deleted since the
+/// caller read it would come back as a keys-only row in the GSI2 ranking.
 #[allow(clippy::too_many_arguments)]
 fn reaction_count_update(
     repo: &Repo,
@@ -628,7 +682,11 @@ fn reaction_count_update(
         )
         .key(attr::SK, AttributeValue::S(response_sk(answer_user_id)))
         .update_expression("SET reaction_count = :new, #g2pk = :g2pk, #g2sk = :g2sk")
-        .condition_expression("attribute_not_exists(reaction_count) OR reaction_count = :old")
+        .condition_expression(
+            "attribute_exists(#pk) AND \
+             (attribute_not_exists(reaction_count) OR reaction_count = :old)",
+        )
+        .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_names("#g2pk", attr::GSI2PK)
         .expression_attribute_names("#g2sk", attr::GSI2SK)
         .expression_attribute_values(":new", AttributeValue::N(new_count.to_string()))
@@ -722,9 +780,7 @@ pub async fn put_reaction_counted(
         .transact_items(TransactWriteItem::builder().update(reactor_bump).build())
         .send()
         .await
-        .map_err(|e| {
-            classify_reaction_tx_error(e, [ReactionTxError::Duplicate, ReactionTxError::CountRace])
-        })?;
+        .map_err(classify_reaction_tx_error)?;
     Ok(())
 }
 
@@ -797,40 +853,22 @@ pub async fn delete_reaction_counted(
         .transact_items(TransactWriteItem::builder().update(reactor_bump).build())
         .send()
         .await
-        .map_err(|e| {
-            classify_reaction_tx_error(e, [ReactionTxError::Duplicate, ReactionTxError::CountRace])
-        })?;
+        .map_err(classify_reaction_tx_error)?;
     Ok(())
 }
 
 /// Map a counted-reaction transaction's failure to the item whose condition
-/// failed. `labels[0]`/`labels[1]` name the outcome for the reaction
-/// row/count update (transact items 0 and 1); the two `MemberStats` bumps
-/// (items 2, 3) carry no condition and never fail this way. Mirrors
-/// `questions::classify_vote_tx_error`.
+/// failed: the reaction row (item 0) is a [`ReactionTxError::Duplicate`], the
+/// count update (item 1) a [`ReactionTxError::CountRace`]. The two
+/// `MemberStats` bumps (items 2, 3) carry no condition, but they can still
+/// conflict with a concurrent writer, which is a [`ReactionTxError::Conflict`].
 fn classify_reaction_tx_error<R: std::fmt::Debug>(
     err: SdkError<TransactWriteItemsError, R>,
-    labels: [ReactionTxError; 2],
 ) -> ReactionTxError {
-    let Some(TransactWriteItemsError::TransactionCanceledException(cancel)) =
-        err.as_service_error()
-    else {
-        return ReactionTxError::Repo(error::from_transact_write_error(err));
-    };
-    let reasons = cancel.cancellation_reasons();
-    if let Some(i) = reasons
-        .iter()
-        .position(|r| r.code() == Some("ConditionalCheckFailed"))
-    {
-        if let Some(label) = labels.into_iter().nth(i) {
-            return label;
-        }
-    }
-    if reasons
-        .iter()
-        .any(|r| r.code() == Some("TransactionConflict"))
-    {
-        return ReactionTxError::Conflict;
-    }
-    ReactionTxError::Repo(RepoError::TransactionCancelled(format!("{cancel:?}")))
+    error::classify_transact_write_error(
+        err,
+        [ReactionTxError::Duplicate, ReactionTxError::CountRace],
+        ReactionTxError::Conflict,
+        ReactionTxError::Repo,
+    )
 }

@@ -25,6 +25,16 @@ fn state(repo: persistence::Repo) -> AppState {
     AppState { repo }
 }
 
+/// The member's `MemberStats.editions_answered`; 0 when they have no stats row.
+async fn editions_answered(state: &AppState, group_id: &GroupId, user_id: &UserId) -> i64 {
+    persistence::member_stats::list_stats_for_group(&state.repo, group_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| &s.user_id == user_id)
+        .map_or(0, |s| s.editions_answered)
+}
+
 fn text_request(body: &str, image_media_ids: Vec<ImageId>, publish: bool) -> SaveResponseRequest {
     SaveResponseRequest::Text {
         body: body.to_owned(),
@@ -186,12 +196,7 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
     assert_eq!(published_first.status, ResponseStatus::Published);
     assert!(published_first.published_at.is_some());
 
-    let membership_after_first =
-        persistence::groups::get_membership(&state.repo, &caller, &group_id)
-            .await
-            .unwrap()
-            .unwrap();
-    assert_eq!(membership_after_first.editions_answered, 1);
+    assert_eq!(editions_answered(&state, &group_id, &caller).await, 1);
 
     handlers::save_response(
         &state,
@@ -204,13 +209,9 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
     .await
     .unwrap();
 
-    let membership_after_second =
-        persistence::groups::get_membership(&state.repo, &caller, &group_id)
-            .await
-            .unwrap()
-            .unwrap();
     assert_eq!(
-        membership_after_second.editions_answered, 1,
+        editions_answered(&state, &group_id, &caller).await,
+        1,
         "a second publish in the same cycle must not double-count"
     );
 }
@@ -256,12 +257,11 @@ async fn first_publish_in_a_second_group_same_month_still_bumps_editions_answere
     }
 
     for g in ["gx-a", "gx-b"] {
-        let membership =
-            persistence::groups::get_membership(&state.repo, &caller, &GroupId::new(g))
-                .await
-                .unwrap()
-                .unwrap();
-        assert_eq!(membership.editions_answered, 1, "group {g}");
+        assert_eq!(
+            editions_answered(&state, &GroupId::new(g), &caller).await,
+            1,
+            "group {g}"
+        );
     }
 }
 

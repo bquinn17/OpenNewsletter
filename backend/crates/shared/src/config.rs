@@ -142,7 +142,8 @@ pub const MAX_NEWSLETTER_LIST_LIMIT: u32 = 24;
 pub const DEFAULT_COMMENT_LIST_LIMIT: u32 = 50;
 /// How many times a comment edit/delete re-reads and retries after its
 /// transaction lost a race to a concurrent image change on the same comment
-/// (`docs/design/engagement.md` §1.4, decided M10).
+/// (`docs/design/engagement.md` §1.4, decided M10). Comment creation reuses it
+/// for retries after a `TransactionConflict` on the author's `MemberStats` row.
 pub const COMMENT_WRITE_ATTEMPTS: u32 = 3;
 
 /// A push subscription is deleted after this many consecutive delivery
@@ -165,13 +166,18 @@ pub const PUSH_SEND_CONCURRENCY: usize = 16;
 /// published edition) one request keeps in flight at once.
 pub const EDITION_READ_CONCURRENCY: usize = 16;
 /// `GET /groups/{groupId}/leaderboard` (`docs/design/api.md` §4.4): how many
-/// of the group's most-reacted answers the top-answers board shows, after
-/// filtering out departed members and zero-count rows.
-pub const LEADERBOARD_TOP_ANSWERS: usize = 3;
-/// How many rows the leaderboard's GSI2 "most reacted" query reads before
-/// filtering, so a few departed-member or zero-count rows at the top don't
-/// starve [`LEADERBOARD_TOP_ANSWERS`] of candidates.
-pub const LEADERBOARD_TOP_ANSWERS_SCAN: i32 = 10;
+/// distinct reaction counts the top-answers board covers. Every answer with
+/// one of those counts is returned, so tied answers share a rank and all stay
+/// on the board, like the member boards (`docs/design/frontend.md` §7.9).
+pub const LEADERBOARD_TOP_ANSWER_RANKS: usize = 3;
+/// A safety cap on `topAnswers` rows, for a group where many answers tie
+/// (say, 40 answers with one reaction each). Ties are never split: a tie
+/// group that would push the total past this is dropped with every rank
+/// below it, except the first rank, which is cut to this many.
+pub const LEADERBOARD_TOP_ANSWERS_MAX: usize = 50;
+/// Page size for the top-answers GSI2 query, which follows pages until it
+/// has every answer in the top ranks.
+pub const LEADERBOARD_TOP_ANSWERS_PAGE: i32 = 25;
 /// How many members' preference/subscription reads a fan-out (`lambda-push`
 /// and `lambda-notify-tick`) keeps in flight at once, ahead of the send step.
 pub const PUSH_MEMBER_READ_CONCURRENCY: usize = 16;

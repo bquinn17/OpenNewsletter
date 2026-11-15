@@ -19,6 +19,12 @@ pub enum RepoError {
     #[error("transaction cancelled: {0}")]
     TransactionCancelled(String),
 
+    /// A transaction kept hitting `TransactionConflict`s with concurrent
+    /// writers through all of its retries. No condition failed, so trying
+    /// again later can succeed. Not a lost race.
+    #[error("transaction kept conflicting: {0}")]
+    TransactionConflict(String),
+
     #[error("not found")]
     NotFound,
 }
@@ -92,4 +98,39 @@ pub fn from_transact_write_error<R: std::fmt::Debug>(
         }
         _ => RepoError::Dynamo(format!("{err:?}")),
     }
+}
+
+/// Map a `TransactWriteItems` failure to an outcome, for transactions that
+/// need to tell which item's condition failed. `condition_failed[i]` is the
+/// outcome when transact item `i`'s condition failed. `conflict` is the outcome
+/// when no labelled condition failed but an item hit a `TransactionConflict`
+/// with a concurrent writer: the transaction applied nothing, so it is safe
+/// to retry unchanged. Anything else goes through `other`.
+pub fn classify_transact_write_error<T, R: std::fmt::Debug, const N: usize>(
+    err: SdkError<TransactWriteItemsError, R>,
+    condition_failed: [T; N],
+    conflict: T,
+    other: impl FnOnce(RepoError) -> T,
+) -> T {
+    let Some(TransactWriteItemsError::TransactionCanceledException(cancel)) =
+        err.as_service_error()
+    else {
+        return other(from_transact_write_error(err));
+    };
+    let reasons = cancel.cancellation_reasons();
+    if let Some(i) = reasons
+        .iter()
+        .position(|r| r.code() == Some("ConditionalCheckFailed"))
+    {
+        if let Some(label) = condition_failed.into_iter().nth(i) {
+            return label;
+        }
+    }
+    if reasons
+        .iter()
+        .any(|r| r.code() == Some("TransactionConflict"))
+    {
+        return conflict;
+    }
+    other(RepoError::TransactionCancelled(format!("{cancel:?}")))
 }

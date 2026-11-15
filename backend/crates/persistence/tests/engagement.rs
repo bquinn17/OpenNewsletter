@@ -396,6 +396,48 @@ async fn put_reaction_counted_is_idempotent_on_a_duplicate() {
 }
 
 #[tokio::test]
+async fn put_reaction_counted_refuses_a_missing_answer_and_writes_nothing() {
+    let (_c, repo) = common::make_repo().await;
+    // Never stored: stands in for an answer deleted after the handler read it.
+    let answer = published_answer("g-react-gone", "202606", "q1", "u1");
+
+    let reaction = common::reaction("g-react-gone", "202606", "q1", "u1", "u2");
+    let err = engagement::put_reaction_counted(&repo, &reaction, &answer.response_id, 0)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, engagement::ReactionTxError::CountRace),
+        "expected CountRace, got {err:?}"
+    );
+
+    // No keys-only Response row came back in its place, so the most-reacted
+    // ranking still reads cleanly.
+    let response = persistence::responses::get_my_response(
+        &repo,
+        &GroupId::new("g-react-gone"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        &UserId::new("u1"),
+    )
+    .await
+    .unwrap();
+    assert!(response.is_none());
+    let top = persistence::responses::list_top_reacted_answers(
+        &repo,
+        &GroupId::new("g-react-gone"),
+        |_| true,
+    )
+    .await
+    .unwrap();
+    assert!(top.is_empty());
+    let stats =
+        persistence::member_stats::list_stats_for_group(&repo, &GroupId::new("g-react-gone"))
+            .await
+            .unwrap();
+    assert!(stats.is_empty(), "the stats bumps must roll back too");
+}
+
+#[tokio::test]
 async fn delete_reaction_counted_reverses_the_bump() {
     let (_c, repo) = common::make_repo().await;
     let answer = published_answer("g-react-3", "202606", "q1", "u1");

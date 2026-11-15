@@ -150,6 +150,77 @@ def test_accumulate_question_counters_excludes_anonymous_and_missing_submitter()
     assert accumulate_question_counters(cycles) == {U1: 1, U2: 1}
 
 
+def test_an_open_cycle_counts_toward_questions_and_editions_only() -> None:
+    # The live code counts promoted questions and an answer's first publish
+    # before the cycle publishes, so a backfill run while a cycle is open
+    # must count them too, or it drops them for good.
+    published = [
+        CycleFacts(
+            cycle_id="202601",
+            locked_questions=(
+                LockedQuestionFact(
+                    question_id="q1", submitted_by=U1, is_anonymous=False
+                ),
+            ),
+            responses=(_text_response(author=U1),),
+        )
+    ]
+    open_cycle = CycleFacts(
+        cycle_id="202602",
+        locked_questions=(
+            LockedQuestionFact(question_id="q2", submitted_by=U1, is_anonymous=False),
+            LockedQuestionFact(question_id="q3", submitted_by=U2, is_anonymous=True),
+        ),
+        responses=(
+            _text_response(question_id="q2", author=U1),
+            _text_response(
+                question_id="q2", response_id="r2", author=U2, status="draft"
+            ),
+        ),
+    )
+    results = {
+        r.user_id: r
+        for r in compute_member_stats(published, [U1, U2], [U1, U2], [open_cycle])
+    }
+    assert results[U1].questions_asked == 2
+    assert results[U2].questions_asked == 0
+    assert results[U1].editions_answered == 2
+    assert results[U1].last_answered_cycle == "202602"
+    assert results[U2].editions_answered == 0, "a draft is not an answer"
+    assert results[U2].last_answered_cycle is None
+    # The open cycle settles no streak: U1's streak is the published one alone.
+    assert results[U1].current_streak == 1
+    assert results[U1].streak_cycle == "202601"
+
+
+def test_editions_answered_counts_each_cycle_once_and_keeps_the_latest_marker() -> None:
+    cycles = [
+        CycleFacts(
+            cycle_id="202601",
+            responses=(
+                _text_response(question_id="q1", author=U1),
+                _text_response(question_id="q2", response_id="r2", author=U1),
+            ),
+        ),
+        CycleFacts(cycle_id="202602", responses=()),
+        CycleFacts(
+            cycle_id="202603",
+            responses=(
+                ResponseFact(
+                    question_id="q1",
+                    response_id="r3",
+                    author_user_id=U1,
+                    status="published",
+                    kind="poll",
+                ),
+            ),
+        ),
+    ]
+    results = {r.user_id: r for r in compute_member_stats(cycles, [U1], [U1])}
+    assert results[U1].editions_answered == 2
+    assert results[U1].last_answered_cycle == "202603"
+
+
 # ---------------------------------------------------------------------------
 # Response row updates: write only when nonzero or correcting a stale count
 # ---------------------------------------------------------------------------

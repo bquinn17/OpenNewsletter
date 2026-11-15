@@ -2245,8 +2245,11 @@ components:
             $ref: "#/components/schemas/MemberStatsResponse"
         topAnswers:
           description: >
-            Up to 3 answers by current members with at least one reaction,
-            most reactions first.
+            Answers by current members whose reaction count is one of the
+            top 3 distinct counts above 0, most reactions first. Tied answers
+            are all included, so this can hold more than 3. A safety cap of
+            50 drops whole tie groups from the bottom; only the first rank is
+            ever cut.
           type: array
           items:
             $ref: "#/components/schemas/TopAnswerResponse"
