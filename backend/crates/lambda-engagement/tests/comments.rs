@@ -614,6 +614,91 @@ async fn admin_can_delete_any_comment_but_a_member_cannot() {
 }
 
 #[tokio::test]
+async fn an_admin_demoted_elsewhere_cannot_delete_others_comments_from_a_warm_cache() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gcmt-demoted", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    common::seed_group_and_membership(&repo, &group, "u2", Role::Member).await;
+    common::seed_group_and_membership(&repo, &group, "u3", Role::Admin).await;
+    common::put_user(&repo, "u1").await;
+    common::put_user(&repo, "u2").await;
+    common::put_newsletter(
+        &repo,
+        &common::published_newsletter("gcmt-demoted", "202606"),
+    )
+    .await;
+    common::put_locked_question(
+        &repo,
+        &common::locked_question("gcmt-demoted", "202606", "q1", "u1"),
+    )
+    .await;
+    common::put_published_text_answer(
+        &repo,
+        "gcmt-demoted",
+        "202606",
+        "q1",
+        "u1",
+        "r1",
+        "Lake 22.",
+    )
+    .await;
+
+    let state = common::test_state(repo);
+    let admin = domain::UserId::new("u1");
+    let group_id = GroupId::new("gcmt-demoted");
+    let cycle_id = CycleId::new("202606");
+    let question_id = QuestionId::new("q1");
+    let response_id = ResponseId::new("r1");
+
+    let created = handlers::create_comment(
+        &state,
+        &domain::UserId::new("u2"),
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &response_id,
+        CreateCommentRequest {
+            body: Some("u2's comment".into()),
+            image_media_id: None,
+        },
+    )
+    .await
+    .expect("u2 creates a comment");
+
+    // u1's admin membership is now cached in this process.
+    handlers::list_comments(
+        &state,
+        &admin,
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &response_id,
+        50,
+        None,
+    )
+    .await
+    .expect("u1 lists comments");
+
+    // Demoted by another Lambda, whose cache eviction can't reach this one.
+    persistence::groups::update_membership_role(&state.repo, &admin, &group_id, Role::Member, None)
+        .await
+        .expect("demote u1");
+
+    let err = handlers::delete_comment(
+        &state,
+        &admin,
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &response_id,
+        &created.comment_id,
+    )
+    .await
+    .expect_err("the admin check reads the demotion, not the cached role");
+    assert_eq!(err.code, ApiErrorCode::Forbidden);
+}
+
+#[tokio::test]
 async fn comment_list_orders_oldest_first_across_a_pagination_boundary() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gcmt9", "u1");

@@ -170,7 +170,7 @@ Route guards:
 └────────────────────────────────────────────────────────────┘
 ```
 
-There is no bottom tab bar. Navigation is the header: the logo goes Home, the group switcher picks the group Home shows, and the avatar menu holds Settings. Home's edition rows lead to the open edition (respond) and the voting cycle (Upcoming). A mobile `BottomNav` existed until 2026-10-14; it was removed because it duplicated Home and covered RespondPage's own bottom bar ([`decisions.md`](../decisions.md#home-shows-one-group)).
+There is no bottom tab bar. Navigation is the header: the logo goes Home, the group switcher picks the group Home shows, and the avatar menu holds Settings. Home's edition rows lead to the open edition (respond) and the voting cycle (Upcoming). A bottom tab bar would duplicate Home and cover RespondPage's own bottom bar ([`decisions.md`](../decisions.md#home-shows-one-group)).
 
 The current group (`state/currentGroup.ts`, persisted) is set by the switcher, defaults to the first membership, and follows the URL: opening any `/g/:groupId/*` page makes that group current, so a deep link from a push notification or shared link doesn't leave Home showing a different group. Picking a group in the switcher navigates to Home.
 
@@ -649,7 +649,7 @@ These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the O
 - Rich text editing beyond markdown.
 - @-mention notifications.
 - Search.
-- Threaded (nested) comments — design sketch in [`future-ideas.md` §1](../future-ideas.md#1-threaded-nested-comments).
+- Reply comments — design sketch in [`future-ideas.md` §1](../future-ideas.md#1-reply-comments).
 - Email digests.
 - Per-user theme override.
 - Multi-account switcher.
@@ -658,7 +658,7 @@ These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the O
 
 ## 16. Legacy mock pages (historical)
 
-An early commit shipped a mock-only UI on hand-written types before the real API existed; `src/mocks/` and `PendingMilestonePage` are long gone. Every page now runs on `api/queries.ts` + `types/api.ts`, with `VITE_USE_MOCKS=true` routing those same pages through `api/mockTransport.ts` (§2, §13) instead of a separate legacy tree.
+There are no legacy mock pages. Every page runs on `api/queries.ts` + `types/api.ts`, and `VITE_USE_MOCKS=true` routes those same pages through `api/mockTransport.ts` (§2, §13).
 
 ---
 

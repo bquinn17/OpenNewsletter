@@ -92,7 +92,7 @@ fn handle(event: PreSignUp) -> PreSignUp {
 }
 ```
 
-`auto_verify_email` is always false (changed 2026-10-08, review fix). It was once true for every federated signup, which set `email_verified=true` for Facebook users as well and defeated the Google-only rule for bound invites (§4.2). `email_verified` now comes only from the Google IdP's attribute mapping. Nothing had been deployed when this changed, so no user pool holds users created under the old behaviour.
+`auto_verify_email` is always false. Setting it would mark every federated signup verified, Facebook users included, and defeat the Google-only rule for bound invites (§4.2). `email_verified` comes only from the Google IdP's attribute mapping.
 
 The SPA preserves the invite code across the OAuth round-trip by passing `{ invite, returnTo }` as `oidc-client-ts`'s `signinRedirect({ state })` data. The library keeps that data client-side, keyed by the opaque OIDC `state` nonce, so nothing user-controlled travels through Cognito ([`frontend.md` §6](frontend.md#6-auth-in-the-spa)). A `sessionStorage` stash is the fallback. After token exchange, `/auth/callback` sends the user to `/join?code=…`, which posts the code to `/invites/redeem`.
 
@@ -302,7 +302,7 @@ Outside of CDK, a human operator registers Google and Facebook as IdPs, generate
 
 ## 11. Tenant authorization helper
 
-`require_membership(repo, user_id, group_id, require_admin)` in `backend/crates/persistence/src/auth.rs` is the tenant-isolation gate every protected handler calls before touching group data. It checks a `DashMap` (`MEMBERSHIP_CACHE`, `once_cell::sync::Lazy`, keyed `(UserId, GroupId)`) fresh for `MEMBERSHIP_CACHE_TTL_SECONDS` (60s, `shared::config`); on a miss it loads the membership from DynamoDB, caches it, and returns `ApiError::forbidden` if the caller isn't a member — or isn't an admin, when `require_admin` is set. The same module's `resolve_user_id`/`require_user_id` do the `sub` → `userId` lookup from §6 with the same cache pattern, and `invalidate_membership`/`cache_user_id` let a handler evict or seed an entry when membership or identity changes mid-request. Both caches live for the duration of the Lambda's warm container.
+`require_membership(repo, user_id, group_id, require_admin)` in `backend/crates/persistence/src/auth.rs` is the tenant-isolation gate every protected handler calls before touching group data. It checks a `DashMap` (`MEMBERSHIP_CACHE`, `once_cell::sync::Lazy`, keyed `(UserId, GroupId)`) fresh for `MEMBERSHIP_CACHE_TTL_SECONDS` (60s, `shared::config`), except when `require_admin` is set: an admin check always reads DynamoDB, because `invalidate_membership` only evicts the entry in the container that made the change, and a cached admin row would let a just-demoted or removed admin keep admin powers in every other Lambda ([decisions](../decisions.md#membership-cache)). On a miss it loads the membership from DynamoDB, caches it, and returns `ApiError::forbidden` if the caller isn't a member — or isn't an admin, when `require_admin` is set. The same module's `resolve_user_id`/`require_user_id` do the `sub` → `userId` lookup from §6 with the same cache pattern, and `invalidate_membership`/`cache_user_id` let a handler evict or seed an entry when membership or identity changes mid-request. A handler whose admin power is conditional (deleting someone else's comment) makes that second check with `require_admin` too, never from the role on a cached membership. Both caches live for the duration of the Lambda's warm container.
 
 ---
 
