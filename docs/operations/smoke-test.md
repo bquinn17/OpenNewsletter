@@ -70,7 +70,7 @@ aws lambda invoke --function-name OpenNewsletter-CycleTick-$ENV \
 - [ ] Fast-forward to publication (same curl as step 5). The response shows `open → published`, and a new `voting` cycle with `from: null`.
 - [ ] Open the published edition. B's answer and image render, loaded from a presigned S3 URL ([`media.md` §4](../design/media.md#4-serving-presigned-s3-gets)).
 - [ ] **Media serving** ([`infrastructure.md` §5.2](../design/infrastructure.md#52-image-serving)). `MediaImage` and `Avatar` load in CORS mode, so if the processed bucket's CORS policy is wrong, *every* image and avatar fails to load, not just offline caching. In DevTools → Network, pick the image request and check:
-  - the URL's host is the processed bucket's S3 endpoint, and the request returns `200` with `Access-Control-Allow-Origin` set to this app's exact origin, never `*`, and no `Access-Control-Allow-Credentials` header (the signature is in the URL, so there are no credentials to send)
+  - the URL's host is the processed bucket's S3 endpoint, and the request returns `200` with `Access-Control-Allow-Origin` set to this app's exact origin, never `*`. S3 also sends `Access-Control-Allow-Credentials: true` whenever the origin matches an allowed origin that isn't `*`, and a bucket can't turn that off. It's harmless: images load with `crossorigin="anonymous"`, which sends no credentials
   - pasting the same URL with its query string (`?X-Amz-...`) stripped returns `403` — confirms the bucket really is private and the signature is doing the work
   - the Console shows no "blocked by CORS policy" errors
 

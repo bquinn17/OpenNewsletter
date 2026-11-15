@@ -365,7 +365,7 @@ Soft delete: sets `deletedAt`, blanks `body` and drops the image attachment, rel
 
 ### 8.6 `PUT .../reactions/{emoji}`
 
-Idempotent toggle-on with an empty body. `emoji` is URL-encoded. The server percent-decodes it if it still contains `%`, because API Gateway's decoding of path parameters isn't relied on. It then validates it against the canonical emoji predicate in [`engagement.md` §2.2](engagement.md#22-validation): NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
+Idempotent toggle-on with an empty body. `emoji` is URL-encoded. API Gateway decodes path parameters once before the Lambda sees them, as checked on dev. The server still percent-decodes the value if it contains `%`, so it doesn't depend on that. It then validates it against the canonical emoji predicate in [`engagement.md` §2.2](engagement.md#22-validation): NFC-normalized, 1–12 codepoints, and at least one `Extended_Pictographic` or regional-indicator codepoint. Anything else is rejected with `VALIDATION_FAILED`. Encoding the emoji in the path simplifies the `R#{user}#{emoji}` sort key. Response 200: the answer's `ReactionsResponse` after the change.
 
 On another member's answer, the write is the reaction transaction in [`data-model.md` §4](data-model.md#4-transactional-invariants) #8, which also keeps the leaderboard counters (§4.4). A PUT of a reaction that already exists writes nothing and returns 200.
 

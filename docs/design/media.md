@@ -144,7 +144,7 @@ Every handler that returns one of these has already checked that the caller may 
 
 - Block Public Access stays fully on. Nothing grants anonymous reads, and S3 doesn't bill for the 403s a request without a valid signature gets from outside the account.
 - A presigned URL carries the signer's permissions, so each signing Lambda's role gets `s3:GetObject` on just the prefixes it serves: `img/*` for `lambda-media`, `lambda-newsletters` and `lambda-engagement`; `avatar/*` for `lambda-media`, `lambda-groups`, `lambda-newsletters` and `lambda-questions` ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)).
-- Bucket CORS allows `GET` and `HEAD` from the SPA's origin (plus `http://localhost:5173` in dev). No credentials: the signature is in the query string. The SPA loads images in CORS mode so its service worker sees real statuses (§4.4).
+- Bucket CORS allows `GET` and `HEAD` from the SPA's origin (plus `http://localhost:5173` in dev). No credentials: the signature is in the query string. S3 still answers a matching origin with `Access-Control-Allow-Credentials: true`, which a bucket can't turn off; the SPA's anonymous CORS requests ignore it. The SPA loads images in CORS mode so its service worker sees real statuses (§4.4).
 
 ### 4.2 URL lifetime and signing window
 
