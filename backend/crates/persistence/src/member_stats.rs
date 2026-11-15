@@ -1,12 +1,14 @@
 //! `MemberStats` upserts and the all-members leaderboard query
-//! (`docs/design/data-model.md` §2.17; transactions §4 #3, #6, #8, #9).
+//! (`docs/design/data-model.md` §2.17; transactions §4 #3, #4, #4a, #6, #8, #9).
 //!
 //! Every write here is an upsert `UpdateItem` — `SET entity, group_id,
 //! user_id` plus the caller's own counter change — so a member's row appears
 //! on its first write and no writer ever needs to read it first. The `ADD`
 //! builder ([`add_update`]) is shared by the reaction transaction
 //! (`engagement.rs`), the comment transaction (`engagement.rs`), and the
-//! promotion transaction (`questions.rs`); the streak reset builder
+//! promotion transaction (`questions.rs`); the `editions_answered` bump
+//! ([`editions_answered_bump`]) by the publish transactions (`responses.rs`,
+//! §4 #4, #4a); the streak reset builder
 //! ([`reset_current_streak_update`]) is used by the leave transaction
 //! (`groups.rs`). [`settle_streak`] is the one write in this module sent on
 //! its own, by `lambda-cycle-tick`'s best-effort streak settlement.
@@ -65,6 +67,37 @@ pub(crate) fn add_update(
         .expression_attribute_values(":group_id", AttributeValue::S(group_id.to_string()))
         .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
         .expression_attribute_values(":delta", AttributeValue::N(delta.to_string()))
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+/// Builds (does not send) the `editions_answered` bump that rides in the
+/// publish transactions (§4 #4, #4a): `ADD editions_answered 1` and stamp
+/// `last_answered_cycle = cycle_id`, conditioned on the marker not already
+/// being this cycle, so two first publishes in one cycle count once. A failed
+/// condition means the cycle is already counted.
+pub(crate) fn editions_answered_bump(
+    repo: &Repo,
+    group_id: &GroupId,
+    user_id: &UserId,
+    cycle_id: &CycleId,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(member_stats_pk(group_id)))
+        .key(attr::SK, AttributeValue::S(member_stats_sk(user_id)))
+        .update_expression(
+            "SET entity = :entity, group_id = :group_id, user_id = :user_id, \
+             last_answered_cycle = :cycle ADD editions_answered :one",
+        )
+        .condition_expression(
+            "attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle",
+        )
+        .expression_attribute_values(":entity", AttributeValue::S("MemberStats".into()))
+        .expression_attribute_values(":group_id", AttributeValue::S(group_id.to_string()))
+        .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
+        .expression_attribute_values(":cycle", AttributeValue::S(cycle_id.to_string()))
+        .expression_attribute_values(":one", AttributeValue::N("1".into()))
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
 }

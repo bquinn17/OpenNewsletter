@@ -379,7 +379,9 @@ pub async fn delete_comment(
 }
 
 /// Re-reads an answer's current `reaction_count`, strongly consistent, after a
-/// counted-reaction write lost a race to another one on the same answer.
+/// counted-reaction write lost a race to another one on the same answer. The
+/// count update is also conditioned on the answer row existing, so an answer
+/// deleted since the first read lands here too and is a 404.
 async fn reload_reaction_count(state: &AppState, answer: &Response) -> Result<u32, ApiError> {
     responses::get_reaction_count_consistent(
         &state.repo,
@@ -393,7 +395,7 @@ async fn reload_reaction_count(state: &AppState, answer: &Response) -> Result<u3
         tracing::error!(error = ?e, group_id = %answer.group_id, "answer reload failed during reaction retry");
         ApiError::internal("failed to save reaction")
     })?
-    .ok_or_else(|| ApiError::internal("answer disappeared during reaction retry"))
+    .ok_or_else(|| ApiError::not_found("answer not found"))
 }
 
 /// Permanently delete an image a comment just released (`docs/design/engagement.md`
@@ -479,7 +481,10 @@ pub async fn put_reaction(
                 ApiError::internal("failed to save reaction")
             })?;
     } else {
-        put_reaction_counted_with_retry(state, &reaction, &answer).await?;
+        counted_reaction_with_retry(state, &answer, "failed to save reaction", |count| {
+            engagement::put_reaction_counted(&state.repo, &reaction, &answer.response_id, count)
+        })
+        .await?;
     }
 
     build_reactions_response(
@@ -493,35 +498,35 @@ pub async fn put_reaction(
     .await
 }
 
-/// Drives [`engagement::put_reaction_counted`] through its retries
+/// Drives a counted-reaction write ([`engagement::put_reaction_counted`] or
+/// [`engagement::delete_reaction_counted`], called by `write` with the
+/// answer's last-known `reaction_count`) through its retries
 /// (`docs/design/data-model.md` §4 #8): a lost race against another counted
 /// write to the same answer re-reads its fresh `reaction_count` and retries;
-/// a duplicate PUT is an idempotent success; anything else is a 500.
-async fn put_reaction_counted_with_retry(
+/// a plain transaction conflict retries unchanged; a duplicate (a PUT of a
+/// reaction already there, or a DELETE of one that isn't) is an idempotent
+/// success; anything else is a 500 carrying `failure`.
+async fn counted_reaction_with_retry<F, Fut>(
     state: &AppState,
-    reaction: &Reaction,
     answer: &Response,
-) -> Result<(), ApiError> {
+    failure: &'static str,
+    write: F,
+) -> Result<(), ApiError>
+where
+    F: Fn(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<(), ReactionTxError>>,
+{
     let mut known_count = answer.reaction_count;
     for attempt in 1..=REACTION_WRITE_ATTEMPTS {
-        match engagement::put_reaction_counted(
-            &state.repo,
-            reaction,
-            &answer.response_id,
-            known_count,
-        )
-        .await
-        {
-            Ok(()) => return Ok(()),
-            // A concurrent duplicate PUT already added this reaction.
-            Err(ReactionTxError::Duplicate) => return Ok(()),
+        match write(known_count).await {
+            Ok(()) | Err(ReactionTxError::Duplicate) => return Ok(()),
             Err(ReactionTxError::CountRace) if attempt < REACTION_WRITE_ATTEMPTS => {
                 known_count = reload_reaction_count(state, answer).await?;
             }
             Err(ReactionTxError::Conflict) if attempt < REACTION_WRITE_ATTEMPTS => {}
             Err(e) => {
-                tracing::error!(error = ?e, group_id = %answer.group_id, "counted reaction put failed");
-                return Err(ApiError::internal("failed to save reaction"));
+                tracing::error!(error = ?e, group_id = %answer.group_id, "{failure}");
+                return Err(ApiError::internal(failure));
             }
         }
     }
@@ -570,7 +575,10 @@ pub async fn delete_reaction(
             emoji,
             created_at: Utc::now(),
         };
-        delete_reaction_counted_with_retry(state, &reaction, &answer).await?;
+        counted_reaction_with_retry(state, &answer, "failed to remove reaction", |count| {
+            engagement::delete_reaction_counted(&state.repo, &reaction, &answer.response_id, count)
+        })
+        .await?;
     }
 
     build_reactions_response(
@@ -582,38 +590,6 @@ pub async fn delete_reaction(
         caller,
     )
     .await
-}
-
-/// [`put_reaction_counted_with_retry`]'s counterpart for DELETE. A duplicate
-/// (nothing to remove) is an idempotent success, same as the uncounted path.
-async fn delete_reaction_counted_with_retry(
-    state: &AppState,
-    reaction: &Reaction,
-    answer: &Response,
-) -> Result<(), ApiError> {
-    let mut known_count = answer.reaction_count;
-    for attempt in 1..=REACTION_WRITE_ATTEMPTS {
-        match engagement::delete_reaction_counted(
-            &state.repo,
-            reaction,
-            &answer.response_id,
-            known_count,
-        )
-        .await
-        {
-            Ok(()) => return Ok(()),
-            Err(ReactionTxError::Duplicate) => return Ok(()),
-            Err(ReactionTxError::CountRace) if attempt < REACTION_WRITE_ATTEMPTS => {
-                known_count = reload_reaction_count(state, answer).await?;
-            }
-            Err(ReactionTxError::Conflict) if attempt < REACTION_WRITE_ATTEMPTS => {}
-            Err(e) => {
-                tracing::error!(error = ?e, group_id = %answer.group_id, "counted reaction delete failed");
-                return Err(ApiError::internal("failed to remove reaction"));
-            }
-        }
-    }
-    unreachable!("the loop above always returns within REACTION_WRITE_ATTEMPTS attempts")
 }
 
 // ---------- shared helpers ----------

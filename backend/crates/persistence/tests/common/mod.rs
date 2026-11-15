@@ -58,7 +58,6 @@ pub fn membership(user_id: &str, group_id: &str, role: Role) -> GroupMembership 
         group_id: GroupId::new(group_id),
         role,
         joined_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        editions_answered: 0,
     }
 }
 

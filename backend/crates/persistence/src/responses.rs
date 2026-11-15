@@ -3,9 +3,10 @@
 
 use crate::error::{self, RepoError};
 use crate::keys::{
-    attr, group_pk, index, key_timestamp, membership_sk, newsletter_sk, reacted_gsi2pk,
-    response_gsi1pk, response_gsi1sk, response_pk, response_sk, user_pk,
+    attr, group_pk, index, key_timestamp, newsletter_sk, reacted_gsi2pk, response_gsi1pk,
+    response_gsi1sk, response_pk, response_sk,
 };
+use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
@@ -16,6 +17,9 @@ use domain::{
     ResponseId, UserId,
 };
 use serde_dynamo::from_item;
+use shared::config::{
+    LEADERBOARD_TOP_ANSWERS_MAX, LEADERBOARD_TOP_ANSWERS_PAGE, LEADERBOARD_TOP_ANSWER_RANKS,
+};
 use std::collections::HashMap;
 
 /// AP14 — list all answers to a question (post-publish). Follows
@@ -119,33 +123,79 @@ pub async fn list_my_responses_in_cycle(
         .collect())
 }
 
-/// AP24 — the group's most-reacted published text answers, most reactions
-/// first (`docs/design/data-model.md` §2.9, §2.17; `docs/design/api.md`
-/// §4.4). One `Query` page, not [`query_all`]: the leaderboard only ever
-/// wants the top handful, so `limit` bounds the read instead of following
-/// `LastEvaluatedKey` to the group's whole history.
+/// AP24 — the group's most-reacted published text answers that `keep`
+/// accepts, most reactions first (`docs/design/data-model.md` §2.9, §2.17;
+/// `docs/design/api.md` §4.4): every answer whose count is one of the top
+/// [`LEADERBOARD_TOP_ANSWER_RANKS`] distinct counts above 0, so ties are
+/// never split. Capped at [`LEADERBOARD_TOP_ANSWERS_MAX`] rows by dropping
+/// whole tie groups from the bottom; only the first group is ever cut.
+///
+/// Follows `LastEvaluatedKey` a page at a time, but stops as soon as the
+/// answer is known: at the first row past the last rank, the first row at 0
+/// (GSI2 sorts by count), or the first row past the cap. So it reads the top
+/// of the group's history, not all of it.
 pub async fn list_top_reacted_answers(
     repo: &Repo,
     group_id: &GroupId,
-    limit: i32,
+    keep: impl Fn(&Response) -> bool,
 ) -> Result<Vec<Response>, RepoError> {
-    let resp = repo
-        .client
-        .query()
-        .table_name(&repo.table)
-        .index_name(index::GSI2)
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", attr::GSI2PK)
-        .expression_attribute_values(":pk", AttributeValue::S(reacted_gsi2pk(group_id)))
-        .scan_index_forward(false)
-        .limit(limit)
-        .send()
-        .await?;
-    resp.items
-        .unwrap_or_default()
-        .into_iter()
-        .map(|i| from_item::<_, Response>(i).map_err(RepoError::from))
-        .collect()
+    let mut groups: Vec<Vec<Response>> = Vec::new();
+    let mut total = 0;
+    let mut start_key = None;
+    'pages: loop {
+        let resp = repo
+            .client
+            .query()
+            .table_name(&repo.table)
+            .index_name(index::GSI2)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", attr::GSI2PK)
+            .expression_attribute_values(":pk", AttributeValue::S(reacted_gsi2pk(group_id)))
+            .scan_index_forward(false)
+            .limit(LEADERBOARD_TOP_ANSWERS_PAGE)
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await?;
+        for item in resp.items.unwrap_or_default() {
+            let answer: Response = from_item(item)?;
+            if answer.reaction_count == 0 {
+                break 'pages;
+            }
+            if !keep(&answer) {
+                continue;
+            }
+            let ties_last = groups
+                .last()
+                .is_some_and(|group| group[0].reaction_count == answer.reaction_count);
+            if ties_last {
+                groups.last_mut().expect("checked above").push(answer);
+            } else if groups.len() == LEADERBOARD_TOP_ANSWER_RANKS {
+                break 'pages;
+            } else {
+                groups.push(vec![answer]);
+            }
+            total += 1;
+            if total > LEADERBOARD_TOP_ANSWERS_MAX {
+                break 'pages;
+            }
+        }
+        start_key = resp.last_evaluated_key;
+        if start_key.is_none() {
+            break;
+        }
+    }
+
+    let mut out = Vec::new();
+    for (i, group) in groups.into_iter().enumerate() {
+        if i == 0 {
+            out.extend(group.into_iter().take(LEADERBOARD_TOP_ANSWERS_MAX));
+        } else if out.len() + group.len() <= LEADERBOARD_TOP_ANSWERS_MAX {
+            out.extend(group);
+        } else {
+            break;
+        }
+    }
+    Ok(out)
 }
 
 /// AP16 — get my response to a question.
@@ -242,8 +292,8 @@ pub struct ResponseSave<'a> {
 ///    (`RepoError::is_lost_race`) means this failed — the caller maps that to
 ///    409 `CYCLE_NOT_OPEN`.
 /// 3. IFF `bump_editions_answered`, an `Update` incrementing the caller's
-///    `GroupMembership.editionsAnswered` and stamping `lastAnsweredCycle`,
-///    conditioned on `lastAnsweredCycle` not already being this cycle. The
+///    `MemberStats.editions_answered` and stamping `last_answered_cycle`,
+///    conditioned on `last_answered_cycle` not already being this cycle. The
 ///    caller's AP15 pre-read ("first publish in this cycle") decides whether
 ///    to ask for the bump; the marker makes it idempotent when two first
 ///    publishes race past that pre-read (found M13).
@@ -396,20 +446,8 @@ async fn save_response_once(
     ];
 
     if bump_editions_answered {
-        let bump = Update::builder()
-            .table_name(&repo.table)
-            .key(attr::PK, AttributeValue::S(user_pk(save.user_id)))
-            .key(attr::SK, AttributeValue::S(membership_sk(save.group_id)))
-            .update_expression(
-                "SET editions_answered = editions_answered + :one, last_answered_cycle = :cycle",
-            )
-            .condition_expression(
-                "attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle",
-            )
-            .expression_attribute_values(":one", AttributeValue::N("1".into()))
-            .expression_attribute_values(":cycle", AttributeValue::S(save.cycle_id.to_string()))
-            .build()
-            .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        let bump =
+            member_stats::editions_answered_bump(repo, save.group_id, save.user_id, save.cycle_id)?;
         items.push(TransactWriteItem::builder().update(bump).build());
     }
 
@@ -447,8 +485,8 @@ impl From<RepoError> for SaveFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoPublishOutcome {
     /// The draft is now published. `counted` says whether this write also
-    /// bumped the author's `editionsAnswered` (false when the cycle was already
-    /// counted, or the author is no longer a member).
+    /// bumped the author's `editions_answered` (false when the cycle was
+    /// already counted).
     Published { counted: bool },
     /// The row was no longer a draft: an earlier pass (or the author) already
     /// published it.
@@ -464,10 +502,10 @@ pub enum AutoPublishOutcome {
 ///    `responseCloseAt`). Every other attribute a published row carries
 ///    (`response_id`, GSI1 keys, `entity`) was already written by the draft
 ///    save, exactly as [`save_response`] writes them.
-/// 2. The same `editionsAnswered` bump as [`save_response`], guarded by the
-///    `lastAnsweredCycle` marker, plus `attribute_exists(pk)` so a member who
-///    has since left the group fails the condition rather than having a stub
-///    membership row created for them.
+/// 2. The same `editions_answered` bump as [`save_response`], guarded by the
+///    `last_answered_cycle` marker. It lands on `MemberStats`, which survives a
+///    leave, so an author who has since left still gets the edition counted,
+///    like any other stat on their published answer.
 ///
 /// If only the bump's condition failed, the draft is published without the
 /// bump. If the draft's condition failed, it was already published:
@@ -499,7 +537,7 @@ const AUTO_PUBLISH_BUMP_ITEM_INDEX: usize = 1;
 enum AutoPublishFailure {
     /// The row's `status = draft` condition failed.
     NotADraft,
-    /// Only the bump's condition failed: already counted, or no membership.
+    /// Only the bump's condition failed: this cycle is already counted.
     BumpRefused,
     Conflict(RepoError),
     Other(RepoError),
@@ -545,22 +583,12 @@ async fn auto_publish_once(
         .transact_write_items()
         .transact_items(TransactWriteItem::builder().update(publish).build());
     if bump_editions_answered {
-        let bump = Update::builder()
-            .table_name(&repo.table)
-            .key(attr::PK, AttributeValue::S(user_pk(&draft.user_id)))
-            .key(attr::SK, AttributeValue::S(membership_sk(&draft.group_id)))
-            .update_expression(
-                "SET editions_answered = editions_answered + :one, last_answered_cycle = :cycle",
-            )
-            .condition_expression(
-                "attribute_exists(#pk) AND \
-                 (attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle)",
-            )
-            .expression_attribute_names("#pk", attr::PK)
-            .expression_attribute_values(":one", AttributeValue::N("1".into()))
-            .expression_attribute_values(":cycle", AttributeValue::S(draft.cycle_id.to_string()))
-            .build()
-            .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+        let bump = member_stats::editions_answered_bump(
+            repo,
+            &draft.group_id,
+            &draft.user_id,
+            &draft.cycle_id,
+        )?;
         req = req.transact_items(TransactWriteItem::builder().update(bump).build());
     }
 

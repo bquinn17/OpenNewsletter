@@ -275,7 +275,6 @@ def write_fixture(
             "group_id": group_id,
             "role": "admin",
             "joined_at": iso(now),
-            "editions_answered": 0,
         },
     ]
 

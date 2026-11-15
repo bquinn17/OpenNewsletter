@@ -8,10 +8,11 @@ use domain::api::{
     PatchMemberRequest, TopAnswerResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, CycleId, Group, GroupId, GroupMembership, QuestionId, Role, UserId,
+    ApiError, ApiErrorCode, CycleId, Group, GroupId, GroupMembership, MemberStats, QuestionId,
+    Role, UserId,
 };
 use persistence::{auth, groups, member_stats, questions, responses, users, RepoError};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub async fn get_group(
     state: &AppState,
@@ -29,9 +30,8 @@ pub async fn get_group(
 
 /// `GET /groups/{groupId}/leaderboard` (`docs/design/api.md` §4.4). Open to
 /// any member. `members` is one row per *current* member — a departed
-/// member's stats row, if any, is never returned — with `editionsAnswered`
-/// from `GroupMembership` and the rest from `MemberStats` (§2.17), zeroed
-/// when the member has no stats row yet.
+/// member's stats row, if any, is never returned — from `MemberStats`
+/// (§2.17), zeroed when the member has no stats row yet.
 pub async fn get_leaderboard(
     state: &AppState,
     caller: &UserId,
@@ -40,26 +40,11 @@ pub async fn get_leaderboard(
     auth::require_membership(&state.repo, caller, group_id, false).await?;
 
     let memberships = list_members(state, group_id).await?;
-    let stats_by_user: std::collections::HashMap<_, _> =
-        member_stats::list_stats_for_group(&state.repo, group_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, group_id = %group_id, "member stats listing failed");
-                ApiError::internal("failed to load member stats")
-            })?
-            .into_iter()
-            .map(|s| (s.user_id.clone(), s))
-            .collect();
+    let stats_by_user = load_stats(state, group_id).await?;
 
     let members = memberships
         .iter()
-        .map(|m| {
-            MemberStatsResponse::new(
-                m.user_id.clone(),
-                m.editions_answered,
-                stats_by_user.get(&m.user_id),
-            )
-        })
+        .map(|m| MemberStatsResponse::new(m.user_id.clone(), stats_by_user.get(&m.user_id)))
         .collect();
 
     let current_member_ids: HashSet<UserId> = memberships.into_iter().map(|m| m.user_id).collect();
@@ -71,35 +56,25 @@ pub async fn get_leaderboard(
     })
 }
 
-/// `LeaderboardResponse.topAnswers` (§4.4): the group's most-reacted
-/// published text answers, filtered to current members and a positive
-/// count, capped at [`shared::config::LEADERBOARD_TOP_ANSWERS`]. Reads
-/// `shared::config::LEADERBOARD_TOP_ANSWERS_SCAN` candidates off GSI2 before
-/// filtering, so a few departed-member or (after a correction) zero-count
-/// rows at the top don't starve the cap. An answer whose locked question row
-/// is missing (e.g. pruned by archival) is dropped rather than failing the
-/// whole request.
+/// `LeaderboardResponse.topAnswers` (§4.4): current members' published text
+/// answers with one of the top `shared::config::LEADERBOARD_TOP_ANSWER_RANKS`
+/// distinct reaction counts above 0, ties included, most reactions first (see
+/// [`responses::list_top_reacted_answers`] for the safety cap). An answer
+/// whose locked question row is missing (e.g. pruned by archival) is dropped
+/// rather than failing the whole request.
 async fn load_top_answers(
     state: &AppState,
     group_id: &GroupId,
     current_member_ids: &HashSet<UserId>,
 ) -> Result<Vec<TopAnswerResponse>, ApiError> {
-    let candidates = responses::list_top_reacted_answers(
-        &state.repo,
-        group_id,
-        shared::config::LEADERBOARD_TOP_ANSWERS_SCAN,
-    )
+    let filtered = responses::list_top_reacted_answers(&state.repo, group_id, |r| {
+        current_member_ids.contains(&r.user_id)
+    })
     .await
     .map_err(|e| {
         tracing::error!(error = ?e, group_id = %group_id, "top-reacted answer listing failed");
         ApiError::internal("failed to load top answers")
     })?;
-
-    let filtered: Vec<_> = candidates
-        .into_iter()
-        .filter(|r| r.reaction_count > 0 && current_member_ids.contains(&r.user_id))
-        .take(shared::config::LEADERBOARD_TOP_ANSWERS)
-        .collect();
     if filtered.is_empty() {
         return Ok(Vec::new());
     }
@@ -254,14 +229,15 @@ pub async fn patch_member(
         .media_urls
         .optional_avatar_url(user.avatar_media_id.as_ref())
         .await?;
+    let stats_by_user = load_stats(state, group_id).await?;
     Ok(MemberResponse {
+        editions_answered: editions_answered(stats_by_user.get(target)),
         user_id: user.user_id,
         display_name: user.display_name,
         role: request.role,
         avatar_color: user.avatar_color,
         avatar_url,
         joined_at: membership.joined_at,
-        editions_answered: membership.editions_answered,
     })
 }
 
@@ -285,6 +261,28 @@ async fn list_members(
             tracing::error!(error = ?e, group_id = %group_id, "member listing failed");
             ApiError::internal("failed to list members")
         })
+}
+
+/// Every `MemberStats` row in the group (AP23), by user. A member with no row
+/// yet is simply absent and reads as all zeros.
+async fn load_stats(
+    state: &AppState,
+    group_id: &GroupId,
+) -> Result<HashMap<UserId, MemberStats>, ApiError> {
+    Ok(member_stats::list_stats_for_group(&state.repo, group_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "member stats listing failed");
+            ApiError::internal("failed to load member stats")
+        })?
+        .into_iter()
+        .map(|s| (s.user_id.clone(), s))
+        .collect())
+}
+
+/// `MemberResponse.editionsAnswered`, from the member's stats row (§2.17).
+fn editions_answered(stats: Option<&MemberStats>) -> u32 {
+    stats.map_or(0, |s| s.editions_answered.max(0) as u32)
 }
 
 /// Pick the admin whose role the removal/demotion of admin `target` is
@@ -340,6 +338,7 @@ async fn hydrate_members(
     group_id: &GroupId,
 ) -> Result<Vec<MemberResponse>, ApiError> {
     let memberships = list_members(state, group_id).await?;
+    let stats_by_user = load_stats(state, group_id).await?;
     let user_ids: Vec<UserId> = memberships.iter().map(|m| m.user_id.clone()).collect();
 
     let profiles = users::get_users_batch(&state.repo, &user_ids)
@@ -359,13 +358,13 @@ async fn hydrate_members(
             .optional_avatar_url(user.avatar_media_id.as_ref())
             .await?;
         out.push(MemberResponse {
+            editions_answered: editions_answered(stats_by_user.get(&membership.user_id)),
             user_id: membership.user_id,
             display_name: user.display_name.clone(),
             role: membership.role,
             avatar_color: user.avatar_color.clone(),
             avatar_url,
             joined_at: membership.joined_at,
-            editions_answered: membership.editions_answered,
         });
     }
     Ok(out)

@@ -18,7 +18,7 @@ export interface MemberBoardEntry {
   currentStreak: number;
 }
 
-/** One of the (up to 3) most-reacted answers, joined with its author's display info. */
+/** One of the most-reacted answers (top 3 ranks, ties included), joined with its author's display info. */
 export interface TopAnswerEntry {
   rank: number;
   userId: string;

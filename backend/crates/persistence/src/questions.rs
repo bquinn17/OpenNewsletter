@@ -167,7 +167,9 @@ pub async fn get_locked_question(
 /// pairs, all within one group — used to hydrate `questionPrompt` for the
 /// leaderboard's top answers (`docs/design/api.md` §4.4), which can span many
 /// cycles. Missing questions (e.g. one an archival prune has since removed)
-/// are absent from the result rather than an error.
+/// are absent from the result rather than an error. `refs` may repeat a pair
+/// (several top answers to one question); each is fetched once, since
+/// `BatchGetItem` rejects a request that names the same key twice.
 pub async fn get_locked_questions_batch(
     repo: &Repo,
     group_id: &GroupId,
@@ -176,8 +178,9 @@ pub async fn get_locked_questions_batch(
     if refs.is_empty() {
         return Ok(HashMap::new());
     }
-    let keys = refs
-        .iter()
+    let unique: std::collections::HashSet<&(CycleId, QuestionId)> = refs.iter().collect();
+    let keys = unique
+        .into_iter()
         .map(|(cycle_id, question_id)| {
             HashMap::from([
                 (
@@ -552,27 +555,7 @@ fn classify_vote_tx_error<R: std::fmt::Debug, const N: usize>(
     err: SdkError<TransactWriteItemsError, R>,
     labels: [VoteTxError; N],
 ) -> VoteTxError {
-    let Some(TransactWriteItemsError::TransactionCanceledException(cancel)) =
-        err.as_service_error()
-    else {
-        return VoteTxError::Repo(error::from_transact_write_error(err));
-    };
-    let reasons = cancel.cancellation_reasons();
-    if let Some(i) = reasons
-        .iter()
-        .position(|r| r.code() == Some("ConditionalCheckFailed"))
-    {
-        if let Some(label) = labels.into_iter().nth(i) {
-            return label;
-        }
-    }
-    if reasons
-        .iter()
-        .any(|r| r.code() == Some("TransactionConflict"))
-    {
-        return VoteTxError::CountRace;
-    }
-    VoteTxError::Repo(RepoError::TransactionCancelled(format!("{cancel:?}")))
+    error::classify_transact_write_error(err, labels, VoteTxError::CountRace, VoteTxError::Repo)
 }
 
 // `questionsPerCycle` is capped at `MAX_QUESTIONS_PER_CYCLE` (20), so a
@@ -595,6 +578,9 @@ const _: () = assert!(
 /// Returns `Err(RepoError::TransactionCancelled)` when the flip lost a race
 /// against another tick — the caller should log that at INFO and move on
 /// rather than treating it as a failure (`docs/design/lifecycle.md` §8).
+/// A plain `TransactionConflict` is retried, up to [`PROMOTION_ATTEMPTS`] in
+/// all, and then returned as `Err(RepoError::TransactionConflict)`: the
+/// newsletter is still `voting`, so the next tick promotes it.
 pub async fn promote_candidates_tx(
     repo: &Repo,
     locked: &[LockedQuestion],
@@ -684,12 +670,52 @@ pub async fn promote_candidates_tx(
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
-    items.push(TransactWriteItem::builder().update(flip).build());
+    // First, so its condition — the only one in the transaction — is item 0.
+    items.insert(0, TransactWriteItem::builder().update(flip).build());
 
-    let mut req = repo.client.transact_write_items();
-    for i in items {
-        req = req.transact_items(i);
+    for attempt in 1..=PROMOTION_ATTEMPTS {
+        let sent = repo
+            .client
+            .transact_write_items()
+            .set_transact_items(Some(items.clone()))
+            .send()
+            .await;
+        let Err(err) = sent else {
+            return Ok(());
+        };
+        let outcome = error::classify_transact_write_error(
+            err,
+            [PromotionTx::LostRace],
+            PromotionTx::Conflict,
+            PromotionTx::Repo,
+        );
+        match outcome {
+            PromotionTx::Conflict if attempt < PROMOTION_ATTEMPTS => {}
+            PromotionTx::Conflict => {
+                return Err(RepoError::TransactionConflict(format!(
+                    "promotion, after {PROMOTION_ATTEMPTS} attempts"
+                )))
+            }
+            PromotionTx::LostRace => {
+                return Err(RepoError::TransactionCancelled(
+                    "newsletter is no longer in voting".into(),
+                ))
+            }
+            PromotionTx::Repo(e) => return Err(e),
+        }
     }
-    req.send().await.map_err(error::from_transact_write_error)?;
-    Ok(())
+    unreachable!("the loop above always returns within PROMOTION_ATTEMPTS attempts")
+}
+
+/// Total tries [`promote_candidates_tx`] makes when its transaction keeps
+/// conflicting with concurrent writes, such as a suggester's reaction landing
+/// on their `MemberStats` row. After that the next tick tries again.
+const PROMOTION_ATTEMPTS: u32 = 3;
+
+/// [`promote_candidates_tx`]'s reading of its transaction's cancellation reasons.
+enum PromotionTx {
+    /// The flip's `status = voting` condition failed: another tick promoted.
+    LostRace,
+    Conflict,
+    Repo(RepoError),
 }

@@ -116,7 +116,6 @@ pub async fn seed_group_and_membership(
         group_id: group.group_id.clone(),
         role,
         joined_at: group.created_at,
-        editions_answered: 0,
     };
     let mut item: HashMap<String, AttributeValue> =
         serde_dynamo::to_item(&m).expect("membership serializes");

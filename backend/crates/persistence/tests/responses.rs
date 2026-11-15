@@ -4,9 +4,19 @@ use chrono::{TimeZone, Utc};
 use domain::{
     CycleId, GroupId, ImageId, PollOptionId, QuestionId, QuestionKind, ResponseStatus, UserId,
 };
+use persistence::newsletters;
 use persistence::responses::{self, ResponseSave};
-use persistence::{groups, newsletters};
 use pretty_assertions::assert_eq;
+
+/// The member's `MemberStats.editions_answered`; 0 when they have no stats row.
+async fn editions_answered(repo: &persistence::Repo, group_id: &GroupId, user_id: &UserId) -> i64 {
+    persistence::member_stats::list_stats_for_group(repo, group_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| &s.user_id == user_id)
+        .map_or(0, |s| s.editions_answered)
+}
 
 fn open_newsletter(group_id: &str, cycle_id: &str) -> domain::Newsletter {
     let mut nl = common::voting_newsletter(group_id, cycle_id);
@@ -232,11 +242,7 @@ async fn save_response_with_publish_sets_published_at_and_bumps_editions_answere
     assert_eq!(published.status, ResponseStatus::Published);
     assert_eq!(published.published_at, Some(now));
 
-    let updated_membership = groups::get_membership(&repo, &user_id, &group_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated_membership.editions_answered, 1);
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
 }
 
 #[tokio::test]
@@ -404,11 +410,7 @@ async fn a_second_publish_in_the_same_cycle_does_not_bump_editions_answered_agai
     .await
     .unwrap();
 
-    let updated_membership = groups::get_membership(&repo, &user_id, &group_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated_membership.editions_answered, 1);
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
 }
 
 /// Two concurrent first-time publishes to different questions both pass the
@@ -440,11 +442,7 @@ async fn concurrent_first_publishes_to_different_questions_count_the_cycle_once(
     r1.unwrap();
     r2.unwrap();
 
-    let updated_membership = groups::get_membership(&repo, &user_id, &group_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated_membership.editions_answered, 1);
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
     for q in [&q1, &q2] {
         let saved = responses::get_my_response(&repo, &group_id, &cycle_id, q, &user_id)
             .await
@@ -480,11 +478,7 @@ async fn a_repeated_bump_request_in_the_same_cycle_still_saves_and_counts_once()
         .await
         .unwrap();
 
-    let membership = groups::get_membership(&repo, &user_id, &group_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(membership.editions_answered, 1);
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
     let saved = responses::get_my_response(&repo, &group_id, &cycle_id, &q2, &user_id)
         .await
         .unwrap()
@@ -620,4 +614,44 @@ async fn list_answers_reads_past_the_one_megabyte_query_page() {
     .await
     .unwrap();
     assert_eq!(answers.len(), 60);
+}
+
+/// `editions_answered` lives on `MemberStats` (`docs/design/data-model.md`
+/// §2.17), so leaving and rejoining keeps it, like every other stat.
+#[tokio::test]
+async fn editions_answered_survives_a_leave_and_rejoin() {
+    let (_c, repo) = common::make_repo().await;
+    let mut g = common::group("g-ed-rejoin", "u0");
+    g.member_count = 2;
+    persistence::groups::put_group(&repo, &g).await.unwrap();
+    newsletters::write_status_transition(&repo, &open_newsletter("g-ed-rejoin", "202606"))
+        .await
+        .unwrap();
+    let m = common::membership("u1", "g-ed-rejoin", domain::Role::Member);
+    common::put_membership(&repo, &m).await;
+
+    let group_id = GroupId::new("g-ed-rejoin");
+    let cycle_id = CycleId::new("202606");
+    let question_id = QuestionId::new("q1");
+    let user_id = UserId::new("u1");
+    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let save = text_save(
+        &group_id,
+        &cycle_id,
+        &question_id,
+        &user_id,
+        "answer",
+        &[],
+        true,
+    );
+    responses::save_response(&repo, &save, now, true)
+        .await
+        .unwrap();
+
+    persistence::groups::leave_group_tx(&repo, &user_id, &group_id, None)
+        .await
+        .unwrap();
+    common::put_membership(&repo, &m).await;
+
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
 }

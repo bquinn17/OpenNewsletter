@@ -13,8 +13,14 @@ chronological (`cycle_id`) order:
     Response row, excluding self-reactions (reactor == author).
   - `reactions_received` / `reactions_given` per user, same self-exclusion.
   - `comments_written` per user, excluding soft-deleted comments.
+  - `editions_answered` per user (editions with at least one published
+    answer of theirs, text or poll) and the `last_answered_cycle` marker.
   - `questions_asked` per user, excluding anonymous candidates (and any
     locked question with no `submitted_by`).
+
+An open cycle counts toward `editions_answered` and `questions_asked` too,
+since the live code counts both before publication (at an answer's first
+publish, and at promotion).
   - `current_streak` / `longest_streak` / `streak_cycle`, walking published
     cycles in order and skipping cycles with no locked questions (an empty
     edition neither extends nor breaks a streak).
@@ -179,6 +185,8 @@ class StreakResult:
 @dataclass(frozen=True)
 class MemberStatsResult:
     user_id: str
+    editions_answered: int
+    last_answered_cycle: str | None
     reactions_received: int
     reactions_given: int
     comments_written: int
@@ -265,6 +273,24 @@ def accumulate_question_counters(cycles: Iterable[CycleFacts]) -> dict[str, int]
     return asked
 
 
+def accumulate_editions_answered(
+    cycles: Iterable[CycleFacts],
+) -> tuple[dict[str, int], dict[str, str]]:
+    """`editions_answered` per user (cycles in which they published at least
+    one answer, text or poll) and `last_answered_cycle`, the latest such cycle.
+    `cycles` must be chronological, as the live bump's marker is the most
+    recent cycle it counted."""
+    answered: dict[str, int] = {}
+    last: dict[str, str] = {}
+    for cycle in cycles:
+        for user in {
+            r.author_user_id for r in cycle.responses if r.status == "published"
+        }:
+            answered[user] = answered.get(user, 0) + 1
+            last[user] = cycle.cycle_id
+    return answered, last
+
+
 def compute_streaks(
     cycles: list[CycleFacts],
     universe_user_ids: Iterable[str],
@@ -309,12 +335,19 @@ def compute_member_stats(
     cycles: list[CycleFacts],
     universe_user_ids: Iterable[str],
     current_member_ids: Iterable[str],
+    open_cycles: Iterable[CycleFacts] = (),
 ) -> list[MemberStatsResult]:
     """The full per-user MemberStats recompute for one group: every counter
-    plus the streak fields, absolute (not deltas)."""
+    plus the streak fields, absolute (not deltas). `cycles` are the published
+    ones, chronological. `open_cycles` (open but not yet published) count only
+    where the live code already counted them: `questions_asked`, bumped at
+    promotion, and `editions_answered`, bumped at an answer's first publish.
+    An open cycle has no reactions or comments yet and settles no streak."""
     received, given = accumulate_reaction_counters(cycles)
     comments_written = accumulate_comment_counters(cycles)
-    questions_asked = accumulate_question_counters(cycles)
+    counted = [*cycles, *open_cycles]
+    questions_asked = accumulate_question_counters(counted)
+    editions_answered, last_answered_cycle = accumulate_editions_answered(counted)
     streaks = compute_streaks(cycles, universe_user_ids, current_member_ids)
 
     results = []
@@ -323,6 +356,8 @@ def compute_member_stats(
         results.append(
             MemberStatsResult(
                 user_id=user,
+                editions_answered=editions_answered.get(user, 0),
+                last_answered_cycle=last_answered_cycle.get(user),
                 reactions_received=received.get(user, 0),
                 reactions_given=given.get(user, 0),
                 comments_written=comments_written.get(user, 0),
@@ -431,8 +466,8 @@ def list_existing_stats_user_ids(table: Any, group_id: str) -> set[str]:
     return {str(item["user_id"]) for item in items}
 
 
-def list_published_cycle_ids(table: Any, group_id: str) -> list[str]:
-    """Published cycles for this group, chronological: monthly `yyyymm` and
+def list_cycle_ids(table: Any, group_id: str, status: str) -> list[str]:
+    """This group's cycles in `status`, chronological: monthly `yyyymm` and
     weekly `yyyymmdd` ids sort correctly together, so ascending sk order is
     already chronological (`docs/design/lifecycle.md` §13)."""
     items = paginate_query(
@@ -443,7 +478,7 @@ def list_published_cycle_ids(table: Any, group_id: str) -> list[str]:
         ExpressionAttributeValues={
             ":pk": group_pk(group_id),
             ":prefix": "NL#",
-            ":status": "published",
+            ":status": status,
         },
         ProjectionExpression="cycle_id",
         ScanIndexForward=True,
@@ -517,9 +552,13 @@ def fetch_engagement(
     return reactions, comments
 
 
-def fetch_group_cycles(table: Any, group_id: str) -> list[CycleFacts]:
+def fetch_group_cycles(
+    table: Any, group_id: str, cycle_status: str
+) -> list[CycleFacts]:
+    """The group's cycles in `status`, chronological. Reactions and comments
+    exist only on published cycles, so only those read engagement rows."""
     cycles: list[CycleFacts] = []
-    for cycle_id in list_published_cycle_ids(table, group_id):
+    for cycle_id in list_cycle_ids(table, group_id, cycle_status):
         locked_questions = fetch_locked_questions(table, group_id, cycle_id)
         responses: list[ResponseFact] = []
         for q in locked_questions:
@@ -528,7 +567,11 @@ def fetch_group_cycles(table: Any, group_id: str) -> list[CycleFacts]:
                 kind = str(raw.get("kind", ""))
                 reactions: list[ReactionFact] = []
                 comments: list[CommentFact] = []
-                if status == "published" and kind == "text":
+                if (
+                    status == "published"
+                    and kind == "text"
+                    and cycle_status == "published"
+                ):
                     reactions, comments = fetch_engagement(
                         table, group_id, cycle_id, q.question_id, str(raw["user_id"])
                     )
@@ -563,6 +606,7 @@ def write_member_stats(
         "entity": STATS_ENTITY,
         "group_id": group_id,
         "user_id": result.user_id,
+        "editions_answered": result.editions_answered,
         "reactions_received": result.reactions_received,
         "reactions_given": result.reactions_given,
         "comments_written": result.comments_written,
@@ -572,6 +616,10 @@ def write_member_stats(
     }
     if result.streak_cycle is not None:
         item["streak_cycle"] = result.streak_cycle
+    # The live bump's "already counted this cycle" marker (§4 #4): without it,
+    # a later publish in the cycle it names would count that cycle twice.
+    if result.last_answered_cycle is not None:
+        item["last_answered_cycle"] = result.last_answered_cycle
     if dry_run:
         print(f"  [dry-run] MemberStats {item['sk']}: {item}")
         return
@@ -609,7 +657,8 @@ def backfill_group(table: Any, group_id: str, *, dry_run: bool) -> None:
     existing_stats_users = list_existing_stats_user_ids(table, group_id)
     universe = current_members | existing_stats_users
 
-    cycles = fetch_group_cycles(table, group_id)
+    cycles = fetch_group_cycles(table, group_id, "published")
+    open_cycles = fetch_group_cycles(table, group_id, "open")
     print(f"  {len(cycles)} published cycle(s), {len(universe)} user(s) in scope")
 
     response_updates = compute_response_updates(cycles)
@@ -617,7 +666,7 @@ def backfill_group(table: Any, group_id: str, *, dry_run: bool) -> None:
         write_response_update(table, group_id, update, dry_run=dry_run)
     print(f"  {len(response_updates)} Response row(s) updated")
 
-    results = compute_member_stats(cycles, universe, current_members)
+    results = compute_member_stats(cycles, universe, current_members, open_cycles)
     for result in results:
         write_member_stats(table, group_id, result, dry_run=dry_run)
     print(f"  {len(results)} MemberStats row(s) written")
