@@ -666,3 +666,125 @@ This is most of the job. Today's palette is fixed hex values in `tailwind.config
 **Open questions.**
 - How should the hero gradients (`from-lavender … to-blush`) and the edition-phase colors look in the dark? This needs a design pass with real screenshots, not just token values.
 - Should the accent colors move to slightly lighter variants in dark mode across the board, or only where a contrast check fails?
+
+## 14. Group-chosen frequency, deadline extensions, skips and pauses
+
+Each group's admins choose how often the group's newsletter comes out, from weekly to once a year. A once-a-year newsletter works like a Christmas card: one edition each December that catches everyone up on the year. Admins also get three controls over the schedule:
+- **Extend the deadline** of the open edition by 24 hours at a time.
+- **Skip** the next edition.
+- **Pause** future editions until they resume them.
+
+### 14.1 Where things stand
+
+- **The cadence is set per deployment.** Two Lambda environment variables set it, `CYCLE_FREQUENCY` (`monthly` or `weekly`) and `CYCLE_WEEKLY_START` (default `sun 21:00`, in each group's timezone) ([`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence), [decision](decisions.md#cycle-cadence)). Only `lambda-cycle-tick` reads it to schedule cycles, and `lambda-groups` reads it to cap the response window and serve `GET /config`'s `cycleCadence`.
+- **Where the values come from.** `infra/opennewsletter/config.py` defaults them by environment: weekly for dev and monthly for prod. A same-named key in `.env.local`, or in the environment at `cdk synth`, overrides the default. `deploy.yml` and `release.yml` pass neither variable, so a CI deploy always gets the defaults. Changing a CI-deployed environment means changing `config.py` or adding the variables to the workflow.
+- **A live deployment can switch cadence without a migration** ([`lifecycle.md` §13.2](design/lifecycle.md#132-cycle-ids-across-a-cadence-change)):
+  - Monthly `yyyymm` and weekly `yyyymmdd` cycle IDs sort correctly together.
+  - The switch takes effect at the next successor, so the cycle that's already scheduled keeps its dates.
+  - A stored window above the new cap is capped when the next cycle is scheduled.
+- **Group admins can't change the cadence.** They can change `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` (up to 28 days monthly, 7 weekly) and `timezone`. Under [D10](decisions.md#d10), those changes apply from the next cycle created, and nothing moves a cycle that's already scheduled.
+- **Admins have no manual controls over a cycle at all** ([`lifecycle.md` §7](design/lifecycle.md#7-manual-admin-overrides)): no early publish, no skip and no cancel. The only exception is the dev-only deadline rewind ([`api.md` §11a.1](design/api.md#11a1-post-admindevtickcycle)).
+
+### 14.2 Frequencies
+
+| Frequency | Opens | Cycle ID | Max `responseWindowDays` |
+|---|---|---|---|
+| Weekly (the minimum) | a weekday and time the admin picks | `yyyymmdd` | 7 |
+| Every 2 weeks | the same | `yyyymmdd` | 14 |
+| Monthly | 00:00 on the 1st | `yyyymm` | 28 |
+| Every 3 months | 00:00 on the 1st of an anchor month | `yyyymm` | 28 |
+| Every 6 months | the same | `yyyymm` | 28 |
+| Yearly (the maximum) | 00:00 on the 1st of the anchor month, e.g. December | `yyyymm` | 28 |
+
+- **Group settings.** `cycleSettings` gains:
+  - `frequency`
+  - `weeklyStart` (a weekday and time), used for weekly and every-2-weeks groups
+  - `anchorMonth` (1–12), used for every-3-months, every-6-months and yearly groups. For example, an `anchorMonth` of 12 on a yearly group gives one edition each December, and an `anchorMonth` of 3 on an every-3-months group opens in March, June, September and December.
+- **Deployment default.** `CYCLE_FREQUENCY` and `CYCLE_WEEKLY_START` stay, as the default for new groups and for any group that hasn't stored a frequency. Dev stays weekly without any group setting changes, and existing rows need no backfill.
+- **Successors.** A successor is always one period after the current cycle's ID. That's the same anchoring rule as today ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)), with the period taken from the group instead of the deployment. The `responseCloseAt` floor from §13.1 applies to every frequency: a cycle never opens before the one before it closes.
+- **Cycle IDs stay sortable dates.** Week-based frequencies use the open date (`yyyymmdd`) and month-based ones the open month (`yyyymm`). Mixed formats already sort chronologically. Two cycles can't share an ID, because the shortest period, a week, is longer than a day and every month-based period is at least a month. `CycleCadence::from_env` becomes `CycleCadence::for_group(group, deployment_default)`, and everything that schedules a cycle takes the group's cadence.
+- **Labels and wording come from the cycle, not the deployment.**
+  - Each new Newsletter row stores its own `frequency`, and `NewsletterResponse` returns it. A group that changes frequency then still labels its past editions correctly.
+  - Week-based editions are labelled by publication date ("Nov 15, 2026") and monthly ones by month ("October 2026"). The longer frequencies are labelled by the month and year they open ("December 2026").
+  - Copy that today says "this month's" or "this week's" says "this edition's" for every frequency except weekly and monthly.
+  - Push wording ([`notifications.md` §5.1](design/notifications.md#51-per-kind-copy)) reads the cycle's stored `frequency`, falling back to its ID's format for older rows.
+  - `GET /config`'s `cycleCadence` stays, as the deployment default, so older frontends keep working.
+
+### 14.3 The schedule controls
+
+All three need an admin, work through new routes in `lambda-groups` or `lambda-newsletters`, and send the group a push, under the existing cycle-open preference.
+
+**Extend the deadline (+24 hours).** On an `open` edition whose `responseCloseAt` is still in the future, **Extend by a day** moves `responseCloseAt` one calendar day later in the group's timezone. That keeps its wall-clock time across a DST change ([`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group)). The admin can press it again for another day.
+- **It's one conditioned update.** The update sets `responseCloseAt`, `nextTransitionAt` and `gsi2sk`, and increments `deadline_extended_days`, conditioned on `status = open` and `response_close_at = :seen`. Two admins pressing it at once therefore extend by one day, not two, and a close that has already passed can't be revived. Answer saves and the auto-publish sweep already read `responseCloseAt` inside their own transactions ([`lifecycle.md` §8](design/lifecycle.md#8-race-conditions-and-idempotency)), so they follow the new deadline without changes.
+- **The cap.** Extensions are capped in total at `MAX_DEADLINE_EXTENSION_DAYS` (new in `config.rs`) or half the period, whichever is smaller: 3 days for a weekly group, perhaps 7 for the others.
+- **It can push the next edition back.** If the new close lands after the next edition's scheduled open, which it always does for a weekly group with a 7-day window, that edition's `responseOpenAt`/`voteWindowCloseAt` move to the new close in the same transaction, conditioned on it still being `voting`. Its `responseCloseAt` stays put, so it loses that much of its window, and the cycle after it is back on the normal schedule. Shifting the whole next edition instead would cascade: its later close would collide with the edition after it, and the `responseCloseAt` floor would then skip a whole week. The button warns about this ("This also opens the next edition a day later, so it has one day less").
+- **Reminders fire again.** Deadline reminders are claimed once per offset (`NOTIFIED#CLOSE#{offset_hours}`, [`data-model.md` §2.15](design/data-model.md#215-counters-and-idempotency-markers)). So the extension deletes the markers whose reminder time is now in the future again, in the same transaction. The extension's push says when answers are now due.
+- **The edition records it.** The open and published edition shows "Deadline extended by n days."
+
+**Skip the next edition.** While the next edition is still `voting`, **Skip** moves it one period later. A skipped December becomes January, and the candidates and votes carry over. The open edition can't be skipped, because members may already have answered it; the admin can extend it instead. Skipping again moves the edition another period later.
+
+**Pause and resume.**
+- **Pausing** sets `Group.paused_at`/`paused_by` and takes the next edition off the schedule. Any `open` edition still publishes on its date, because answers may already be in. Members can keep suggesting and voting, so the pool is ready when the group resumes, and the Upcoming page says "Paused by an admin, no edition is scheduled."
+- **Resuming** schedules the next edition for the first slot strictly after now under the group's frequency, the same rule as a group's first cycle ([`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group)).
+- **A paused `voting` row stays in GSI2,** under a far-future sentinel `gsi2sk`, the same way terminal states are kept there. Removing it would make the successor repair ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)) treat the group as missing its next cycle and create a second one.
+- **A successor created while the group is paused** is written unscheduled the same way. `create_next_voting_cycle` checks `paused_at` with a ConditionCheck on the group in its transaction, so a pause racing a promotion can't leave an edition scheduled.
+
+### 14.4 Moving the next edition: the main design problem
+
+Skip, resume and a frequency change all move the scheduled `voting` cycle to a new period. That's harder than it sounds, because today a cycle's ID *is* its period:
+- The successor is anchored on the ID ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)).
+- The current-cycle lookup and newest-first lists rely on IDs sorting in date order.
+
+If the cycle kept its ID and only changed its dates, the next successor would be computed from the stale ID. Moving it *earlier* would break the sort order: a yearly group's `202712` changed to weekly opens on Nov 22, 2026, and its successor `20261129` would sort before it.
+
+**Recommendation: re-key the Newsletter row, and leave the candidate pool where it is.**
+- **The move is one transaction:** Put a Newsletter row under the new period's ID, and Delete the old row, conditioned on `status = voting`.
+- **The new row points at the existing pool.** Candidates, votes and vote tallies live in the cycle's partition (`GROUP#{g}#CYCLE#{c}`, [`data-model.md` §2.6](design/data-model.md#26-candidate-question-in-voting-pool)), so the new row carries `candidate_pool_cycle_id`, the old ID. Everything that reads or writes candidates for a cycle uses `candidate_pool_cycle_id`, defaulting to `cycle_id` when it's absent. That leaves nothing to copy: no candidate, vote or tally rows move, and there's no window where some have moved and some haven't.
+- **Clients notice nothing.** The candidate routes (`/groups/{groupId}/candidate-questions`) resolve the current `voting` cycle on the server and take no cycle ID. A vote in flight against the old row fails with `CYCLE_NOT_VOTING`, and the client refetches.
+- **Promotion reads the pool by `candidate_pool_cycle_id` too** ([`lifecycle.md` §5.2](design/lifecycle.md#52-promote_and_opennl)). The locked questions go under the new cycle's ID as usual.
+
+That keeps every existing invariant: IDs remain period dates, IDs sort chronologically, and the successor stays anchored on the ID.
+
+### 14.5 Changing the frequency
+
+A frequency change can't wait for D10's "next new cycle". A yearly group switching to monthly would otherwise wait up to a year, because the cycle already scheduled stays as stored. So saving a new frequency re-keys the scheduled `voting` cycle (§14.4) into the first slot under the new frequency, at or after the `open` edition's close. Any open edition is untouched. The settings form shows the new date before the admin saves ("The next edition will open Sun Nov 22, 9pm").
+
+This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is about *passive* setting saves moving dates members were told. Frequency, skip and pause are explicit actions with a confirmation, and each one sends a push. Record it in [`decisions.md`](decisions.md) by amending D10. A window that's too long for the new frequency is capped by the existing rule ([`lifecycle.md` §13.3](design/lifecycle.md#133-window-limits-and-overlap)).
+
+### 14.6 API, frontend and rollout
+
+- **API.** All of these are additive:
+  - `PATCH /groups/{g}` takes the new `cycleSettings` fields.
+  - New routes: `POST …/newsletters/{cycleId}/extend-deadline`, `POST …/newsletters/{cycleId}/skip`, `POST /groups/{g}/pause` and `POST /groups/{g}/resume`, each admin-only.
+  - `GroupResponse` gains `pausedAt`, and `NewsletterResponse` gains `frequency` and `deadlineExtendedDays`.
+  - `PatchGroupRequest` has `additionalProperties: false`, so **the backend ships first**: the current backend rejects the new fields.
+- **Frontend.**
+  - The admin page's cycle card gains a frequency picker that shows only the fields that frequency needs, plus a live "Next edition opens …" preview.
+  - Next to the settings: **Extend by a day** on the open edition, **Skip next edition** and **Pause**/**Resume**, each behind a `ConfirmDialog` that states the new dates.
+  - Edition labels and copy follow the cycle's own `frequency` (§14.2).
+- **Tests.**
+  - Successor scheduling for each frequency, including the 1st of an anchor month across DST.
+  - Two admins extending at once.
+  - An extension that pushes the next edition back.
+  - Skip, and pause then resume, around a promotion race.
+  - A frequency change that moves the next edition earlier.
+  - Votes and promotion through `candidate_pool_cycle_id`.
+  - Reminders firing again after an extension.
+
+**Knock-on effects.**
+- Year in review (§11) assumes at most 12 editions a year and selects a year's editions by `cycle_id` prefix. Weekly groups have 52 editions and yearly groups have 1. Select by `publishedAt` instead, and let `RECAP_MIN_EDITIONS` depend on the frequency.
+- The leaderboard's streaks (§5) count editions, so they read as weeks for a weekly group and years for a yearly one. That's fine as is.
+
+**Docs to update when it's built:**
+- [`lifecycle.md`](design/lifecycle.md): §1–§2 for the paused state; §5.4 and §13, with §13 rewritten for per-group cadence; and §7 for the new admin controls.
+- [`data-model.md`](design/data-model.md): §2.3 Group and §2.5 Newsletter for the new fields and `candidate_pool_cycle_id`.
+- [`api.md`](design/api.md): the new routes and fields.
+- [`frontend.md`](design/frontend.md): the admin page and edition labels.
+- [`notifications.md`](design/notifications.md): the new pushes and how reminders fire again after an extension.
+- D10 and the cycle-cadence decision in [`decisions.md`](decisions.md).
+
+**Open questions.**
+- Should a yearly group pick the day as well as the month, so it can open on, say, Dec 1 and close before Christmas?
+- Should yearly and every-6-months groups get a heads-up push a week before the edition opens, since members will have forgotten it exists?
+- Should pausing also freeze suggestions and voting, or should the pool keep growing while the group is paused, as proposed?
+- Should members other than admins be able to request an extension, for example with a "Need more time?" button that notifies the admins?
