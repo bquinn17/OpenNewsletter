@@ -96,9 +96,11 @@ The current data model and API already guarantee what this design needs, with no
 
 ## 6. Inactive-account cleanup (separate but related)
 
-Cognito users who never finished onboarding (created an account but never redeemed an invite) take up directory space. A separate `lambda-cleanup-tick`, running daily, would delete Cognito users whose:
-- `userCreateDate < now - 30 days`
-- AND have no DynamoDB `User` row
+Cognito users who never finished onboarding (created an account but never redeemed an invite) take up directory space. A separate `lambda-cleanup-tick`, running hourly, would delete Cognito users whose:
+- `userCreateDate < now - 24 hours`
+- AND have no `COGNITO_SUB#{sub}` lookup row, i.e. never redeemed an invite
+
+The full design, including the race with a still-valid ID token, is [`future-ideas.md` §15.3](../future-ideas.md#153-delete-accounts-that-dont-redeem-an-invite-within-24-hours).
 
 The same Lambda would also delete expired invite rows that aren't auto-cleaned by TTL (defensive).
 
