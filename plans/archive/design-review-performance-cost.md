@@ -13,7 +13,7 @@
 
 ## Fix before prod
 
-1. **The published-edition read is a serial N+1 chain.** In [handlers.rs:287](backend/crates/lambda-newsletters/src/handlers.rs#L287), each answer makes these calls one after another:
+1. **The published-edition read is a serial N+1 chain.** In [handlers.rs:287](../../backend/crates/lambda-newsletters/src/handlers.rs#L287), each answer makes these calls one after another:
    - a `GetItem` for the author
    - one `GetItem` per image
    - a comments query, then a `BatchGet` for the commenters
@@ -41,25 +41,25 @@
   - Today a single page load can cold-start 3 functions (`/config`, newsletters, questions), and each one rebuilds its own membership cache.
   - One function means one cold start and a shared cache.
   - It also makes decision #7's "≤10 free alarms" possible: per-function error alarms for 11 Lambdas can't fit.
-  - Least privilege is weaker than it looks today: every function already gets read/write on the whole table ([api_stack.py:445](infra/opennewsletter/api_stack.py#L445)). Keep `image-process` and the two tick functions separate.
-- **Home makes up to 20 sequential GSI queries per group.** `list_newsletters` runs one query per cycle ([handlers.rs:49](backend/crates/lambda-newsletters/src/handlers.rs#L49)), and Home uses the default limit of 20. This gets slower every month. Either compute draft/published counts only for `open` cycles, or have Home request `limit=3`.
-- **`find_voting_cycle` reads every newsletter the group has ever had** ([newsletters.rs:158](backend/crates/persistence/src/newsletters.rs#L158)), on every candidate list, create and vote. The voting cycle is always the newest, so a backward query with `limit(2)` is enough.
-- **Response autosave makes 5+N calls.** It does one `GetItem` per image ([responses handlers.rs:171](backend/crates/lambda-responses/src/handlers.rs#L171)), then re-reads the row after the transaction. Fetch the images with one batch read, run the independent reads with `try_join!`, and build the response locally instead of re-reading. Raising the 1.5 s debounce to about 3 s would roughly halve request volume; the `localStorage` mirror already covers crash recovery.
-- **Push fan-out reads 2 rows per member, one member at a time** ([fanout.rs:235](backend/crates/lambda-push/src/fanout.rs#L235)). The notification pref and push subscriptions both live under `USER#u`, so one query per member covers both, and those queries can run concurrently.
+  - Least privilege is weaker than it looks today: every function already gets read/write on the whole table ([api_stack.py:445](../../infra/opennewsletter/api_stack.py#L445)). Keep `image-process` and the two tick functions separate.
+- **Home makes up to 20 sequential GSI queries per group.** `list_newsletters` runs one query per cycle ([handlers.rs:49](../../backend/crates/lambda-newsletters/src/handlers.rs#L49)), and Home uses the default limit of 20. This gets slower every month. Either compute draft/published counts only for `open` cycles, or have Home request `limit=3`.
+- **`find_voting_cycle` reads every newsletter the group has ever had** ([newsletters.rs:158](../../backend/crates/persistence/src/newsletters.rs#L158)), on every candidate list, create and vote. The voting cycle is always the newest, so a backward query with `limit(2)` is enough.
+- **Response autosave makes 5+N calls.** It does one `GetItem` per image ([responses handlers.rs:171](../../backend/crates/lambda-responses/src/handlers.rs#L171)), then re-reads the row after the transaction. Fetch the images with one batch read, run the independent reads with `try_join!`, and build the response locally instead of re-reading. Raising the 1.5 s debounce to about 3 s would roughly halve request volume; the `localStorage` mirror already covers crash recovery.
+- **Push fan-out reads 2 rows per member, one member at a time** ([fanout.rs:235](../../backend/crates/lambda-push/src/fanout.rs#L235)). The notification pref and push subscriptions both live under `USER#u`, so one query per member covers both, and those queries can run concurrently.
 - **Original images are kept forever after processing.** They're the storage cost that grows (about 120 MB per group per month of phone photos), and they still carry EXIF data, including GPS location. Delete them once processing succeeds, or expire them after 30 days. That saves money and cuts the location data you hold. It's your call whether you'd ever want to reprocess at new sizes.
-- **Intelligent-Tiering on the processed and avatar buckets is wasted** ([media_persistent_stack.py:74](infra/opennewsletter/media_persistent_stack.py#L74)). Objects under 128 KB never move to a cheaper tier, but each lifecycle transition still costs money. Keep it only on the originals bucket, if you keep originals at all.
-- **At scale, Cognito becomes the biggest bill**: free up to 10k monthly active users, then about $0.0055 each. Lambda, DynamoDB and S3 stay small. Put that in the [`infrastructure.md` §12](docs/design/infrastructure.md#12-cost-expectations) cost model.
+- **Intelligent-Tiering on the processed and avatar buckets is wasted** ([media_persistent_stack.py:74](../../infra/opennewsletter/media_persistent_stack.py#L74)). Objects under 128 KB never move to a cheaper tier, but each lifecycle transition still costs money. Keep it only on the originals bucket, if you keep originals at all.
+- **At scale, Cognito becomes the biggest bill**: free up to 10k monthly active users, then about $0.0055 each. Lambda, DynamoDB and S3 stay small. Put that in the [`infrastructure.md` §12](../../docs/design/infrastructure.md#12-cost-expectations) cost model.
 - **Keep the 5-minute tick.** It costs essentially nothing and is simpler than scheduled one-off events.
 
 ## Security
 
-- **Any Google or Facebook user can get a valid JWT.** Federated sign-in goes around `self_sign_up_enabled=False`, and `PreSignUp` is a pass-through. Data is safe because invites gate membership, but strangers' traffic does reach Lambda, which slightly bends the "idle backend" principle. HTTP APIs can't use WAF or per-client throttling. The current throttle of 25 requests/s applies to each route separately ([api_stack.py:489](infra/opennewsletter/api_stack.py#L489)), so the combined ceiling is very high. A merged Lambda with reserved concurrency (around 10–20) puts a hard cap on cost exposure.
-- **GitHub Pages can't send `frame-ancestors` or `X-Frame-Options`**, and a meta-tag CSP ignores `frame-ancestors`. Clickjacking risk is low but it can't be fixed on this host. Note it in [`frontend.md` §12](docs/design/frontend.md#12-build--deploy).
+- **Any Google or Facebook user can get a valid JWT.** Federated sign-in goes around `self_sign_up_enabled=False`, and `PreSignUp` is a pass-through. Data is safe because invites gate membership, but strangers' traffic does reach Lambda, which slightly bends the "idle backend" principle. HTTP APIs can't use WAF or per-client throttling. The current throttle of 25 requests/s applies to each route separately ([api_stack.py:489](../../infra/opennewsletter/api_stack.py#L489)), so the combined ceiling is very high. A merged Lambda with reserved concurrency (around 10–20) puts a hard cap on cost exposure.
+- **GitHub Pages can't send `frame-ancestors` or `X-Frame-Options`**, and a meta-tag CSP ignores `frame-ancestors`. Clickjacking risk is low but it can't be fixed on this host. Note it in [`frontend.md` §12](../../docs/design/frontend.md#12-build--deploy).
 - **Facebook's `email` claim may not be verified.** When M13.5 adds email-bound invites, make sure they can only be redeemed with Google's `email_verified=true`, as the plan says.
 
 ## Simplification
 
-- **`CONFIG_JSON` copies the `config.rs` defaults by hand and has already drifted** ([api_stack.py:47](infra/opennewsletter/api_stack.py#L47) still says `responseWindowDays: 4`, against the 7-day decision). Have `lambda-groups` build these defaults from `shared::config` and delete the environment variable.
+- **`CONFIG_JSON` copies the `config.rs` defaults by hand and has already drifted** ([api_stack.py:47](../../infra/opennewsletter/api_stack.py#L47) still says `responseWindowDays: 4`, against the 7-day decision). Have `lambda-groups` build these defaults from `shared::config` and delete the environment variable.
 - **PROGRESS.md is about 48k tokens of journal**, and CLAUDE.md tells every agent to start there, so each session pays that cost before doing any work. Keep the status table, blockers, decisions and handoff (about 150 lines), and move the "Mn detail" sections to `plans/archive/`.
 
 ## What's already strong
