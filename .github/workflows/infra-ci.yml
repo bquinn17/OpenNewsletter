@@ -1,6 +1,7 @@
 # Trigger: pull requests and pushes to main that touch infra/**, scripts/**
 # (infra/tests covers scripts/bootstrap_admin.py) or this workflow file.
-# Purpose: lint/type-check the CDK app and scripts, run the unit tests, and synth (no AWS
+# Purpose: lint/type-check the CDK app and scripts, run both sets of unit tests
+# (infra/tests, scripts/tests), and synth (no AWS
 # credentials needed — Lambda assets fall back to a stub when
 # backend/target/lambda/*/bootstrap is missing, see lambda_assets.py). On a
 # pull request, and only once the repo variable AWS_DIFF_ROLE_ARN is set, a
@@ -41,7 +42,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install -r requirements.txt
+      # The scripts' own requirements too: mypy needs boto3 and py-vapid
+      # installed for the scripts' `# type: ignore[import-untyped]` to match.
+      - run: pip install -r requirements.txt -r ../scripts/requirements.txt
 
       - run: ruff check . ../scripts
 
@@ -49,7 +52,11 @@ jobs:
 
       - run: mypy --strict .
 
+      - run: mypy --strict ../scripts
+
       - run: pytest tests/ -q
+
+      - run: pytest ../scripts/tests -q
 
       # Needed for `npx aws-cdk@2`, not for the Python app itself.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

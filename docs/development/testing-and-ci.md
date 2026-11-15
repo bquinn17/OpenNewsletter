@@ -117,7 +117,7 @@ Time fast-forwarding uses the dev-only tick routes ([`api.md` §11a](../design/a
 
 ### 5.3 Python (CDK)
 
-`ruff check`, `ruff format --check`, `mypy --strict`, `cdk synth` for dev and prod.
+`ruff check`, `ruff format --check`, `mypy --strict`, `cdk synth` for dev and prod. `scripts/` gets the same ruff and `mypy --strict` checks, and its unit tests (`pytest scripts/tests`) run alongside `infra/tests`.
 
 ---
 
@@ -139,7 +139,7 @@ PRs and pushes touching `backend/**`: fmt, clippy, `cargo deny`, `cargo test --w
 
 ### 6.3 `infra-ci.yml`
 
-PRs and pushes touching `infra/**`: ruff, mypy, pytest, `cdk synth` dev + prod. On PRs, when `vars.AWS_DIFF_ROLE_ARN` is set, `cdk diff --context env=prod --no-change-set` is posted as a comment, using the same prod config variables as the deploy.
+PRs and pushes touching `infra/**` or `scripts/**`: ruff, mypy and pytest over both `infra/` and `scripts/`, then `cdk synth` dev + prod. It installs `scripts/requirements.txt` as well as `infra/requirements.txt`, because mypy needs boto3 and py-vapid installed to check the scripts. On PRs, when `vars.AWS_DIFF_ROLE_ARN` is set, `cdk diff --context env=prod --no-change-set` is posted as a comment, using the same prod config variables as the deploy.
 
 ### 6.4 `deploy.yml` and `release.yml` — dev auto-deploy, prod on release
 
