@@ -381,7 +381,7 @@ General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). The
 
 ## 12. Operational dashboards
 
-`infra/opennewsletter/monitoring_stack.py` builds one dashboard per environment (`OpenNewsletter-{env}`). For the tick, it adds the same generic per-Lambda widget every Lambda gets — invocation count, error count, throttle count, and duration p95 for `OpenNewsletter-CycleTick-{env}` (`MonitoringStack._lambda_widget`) — plus, in prod, `CycleTickErrorsAlarm`: `FILL(Errors, 0) + FILL(AutoPublishAbandoned, 0) > 0` over one evaluation period, so a stuck tick or an abandoned auto-publish sweep (§5.3) pages the operator even though the tick logs per-cycle failures instead of failing the Lambda invocation.
+`infra/opennewsletter/monitoring_stack.py` builds one dashboard per environment (`OpenNewsletter-{env}`). Like every Lambda, the tick has a line for `OpenNewsletter-CycleTick-{env}` in each of the per-function Lambda graphs: invocation count, error count, and duration p95 (`MonitoringStack._lambda_widgets`, [`infrastructure.md` §9.1](infrastructure.md#91-dashboard)). In prod it also has `CycleTickErrorsAlarm`: `FILL(Errors, 0) + FILL(AutoPublishAbandoned, 0) > 0` over one evaluation period, so a stuck tick or an abandoned auto-publish sweep (§5.3) pages the operator even though the tick logs per-cycle failures instead of failing the Lambda invocation.
 
 Known limitation: there is no dashboard widget or custom metric for "cycles by status", "cycles that transitioned in the last 24h", or the lag between `nextTransitionAt` and the actual transition — `AutoPublishAbandoned` is the only custom EMF metric the tick emits. Those would need either a scheduled aggregation job or per-transition EMF lines from the tick itself; neither exists yet.
 

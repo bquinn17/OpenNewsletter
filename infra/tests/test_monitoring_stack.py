@@ -1,7 +1,8 @@
 """MonitoringStack assertions: dashboard in every env, alarms in prod only.
 
 Per `docs/design/infrastructure.md` §9 (M13.5): prod's alarms fit inside the
-10 free CloudWatch alarm metrics, dev has the dashboard and nothing else, and
+10 free CloudWatch alarm metrics, each env's dashboard fits inside the 50
+metrics a free dashboard may reference, dev has the dashboard and nothing else, and
 the cost budget lives in CiStack (`test_ci_stack.py`), not here. The
 PushFailureRate / CycleTick-Errors alarm tests stay in `test_stacks.py`.
 
@@ -10,6 +11,7 @@ Run with: pytest infra/tests/
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ from opennewsletter.config import load_config
 from opennewsletter.monitoring_stack import (
     _LAMBDA_NAMES,
     MAX_ALARM_METRICS,
+    MAX_DASHBOARD_METRICS,
     MonitoringStack,
 )
 
@@ -177,8 +180,52 @@ def test_dashboard_body_references_the_table_and_apis(
     body = str(dashboard["Properties"]["DashboardBody"])
     assert "OpenNewsletter-dev" in body  # table name
     assert "AWS/ApiGateway" in body
-    assert "AWS/S3" in body
     assert "{{resolve:ssm:/opennewsletter/dev/http-api-id}}" in body
+
+
+def _dashboard_body(template: assertions.Template) -> dict[str, Any]:
+    """The dashboard body as JSON. CDK renders it as a string, or as an
+    `Fn::Join` when it embeds a token; a token is always inside a JSON string,
+    so a placeholder in its place keeps the body parseable."""
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    body = dashboard["Properties"]["DashboardBody"]
+    if isinstance(body, dict):
+        _, parts = body["Fn::Join"]
+        body = "".join(p if isinstance(p, str) else "TOKEN" for p in parts)
+    parsed: dict[str, Any] = json.loads(body)
+    return parsed
+
+
+def _dashboard_metric_count(template: assertions.Template) -> int:
+    """Every line on a graph counts toward the dashboard's free-tier 50,
+    including each statistic of one metric. A metric-math expression would
+    count each metric it reads; entries with an `expression` aren't counted
+    here, so the test fails if one appears rather than guess at it."""
+    count = 0
+    for widget in _dashboard_body(template)["widgets"]:
+        for entry in widget.get("properties", {}).get("metrics", []):
+            assert not any(
+                isinstance(part, dict) and "expression" in part for part in entry
+            ), "count the metrics a math expression reads before adding one"
+            count += 1
+    return count
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_dashboard_fits_in_the_free_dashboard_metrics(env: str) -> None:
+    template = _template(env, f"TestMonitoringStackDashboard{env}")
+    total = _dashboard_metric_count(template)
+    assert total <= MAX_DASHBOARD_METRICS == 50
+    # 5 API + 37 Lambda + 3 DynamoDB + 2 push (monitoring_stack.py).
+    assert total == 47
+
+
+def test_dashboard_url_output(dev_template: assertions.Template) -> None:
+    (output,) = dev_template.find_outputs("DashboardUrl").values()
+    assert output["Value"] == (
+        "https://us-east-1.console.aws.amazon.com/cloudwatch/home"
+        "?region=us-east-1#dashboards/dashboard/OpenNewsletter-dev"
+    )
 
 
 @pytest.mark.parametrize("env", ["dev", "prod"])

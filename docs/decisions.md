@@ -67,9 +67,9 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d7"></a>
 ### D7 — Run for about $1–2 a month
 
-**Decision.** Use one Secrets Manager secret per environment (`opennewsletter/{env}`). Create alarms in prod only and stay within the 10 free alarm metrics. Keep one account-wide $5 budget in `CiStack`. Put DynamoDB on the AWS-owned key.
+**Decision.** Use one Secrets Manager secret per environment (`opennewsletter/{env}`). Create alarms in prod only and stay within the 10 free alarm metrics. Keep each environment's dashboard within the 50 metrics a free dashboard may reference. Keep one account-wide $5 budget in `CiStack`. Put DynamoDB on the AWS-owned key.
 
-**Why.** As first built, the stacks would have cost about $7–8 a month, nearly all of it fixed charges that didn't depend on usage: three secrets per environment ($2.40) and about 30 alarm metrics per environment (about $5).
+**Why.** As first built, the stacks would have cost about $7–8 a month, nearly all of it fixed charges that didn't depend on usage: three secrets per environment ($2.40) and about 30 alarm metrics per environment (about $5). The dashboard was another: at 67 metrics it billed $3 a month per environment, most of dev's bill.
 
 **Where.** [`infrastructure.md` §12](design/infrastructure.md#12-cost-expectations), the combined secret in [`operator-setup.md` §7](operations/operator-setup.md#7-combine-credentials-into-one-secrets-manager-secret-per-env).
 

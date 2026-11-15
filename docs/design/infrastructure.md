@@ -360,16 +360,18 @@ Stack outputs the required records as `CfnOutput` so the operator can copy them.
 
 ### 9.1 Dashboard
 
-A single CloudWatch dashboard `OpenNewsletter-{env}` with widgets for:
-- HTTP API 4xx/5xx rates and p50/p95/p99 latency per route
-- Per-Lambda invocation count, error rate, duration p95, throttles
-- DynamoDB consumed RCU/WCU, throttles, conditional check failures
-- S3 storage: `BucketSizeBytes` and `NumberOfObjects` per media bucket (daily, free)
-- Web Push delivery success/failure (custom metric emitted by `lambda-notify-tick` and `lambda-push`)
+A single CloudWatch dashboard `OpenNewsletter-{env}`, **capped at 50 metrics** (`MAX_DASHBOARD_METRICS`) so that it stays free. CloudWatch's free tier covers three dashboards of up to 50 metrics each. A dashboard over 50 bills at $3/mo. Every line on a graph counts, each statistic of one metric counts separately, and a metric-math expression counts every metric it reads, so combining metrics in math saves nothing. The dashboard has 47 metrics:
+
+- **HTTP API (5):** requests, 4xx and 5xx counts, and latency p50 and p99. At this traffic p95 sits on top of p99.
+- **Lambda (37):** one graph per metric, each with a line per function: invocations, errors, and duration p95 (3 × 12). Errors share their graph with one account-wide `Throttles` line. Concurrency is an account-wide limit shared by dev and prod, so a throttle anywhere is the signal, and per-function lines would cost 12 metrics.
+- **DynamoDB (3):** consumed RCU/WCU and conditional-check failures. A spike in failures points at a write race or a retry loop. Throttles are left to the prod alarm (§9.2), because an on-demand table doesn't throttle at this traffic.
+- **Web Push (2):** delivery success and failure, a custom metric emitted by `lambda-notify-tick` and `lambda-push`.
+
+Each Lambda added to `_LAMBDA_NAMES` costs three more metrics, so the cap allows one more Lambda before something has to give. S3 bucket size and object count aren't on the dashboard. The S3 console's per-bucket **Metrics** tab shows both for free. The stack outputs `DashboardUrl`, a console link to the dashboard ([`runbook.md`](../operations/runbook.md#viewing-the-dashboards)).
 
 ### 9.2 Alarms
 
-**Prod only, ≤10 alarm metrics total** (dev keeps the dashboard in §9.1 but ships no alarms, so dev stays inside the 10-free-alarm-metrics CloudWatch tier at $0):
+**Prod only, ≤10 alarm metrics total** (dev keeps the dashboard in §9.1 but ships no alarms, so the account stays inside the 10-free-alarm-metrics CloudWatch tier at $0):
 
 - Lambda error rate across all functions, account-level aggregate `AWS/Lambda` `Errors`/`Invocations` (2 metrics) → SNS topic. Replaces a per-Lambda >5% alarm, which would have needed one metric pair per function.
 - HTTP API 5xx rate >1% over 10 minutes (2 metrics) → SNS topic
@@ -430,6 +432,7 @@ Target ≈ $1–2/mo at ~30 monthly active users, prod + dev in one account:
 |---|---|
 | Secrets Manager ($0.40/secret/mo; 1 per env × 2) | $0.80 |
 | CloudWatch alarms ($0.10/alarm metric; 10 free; prod only, §9.2) | $0 |
+| CloudWatch dashboards ($3/dashboard/mo; 3 free at ≤50 metrics each; one per env at 47, §9.1) | $0 |
 | CloudWatch Logs / EMF metrics | < $0.10 |
 | DynamoDB on-demand + storage (+ PITR prod) | < $0.30 |
 | Lambda | $0 (always-free tier) |
@@ -442,7 +445,7 @@ Target ≈ $1–2/mo at ~30 monthly active users, prod + dev in one account:
 
 Domain registration and DNS stay with the registrar (Namecheap) rather than Route53, so there is no Route53 hosted zone; see `hosted_zone_id: None` (§2) and §8.3. Prices are approximate list prices (us-east-1).
 
-This depends on: one Secrets Manager secret per env, `opennewsletter/{env}` (§2, §7.1); alarms in prod only, ≤10 alarm metrics (§9.2), with dev keeping its dashboard but no alarms; one account-wide AWS Budget at $5/mo in `CiStack`, not per-env (§9.2a); and DynamoDB on the AWS-owned key rather than the AWS-managed `aws/dynamodb` KMS key (§3.1). [`environments.md` §12](../development/environments.md#12-cost-expectations) covers the dev-only slice of this total (≈ $0.40–1/mo).
+This depends on: one Secrets Manager secret per env, `opennewsletter/{env}` (§2, §7.1); alarms in prod only, ≤10 alarm metrics (§9.2), with dev keeping its dashboard but no alarms; each env's dashboard at ≤50 metrics (§9.1); one account-wide AWS Budget at $5/mo in `CiStack`, not per-env (§9.2a); and DynamoDB on the AWS-owned key rather than the AWS-managed `aws/dynamodb` KMS key (§3.1). [`environments.md` §12](../development/environments.md#12-cost-expectations) covers the dev-only slice of this total (≈ $0.40–1/mo).
 
 **At scale.** The table above is for ~30 users. Most of it stays near zero as groups grow: Lambda and DynamoDB scale with requests and remain cents to low dollars, and S3's always-free 100 GB/mo data-transfer-out tier covers image egress for a while, growing at ~$0.09/GB past that (the service worker's image cache means each device only fetches a given image once — [`media.md` §6](media.md#6-cache-and-tenant-isolation-summary)). One line still grows:
 - **Cognito**: free up to 10,000 monthly active users, then billed per MAU at a rate set by the user pool's feature plan (Lite is the cheapest; check the pool's plan and current pricing before crossing 10k).
