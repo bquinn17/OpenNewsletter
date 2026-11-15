@@ -10,16 +10,20 @@
 //! ([`editions_answered_bump`]) by the publish transactions (`responses.rs`,
 //! §4 #4, #4a); the streak reset builder
 //! ([`reset_current_streak_update`]) is used by the leave transaction
-//! (`groups.rs`). [`settle_streak`] is the one write in this module sent on
-//! its own, by `lambda-cycle-tick`'s best-effort streak settlement.
+//! (`groups.rs`). [`settle_streak`] is the only write this module sends
+//! itself, for `lambda-cycle-tick`'s best-effort streak
+//! settlement, with a check that the member still belongs to the group.
 
 use crate::error::{self, RepoError};
-use crate::keys::{attr, member_stats_pk, member_stats_sk, MEMBER_STATS_SK_PREFIX};
+use crate::keys::{
+    attr, member_stats_pk, member_stats_sk, membership_sk, user_pk, MEMBER_STATS_SK_PREFIX,
+};
 use crate::query::query_all;
 use crate::repo::Repo;
-use aws_sdk_dynamodb::types::{AttributeValue, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
 use domain::{CycleId, GroupId, MemberStats, UserId};
 use serde_dynamo::from_item;
+use shared::config::MEMBER_STATS_TX_ATTEMPTS;
 
 /// AP23 — every member's stats row in a group, reading every page. The whole
 /// set is safe to hold in memory: one row per member, bounded by `memberSoftCap`.
@@ -128,9 +132,19 @@ pub(crate) fn reset_current_streak_update(
 /// `lambda-cycle-tick`'s per-member streak settlement (`docs/design/lifecycle.md`
 /// §5.3): sets `current_streak`, `longest_streak` and `streak_cycle` to their
 /// freshly-computed values, conditioned on this cycle not already being
-/// settled. A `RepoError::ConditionalCheckFailed` means an earlier, crashed
-/// pass already settled this member for `cycle_id` — the caller skips it
-/// silently (`RepoError::is_lost_race`).
+/// settled and on `user_id` still being a member of the group.
+///
+/// The values are computed from a stats snapshot read earlier, so without the
+/// membership check a leave (§4 #6) committing in between would have its
+/// `current_streak = 0` overwritten, and a later rejoin would pick up the
+/// stale streak. The leave transaction deletes the membership row in the same
+/// write that zeroes the streak, so either this settlement lands first and
+/// the leave zeroes it, or the leave lands first and this one is refused.
+///
+/// A `RepoError::TransactionCancelled` means an earlier, crashed pass already
+/// settled this member for `cycle_id`, or they left — the caller skips it
+/// silently (`RepoError::is_lost_race`). A plain `TransactionConflict` is
+/// retried, up to `MEMBER_STATS_TX_ATTEMPTS` sends in all.
 pub async fn settle_streak(
     repo: &Repo,
     group_id: &GroupId,
@@ -139,8 +153,7 @@ pub async fn settle_streak(
     longest_streak: i64,
     cycle_id: &CycleId,
 ) -> Result<(), RepoError> {
-    repo.client
-        .update_item()
+    let settle = Update::builder()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(member_stats_pk(group_id)))
         .key(attr::SK, AttributeValue::S(member_stats_sk(user_id)))
@@ -155,8 +168,28 @@ pub async fn settle_streak(
         .expression_attribute_values(":current", AttributeValue::N(current_streak.to_string()))
         .expression_attribute_values(":longest", AttributeValue::N(longest_streak.to_string()))
         .expression_attribute_values(":cycle", AttributeValue::S(cycle_id.to_string()))
-        .send()
-        .await
-        .map_err(error::from_update_item_error)?;
-    Ok(())
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    let still_member = ConditionCheck::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(user_pk(user_id)))
+        .key(attr::SK, AttributeValue::S(membership_sk(group_id)))
+        .condition_expression("attribute_exists(#sk)")
+        .expression_attribute_names("#sk", attr::SK)
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
+
+    error::transact_write_retrying_conflicts(
+        repo,
+        vec![
+            TransactWriteItem::builder().update(settle).build(),
+            TransactWriteItem::builder()
+                .condition_check(still_member)
+                .build(),
+        ],
+        MEMBER_STATS_TX_ATTEMPTS,
+        "streak settlement",
+    )
+    .await
 }

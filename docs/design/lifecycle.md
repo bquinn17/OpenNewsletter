@@ -244,12 +244,14 @@ for m in members(nl.groupId):   # AP3; departed authors are ignored
         continue   # settled by an earlier pass that crashed before the flip
     current = s.currentStreak + 1 if m.userId in authors else 0
     longest = max(s.longestStreak, current)
-    Update(MemberStats(nl.groupId, m.userId),
-        Set: currentStreak=current, longestStreak=longest, streakCycle=nl.cycleId,
-        Condition: attribute_not_exists(streakCycle) OR streakCycle <> nl.cycleId)
+    TransactWrite(
+        Update(MemberStats(nl.groupId, m.userId),
+            Set: currentStreak=current, longestStreak=longest, streakCycle=nl.cycleId,
+            Condition: attribute_not_exists(streakCycle) OR streakCycle <> nl.cycleId),
+        ConditionCheck(GroupMembership(m.userId, nl.groupId), attribute_exists(sk)))
 ```
 
-A failed condition means another pass already settled that member, and it's skipped. Streaks are best-effort: an error on one member, or on the whole step, is logged at ERROR and the edition still publishes. Running `scripts/backfill_member_stats.py` repairs a missed settlement. The step runs only on the path that goes on to the flip, so a sweep that leaves the cycle `open` for a retry settles nothing.
+Members settle concurrently (`STREAK_SETTLE_CONCURRENCY` at a time). A failed condition means another pass already settled that member, or they left after the member list was read, and it's skipped. The membership check matters because `current` comes from a snapshot: without it, a leave ([`data-model.md` §4 #6](data-model.md#4-transactional-invariants)) committing between the read and the write would have its `currentStreak = 0` overwritten. A plain `TransactionConflict` with another write to the same `MemberStats` row is retried (`MEMBER_STATS_TX_ATTEMPTS` sends in all). Streaks are best-effort: an error on one member, or on the whole step, is logged at ERROR and the edition still publishes. Running `scripts/backfill_member_stats.py` repairs a missed settlement. The step runs only on the path that goes on to the flip, so a sweep that leaves the cycle `open` for a retry settles nothing.
 
 Then the status flip:
 

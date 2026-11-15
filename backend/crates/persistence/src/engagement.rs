@@ -134,6 +134,11 @@ pub async fn list_comments_page(
 /// range, following `LastEvaluatedKey`, filtering server-side. Thread sizes
 /// are expected to stay small (`docs/design/engagement.md` §7 — unbounded but
 /// activity-driven), so a full scan of the partition is acceptable.
+///
+/// Strongly consistent: the edit and delete handlers re-read through this
+/// after their transaction loses a race, and a stale row would have them retry
+/// against state that's already gone (a delete would never see the concurrent
+/// delete that beat it, and would 500 instead of the idempotent 204).
 pub async fn get_comment_by_id(
     repo: &Repo,
     group_id: &GroupId,
@@ -150,6 +155,7 @@ pub async fn get_comment_by_id(
             .table_name(&repo.table)
             .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
             .filter_expression("comment_id = :cid")
+            .consistent_read(true)
             .expression_attribute_names("#pk", attr::PK)
             .expression_attribute_names("#sk", attr::SK)
             .expression_attribute_values(

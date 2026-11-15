@@ -13,6 +13,7 @@ use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Delete, TransactWriteItem, Update};
 use domain::{CycleSettings, Group, GroupId, GroupMembership, NotificationSettings, Role, UserId};
 use serde_dynamo::{from_item, to_attribute_value, to_item};
+use shared::config::MEMBER_STATS_TX_ATTEMPTS;
 use std::collections::HashMap;
 
 /// `docs/design/lifecycle.md` §4.2 — every group whose META row still
@@ -357,6 +358,11 @@ fn admin_witness_condition(
 /// enforcing that — see [`update_membership_role`]'s rustdoc for why this
 /// closes the last-admin TOCTOU race. Pass `None` when the member being
 /// removed does not currently hold the admin role.
+///
+/// A failed condition (membership already gone, or the witness no longer an
+/// admin) is `Err(RepoError::TransactionCancelled)`. A plain
+/// `TransactionConflict` is retried, up to `MEMBER_STATS_TX_ATTEMPTS` sends
+/// in all, then returned as `Err(RepoError::TransactionConflict)`.
 pub async fn leave_group_tx(
     repo: &Repo,
     user_id: &UserId,
@@ -383,25 +389,23 @@ pub async fn leave_group_tx(
 
     let streak_reset = member_stats::reset_current_streak_update(repo, group_id, user_id)?;
 
-    let mut request = repo
-        .client
-        .transact_write_items()
-        .transact_items(TransactWriteItem::builder().delete(delete).build())
-        .transact_items(TransactWriteItem::builder().update(update).build())
-        .transact_items(TransactWriteItem::builder().update(streak_reset).build());
-
+    let mut items = vec![
+        TransactWriteItem::builder().delete(delete).build(),
+        TransactWriteItem::builder().update(update).build(),
+        TransactWriteItem::builder().update(streak_reset).build(),
+    ];
     if let Some(witness) = admin_witness {
         let witness_check = admin_witness_condition(repo, witness, group_id)?;
-        request = request.transact_items(
+        items.push(
             TransactWriteItem::builder()
                 .condition_check(witness_check)
                 .build(),
         );
     }
 
-    request
-        .send()
+    // The streak reset shares the leaver's `MemberStats` row with every
+    // reaction, comment and settlement touching them, so a plain conflict is
+    // retried rather than reported as a lost admin race.
+    error::transact_write_retrying_conflicts(repo, items, MEMBER_STATS_TX_ATTEMPTS, "leave group")
         .await
-        .map_err(error::from_transact_write_error)?;
-    Ok(())
 }

@@ -9,7 +9,6 @@ use crate::keys::{
 use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
-use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
 use chrono::{DateTime, Utc};
 use domain::{
@@ -459,7 +458,7 @@ async fn save_response_once(
         Ok(_) => return Ok(()),
         Err(err) => err,
     };
-    let codes = cancellation_codes(&err);
+    let codes = error::cancellation_codes(&err);
     let err = error::from_transact_write_error(err);
     let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
     if bump_editions_answered
@@ -468,7 +467,7 @@ async fn save_response_once(
     {
         return Err(SaveFailure::AlreadyCounted);
     }
-    if is_conflict_only(&codes) {
+    if error::is_conflict_only(&codes) {
         Err(SaveFailure::Conflict(err))
     } else {
         Err(SaveFailure::Other(err))
@@ -596,7 +595,7 @@ async fn auto_publish_once(
         Ok(_) => return Ok(()),
         Err(err) => err,
     };
-    let codes = cancellation_codes(&err);
+    let codes = error::cancellation_codes(&err);
     let err = error::from_transact_write_error(err);
     let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
     if code_at(AUTO_PUBLISH_DRAFT_ITEM_INDEX) == Some("ConditionalCheckFailed") {
@@ -607,40 +606,11 @@ async fn auto_publish_once(
     {
         return Err(AutoPublishFailure::BumpRefused);
     }
-    if is_conflict_only(&codes) {
+    if error::is_conflict_only(&codes) {
         Err(AutoPublishFailure::Conflict(err))
     } else {
         Err(AutoPublishFailure::Other(err))
     }
-}
-
-/// Per-item cancellation reason codes of a cancelled transaction, in item
-/// order; empty for any other failure.
-fn cancellation_codes<R>(
-    err: &aws_sdk_dynamodb::error::SdkError<TransactWriteItemsError, R>,
-) -> Vec<Option<String>> {
-    match err.as_service_error() {
-        Some(TransactWriteItemsError::TransactionCanceledException(e)) => e
-            .cancellation_reasons()
-            .iter()
-            .map(|r| r.code().map(str::to_owned))
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// True when a cancellation was caused only by `TransactionConflict`s, so the
-/// same transaction is safe to retry.
-fn is_conflict_only(codes: &[Option<String>]) -> bool {
-    codes
-        .iter()
-        .any(|c| c.as_deref() == Some("TransactionConflict"))
-        && codes.iter().all(|c| {
-            matches!(
-                c.as_deref(),
-                None | Some("None") | Some("TransactionConflict")
-            )
-        })
 }
 
 /// `DELETE /uploads/{imageId}` (`docs/design/api.md` §9.4) — drop `image_id`

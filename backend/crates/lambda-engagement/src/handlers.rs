@@ -15,13 +15,8 @@ use domain::{
 };
 use persistence::engagement::{self, CommentLocation, NewComment, ReactionTxError};
 use persistence::{auth, keys, media, newsletters, responses, users};
-use shared::config::COMMENT_WRITE_ATTEMPTS;
+use shared::config::{COMMENT_WRITE_ATTEMPTS, REACTION_WRITE_ATTEMPTS};
 use std::collections::HashMap;
-
-/// How many times a counted-reaction transaction retries after losing a race
-/// (`docs/design/data-model.md` §4 #8, mirroring the vote transaction's
-/// `questions::cast_vote_with_retry`).
-const REACTION_WRITE_ATTEMPTS: u32 = 3;
 
 /// `GET .../comments` (§8.1). AP18.
 // Args mirror the route's own path + query parameters; bundling them into a

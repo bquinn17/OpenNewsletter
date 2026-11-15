@@ -3,7 +3,10 @@ use aws_sdk_dynamodb::operation::delete_item::DeleteItemError;
 use aws_sdk_dynamodb::operation::put_item::PutItemError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::operation::update_item::UpdateItemError;
+use aws_sdk_dynamodb::types::TransactWriteItem;
 use thiserror::Error;
+
+use crate::repo::Repo;
 
 #[derive(Debug, Error)]
 pub enum RepoError {
@@ -133,4 +136,68 @@ pub fn classify_transact_write_error<T, R: std::fmt::Debug, const N: usize>(
         return conflict;
     }
     other(RepoError::TransactionCancelled(format!("{cancel:?}")))
+}
+
+/// Per-item cancellation reason codes of a cancelled transaction, in item
+/// order; empty for any other failure.
+pub(crate) fn cancellation_codes<R>(
+    err: &SdkError<TransactWriteItemsError, R>,
+) -> Vec<Option<String>> {
+    match err.as_service_error() {
+        Some(TransactWriteItemsError::TransactionCanceledException(e)) => e
+            .cancellation_reasons()
+            .iter()
+            .map(|r| r.code().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// True when a cancellation was caused only by `TransactionConflict`s, so the
+/// same transaction is safe to retry.
+pub(crate) fn is_conflict_only(codes: &[Option<String>]) -> bool {
+    codes
+        .iter()
+        .any(|c| c.as_deref() == Some("TransactionConflict"))
+        && codes.iter().all(|c| {
+            matches!(
+                c.as_deref(),
+                None | Some("None") | Some("TransactionConflict")
+            )
+        })
+}
+
+/// Send `items` as one `TransactWriteItems`, sending it again unchanged while
+/// it is cancelled only by `TransactionConflict`s, up to `attempts` sends in
+/// all. For transactions whose conditions all mean "a concurrent writer won":
+/// any failed condition is returned as [`RepoError::TransactionCancelled`]
+/// (a lost race, as from [`from_transact_write_error`]); conflicts that
+/// outlast every attempt as [`RepoError::TransactionConflict`], naming `what`.
+pub(crate) async fn transact_write_retrying_conflicts(
+    repo: &Repo,
+    items: Vec<TransactWriteItem>,
+    attempts: u32,
+    what: &str,
+) -> Result<(), RepoError> {
+    let mut attempt = 1;
+    loop {
+        let sent = repo
+            .client
+            .transact_write_items()
+            .set_transact_items(Some(items.clone()))
+            .send()
+            .await;
+        let Err(err) = sent else {
+            return Ok(());
+        };
+        if !is_conflict_only(&cancellation_codes(&err)) {
+            return Err(from_transact_write_error(err));
+        }
+        if attempt >= attempts {
+            return Err(RepoError::TransactionConflict(format!(
+                "{what}, after {attempt} attempts"
+            )));
+        }
+        attempt += 1;
+    }
 }

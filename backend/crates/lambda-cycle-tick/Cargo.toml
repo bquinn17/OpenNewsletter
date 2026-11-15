@@ -14,6 +14,7 @@ aws-sdk-dynamodb.workspace = true
 aws-sdk-lambda.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+futures.workspace = true
 lambda_runtime.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

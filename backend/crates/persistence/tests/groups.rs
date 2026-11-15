@@ -228,6 +228,56 @@ async fn leave_group_tx_resets_current_streak_and_keeps_longest() {
     assert_eq!(u2.longest_streak, 5, "longest_streak must survive a leave");
 }
 
+/// A settlement computed from a snapshot taken before the member left must
+/// not write their old streak back over the leave's reset (§4 #6, §2.17).
+#[tokio::test]
+async fn settle_streak_after_a_leave_is_refused_and_keeps_the_reset() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-settle-after-leave");
+    let mut g = common::group("g-settle-after-leave", "u1");
+    g.member_count = 2;
+    groups::put_group(&repo, &g).await.unwrap();
+    common::put_membership(
+        &repo,
+        &common::membership("u2", "g-settle-after-leave", Role::Member),
+    )
+    .await;
+    let u2 = UserId::new("u2");
+    persistence::member_stats::settle_streak(
+        &repo,
+        &group_id,
+        &u2,
+        4,
+        4,
+        &domain::CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
+
+    groups::leave_group_tx(&repo, &u2, &group_id, None)
+        .await
+        .unwrap();
+    let err = persistence::member_stats::settle_streak(
+        &repo,
+        &group_id,
+        &u2,
+        5,
+        5,
+        &domain::CycleId::new("202607"),
+    )
+    .await
+    .expect_err("a departed member's streak is not settled");
+    assert!(err.is_lost_race(), "got {err:?}");
+
+    let stats = persistence::member_stats::list_stats_for_group(&repo, &group_id)
+        .await
+        .unwrap();
+    let row = stats.iter().find(|s| s.user_id == u2).unwrap();
+    assert_eq!(row.current_streak, 0);
+    assert_eq!(row.longest_streak, 4);
+    assert_eq!(row.streak_cycle, Some(domain::CycleId::new("202606")));
+}
+
 #[tokio::test]
 async fn leave_group_tx_fails_when_membership_absent() {
     let (_c, repo) = common::make_repo().await;

@@ -8,11 +8,11 @@ mod common;
 use chrono::{TimeZone, Utc};
 use common::{put_locked_question, put_reacted_response, seed, state};
 use domain::{
-    ApiErrorCode, CycleId, GroupId, LockedQuestion, QuestionId, QuestionKind, Response, ResponseId,
-    ResponseStatus, Role, UserId,
+    ApiErrorCode, CycleId, GroupId, LockedQuestion, MemberStats, QuestionId, QuestionKind,
+    Response, ResponseId, ResponseStatus, Role, UserId,
 };
 use groups::group_routes;
-use persistence::{member_stats, test_factories};
+use persistence::test_factories;
 use pretty_assertions::assert_eq;
 
 fn locked_question(
@@ -113,16 +113,22 @@ async fn a_departed_members_stats_are_excluded() {
     seed(&repo, "glb-departed", &[("a1", Role::Admin)]).await;
     let state = state(repo);
     // u-gone has a stats row but is not a current member.
-    member_stats::settle_streak(
+    test_factories::put_member_stats(
         &state.repo,
-        &GroupId::new("glb-departed"),
-        &UserId::new("u-gone"),
-        3,
-        3,
-        &CycleId::new("202605"),
+        &MemberStats {
+            group_id: GroupId::new("glb-departed"),
+            user_id: UserId::new("u-gone"),
+            editions_answered: 0,
+            reactions_received: 0,
+            reactions_given: 0,
+            comments_written: 0,
+            questions_asked: 0,
+            current_streak: 3,
+            longest_streak: 3,
+            streak_cycle: Some(CycleId::new("202605")),
+        },
     )
-    .await
-    .unwrap();
+    .await;
 
     let board =
         group_routes::get_leaderboard(&state, &UserId::new("a1"), &GroupId::new("glb-departed"))

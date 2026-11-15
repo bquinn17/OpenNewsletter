@@ -10,8 +10,10 @@ use domain::{
     CandidateQuestion, CycleId, GroupId, LockedQuestion, MemberStats, Newsletter, NewsletterStatus,
     Response, ResponseStatus, UserId,
 };
+use futures::StreamExt;
 use persistence::responses::AutoPublishOutcome;
 use persistence::{groups, member_stats, newsletters, questions, responses, Repo, RepoError};
+use shared::config::STREAK_SETTLE_CONCURRENCY;
 use shared::cycle_time::CycleCadence;
 use std::collections::{HashMap, HashSet};
 
@@ -563,6 +565,7 @@ async fn auto_publish_one(
 /// streak. `authors` is [`SweepReport::authors`]: every user with at least
 /// one published answer to a locked question, after the sweep.
 ///
+/// Members settle concurrently, up to `STREAK_SETTLE_CONCURRENCY` at a time.
 /// Best-effort: an error settling one member, or listing members/stats for
 /// the whole step, is logged at ERROR and never stops the publish that
 /// follows. `scripts/backfill_member_stats.py` repairs a missed settlement.
@@ -596,11 +599,11 @@ pub async fn settle_streaks(repo: &Repo, nl: &Newsletter, authors: &HashSet<User
         }
     };
 
-    for member in &members {
+    let settlements = members.iter().filter_map(|member| {
         let existing = stats.get(&member.user_id);
         if existing.and_then(|s| s.streak_cycle.as_ref()) == Some(&nl.cycle_id) {
             // Already settled by an earlier, crashed pass over this cycle.
-            continue;
+            return None;
         }
 
         let prior_current = existing.map_or(0, |s| s.current_streak);
@@ -612,25 +615,32 @@ pub async fn settle_streaks(repo: &Repo, nl: &Newsletter, authors: &HashSet<User
             (0, prior_longest)
         };
 
-        match member_stats::settle_streak(
-            repo,
-            &nl.group_id,
-            &member.user_id,
-            current,
-            longest,
-            &nl.cycle_id,
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(e) if e.is_lost_race() => {
-                tracing::info!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %member.user_id, "member's streak already settled for this cycle by an earlier pass");
+        Some(async move {
+            let user_id = &member.user_id;
+            match member_stats::settle_streak(
+                repo,
+                &nl.group_id,
+                user_id,
+                current,
+                longest,
+                &nl.cycle_id,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(e) if e.is_lost_race() => {
+                    tracing::info!(group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %user_id, "member's streak already settled for this cycle by an earlier pass, or they left the group");
+                }
+                Err(e) => {
+                    tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %user_id, "failed to settle member's streak");
+                }
             }
-            Err(e) => {
-                tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %member.user_id, "failed to settle member's streak");
-            }
-        }
-    }
+        })
+    });
+    futures::stream::iter(settlements)
+        .buffer_unordered(STREAK_SETTLE_CONCURRENCY)
+        .collect::<()>()
+        .await;
 }
 
 /// One EMF log line: drafts the sweep gave up on when it published a cycle

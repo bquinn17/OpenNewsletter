@@ -145,6 +145,18 @@ pub const DEFAULT_COMMENT_LIST_LIMIT: u32 = 50;
 /// (`docs/design/engagement.md` §1.4, decided M10). Comment creation reuses it
 /// for retries after a `TransactionConflict` on the author's `MemberStats` row.
 pub const COMMENT_WRITE_ATTEMPTS: u32 = 3;
+/// How many times a counted-reaction transaction is sent in all after losing a
+/// race to another counted write on the same answer, or a plain
+/// `TransactionConflict` (`docs/design/data-model.md` §4 #8).
+pub const REACTION_WRITE_ATTEMPTS: u32 = 3;
+/// How many times the leave transaction (`docs/design/data-model.md` §4 #6) and
+/// a member's streak settlement (`docs/design/lifecycle.md` §5.3) are sent in
+/// all when they keep hitting a `TransactionConflict` with a concurrent write
+/// to the same `MemberStats` row.
+pub const MEMBER_STATS_TX_ATTEMPTS: u32 = 3;
+/// How many members' streak settlements one cycle tick keeps in flight at once
+/// for a group's edition (`docs/design/lifecycle.md` §5.3).
+pub const STREAK_SETTLE_CONCURRENCY: usize = 16;
 
 /// A push subscription is deleted after this many consecutive delivery
 /// failures (`docs/design/notifications.md` §3.2).
