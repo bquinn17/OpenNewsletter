@@ -75,7 +75,7 @@ Workstation setup for either machine: [`environments.md` §0](../docs/developmen
 
 Not changed in code; each needs the owner's call before or soon after M14. (2 and 4 are settled; the numbers are kept so references stay valid. Originals are deleted once processed: [`decisions.md`](../docs/decisions.md#originals-deleted-on-success).)
 1. **Merge the 8 API Lambdas into one?** Fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and one build artifact, against a broader IAM role (every function already has table read/write).
-3. **Cap cost exposure.** Any Google/Facebook user can get a JWT. Reserved concurrency on the API function (easiest after 1) and/or lower per-route throttles.
+3. **Cap cost exposure.** Any Google/Facebook user can get a JWT. Reserved concurrency on the API function (easiest after 1) and/or lower per-route throttles. Rejecting sign-ups without an invite, or deleting accounts that don't redeem one within 24 hours, would also limit it ([`future-ideas.md` §15](../docs/future-ideas.md#15-invite-only-accounts-enforced-at-sign-up)).
 5. **Raise the Lambda account concurrency quota.** It's 50, shared by dev and prod: fine for launch, too low before inviting many groups.
 
 ---

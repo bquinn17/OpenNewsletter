@@ -767,3 +767,54 @@ This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is
 - Should yearly and every-6-months groups get a heads-up push a week before the edition opens, since members will have forgotten it exists?
 - Should pausing also freeze suggestions and voting, or should the pool keep growing while the group is paused, as proposed?
 - Should members other than admins be able to request an extension, for example with a "Need more time?" button that notifies the admins?
+
+---
+
+## 15. Invite-only accounts, enforced at sign-up
+
+The app tells people it's invite-only: Home, `/signin` and `/join` all say "You can't create an account without an invite code from a group" ([`frontend.md` §7.8](design/frontend.md#78-joinpage-joincode)). Cognito doesn't enforce it. These are two independent ways to back the promise up: §15.2 rejects sign-ups without an invite, and §15.3 deletes accounts that never redeem one. Either can ship alone.
+
+### 15.1 Where things stand
+
+- The `PreSignUp` trigger auto-confirms every federated sign-up. The invite code never reaches Cognito: it travels in the browser's OIDC state and is redeemed only after the user holds a JWT ([`auth.md` §3](design/auth.md#3-presignup-lambda)).
+- The app's own account, the `COGNITO_SUB#{sub}` lookup and the `User` row, is created at the first redemption ([`auth.md` §4.2](design/auth.md#42-algorithm)).
+- So anyone with a Google or Facebook account gets a Cognito user and a JWT. That account can't see any group's data, but its API calls still run Lambdas (open question 3 in [`PROGRESS.md`](../plans/PROGRESS.md)). Such accounts also pile up in the user pool and count as Cognito monthly active users.
+
+### 15.2 Reject sign-ups without an invite
+
+`PreSignUp` can't see the code, but it does receive the email address the IdP sent (`request.userAttributes.email`). It would allow a new account only if a pending invite is bound to that email.
+
+- **Lookup.** Each email-bound invite also writes `pk = INVITE_EMAIL#{lowercased email}`, `sk = INVITE#{code}`, with a TTL at the invite's expiry. Consuming or revoking the invite deletes that row in the same transaction. This adds an item rather than a third GSI.
+- **Rejecting.** On `PreSignUp_ExternalProvider` with no matching row, the trigger throws. Cognito doesn't create the user, and redirects to `/auth/callback` with an `error_description` beginning "PreSignUp failed with error". `AuthCallbackPage` turns that into a "You need an invite to sign up" screen with a link to `/join`.
+- **Scope.** `PreSignUp` runs only when Cognito creates a user, so existing users are unaffected. That includes joining more groups through open invite links.
+- **Infra.** The trigger needs read access to the table, and has to answer within Cognito's 5-second trigger timeout, so a cold start lands on the sign-up path.
+
+Trade-offs for the owner to decide:
+- **Every invite for someone new must be bound to an email.** Open "anyone with this link" invites would only work for people who already have an account. The admin Invites tab would need an email field, required for newcomers.
+- **Facebook.** Facebook doesn't send `email_verified`, and redeeming a bound invite requires a Google-verified email ([D5](decisions.md#d5)). A Facebook newcomer would pass `PreSignUp` and then fail redemption with `INVITE_EMAIL_MISMATCH`. A Facebook account may also have no email at all. So new users become Google-only unless D5 is relaxed.
+- **A different address.** Someone signing in with a Google account other than the invited one is turned away and has to ask for an invite to that address.
+- Matching an unverified email at sign-up is acceptable for this gate. Passing it only creates an inert account, and redemption still checks properly.
+
+Alternatives considered:
+- A pre-token-generation trigger that refuses tokens. The Cognito user already exists by then.
+- An unauthenticated "check this code" endpoint before sign-in. It breaks the idle-backend principle, and the check still couldn't be tied to Cognito creating the user.
+- Passing the code to `PreSignUp` as `clientMetadata`. The OAuth redirect flow doesn't forward it ([`auth.md` §3.1](design/auth.md#31-role)).
+
+### 15.3 Delete accounts that don't redeem an invite within 24 hours
+
+This limits how many inert accounts can exist, rather than preventing them: someone deleted can sign in again and get another 24 hours. It needs no change to invites, so it's the cheaper of the two. It's the cleanup job of [`archival.md` §6](design/archival.md#6-inactive-account-cleanup-separate-but-related), with a 24-hour threshold.
+
+- **The sweep.** An hourly scheduled Lambda, on EventBridge like the cycle and notify ticks, pages through Cognito `ListUsers`. Each user created more than 24 hours ago with no `COGNITO_SUB#{sub}` row is deleted with `AdminDeleteUser`. With an hourly run, deletion lands 24–25 hours after sign-up.
+- **Who's kept.** Anyone who has ever redeemed an invite has the lookup row and is kept, even after leaving every group. The dev scripts (`bootstrap_admin.py`, `seed_dev_data.py`) write the row for the users they create. A Cognito user made by hand without it would be swept.
+- **The prod bootstrap admin** creates their Cognito user by signing in with Google, then redeems a bound invite ([`auth.md` §9.1a](design/auth.md#91a-scriptsbootstrap_adminpy--prod-d5)). They'd have to redeem within the 24 hours, like everyone else.
+- **Race with a live token.** Deleting a Cognito user doesn't invalidate an ID token it already holds, which lasts up to 60 minutes ([`auth.md` §7](design/auth.md#7-token-lifetime-and-refresh)). A redemption in that window would create a `User` row for a `sub` Cognito no longer has. To prevent it, the sweep first writes a tombstone at `COGNITO_SUB#{sub}`, with a TTL a little over the token lifetime, and only then deletes the user:
+  - `/invites/redeem` step 4 treats a tombstone as `401`;
+  - a redemption that read before the tombstone landed fails step 6's existing `attribute_not_exists(pk)` condition.
+- **UX.** Home's no-group state would add "Accounts that don't join a group within 24 hours are removed. You can sign in again any time with an invite." Signing in again creates a fresh account, and nothing is lost, because nothing was stored.
+- **Scale.** `ListUsers` returns 60 users a page and is rate-limited, which is fine for a pool of hundreds or a few thousand. A much larger pool would need sign-ups recorded as they happen, instead of a full sweep.
+- **Ops.** Count deletions in a metric, and let the account error alarm cover failures.
+
+**Open questions.**
+- Ship §15.3 alone, or both? §15.3 needs no change to how invites work. §15.2 is the only way to actually stop identities from being created.
+- Under §15.2, should newcomers be Google-only, or should D5's rule for bound invites be relaxed for Facebook?
+- Is 24 hours long enough for someone who signs in on one device and opens the invite link on another, a day later?
