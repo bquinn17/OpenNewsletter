@@ -1364,3 +1364,13 @@ Streak settlement needed no change for weekly cycles: it never does calendar ari
 - **Cleanups.** One shared cancellation classifier (`error::classify_transact_write_error`) for the vote, reaction, comment and promotion transactions, and one retry driver for counted reactions. `RepoError::TransactionConflict` marks a transaction that kept conflicting through its retries.
 
 **Tests after the fixes.** Backend 559 (+5: missing answer, rejoin, ties, two cap tests), scripts 19 (+2), CDK 177, Vitest unchanged.
+
+## Dev gate pass — what it found (2026-11-15)
+
+The API side of the M4–M13.5 gates ran against dev, on a build from before the leaderboard and the app's own sign-in pages merged. It was driven with two `bootstrap_admin.py` password users and a group each; the owner did the seeded sign-in and a second Google account's invite redeem by hand. [`build-order.md`](../build-order.md) marks what passed. Three findings, fixed in the same change:
+
+- **Admin checks no longer use the membership cache.** After a removal, the removed admin could still list invites through `lambda-invites` for the rest of the 60 s TTL, because `invalidate_membership` only evicts the cache in the Lambda that made the change. That window was enough to mint an admin invite and rejoin. `require_membership(.., true)` now always reads DynamoDB, and deleting someone else's comment makes that check rather than trusting the cached role. Member access keeps the accepted 60 s staleness ([decision](../../docs/decisions.md#membership-cache), [`auth.md` §11](../../docs/design/auth.md#11-tenant-authorization-helper)).
+- **`promote_candidates_tx` saves `next_transition_at`.** It moved `gsi2sk` to the close time but left `next_transition_at` at the voting cycle's open time, so an `open` row disagreed with its own index key. Nothing read it back yet, but a full-row write of that row would have moved `gsi2sk` back to the open time and closed the cycle at once.
+- **Smoke-test CORS expectation.** S3 sends `Access-Control-Allow-Credentials: true` for any matched non-`*` origin and can't be told not to; [`smoke-test.md`](../../docs/operations/smoke-test.md) §6 no longer expects it absent.
+
+Also answered: API Gateway passes the reaction emoji path parameter decoded ([`api.md` §8.6](../../docs/design/api.md#86-put-reactionsemoji)).

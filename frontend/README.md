@@ -133,14 +133,6 @@ a demo group; any other code shows the invalid-invite error. `GET /config`'s
 `vapidPublicKey` is a valid but throwaway P-256 key in mock mode: the browser will
 subscribe, but no private key exists for it, so no real push can arrive.
 
-`src/mocks/` is the **legacy** pre-M7 mock layer (`legacyQueries.ts`, `types.ts`, `api.ts`,
-`data.ts`). It backs the pages later milestones haven't migrated yet (Candidates, Suggest,
-Newsletter, Respond, GroupAdmin), which the router renders only in mock mode — against a
-real API those routes show `PendingMilestonePage`. See
-[`docs/design/frontend.md` §16](../docs/design/frontend.md#16-legacy-mock-pages-historical). Don't
-build new features on it. (M11 removed its unused push/notification-preference mocks —
-`GroupAdminPage`, the only remaining consumer, never read them.)
-
 ## Where types come from
 
 `frontend/src/types/api.ts` is generated from [`../shared/openapi.yaml`](../shared/openapi.yaml)

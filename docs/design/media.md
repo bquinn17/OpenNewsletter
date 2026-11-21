@@ -144,7 +144,7 @@ Every handler that returns one of these has already checked that the caller may 
 
 - Block Public Access stays fully on. Nothing grants anonymous reads, and S3 doesn't bill for the 403s a request without a valid signature gets from outside the account.
 - A presigned URL carries the signer's permissions, so each signing Lambda's role gets `s3:GetObject` on just the prefixes it serves: `img/*` for `lambda-media`, `lambda-newsletters` and `lambda-engagement`; `avatar/*` for `lambda-media`, `lambda-groups`, `lambda-newsletters` and `lambda-questions` ([`infrastructure.md` §6.2](infrastructure.md#62-lambda-functions-request-handlers)).
-- Bucket CORS allows `GET` and `HEAD` from the SPA's origin (plus `http://localhost:5173` in dev). No credentials: the signature is in the query string. The SPA loads images in CORS mode so its service worker sees real statuses (§4.4).
+- Bucket CORS allows `GET` and `HEAD` from the SPA's origin (plus `http://localhost:5173` in dev). No credentials: the signature is in the query string. S3 still answers a matching origin with `Access-Control-Allow-Credentials: true`, which a bucket can't turn off; the SPA's anonymous CORS requests ignore it. The SPA loads images in CORS mode so its service worker sees real statuses (§4.4).
 
 ### 4.2 URL lifetime and signing window
 
@@ -184,7 +184,7 @@ Implementation notes:
 - The ready/failed updates are conditioned on `status = pending`. A lost condition means another invocation already finished, so it is logged and skipped, not retried.
 - Size and decode failures are terminal and recorded on the row (`error_message` = `IMAGE_TOO_LARGE` / `IMAGE_DECODE_FAILED`), and both delete the original, best effort as on the `ready` path below. Transient S3/DynamoDB errors return `Err` so Lambda's async retry runs.
 - **An original that's already gone is skipped, not an error.** S3 notifications are at-least-once, so a duplicate delivery can see the row still `pending` and then find that the first invocation has since finished and deleted the original. The S3 `NotFound`/`NoSuchKey` on its read is logged at INFO and the invocation returns `Ok`.
-- **The original is deleted once the row is `ready`.** Right after the conditional ready update succeeds, the handler deletes the original from its originals bucket. This is best effort: a failure is logged at ERROR and the invocation still returns `Ok`, because a retry would find the row no longer `pending` and skip it. The 7-day lifecycle expiry (§8.1) removes whatever a failed delete leaves. When the ready update loses its condition (another invocation finished, or the image was deleted mid-processing), the original is left to whoever won. Keeping no originals is an owner decision (2026-10-14): storage stays flat, and uploaded EXIF/GPS metadata doesn't outlive processing (the variants are re-encoded from pixels and carry none). The trade-off is that variants can't be regenerated at new sizes from the full-size upload.
+- **The original is deleted once the row is `ready`.** Right after the conditional ready update succeeds, the handler deletes the original from its originals bucket. This is best effort: a failure is logged at ERROR and the invocation still returns `Ok`, because a retry would find the row no longer `pending` and skip it. The 7-day lifecycle expiry (§8.1) removes whatever a failed delete leaves. When the ready update loses its condition (another invocation finished, or the image was deleted mid-processing), the original is left to whoever won. Keeping no originals is an owner decision: storage stays flat, and uploaded EXIF/GPS metadata doesn't outlive processing (the variants are re-encoded from pixels and carry none). The trade-off is that variants can't be regenerated at new sizes from the full-size upload.
 - Variants are never upscaled. Recorded `width`/`height` are the original's after EXIF orientation.
 - Cache-Control on writes: `private, max-age=5184000, immutable` (60 days, never more than two months) for `img/*`, `private, max-age=7776000, immutable` (90 days, §11.3) for `avatar/*`; the two lifetimes are `IMAGE_CACHE_MAX_AGE_SECONDS` and `AVATAR_CACHE_MAX_AGE_SECONDS` in `backend/crates/shared/src/config.rs`. `private` because these are per-viewer authenticated reads that no shared cache should keep. The browser's HTTP cache keys on the full presigned URL; the service worker's cache (§4.4) is what makes reloads free.
 
@@ -224,7 +224,7 @@ Memory: 1024 MB (image processing is CPU-bound; arm64 Lambda's 1024 MB gives a f
 
 ### 6.1 Why presigned S3 (decision record)
 
-**Decision (2026-10-14): private S3 plus presigned GET URLs signed by each Lambda's own role, minted inline in API responses.**
+**Decision: private S3 plus presigned GET URLs signed by each Lambda's own role, minted inline in API responses.**
 
 Options weighed:
 
@@ -347,7 +347,7 @@ Same shape as the per-question pipeline:
 ### 11.3 Serving
 
 The same way as images (§4): `avatarUrl` fields carry a presigned GET for `avatar/{avatarId}/display.webp`, signed by `media-urls` (`MediaUrls::avatar_url`). Avatars are signed too, even though a leaked avatar shows no more than any shared group does: signing costs nothing extra and means the bucket needs no public path at all.
-- Cached for 90 days (owner decision 2026-10-18): `Cache-Control: private, max-age=7776000, immutable`, and the service worker's `media-avatars` cache expires entries after 90 days. That's longer than images because an avatar's bytes never change under its key. Changing avatars produces a new `avatarId`, so a new path, and the new photo misses every cache.
+- Cached for 90 days ([owner decision](../decisions.md#avatars-cached-90-days)): `Cache-Control: private, max-age=7776000, immutable`, and the service worker's `media-avatars` cache expires entries after 90 days. That's longer than images because an avatar's bytes never change under its key. Changing avatars produces a new `avatarId`, so a new path, and the new photo misses every cache.
 - The new path only reaches other views once their data refetches. After an avatar change (photo or colour), `useUpdateProfile` writes the `PATCH /me` response into `me` and invalidates every other query flagged `MEDIA_URLS_META` (§4.4), which covers every query that shows member avatars: the group's members, candidates and the newsletter. Other members' devices pick it up on their next refetch, within each query's `staleTime`.
 
 ### 11.4 Cleanup

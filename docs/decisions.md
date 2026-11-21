@@ -6,9 +6,9 @@ Each decision is already written into its design page as current behaviour. This
 
 ---
 
-## Plan review, 2026-10-07 (D1–D12)
+## Plan review (D1–D12)
 
-A full read-through of the design after the hardening milestone turned up twelve questions for the owner. All twelve were decided on 2026-10-07 and implemented by 2026-10-08.
+A full read-through of the design after the hardening milestone turned up twelve questions for the owner. All twelve are decided and implemented.
 
 <a id="d1"></a>
 ### D1 — Sessions persist in `localStorage`
@@ -58,7 +58,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d6"></a>
 ### D6 — Dev deploys on every merge; prod deploys when the owner pushes `release`
 
-**Decision.** `deploy.yml` deploys every push to `main` to dev. `release.yml` deploys every push to the `release` branch to prod, and that push is the manual gate (`git push origin main:release`, updated 2026-11-01). Only the owner can update `release`, it can't be force-pushed or deleted, and only it can deploy through the `production` environment. Prod refuses a commit that isn't on `main` or hasn't deployed to dev, and deploys dev's Lambda build for that commit unchanged. Each deploy ships the backend, then the frontend, from one commit. API changes are expand → contract. The service worker activates new builds promptly (`skipWaiting` plus `clients.claim`).
+**Decision.** `deploy.yml` deploys every push to `main` to dev. `release.yml` deploys every push to the `release` branch to prod, and that push is the manual gate (`git push origin main:release`). Only the owner can update `release`, it can't be force-pushed or deleted, and only it can deploy through the `production` environment. Prod refuses a commit that isn't on `main` or hasn't deployed to dev, and deploys dev's Lambda build for that commit unchanged. Each deploy ships the backend, then the frontend, from one commit. API changes are expand → contract. The service worker activates new builds promptly (`skipWaiting` plus `clients.claim`).
 
 **Why.** One build ships unchanged, so what reached prod is exactly what ran in dev. A branch push, rather than an approval on every `main` run, means no prod run sits waiting after each merge, the tip of `release` always shows what's in prod, and releasing is one deliberate command. An installed PWA keeps running its old code until its service worker updates, so the backend must keep serving the previous frontend release for a while. Prompt activation keeps that window short without reloading the page mid-session, which `autoUpdate` would do.
 
@@ -92,9 +92,9 @@ A full read-through of the design after the hardening milestone turned up twelve
 **Where.** [`auth.md` §12](design/auth.md#12-threat-model-considerations), [`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy).
 
 <a id="d10"></a>
-### D10 — Cycle-settings changes apply from the next new cycle (2026-11-01)
+### D10 — Cycle-settings changes apply from the next new cycle
 
-**Decision.** When an admin changes `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` or `timezone`, no existing cycle changes. The `open` cycle and the already-scheduled `voting` cycle keep their dates, question count and vote cap, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. Each cycle copies the question and vote counts onto its own row when it's created (2026-11-03). The settings form says cycle setting changes "apply from the next new cycle".
+**Decision.** When an admin changes `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` or `timezone`, no existing cycle changes. The `open` cycle and the already-scheduled `voting` cycle keep their dates, question count and vote cap, and the first cycle created after the change (the successor the tick creates when the current `voting` cycle opens) uses the new settings. Each cycle copies the question and vote counts onto its own row when it's created. The settings form says cycle setting changes "apply from the next new cycle".
 
 **Why.** Moving a live cycle's open or close interacted badly with the weekly cadence: a rescheduled `voting` cycle could open before the `open` one closed, leaving two cycles open at once. Rescheduling also needed an error path for closes that would land in the past. Leaving scheduled cycles alone means members never see a date they were told change underneath them, and the scheduling rules live in one place, the tick. Fixing the vote cap per cycle means a lowered cap never strands votes already cast above it, and a cycle's question count is known while members are still voting.
 
@@ -107,7 +107,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 
 **Why.** A small group's threads are short, and flat lists are simpler to read on a phone. The designs for the deferred features are kept in [`future-ideas.md`](future-ideas.md) so they can be picked up later.
 
-**Where.** [`engagement.md` §1](design/engagement.md#1-comments), [`future-ideas.md` §1](future-ideas.md#1-threaded-nested-comments)–§2.
+**Where.** [`engagement.md` §1](design/engagement.md#1-comments), [`future-ideas.md` §1](future-ideas.md#1-reply-comments)–§2.
 
 <a id="d12"></a>
 ### D12 — No per-PR CI stacks
@@ -123,72 +123,72 @@ A full read-through of the design after the hardening milestone turned up twelve
 ## Other standing decisions
 
 <a id="apple-idp-dropped"></a>
-### Sign in with Apple is not offered (2026-10-05)
+### Sign in with Apple is not offered
 
 Sign in with Apple requires a paid Apple Developer membership ($99/yr), so the user pool federates Google and Facebook only. Adding Apple back means restoring the IdP construct in `AuthStack`, its config fields and the operator-setup step. See [`infrastructure.md` §4.2](design/infrastructure.md#42-identity-providers-federated).
 
 <a id="broken-drafts"></a>
-### Broken drafts are retried, then skipped (2026-10-09)
+### Broken drafts are retried, then skipped
 
 One draft that can't be published must not hold the whole edition back. The close sweep carries on past a failing draft and keeps the cycle `open`. After `AUTO_PUBLISH_MAX_FAILED_SWEEPS` failing ticks, it publishes without that draft and emits the `AutoPublishAbandoned` metric, which the cycle-tick alarm counts. See [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl) and the operator procedure in [`operations/runbook.md`](operations/runbook.md).
 
 <a id="field-errors"></a>
-### Field errors name the field, and the reason is a code (2026-10-09)
+### Field errors name the field, and the reason is a code
 
 A 422's `fieldErrors[]` entries carry one plain field name each, and the reason goes in `code`, a `FieldErrorCode` enum in `shared/openapi.yaml`. Clients switch on the code; they never parse a compound field name. See [`api.md` §1.1](design/api.md#11-error-format).
 
 <a id="ci-hardening"></a>
-### CI can't read user data, and every action is SHA-pinned (2026-10-11)
+### CI can't read user data, and every action is SHA-pinned
 
 The pull-request `cdk diff` job runs the branch's own code, so its role assumes no CDK bootstrap role and can only read stack templates. Every `uses:` in the workflows is pinned to a full commit SHA, and Dependabot bumps them in one weekly PR. See [`testing-and-ci.md` §6](development/testing-and-ci.md#6-github-actions-workflows) and [`.github/workflows/README.md`](../.github/workflows/README.md).
 
 <a id="membership-cache"></a>
-### Up to 60 seconds of stale access after removal is accepted (2026-10-11)
+### Up to 60 seconds of stale member access after removal is accepted
 
-Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SECONDS` (60 s). A member who is removed or demoted can keep their old access for up to that long. See [`auth.md` §11](design/auth.md#11-tenant-authorization-helper).
+Each Lambda container caches a caller's memberships for `MEMBERSHIP_CACHE_TTL_SECONDS` (60 s). A removed member can keep reading the group for up to that long. Admin powers aren't cached: every admin check reads the membership row, so a demoted or removed admin loses them at once and can't, for example, mint an invite to get back in. See [`auth.md` §11](design/auth.md#11-tenant-authorization-helper).
 
 <a id="home-shows-one-group"></a>
-### Home shows one group, and there is no bottom tab bar (2026-10-14)
+### Home shows one group, and there is no bottom tab bar
 
 Home lists only the group picked in the header's group switcher, rather than a section per membership under a switcher that didn't affect it. The mobile `BottomNav` is gone: its tabs duplicated Home's edition rows and the header (logo, avatar menu → Settings), and it covered RespondPage's own bottom bar. See [`frontend.md` §4.1](design/frontend.md#41-shell) and [§7.1](design/frontend.md#71-homepage-).
 
 <a id="presigned-s3-media"></a>
-### Images are served from private S3 by presigned URL (2026-10-14)
+### Images are served from private S3 by presigned URL
 
 API responses carry short-lived S3 presigned GET URLs for every image and avatar, signed by the handler's own Lambda role after its usual membership check. No signing key is stored anywhere. The processed variants of images and avatars share one bucket. Images load in CORS mode (`crossorigin="anonymous"`) so the service worker sees real response statuses, and it caches by object path, so a fresh signature doesn't mean a fresh download and published editions work offline.
 
 **Why.** It keeps membership-based isolation (a public bucket wouldn't) without a long-lived credential (an IAM-user signing key would add one), and it's the presigning mechanism uploads already use. URLs arrive inline with the data, so an image needs no separate auth request before it loads. A CDN isn't an option: this AWS account can't create CloudFront resources, and S3's free egress covers this scale. See [`media.md` §4](design/media.md#4-serving-presigned-s3-gets) and [§6.1](design/media.md#61-why-presigned-s3-decision-record), [`infrastructure.md` §5](design/infrastructure.md#5-mediapersistentstack-and-mediapipelinestack).
 
 <a id="originals-deleted-on-success"></a>
-### Originals are deleted once processed (2026-10-14)
+### Originals are deleted once processed
 
 `lambda-image-process` deletes each uploaded original as soon as the row is `ready`, or terminally `failed`. A 7-day lifecycle rule on `uploads/` catches anything left behind. This answers the open question of whether to keep originals.
 
 **Why.** Originals were the only media storage that grew without bound, and they kept uploaded EXIF/GPS metadata that the re-encoded variants don't carry. The cost is that variants can't be regenerated at new sizes from full-size uploads. See [`media.md` §5.1](design/media.md#51-trigger-configuration) and [§8.1](design/media.md#81-orphan-originals).
 
 <a id="avatars-cached-90-days"></a>
-### Avatars are cached for 90 days (2026-10-18)
+### Avatars are cached for 90 days
 
 A device keeps an avatar for 90 days: the service worker's `media-avatars` cache expires entries then, and the processed object's `Cache-Control` matches. Images stay at 30 days in the service worker. Changing an avatar (photo or colour) refetches every query that shows member avatars.
 
 **Why.** Avatars appear on almost every screen and change rarely, and an avatar's bytes never change under its key: a new avatar gets a new `avatarId`, so a new path that misses every cache. The cost is that a replaced or deleted avatar can stay in a device's cache for up to 90 days, though nothing references its path any more ([D8](#d8)'s accepted residual copies). See [`media.md` §11.3](design/media.md#113-serving).
 
 <a id="demo-mode"></a>
-### A demo at `/demo`, on mock data, that writes nothing (2026-10-29)
+### A demo at `/demo`, on mock data, that writes nothing
 
 The deployed site serves a demo at `/demo`: the normal app on the in-memory mock, linked from the signed-out home screen ("See a demo") and shareable as any `/demo/...` URL. Whether a page is the demo depends only on the URL it loaded at. Leaving `/demo` in any way leaves the demo, and so does a sign-in, here or in another tab. The demo makes no writes to the API, S3 or the push service, and keeps its client state in memory rather than browser storage. Signed-in visitors can use it, and a banner on every page says it's a demo.
 
 **Why.** It lets people see the app before they have an invite, with no second GitHub Pages build and no backend cost: the demo never reaches API Gateway. A URL prefix rather than a stored flag means there is no "in the demo" state that could outlive the demo. Keeping its state in memory, rather than clearing storage on exit, means no exit path can leave anything behind, and a visitor's real session and drafts are never touched. See [`frontend.md` §17](design/frontend.md#17-demo-mode).
 
 <a id="hosted-dev-frontend"></a>
-### Every push to `main` deploys dev, frontend included; prod's site lives in its own repo (2026-10-31)
+### Every push to `main` deploys dev, frontend included; prod's site lives in its own repo
 
 `deploy.yml` deploys dev, backend and frontend, on every push to `main` (`DEPLOY_ENABLED=true`). The dev frontend is built from the outputs of the stacks it just deployed and served from this repo's GitHub Pages site at `dev.betterloop.site`. Prod deploys when the owner pushes `release` ([D6](#d6)). Its frontend publishes to the `gh-pages` branch of a separate repo (`PROD_PAGES_REPO`, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site)), pushed with a deploy key.
 
 **Why.** A merged change should be live on dev without anyone running `make deploy-dev`, and a hosted dev site is what the owner and testers actually use. A repo hosts only one Pages site, so dev and prod can't both be served from this one. Moving prod to its own repo keeps the live dev site where it is, and keeps prod on free GitHub Pages, consistent with the idle-backend principle. See [`testing-and-ci.md` §6.4](development/testing-and-ci.md#64-deployyml-and-releaseyml--dev-auto-deploy-prod-on-release) and [`operator-setup.md` §10](operations/operator-setup.md#10-prod-frontend-pages-repo).
 
 <a id="cycle-cadence"></a>
-### Cycle cadence is set per deployment: dev weekly, prod monthly (2026-10-29)
+### Cycle cadence is set per deployment: dev weekly, prod monthly
 
 **Decision.** The `CYCLE_FREQUENCY` Lambda environment variable (`monthly` or `weekly`) chooses the cadence for a whole deployment. `CYCLE_WEEKLY_START` (default `sun 21:00`, group-local) sets when weekly cycles open. With the default 7-day window, that's also when the previous edition publishes. Weekly cycle ids are `yyyymmdd`. A weekly response window is capped at 7 days. A monthly deployment keeps month-name labels. A weekly one labels each edition by its publication date, the scheduled close until it publishes.
 
@@ -197,16 +197,16 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 **Where.** [`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence), [`api.md` §2.1](design/api.md#21-get-config), [`frontend.md` §14a](design/frontend.md#14a-client-derived-display-data-not-api-fields), [`infrastructure.md` §2](design/infrastructure.md#2-configpy).
 
 <a id="first-cycle-by-tick"></a>
-### The cycle tick creates a group's first cycle (2026-11-01)
+### The cycle tick creates a group's first cycle
 
 **Decision.** `scripts/bootstrap_admin.py` and `scripts/seed_dev_data.py` write a new group with a marker on its `META` row (`gsi2pk = GROUP_STATUS#awaiting_first_cycle`) and no Newsletter row. The next cycle tick creates the group's first `voting` cycle at the deployment's cadence and removes the marker in the same transaction. The seed script writes no deadlines: to fast-forward a cycle, call `POST /admin/dev/tick/cycle` with `advanceCycleClosesBy`.
 
 **Why.** The scripts held a Python copy of the scheduling rules, which had already drifted from the Rust copy (window caps), and they had to guess the deployed cadence from stack outputs. With one implementation, a script can't create a first cycle that the Lambdas would schedule differently. The cost is a wait of up to 5 minutes for the first cycle, or one dev tick call.
 
-**Where.** [`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group), [`data-model.md` §2](design/data-model.md#2-entities), [`environments.md`](development/environments.md).
+**Where.** [`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group), [`data-model.md` §2](design/data-model.md#2-entity-catalog), [`environments.md`](development/environments.md).
 
 <a id="own-signin-page"></a>
-### The app has its own sign-in and sign-up pages; Cognito's hosted page is never shown (2026-11-15)
+### The app has its own sign-in and sign-up pages; Cognito's hosted page is never shown
 
 **Decision.** Sign-in starts on the app's `/signin` page, and signing up on `/join`, both in the app's theme. Each IdP button calls Cognito's `/oauth2/authorize` with `identity_provider`, so Cognito forwards straight to Google or Facebook and its hosted page never appears. Home, signed out, offers **Sign up** (an invite code, then an IdP) and **Sign in** side by side. An invite link shows a "You're invited" page rather than redirecting.
 
@@ -216,9 +216,9 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 ---
 
-## Design review, 2026-10-08
+## Design review: performance and cost
 
-A performance, cost and security review before the first production deploy. These decisions came out of it:
+A performance, cost and security review before the first production deploy ([archived](../plans/archive/design-review-performance-cost.md)). These decisions came out of it:
 
 - **Whole-set queries paginate.** Every Query that needs the whole set goes through `persistence::query::query_all` and follows `LastEvaluatedKey`. Only cursor-paged routes and deliberately capped reads stop early. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
 - **Current-cycle lookups read three rows.** `find_voting_cycle` and `find_open_cycle` read only a group's three newest `NL#` rows. This relies on cycle ids sorting chronologically (`yyyymm`, or `yyyymmdd` when weekly) and on a group gaining one successor cycle at a time. See [`data-model.md` §3](design/data-model.md#3-access-patterns--index-map).
@@ -233,4 +233,4 @@ A performance, cost and security review before the first production deploy. Thes
 When the owner settles a design question:
 1. Write the outcome into the owning design page as current behaviour.
 2. Add an entry here with what was decided, why, and where. Give it the next `D` number if code or docs will cite it by ID; otherwise give it a descriptive `<a id>` anchor.
-3. Record what landed, and when, in that milestone's entry in [`plans/archive/progress-log.md`](../plans/archive/progress-log.md).
+3. Record what landed in that milestone's entry in [`plans/archive/progress-log.md`](../plans/archive/progress-log.md).

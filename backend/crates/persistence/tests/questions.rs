@@ -1,6 +1,6 @@
 mod common;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use domain::{CycleId, GroupId, NewsletterStatus, QuestionId, UserId};
 use persistence::questions::{self, VoteTxError};
 use pretty_assertions::assert_eq;
@@ -149,7 +149,9 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     let lq = common::locked_question("g1", "202606", "q1", "u1");
     nl.status = NewsletterStatus::Open;
     nl.locked_question_ids = vec![lq.question_id.clone()];
-    nl.next_transition_at = Some(Utc::now());
+    let close_at: DateTime<Utc> = "2026-06-08T00:00:00Z".parse().unwrap();
+    assert_ne!(nl.next_transition_at, Some(close_at));
+    nl.next_transition_at = Some(close_at);
     questions::promote_candidates_tx(&repo, std::slice::from_ref(&lq), &nl)
         .await
         .unwrap();
@@ -169,6 +171,11 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     .unwrap()
     .unwrap();
     assert_eq!(updated_nl.status, NewsletterStatus::Open);
+    assert_eq!(
+        updated_nl.next_transition_at,
+        Some(close_at),
+        "the open row carries its close time, not the voting cycle's open time"
+    );
 }
 
 /// Promotion §4 #3: one `MemberStats.questions_asked` bump per distinct

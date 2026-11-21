@@ -9,9 +9,9 @@ use domain::api::{
     PatchCommentRequest, ReactionsResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, Comment, CommentId, CycleId, GroupId, GroupMembership, ImageId,
-    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, Response,
-    ResponseId, ResponseStatus, Role, User, UserId,
+    ApiError, ApiErrorCode, Comment, CommentId, CycleId, GroupId, ImageId, ImagePurpose,
+    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, Response, ResponseId,
+    ResponseStatus, User, UserId,
 };
 use persistence::engagement::{self, CommentLocation, NewComment, ReactionTxError};
 use persistence::{auth, keys, media, newsletters, responses, users};
@@ -33,7 +33,7 @@ pub async fn list_comments(
     limit: i32,
     cursor: Option<&str>,
 ) -> Result<CommentListResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let answer_user_id = answer.user_id;
@@ -86,7 +86,7 @@ pub async fn create_comment(
     response_id: &ResponseId,
     request: CreateCommentRequest,
 ) -> Result<CommentResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let answer_user_id = answer.user_id;
@@ -154,7 +154,7 @@ pub async fn patch_comment(
     comment_id: &CommentId,
     request: PatchCommentRequest,
 ) -> Result<CommentResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let answer_user_id = answer.user_id;
@@ -303,7 +303,7 @@ pub async fn delete_comment(
     response_id: &ResponseId,
     comment_id: &CommentId,
 ) -> Result<(), ApiError> {
-    let (answer, membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let answer_user_id = answer.user_id;
@@ -334,11 +334,17 @@ pub async fn delete_comment(
             return Ok(());
         }
 
-        let is_admin = membership.role == Role::Admin;
-        if existing.author_user_id != *caller && !is_admin {
-            return Err(ApiError::forbidden(
-                "only the comment's author or a group admin can delete it",
-            ));
+        // Moderating someone else's comment is an admin power, so it gets the
+        // uncached admin check (`docs/design/auth.md` §11).
+        if existing.author_user_id != *caller {
+            auth::require_membership(&state.repo, caller, group_id, true)
+                .await
+                .map_err(|e| match e.code {
+                    ApiErrorCode::Forbidden => ApiError::forbidden(
+                        "only the comment's author or a group admin can delete it",
+                    ),
+                    _ => e,
+                })?;
         }
 
         let loc = CommentLocation {
@@ -426,7 +432,7 @@ pub async fn get_reactions(
     question_id: &QuestionId,
     response_id: &ResponseId,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     build_reactions_response(
@@ -451,7 +457,7 @@ pub async fn put_reaction(
     response_id: &ResponseId,
     raw_emoji: &str,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let emoji = validation::emoji(raw_emoji)?;
@@ -539,7 +545,7 @@ pub async fn delete_reaction(
     response_id: &ResponseId,
     raw_emoji: &str,
 ) -> Result<ReactionsResponse, ApiError> {
-    let (answer, _membership) =
+    let answer =
         require_published_text_answer(state, caller, group_id, cycle_id, question_id, response_id)
             .await?;
     let emoji = validation::emoji(raw_emoji)?;
@@ -592,9 +598,8 @@ pub async fn delete_reaction(
 /// Check order shared by all seven routes (`docs/design/api.md` §8, GETs
 /// included): membership (403) -> cycle exists (404) -> not archived (410)
 /// -> published (409) -> answer resolves to a published text response
-/// (404). Returns the whole answer `Response` — reaction handlers need its
-/// author and current `reaction_count` — and the caller's membership (for
-/// the admin check on delete).
+/// (404). Returns the whole answer `Response`: reaction handlers need its
+/// author and current `reaction_count`.
 async fn require_published_text_answer(
     state: &AppState,
     caller: &UserId,
@@ -602,8 +607,8 @@ async fn require_published_text_answer(
     cycle_id: &CycleId,
     question_id: &QuestionId,
     response_id: &ResponseId,
-) -> Result<(Response, GroupMembership), ApiError> {
-    let membership = auth::require_membership(&state.repo, caller, group_id, false).await?;
+) -> Result<Response, ApiError> {
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
 
     let nl = newsletters::get_newsletter(&state.repo, group_id, cycle_id)
         .await
@@ -639,7 +644,7 @@ async fn require_published_text_answer(
         .filter(|r| r.kind == QuestionKind::Text && r.status == ResponseStatus::Published)
         .ok_or_else(|| ApiError::not_found("response not found"))?;
 
-    Ok((answer, membership))
+    Ok(answer)
 }
 
 /// Looks up a comment by id and 404s if it's missing or already

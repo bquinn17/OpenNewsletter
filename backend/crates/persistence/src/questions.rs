@@ -18,7 +18,7 @@ use domain::{
     CandidateQuestion, CandidateVote, CycleId, GroupId, LockedQuestion, Newsletter,
     NewsletterStatus, QuestionId, UserId,
 };
-use serde_dynamo::{from_item, to_item};
+use serde_dynamo::{from_item, to_attribute_value, to_item};
 use std::collections::HashMap;
 
 /// AP10 — list candidate questions for the next cycle. Follows
@@ -644,17 +644,29 @@ pub async fn promote_candidates_tx(
         Some(d) => newsletter_gsi2sk(d, &newsletter.group_id, &newsletter.cycle_id),
         None => newsletter_gsi2sk_sentinel(&newsletter.group_id, &newsletter.cycle_id),
     };
+    // `next_transition_at` moves with `gsi2sk`, so the row never carries the
+    // voting cycle's old open time once it's `open`.
+    let (update_expression, next_at) = match newsletter.next_transition_at {
+        Some(d) => (
+            "SET #s = :open, locked_question_ids = :ids, #g2pk = :g2pk, #g2sk = :g2sk, \
+             next_transition_at = :next",
+            Some(to_attribute_value(d)?),
+        ),
+        None => (
+            "SET #s = :open, locked_question_ids = :ids, #g2pk = :g2pk, #g2sk = :g2sk \
+             REMOVE next_transition_at",
+            None,
+        ),
+    };
 
-    let flip = Update::builder()
+    let mut flip = Update::builder()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(group_pk(&newsletter.group_id)))
         .key(
             attr::SK,
             AttributeValue::S(newsletter_sk(&newsletter.cycle_id)),
         )
-        .update_expression(
-            "SET #s = :open, locked_question_ids = :ids, #g2pk = :g2pk, #g2sk = :g2sk",
-        )
+        .update_expression(update_expression)
         .condition_expression("#s = :voting")
         .expression_attribute_names("#s", "status")
         .expression_attribute_names("#g2pk", attr::GSI2PK)
@@ -666,7 +678,11 @@ pub async fn promote_candidates_tx(
             ":g2pk",
             AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Open)),
         )
-        .expression_attribute_values(":g2sk", AttributeValue::S(gsi2sk))
+        .expression_attribute_values(":g2sk", AttributeValue::S(gsi2sk));
+    if let Some(next_at) = next_at {
+        flip = flip.expression_attribute_values(":next", next_at);
+    }
+    let flip = flip
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
