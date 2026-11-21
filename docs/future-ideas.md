@@ -98,28 +98,43 @@ A member can attach a place to any text answer ("📍 Lucali, Brooklyn"). A ques
 
 **Privacy.** Only the group can see a place, the same as the answer it's attached to. Uploaded photos already lose their GPS metadata during processing ([`media.md` §5.1](design/media.md#51-trigger-configuration)), so the only places an answer can carry are ones the member chose.
 
-## 7. Members page and hometown map
+## 7. Members page, profile fields and the city map
 
-A page that any member can open from an edition. It lists who's in the group, and its map view puts each member's face on their hometown.
+A page that any member can open from an edition. It lists who's in the group, and its map view puts each member's face on their current city.
 
 **List.**
 - `/g/:groupId/members`, opened from an avatar stack ("12 members") in the edition page's header. It links to the leaderboard (§5).
 - Each row shows the member's avatar, display name, role, the month they joined and the editions they've answered.
 - **No new route is needed.** `GET /groups/{groupId}` already returns `members`, with `avatarUrl`, `avatarColor`, `joinedAt` and `editionsAnswered`, to any member ([`api.md` §4.2](design/api.md#42-get-groupsgroupid)). Today only the admin page's Members tab displays it.
 
-**Hometown** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns.
-- `User.hometown` holds `{ name, lat, lng, provider_place_id }`, or is absent.
+**Current city** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns. It's "where I live now", not a birthplace — Facebook separately offers a birthplace permission (`user_hometown`) that this feature doesn't use, to avoid the glossary collision.
+- `User.current_city` holds `{ name, lat, lng, provider_place_id }`, or is absent.
 - **City-level only.** The search returns only cities and towns, and the stored point is the town's centre, so the map never shows a street.
 - **Opt-in.** It's unset by default. Because it lives on the User row, every group the member belongs to sees it, and the Settings copy says so. Hiding it from a single group could come later if someone asks.
-- **API.** `PATCH /me` accepts `hometown`, and `null` clears it. `UserResponse` and `MemberResponse` gain it. Both are new fields, so this is an expand-only change.
+- **API.** `PATCH /me` accepts `currentCity`, and `null` clears it. `UserResponse` and `MemberResponse` gain it. Both are new fields, so this is an expand-only change.
+
+**Birthday** is a second profile field, also set in Settings → Profile and shown only on the member's own profile card (not on the members list or map — a group's superlatives already avoid singling anyone out, §5).
+- `User.birthday` holds `{ month, day, year }`, with `year` optional — Facebook's own `birthday` field comes back in `MM/DD/YYYY`, `MM/DD` or just `YYYY` depending on the person's Facebook privacy settings, and manual entry should accept the same three shapes rather than forcing a year nobody asked for.
+- No age math anywhere in v1 (no "turns 34" banner, no sort-by-age). That can come later as its own decision once there's a reason for it.
+- **API.** `PATCH /me` accepts `birthday` or `null`. `UserResponse` gains it; `MemberResponse` doesn't, since it's visible only to the member themselves.
 
 **Map view.** The members page gets a List | Map toggle that uses the map component from §6.
 - Markers are the members' avatars: the presigned `avatarUrl`, or the colored initial when there isn't one.
 - Members from the same town share one marker, which spreads out into their faces when tapped. A group has at most about 50 members, so it doesn't need a clustering library.
-- The map zooms to fit all the markers. Members without a hometown are listed below it.
+- The map zooms to fit all the markers. Members without a current city are listed below it.
 - Avatar URLs are presigned and expire. Markers should go through `useMediaRetry`, the retry policy `MediaImage` and `Avatar` use, rather than plain `<img>` tags ([`media.md` §4.4](design/media.md#44-spa-usage)).
 
-New glossary terms when §5–§7 are built: *Check-in*, *Hometown*, *Leaderboard* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
+### 7.1 Importing current city, birthday and profile picture from Facebook
+
+Today Facebook sign-in maps only `email` and `name` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py), `scopes=["public_profile", "email"]`). Filling in current city and birthday from Facebook, where the person has them set and shares them, saves a step; either field can still be entered or changed by hand regardless of where it came from, same as the existing avatar.
+
+- **New Facebook permissions.** `user_location` (current city) and `user_birthday`. Both need adding under the app's Authentication use case in the Meta Dashboard, the same place the just-fixed `email` permission lives — and unlike `email`/`public_profile`, Meta may require Advanced Access (business verification) before they work for people who aren't a tester/developer/admin on the app. That's a setup step to do once, out-of-band, like the rest of [`operator-setup.md`](operations/operator-setup.md); it isn't a reason not to build this, but it means the feature can land in code before it actually fills in anything in prod.
+- **Attribute mapping.** `facebook_idp`'s `attribute_mapping.custom` gains entries for Facebook's own field names, the same pattern already used for Google's `email_verified` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py) lines ~122–124): `current_city: ProviderAttribute.other("location")`, `birthday: ProviderAttribute.other("birthday")`. Verify against a live Graph API call during the build, since Cognito's Facebook IdP only forwards fields the Graph API `/me` call actually returns for the scopes granted.
+- **Profile picture reuses the existing avatar pipeline, not a new field.** Facebook's `picture` field needs no extra permission beyond `public_profile`. On first Facebook sign-in, if the new user has no avatar yet, the SPA fetches the larger Facebook picture (`picture.width(400)`), downloads the bytes client-side, and runs them through the ordinary `POST /avatars` upload flow ([`media.md` §11](design/media.md#11-avatars-separate-pipeline)) — exactly as if the person had picked that file themselves. No new backend route, bucket or Lambda: the existing avatar pipeline already does the work, and `lambda-image-process` doesn't know or care that the bytes came from Facebook instead of a file picker. The person can replace or remove it afterward like any avatar.
+- **When it runs.** Once, right after a Facebook sign-up creates the `User` row, gated on each field being empty — it never overwrites a value the person already set (by hand or from an earlier import), and it never re-runs on a later Facebook sign-in. A Google-only member, or someone who declined these permissions in the Facebook consent screen, just sees empty fields to fill in by hand, same as today.
+- **Failure is silent.** A missing permission, a Graph API miss, or a failed picture download all just leave the field empty — sign-up never fails or stalls because an optional profile field couldn't be imported.
+
+New glossary terms when §5–§7 are built: *Check-in*, *Current city*, *Leaderboard* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
 
 ## 8. Voice clips on answers and comments
 
