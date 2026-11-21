@@ -833,3 +833,81 @@ This limits how many inert accounts can exist, rather than preventing them: some
 - Ship §15.3 alone, or both? §15.3 needs no change to how invites work. §15.2 is the only way to actually stop identities from being created.
 - Under §15.2, should newcomers be Google-only, or should D5's rule for bound invites be relaxed for Facebook?
 - Is 24 hours long enough for someone who signs in on one device and opens the invite link on another, a day later?
+
+---
+
+## 16. Owner UX review notes
+
+Smaller UX fixes from an owner pass over the shipped app, each independent of the others.
+
+### 16.1 Home page: demo and sign-in first, sign-up tucked under the invite notice
+
+Today's signed-out Home ([`frontend.md` §7.1](design/frontend.md#71-homepage)) leads with a primary **Sign up** and a secondary **Sign in**, with the invite-only notice and **See a demo** below. For an invite-only app, most first-time visitors have nothing to sign up *for* yet — the useful actions are **See a demo** and, for an invited member, **Sign in**.
+
+- Promote **See a demo** and **Sign in** to the page's primary calls to action.
+- Move **Sign up** to sit directly under the invite-only notice, reframed as a question-and-answer pair: "**Received an invite?**" followed by the **Sign up** button. That ties the button to the one condition under which it's useful, instead of presenting it as a generic front-door action.
+- No API or data change — this is a `components/home/Landing.tsx` layout change only.
+
+### 16.2 RespondPage: make autosave and auto-publish legible
+
+[`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq) already autosaves drafts and auto-publishes non-empty ones at close, but the UI still center on a manual **Publish** button per question, which reads as "nothing happens until I press this" — the opposite of what's actually true.
+
+- **Reframe the button.** Drop the per-question **Publish** label (which implies the answer wasn't saved until pressed) in favor of **Done** or **Continue**, which moves the member to the next unanswered question rather than describing a storage action. The existing autosave indicator keeps doing the "this is saved" job; the button's job becomes only "I'm finished with this one for now."
+  - This likely means retiring the manual immediate-publish semantics in favor of relying on the existing auto-publish-at-close behavior for everyone, not just members who never press anything — worth an explicit decision, since today's design ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4) treats a manual publish and the close-time auto-publish as two different paths with different `editions_answered` timing (see §16.4).
+  - The existing "Drafts are published automatically when responses close" note and the **Edit** toggle on a published answer ([`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq)) already say answers stay editable up to the deadline; that copy carries over unchanged.
+- **A completion celebration.** When a member has a non-empty draft or answer on every question of the open edition, returning to the edition's question list (§7.2, the `open` layout) shows a one-time, full-screen congratulatory overlay — confetti/sparkle animation, "You completed the newsletter!" — with a line reminding them they can still edit any answer until the deadline. `prefers-reduced-motion` gets a static version. It shows once per edition per device (a flag in `localStorage`, since there's nothing server-side worth persisting this for); revisiting an already-celebrated, fully-answered edition doesn't show it again.
+- No API change: "every question answered" is derivable client-side from the same `GET /groups/{g}/newsletters/{c}` payload the question list already renders.
+
+### 16.3 Group page: Editions, Leaderboard and Members as tabs
+
+Today Home (§7.1) shows only the current group's editions; the leaderboard (§5, [`frontend.md` §7.9](design/frontend.md#79-leaderboardpage-ggleaderboard)) is a separate route linked from an edition's header, and a members list ([§7](#7-members-page-profile-fields-and-the-city-map)) isn't built yet.
+
+- Once §7 ships, present **Editions**, **Leaderboard** and **Members** as tabs of one group page, rather than as separate destinations reached by different links. Editions stays the default tab (what Home shows today); the other two become `?tab=` states of the same route rather than full navigations, so switching between them doesn't refetch `/config`.
+- This is a navigation/layout change on top of pages that otherwise work as already specced; it doesn't change what §5 or §7 return from the API.
+
+### 16.4 Open question: when should a published answer count toward the leaderboard?
+
+Today a member's `editions_answered` bumps the moment *they* first publish an answer in a cycle, not when the edition as a whole publishes at close ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4, §2.17). That's deliberate — it's what makes the "Early bird" year-in-review card (§11.1) and a live-updating leaderboard possible — but it means a fast member's board position can visibly move *during* the response window, before anyone has read the edition.
+
+This is worth an explicit owner decision rather than a silent fix, since it trades off against a built feature:
+- **Keep counting at first-publish** (today's behavior). The leaderboard and "who's answered" signals move in real time, including the Early-bird card's own data.
+- **Count only when the edition publishes at close**, i.e. move the `editions_answered` bump into `publish(nl)` alongside the other close-time transactions ([`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl)). This hides everyone's standing until the edition is out, matching "the leaderboard is about editions, not about who's fastest to answer," but it also means a member who leaves before close ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a, #6) still gets counted by the existing auto-publish-at-close bump, same as today — so the *mechanism* barely changes, only *when* the regular manual-publish path's bump fires.
+- Either way, §16.2's reframing of the per-question button doesn't itself resolve this — it only changes what members see, not when the counter moves.
+
+Record whichever is chosen in [`decisions.md`](decisions.md).
+
+---
+
+## 17. Self-serve group creation, with site-admin approval
+
+Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a) — there's no API route a signed-in member can call to start a new group. This adds one, gated behind approval by a new, site-wide role.
+
+### 17.1 Requesting a group
+
+- On the Home page, under "Your groups," next to **+ Join with an invite code**, add **+ Create a group**.
+- The form asks for a group name and a short description. The submitter becomes that group's admin once (and if) it's approved.
+- `POST /groups/requests` (new route, any authenticated user) creates a `GroupRequest` row: `pk=GROUPREQ#{request_id}`, holding `name`, `description`, `requested_by`, `status` (`pending` | `approved` | `rejected`), `created_at` and `decided_at`/`decided_by`. It does **not** create a `Group` row yet — nothing exists for other members to see or join until a site admin approves it.
+- The requester sees their pending request's status on Home in place of the create button, so they can't submit a second one while the first is undecided.
+
+### 17.2 The Site Admin role
+
+This is new: every role that exists today ([`entities.rs`](../backend/crates/domain/src/entities.rs) `enum Role`) is scoped to one group. Approving group requests needs a role that isn't.
+
+- **A `SiteAdmin` row**, not a field on `User`: `pk=SITEADMIN#{user_id}`, so granting or revoking one is a single conditioned Put/Delete rather than a migration, and checking "is this caller a site admin" is a single `GetItem` any handler can make.
+- **The bootstrap admin is a site admin from the start.** `scripts/bootstrap_admin.py` writes the `SiteAdmin` row for the account it creates (both the dev and prod paths, [`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a), so there's always at least one.
+- **A site admin can grant the role to others.** `PUT /site-admins/{userId}` and `DELETE /site-admins/{userId}`, both site-admin-only, let the role spread past the bootstrap account without another script run. A site admin can't remove themselves if they're the last one, the same kind of guard admin-removal already has at the group level ([`api.md`](design/api.md), group admin demotion rules).
+- **Scope stays narrow in v1.** A site admin's only power is deciding group requests (§17.3) — not reading groups' content, not moderating members. Broader site-admin powers are a separate decision if they're ever needed.
+
+### 17.3 Deciding a request
+
+- A new **Site admin** surface (`/site-admin`, reachable only to site admins — anyone else gets the usual not-authorized screen) lists pending `GroupRequest` rows with the name, description and requester.
+- **Approve** (`POST /groups/requests/{requestId}/approve`): one transaction that flips the request to `approved` and creates the `Group` row plus the requester's `GroupMembership` as `admin` — the same shape `bootstrap_admin.py` writes by hand today, so nothing about group creation changes once this lands, only who can trigger it. The requester gets a push: "Your group '{name}' was approved — you're the admin."
+- **Reject** (`POST /groups/requests/{requestId}/reject`, optional reason): flips the request to `rejected`. Nothing was ever created, so there's nothing to delete — matching the "approved request creates the group, rejected request creates nothing" shape above rather than creating-then-deleting a group. The requester gets a push with the reason, if one was given.
+- Decided requests drop off the pending list but aren't deleted, so there's a record of what was asked for and who decided it.
+
+### 17.4 Open questions
+
+- Should a rejected requester be able to resubmit immediately, or is there a cooldown?
+- Does a new group need any default `CycleSettings` beyond what `bootstrap_admin.py` already picks, or a way for the requester to set them (cadence, timezone) at request time rather than after approval?
+- Should site admins be notified (push or email) when a request comes in, rather than having to check `/site-admin`?
+- Is a `SiteAdmin` row the right shape, or should this ride on a Cognito group/custom attribute instead, given Cognito already issues the JWT every request carries?
