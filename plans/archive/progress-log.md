@@ -1374,3 +1374,18 @@ The API side of the M4–M13.5 gates ran against dev, on a build from before the
 - **Smoke-test CORS expectation.** S3 sends `Access-Control-Allow-Credentials: true` for any matched non-`*` origin and can't be told not to; [`smoke-test.md`](../../docs/operations/smoke-test.md) §6 no longer expects it absent.
 
 Also answered: API Gateway passes the reaction emoji path parameter decoded ([`api.md` §8.6](../../docs/design/api.md#86-put-reactionsemoji)).
+
+## chrono replaced by jiff, and one timestamp format (2026-11-21)
+
+CI's `cargo deny` started failing: RustSec marked `chrono`, `chrono-tz` and `chrono-tz-build` unmaintained (RUSTSEC-2026-0543, 0555, 0559), with no fixed release. The backend moved to `jiff` 1.0 ([decision](../../docs/decisions.md#jiff)).
+
+**What landed.**
+- `domain::Timestamp` (`domain/src/time.rs`) is the one instant type: RFC 3339 UTC, `YYYY-MM-DDTHH:MM:SS.sssZ` in data attributes and API fields, `YYYY-MM-DDTHH:MM:SSZ` through `key_timestamp` in keys ([`data-model.md` §1](../../docs/design/data-model.md#1-table-shape-recap)). It holds whole milliseconds and parses any RFC 3339, so older rows (`+00:00`, nanoseconds) still read.
+- `shared::cycle_time` ported with the same DST rules: a fold resolves to its earliest instant, a gap steps forward in whole hours. Every existing `cycle_time` test kept its expected value.
+- `shared::cycle_time::time_zone` is the one zone lookup. jiff's `TimeZone::get` is case-insensitive, so it requires the exact IANA spelling, as group settings did before.
+- `lambda-image-process` dropped `aws_lambda_events`, whose `s3` feature needs chrono in every version, for a small S3 notification model of the two fields it reads.
+- The OpenAPI examples, the generated `api.ts` comments and the seed and bootstrap scripts use the new forms.
+
+**Bug fixed.** `save_response`'s `response_close_at > :now` check compared a data attribute with a whole-second key timestamp. It now uses the attribute form.
+
+**Tests.** Backend +12, all passing; scripts +8; `cargo deny` clean.

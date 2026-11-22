@@ -302,7 +302,7 @@ At a cycle's close, the tick publishes every non-empty draft. A draft that keeps
 
    Each line names the group, cycle and question, plus either a `response_id`, the row's sort key `sk` (`A#{userId}`), or (for a listing failure) no row at all. A listing failure means every draft under that question was skipped.
 2. **Fix the cause.** An `unreadable answer row` is corrupt data. Inspect the item at `pk = GROUP#{groupId}#NL#{cycleId}#Q#{questionId}`, `sk = A#{userId}`, and repair or delete it. Anything else (throttling, a validation error) shows in the log line's `error` field.
-3. **Publish each draft by hand.** Do what the tick would have done: set `status` and `published_at`, the latter to the cycle's `response_close_at` as RFC 3339:
+3. **Publish each draft by hand.** Do what the tick would have done: set `status` and `published_at`, the latter to the cycle's `response_close_at` in the attribute form, `YYYY-MM-DDTHH:MM:SS.sssZ` ([`data-model.md` §1](../design/data-model.md#1-table-shape-recap)):
 
    ```sh
    aws dynamodb update-item --table-name OpenNewsletter-prod \

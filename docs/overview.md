@@ -147,7 +147,7 @@ OpenNewsletter/
 ## 6. Cross-cutting conventions
 
 - **IDs.** All IDs are UUIDv7 strings except group cycle IDs, which are `yyyymm` (e.g. `202605`), or `yyyymmdd` on a weekly deployment. UUIDv7 sorts lexicographically by creation time, which the data layer relies on. `userId` is a UUIDv7 we generate when an account first redeems an invite — it is NOT the Cognito `sub`. A small `pk=COGNITO_SUB#{sub}, sk=USER_ID` lookup row maps the JWT's `sub` → `userId` on every request; see [`data-model.md` §2.1](design/data-model.md#21-user).
-- **Timestamps.** All timestamps stored as ISO-8601 UTC strings. Group-local rendering happens client-side using the group's `timezone` field.
+- **Timestamps.** All timestamps are stored and sent as RFC 3339 (ISO 8601) UTC strings ending in `Z`, at millisecond precision, through one type, `domain::Timestamp` ([`data-model.md` §1](design/data-model.md#1-table-shape-recap)). Group-local rendering happens client-side using the group's `timezone` field.
 - **Errors.** Backend returns RFC-7807 Problem Details JSON. Error catalog in [`api.md`](design/api.md).
 - **Logging.** Structured JSON logs via `tracing` + `tracing-subscriber` with a `correlation_id` taken from `x-correlation-id` request header (frontend generates ULIDs).
 - **Auth claims.** Lambdas read `sub` (Cognito user ID) and `email` from the validated JWT context injected by API Gateway. Group memberships are NOT in the JWT — they are resolved on every request via DynamoDB (cached in-memory per cold-start for ≤60s).
