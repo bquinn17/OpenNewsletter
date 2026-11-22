@@ -414,7 +414,7 @@ If the user leaves the page before the redeem resolves, it still completes, and 
   5. **Most questions asked**: `questionsAsked`.
   6. **Most comments written**: `commentsWritten`.
 - Each board ranks densely over the top 3 distinct values above 0: members who tie share a rank, and every member with one of those values is shown, so a board can list more than 3 members, and in a small group everyone with a value above 0. A board where nobody is above 0 is hidden. If every board is hidden, the page shows one empty state: "Superlatives show up once your group's first edition is out."
-- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../future-ideas.md#7-members-page-and-hometown-map) will link to it too, once it's built.
+- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../future-ideas.md#7-members-page-profile-fields-and-the-city-map) will link to it too, once it's built.
 
 ### 7.10 SignInPage `/signin?returnTo=...`
 

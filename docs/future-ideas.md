@@ -98,28 +98,43 @@ A member can attach a place to any text answer ("📍 Lucali, Brooklyn"). A ques
 
 **Privacy.** Only the group can see a place, the same as the answer it's attached to. Uploaded photos already lose their GPS metadata during processing ([`media.md` §5.1](design/media.md#51-trigger-configuration)), so the only places an answer can carry are ones the member chose.
 
-## 7. Members page and hometown map
+## 7. Members page, profile fields and the city map
 
-A page that any member can open from an edition. It lists who's in the group, and its map view puts each member's face on their hometown.
+A page that any member can open from an edition. It lists who's in the group, and its map view puts each member's face on their current city.
 
 **List.**
 - `/g/:groupId/members`, opened from an avatar stack ("12 members") in the edition page's header. It links to the leaderboard (§5).
 - Each row shows the member's avatar, display name, role, the month they joined and the editions they've answered.
 - **No new route is needed.** `GET /groups/{groupId}` already returns `members`, with `avatarUrl`, `avatarColor`, `joinedAt` and `editionsAnswered`, to any member ([`api.md` §4.2](design/api.md#42-get-groupsgroupid)). Today only the admin page's Members tab displays it.
 
-**Hometown** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns.
-- `User.hometown` holds `{ name, lat, lng, provider_place_id }`, or is absent.
+**Current city** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns. It's "where I live now", not a birthplace — Facebook separately offers a birthplace permission (`user_hometown`) that this feature doesn't use, to avoid the glossary collision.
+- `User.current_city` holds `{ name, lat, lng, provider_place_id }`, or is absent.
 - **City-level only.** The search returns only cities and towns, and the stored point is the town's centre, so the map never shows a street.
 - **Opt-in.** It's unset by default. Because it lives on the User row, every group the member belongs to sees it, and the Settings copy says so. Hiding it from a single group could come later if someone asks.
-- **API.** `PATCH /me` accepts `hometown`, and `null` clears it. `UserResponse` and `MemberResponse` gain it. Both are new fields, so this is an expand-only change.
+- **API.** `PATCH /me` accepts `currentCity`, and `null` clears it. `UserResponse` and `MemberResponse` gain it. Both are new fields, so this is an expand-only change.
+
+**Birthday** is a second profile field, also set in Settings → Profile and shown only on the member's own profile card (not on the members list or map — a group's superlatives already avoid singling anyone out, §5).
+- `User.birthday` holds `{ month, day, year }`, with `year` optional — Facebook's own `birthday` field comes back in `MM/DD/YYYY`, `MM/DD` or just `YYYY` depending on the person's Facebook privacy settings, and manual entry should accept the same three shapes rather than forcing a year nobody asked for.
+- No age math anywhere in v1 (no "turns 34" banner, no sort-by-age). That can come later as its own decision once there's a reason for it.
+- **API.** `PATCH /me` accepts `birthday` or `null`. `UserResponse` gains it; `MemberResponse` doesn't, since it's visible only to the member themselves.
 
 **Map view.** The members page gets a List | Map toggle that uses the map component from §6.
 - Markers are the members' avatars: the presigned `avatarUrl`, or the colored initial when there isn't one.
 - Members from the same town share one marker, which spreads out into their faces when tapped. A group has at most about 50 members, so it doesn't need a clustering library.
-- The map zooms to fit all the markers. Members without a hometown are listed below it.
+- The map zooms to fit all the markers. Members without a current city are listed below it.
 - Avatar URLs are presigned and expire. Markers should go through `useMediaRetry`, the retry policy `MediaImage` and `Avatar` use, rather than plain `<img>` tags ([`media.md` §4.4](design/media.md#44-spa-usage)).
 
-New glossary terms when §5–§7 are built: *Check-in*, *Hometown*, *Leaderboard* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
+### 7.1 Importing current city, birthday and profile picture from Facebook
+
+Today Facebook sign-in maps only `email` and `name` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py), `scopes=["public_profile", "email"]`). Filling in current city and birthday from Facebook, where the person has them set and shares them, saves a step; either field can still be entered or changed by hand regardless of where it came from, same as the existing avatar.
+
+- **New Facebook permissions.** `user_location` (current city) and `user_birthday`. Both need adding under the app's Authentication use case in the Meta Dashboard, the same place the just-fixed `email` permission lives — and unlike `email`/`public_profile`, Meta may require Advanced Access (business verification) before they work for people who aren't a tester/developer/admin on the app. That's a setup step to do once, out-of-band, like the rest of [`operator-setup.md`](operations/operator-setup.md); it isn't a reason not to build this, but it means the feature can land in code before it actually fills in anything in prod.
+- **Attribute mapping.** `facebook_idp`'s `attribute_mapping.custom` gains entries for Facebook's own field names, the same pattern already used for Google's `email_verified` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py) lines ~122–124): `current_city: ProviderAttribute.other("location")`, `birthday: ProviderAttribute.other("birthday")`. Verify against a live Graph API call during the build, since Cognito's Facebook IdP only forwards fields the Graph API `/me` call actually returns for the scopes granted.
+- **Profile picture reuses the existing avatar pipeline, not a new field.** Facebook's `picture` field needs no extra permission beyond `public_profile`. On first Facebook sign-in, if the new user has no avatar yet, the SPA fetches the larger Facebook picture (`picture.width(400)`), downloads the bytes client-side, and runs them through the ordinary `POST /avatars` upload flow ([`media.md` §11](design/media.md#11-avatars-separate-pipeline)) — exactly as if the person had picked that file themselves. No new backend route, bucket or Lambda: the existing avatar pipeline already does the work, and `lambda-image-process` doesn't know or care that the bytes came from Facebook instead of a file picker. The person can replace or remove it afterward like any avatar.
+- **When it runs.** Once, right after a Facebook sign-up creates the `User` row, gated on each field being empty — it never overwrites a value the person already set (by hand or from an earlier import), and it never re-runs on a later Facebook sign-in. A Google-only member, or someone who declined these permissions in the Facebook consent screen, just sees empty fields to fill in by hand, same as today.
+- **Failure is silent.** A missing permission, a Graph API miss, or a failed picture download all just leave the field empty — sign-up never fails or stalls because an optional profile field couldn't be imported.
+
+New glossary terms when §5–§7 are built: *Check-in*, *Current city*, *Leaderboard* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
 
 ## 8. Voice clips on answers and comments
 
@@ -443,7 +458,7 @@ The rule from the leaderboard (§5) holds here too: cards celebrate the top few 
 - **The thread of the year:** the answer with the most comments (counting non-deleted ones), and how many members joined in.
 - **Question of the year:** the locked question whose answers drew the most reactions and comments in total, crediting whoever suggested it unless it was anonymous.
 - **The year's leaders:** year-scoped versions of the §5 boards: most reactions received, most editions answered and longest streak within the year.
-- **Early bird:** the member with the shortest median time from `response_open_at` to their first manual publish. It uses the median, so one late month doesn't sink anyone, and only counts members who answered at least half the year's editions. Auto-published drafts are left out, because their `published_at` is `response_close_at` and says nothing about the member.
+- **Early bird:** the member with the largest median *slack* — `response_close_at` minus the last time they touched any answer in that cycle (`Response.updated_at`, the latest value across their answers, read once the cycle is closed) — among the editions they answered ([owner decision](decisions.md#early-bird-uses-last-edit-not-first-publish), resolving §16.4's open question for this card). It deliberately uses the *last* edit, not the first draft save or first manual publish: a member who starts a draft the moment the edition opens and then comes back to flesh it out right before the deadline has almost no slack and isn't an early bird, even though something existed in their draft from the first minute. Only the edit that was actually left in place when responses closed counts. It uses the median across the member's editions this year, so one late month doesn't sink anyone, and only counts members who answered at least half the year's editions. Auto-published drafts are included, not excluded as an earlier draft of this idea assumed: `updated_at` is whenever the member actually last saved it, which can be well before `response_close_at`, unlike `published_at`, which for an auto-published draft is always `response_close_at` itself and says nothing about the member.
 - **Question machine:** the member who suggested the most candidate questions, counting only ones that weren't anonymous, so the card can't unmask anyone. Unpromoted candidates still count, because promotion copies the winners into locked questions and leaves every candidate row where it was ([`lifecycle.md` §5.2](design/lifecycle.md#52-promote_and_opennl)). A second line names whose questions were promoted most often.
 - **Lighter awards**, each shown only if someone qualifies:
   - *Perfect attendance:* everyone who answered every edition.
@@ -818,3 +833,86 @@ This limits how many inert accounts can exist, rather than preventing them: some
 - Ship §15.3 alone, or both? §15.3 needs no change to how invites work. §15.2 is the only way to actually stop identities from being created.
 - Under §15.2, should newcomers be Google-only, or should D5's rule for bound invites be relaxed for Facebook?
 - Is 24 hours long enough for someone who signs in on one device and opens the invite link on another, a day later?
+
+---
+
+## 16. Owner UX review notes
+
+Smaller UX fixes from an owner pass over the shipped app, each independent of the others.
+
+### 16.1 Home page: demo and sign-in first, sign-up tucked under the invite notice
+
+Today's signed-out Home ([`frontend.md` §7.1](design/frontend.md#71-homepage)) leads with a primary **Sign up** and a secondary **Sign in**, with the invite-only notice and **See a demo** below. For an invite-only app, most first-time visitors have nothing to sign up *for* yet — the useful actions are **See a demo** and, for an invited member, **Sign in**.
+
+- Promote **See a demo** and **Sign in** to the page's primary calls to action.
+- Move **Sign up** to sit directly under the invite-only notice, reframed as a question-and-answer pair: "**Received an invite?**" followed by the **Sign up** button. That ties the button to the one condition under which it's useful, instead of presenting it as a generic front-door action.
+- No API or data change — this is a `components/home/Landing.tsx` layout change only.
+
+### 16.2 RespondPage: make autosave and auto-publish legible
+
+[`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq) already autosaves drafts and auto-publishes non-empty ones at close, but the UI still center on a manual **Publish** button per question, which reads as "nothing happens until I press this" — the opposite of what's actually true.
+
+- **Reframe the button.** Drop the per-question **Publish** label (which implies the answer wasn't saved until pressed) in favor of **Done** or **Continue**, which moves the member to the next unanswered question rather than describing a storage action. The existing autosave indicator keeps doing the "this is saved" job; the button's job becomes only "I'm finished with this one for now."
+  - This likely means retiring the manual immediate-publish semantics in favor of relying on the existing auto-publish-at-close behavior for everyone, not just members who never press anything — worth an explicit decision, since today's design ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4) treats a manual publish and the close-time auto-publish as two different paths with different `editions_answered` timing (see §16.4).
+  - The existing "Drafts are published automatically when responses close" note and the **Edit** toggle on a published answer ([`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq)) already say answers stay editable up to the deadline; that copy carries over unchanged.
+- **A completion celebration.** When a member has a non-empty draft or answer on every question of the open edition, returning to the edition's question list (§7.2, the `open` layout) shows a one-time, full-screen congratulatory overlay — confetti/sparkle animation, "You completed the newsletter!" — with a line reminding them they can still edit any answer until the deadline. `prefers-reduced-motion` gets a static version. It shows once per edition per device (a flag in `localStorage`, since there's nothing server-side worth persisting this for); revisiting an already-celebrated, fully-answered edition doesn't show it again.
+- No API change: "every question answered" is derivable client-side from the same `GET /groups/{g}/newsletters/{c}` payload the question list already renders.
+
+### 16.3 Group page: Editions, Leaderboard and Members as tabs
+
+Today Home (§7.1) shows only the current group's editions; the leaderboard (§5, [`frontend.md` §7.9](design/frontend.md#79-leaderboardpage-ggleaderboard)) is a separate route linked from an edition's header, and a members list ([§7](#7-members-page-profile-fields-and-the-city-map)) isn't built yet.
+
+- Once §7 ships, present **Editions**, **Leaderboard** and **Members** as tabs of one group page, rather than as separate destinations reached by different links. Editions stays the default tab (what Home shows today); the other two become `?tab=` states of the same route rather than full navigations, so switching between them doesn't refetch `/config`.
+- This is a navigation/layout change on top of pages that otherwise work as already specced; it doesn't change what §5 or §7 return from the API.
+
+### 16.4 Decision: `editions_answered` counts only once the edition closes
+
+**This reverses shipped behavior**, not just an unbuilt idea: `editions_answered` bumps today the moment a member first publishes a non-empty answer, inside `save_response`'s transaction (`backend/crates/persistence/src/responses.rs`, `bump_editions_answered`; [`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4, §2.17). Implementing this needs an actual backend change, a `data-model.md`/`lifecycle.md` edit and a `progress-log.md` entry, not just this doc — see the note at the end of this section.
+
+**Decision.** `editions_answered` — and the live leaderboard it feeds — no longer updates during the response window. It's decided once, at close, alongside the existing non-empty check.
+
+**Why, beyond visibility.** The owner's original "someone drafts something the moment the edition opens, then fleshes it out right before the deadline" worry about *speed* is already handled separately: the "Early bird" card (§11.1) now scores by the last edit before close, not the first publish ([decision](decisions.md#early-bird-uses-last-edit-not-first-publish)). But there's a second, sharper gap counting-at-first-publish leaves open: **a member can empty an already-published answer.** `PUT …/my-response`'s validation accepts an empty `body` unconditionally — `validation::body("")` is accepted — and publishing is sticky (`status` never reverts), so emptying a published text answer doesn't un-publish it, it just leaves a published row with nothing in it. Today's real-time bump already fired at the first publish, so a member who published early, then cleared their answer entirely before close, is still credited with having answered an edition they ultimately left blank. Moving the bump to close time, decided from the content that's actually there at that moment, closes this.
+
+- **Drop the real-time bump.** A manual `PUT …/my-response` with `publish: true` no longer touches `MemberStats` at all.
+- **Widen the close-time pass.** `publish(nl)`'s existing sweep over the cycle's response rows ([`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), [`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a) already auto-publishes non-empty drafts using a content check (text: non-whitespace `body` or `imageMediaIds`/`audioMediaIds` non-empty; poll: `pollOptionId` set). That same check, applied to *every* response row in the cycle regardless of its current `status` — not just rows still `draft` — decides the bump: if any of a member's answers in the cycle is non-empty at that moment, bump `editions_answered` once, through the existing `last_answered_cycle` marker (so a retried tick, or a member with several non-empty answers, still counts once). This folds the old draft-only auto-publish bump (#4a) and the old manual-publish bump (#4) into one close-time rule, rather than keeping two paths that can disagree.
+- **What doesn't change.** Publishing stays sticky — an emptied answer still shows up in the published edition as an empty card, exactly as it does today. This decision only changes whether it counts toward `editions_answered` and the leaderboard, not what's rendered.
+- **Polls are unaffected.** `pollOptionId` is required on every poll save and there's no "clear" action (§7.3's own open question), so a poll answer can't be emptied once picked — this gap is text/image/audio-answer-only.
+- **Trade-off accepted.** The leaderboard and "who's answered" no longer update live during the response window; standing is visible only once the edition is out. That matches "the leaderboard is about editions, not about who's fastest."
+
+**To actually ship this:** update `data-model.md` §4 #4/#4a and §2.17, `lifecycle.md` §5.3, change `save_response`'s `bump_editions_answered` wiring and the close-time sweep in `backend/crates/persistence/src/responses.rs`/`lambda-cycle-tick`, update their tests, and log it in `plans/archive/progress-log.md`. Recorded in [`decisions.md`](decisions.md#editions-answered-counted-at-close).
+
+---
+
+## 17. Self-serve group creation, with site-admin approval
+
+Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a) — there's no API route a signed-in member can call to start a new group. This adds one, gated behind approval by a new, site-wide role.
+
+### 17.1 Requesting a group
+
+- On the Home page, under "Your groups," next to **+ Join with an invite code**, add **+ Create a group**.
+- The form asks for a group name and a short description. The submitter becomes that group's admin once (and if) it's approved.
+- `POST /groups/requests` (new route, any authenticated user) creates a `GroupRequest` row: `pk=GROUPREQ#{request_id}`, holding `name`, `description`, `requested_by`, `status` (`pending` | `approved` | `rejected`), `created_at` and `decided_at`/`decided_by`. It does **not** create a `Group` row yet — nothing exists for other members to see or join until a site admin approves it.
+- The requester sees their pending request's status on Home in place of the create button, so they can't submit a second one while the first is undecided.
+
+### 17.2 The Site Admin role
+
+This is new: every role that exists today ([`entities.rs`](../backend/crates/domain/src/entities.rs) `enum Role`) is scoped to one group. Approving group requests needs a role that isn't.
+
+- **A `SiteAdmin` row**, not a field on `User`: `pk=SITEADMIN#{user_id}`, so granting or revoking one is a single conditioned Put/Delete rather than a migration, and checking "is this caller a site admin" is a single `GetItem` any handler can make.
+- **The bootstrap admin is a site admin from the start.** `scripts/bootstrap_admin.py` writes the `SiteAdmin` row for the account it creates (both the dev and prod paths, [`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a), so there's always at least one.
+- **A site admin can grant the role to others.** `PUT /site-admins/{userId}` and `DELETE /site-admins/{userId}`, both site-admin-only, let the role spread past the bootstrap account without another script run. A site admin can't remove themselves if they're the last one, the same kind of guard admin-removal already has at the group level ([`api.md`](design/api.md), group admin demotion rules).
+- **Scope stays narrow in v1.** A site admin's only power is deciding group requests (§17.3) — not reading groups' content, not moderating members. Broader site-admin powers are a separate decision if they're ever needed.
+
+### 17.3 Deciding a request
+
+- A new **Site admin** surface (`/site-admin`, reachable only to site admins — anyone else gets the usual not-authorized screen) lists pending `GroupRequest` rows with the name, description and requester.
+- **Approve** (`POST /groups/requests/{requestId}/approve`): one transaction that flips the request to `approved` and creates the `Group` row plus the requester's `GroupMembership` as `admin` — the same shape `bootstrap_admin.py` writes by hand today, so nothing about group creation changes once this lands, only who can trigger it. The requester gets a push: "Your group '{name}' was approved — you're the admin."
+- **Reject** (`POST /groups/requests/{requestId}/reject`, optional reason): flips the request to `rejected`. Nothing was ever created, so there's nothing to delete — matching the "approved request creates the group, rejected request creates nothing" shape above rather than creating-then-deleting a group. The requester gets a push with the reason, if one was given.
+- Decided requests drop off the pending list but aren't deleted, so there's a record of what was asked for and who decided it.
+
+### 17.4 Open questions
+
+- Should a rejected requester be able to resubmit immediately, or is there a cooldown?
+- Does a new group need any default `CycleSettings` beyond what `bootstrap_admin.py` already picks, or a way for the requester to set them (cadence, timezone) at request time rather than after approval?
+- Should site admins be notified (push or email) when a request comes in, rather than having to check `/site-admin`?
+- Is a `SiteAdmin` row the right shape, or should this ride on a Cognito group/custom attribute instead, given Cognito already issues the JWT every request carries?
