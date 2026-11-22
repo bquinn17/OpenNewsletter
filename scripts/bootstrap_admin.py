@@ -115,8 +115,17 @@ def derive_avatar_color(user_id: str) -> str:
     return AVATAR_COLOR_SLUGS[sum(user_id.encode()) % len(AVATAR_COLOR_SLUGS)]
 
 
-def iso(dt: datetime) -> str:
+def iso_key(dt: datetime) -> str:
+    """RFC 3339 for key attributes: whole seconds, UTC."""
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_data(dt: datetime) -> str:
+    """RFC 3339 for data attributes: milliseconds, UTC, truncated (not rounded)."""
+    dt_utc = dt.astimezone(UTC)
+    base = dt_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    millis = f"{dt_utc.microsecond // 1000:03d}"
+    return f"{base}.{millis}Z"
 
 
 def deterministic_id(seed: str) -> str:
@@ -187,7 +196,7 @@ def group_meta_item(
     tz_name: str,
     member_count: int,
     created_by: str,
-    timestamp: str,
+    now: datetime,
 ) -> dict[str, Any]:
     """The Group META row (`docs/design/data-model.md` §2.3).
 
@@ -198,7 +207,7 @@ def group_meta_item(
         "pk": {"S": f"GROUP#{group_id}"},
         "sk": {"S": "META"},
         "gsi2pk": {"S": "GROUP_STATUS#awaiting_first_cycle"},
-        "gsi2sk": {"S": f"{timestamp}#{group_id}"},
+        "gsi2sk": {"S": f"{iso_key(now)}#{group_id}"},
         "entity": {"S": "Group"},
         "group_id": {"S": group_id},
         "name": {"S": group_name},
@@ -235,7 +244,7 @@ def group_meta_item(
         "member_count": {"N": str(member_count)},
         "member_soft_cap": {"N": str(DEFAULT_MEMBER_SOFT_CAP)},
         "gradient": {"S": DEFAULT_GRADIENT},
-        "created_at": {"S": timestamp},
+        "created_at": {"S": iso_data(now)},
         "created_by": {"S": created_by},
     }
 
@@ -257,8 +266,8 @@ def bound_admin_invite_item(
         "code": {"S": code},
         "group_id": {"S": group_id},
         "created_by": {"S": BOOTSTRAP_CREATOR},
-        "created_at": {"S": iso(now)},
-        "expires_at": {"S": iso(expires_at)},
+        "created_at": {"S": iso_data(now)},
+        "expires_at": {"S": iso_data(expires_at)},
         "status": {"S": "pending"},
         "consumed_by": {"NULL": True},
         "consumed_at": {"NULL": True},
@@ -289,14 +298,13 @@ def prod_bootstrap_transact_items(
     `memberCount = 0` (marked awaiting its first cycle) and the bound admin
     Invite. Every put is conditional on the row not existing, so a re-run can
     never reset a live group's member count."""
-    timestamp = iso(now)
     group = group_meta_item(
         group_id=group_id,
         group_name=group_name,
         tz_name=tz_name,
         member_count=0,
         created_by=BOOTSTRAP_CREATOR,
-        timestamp=timestamp,
+        now=now,
     )
     invite = bound_admin_invite_item(
         code=invite_code, group_id=group_id, bound_email=bound_email, now=now
@@ -388,7 +396,6 @@ def write_group(
     The group is marked awaiting its first cycle, which will be created by the
     next cycle tick.
     """
-    timestamp = iso(now)
     items: list[dict[str, Any]] = [
         {
             "pk": {"S": f"COGNITO_SUB#{cognito_sub}"},
@@ -407,8 +414,8 @@ def write_group(
             "display_name": {"S": display_name},
             "avatar_color": {"S": derive_avatar_color(user_id)},
             "avatar_media_id": {"NULL": True},
-            "created_at": {"S": timestamp},
-            "last_login_at": {"S": timestamp},
+            "created_at": {"S": iso_data(now)},
+            "last_login_at": {"S": iso_data(now)},
         },
         group_meta_item(
             group_id=group_id,
@@ -416,7 +423,7 @@ def write_group(
             tz_name=tz_name,
             member_count=1,
             created_by=user_id,
-            timestamp=timestamp,
+            now=now,
         ),
         {
             "pk": {"S": f"USER#{user_id}"},
@@ -427,7 +434,7 @@ def write_group(
             "user_id": {"S": user_id},
             "group_id": {"S": group_id},
             "role": {"S": "admin"},
-            "joined_at": {"S": timestamp},
+            "joined_at": {"S": iso_data(now)},
         },
     ]
     dynamodb.transact_write_items(

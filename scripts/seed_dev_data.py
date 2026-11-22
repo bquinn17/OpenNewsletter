@@ -69,8 +69,17 @@ def get_output(outputs: dict[str, Any], stack: str, key: str, env: str) -> str:
     return str(val)
 
 
-def iso(dt: datetime) -> str:
+def iso_key(dt: datetime) -> str:
+    """RFC 3339 for key attributes: whole seconds, UTC."""
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_data(dt: datetime) -> str:
+    """RFC 3339 for data attributes: milliseconds, UTC, truncated (not rounded)."""
+    dt_utc = dt.astimezone(UTC)
+    base = dt_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    millis = f"{dt_utc.microsecond // 1000:03d}"
+    return f"{base}.{millis}Z"
 
 
 def deterministic_id(seed: str) -> str:
@@ -234,8 +243,8 @@ def write_fixture(
             "email": admin_email,
             "display_name": "Dev Admin",
             "avatar_color": "blue",
-            "created_at": iso(now),
-            "last_login_at": iso(now),
+            "created_at": iso_data(now),
+            "last_login_at": iso_data(now),
         },
         # --- Group metadata (AP4) ---
         # Marked as awaiting its first cycle, which is created by the cycle tick Lambda.
@@ -243,7 +252,7 @@ def write_fixture(
             "pk": f"GROUP#{group_id}",
             "sk": "META",
             "gsi2pk": "GROUP_STATUS#awaiting_first_cycle",
-            "gsi2sk": f"{iso(now)}#{group_id}",
+            "gsi2sk": f"{iso_key(now)}#{group_id}",
             "entity": "Group",
             "group_id": group_id,
             "name": "Dev Group",
@@ -261,7 +270,7 @@ def write_fixture(
             "member_count": 1,
             "member_soft_cap": 50,
             "gradient": "grape-sky",
-            "created_at": iso(now),
+            "created_at": iso_data(now),
             "created_by": user_id,
         },
         # --- GroupMembership (AP2 — stored under the user partition) ---
@@ -274,7 +283,7 @@ def write_fixture(
             "user_id": user_id,
             "group_id": group_id,
             "role": "admin",
-            "joined_at": iso(now),
+            "joined_at": iso_data(now),
         },
     ]
 
