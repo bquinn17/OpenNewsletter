@@ -6,6 +6,7 @@ import { formatInZone, formatRelative } from "../../utils/dates";
 import { thumbSize } from "../../utils/media";
 import { MarkdownBody } from "../../utils/markdown";
 import { Avatar } from "../ui/Avatar";
+import { Lightbox } from "../ui/Lightbox";
 import { MediaImage } from "../ui/MediaImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ImageUploader, type UploaderImage } from "../responses/ImageUploader";
@@ -50,6 +51,7 @@ export function CommentRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmImageRelease, setConfirmImageRelease] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const editComment = useEditComment(groupId, cycleId, questionId);
   const deleteComment = useDeleteComment(groupId, cycleId, questionId);
@@ -145,7 +147,7 @@ export function CommentRow({
                     type="button"
                     onClick={startEdit}
                     disabled={busy}
-                    className="text-xs font-semibold text-grape disabled:opacity-50"
+                    className="text-xs font-semibold text-grape-ink disabled:opacity-50"
                   >
                     Edit
                   </button>
@@ -155,7 +157,7 @@ export function CommentRow({
                     type="button"
                     onClick={() => setConfirmDelete(true)}
                     disabled={busy}
-                    className="text-xs font-semibold text-coral disabled:opacity-50"
+                    className="text-xs font-semibold text-danger disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -177,7 +179,7 @@ export function CommentRow({
                 onChange={(e) => setDraftBody(e.target.value.slice(0, MAX_BODY_CHARS))}
                 maxLength={MAX_BODY_CHARS}
                 disabled={busy}
-                className="min-h-[60px] w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                className="min-h-[60px] w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
               />
               {comment.image && !imageRemoved ? (
                 <div className="mt-2 flex items-center gap-2">
@@ -191,7 +193,7 @@ export function CommentRow({
                     type="button"
                     onClick={() => setImageRemoved(true)}
                     disabled={busy}
-                    className="text-xs font-semibold text-coral disabled:opacity-50"
+                    className="text-xs font-semibold text-danger disabled:opacity-50"
                   >
                     Remove image
                   </button>
@@ -209,7 +211,7 @@ export function CommentRow({
                 </div>
               )}
               {error && (
-                <p role="alert" className="mt-1 text-xs font-semibold text-coral">
+                <p role="alert" className="mt-1 text-xs font-semibold text-danger">
                   {error}
                 </p>
               )}
@@ -226,7 +228,7 @@ export function CommentRow({
                   type="button"
                   onClick={saveEdit}
                   disabled={busy}
-                  className="text-xs font-bold text-grape disabled:opacity-50"
+                  className="text-xs font-bold text-grape-ink disabled:opacity-50"
                 >
                   {busy ? "Saving…" : "Save"}
                 </button>
@@ -241,11 +243,11 @@ export function CommentRow({
                 className="mt-0.5"
               />
               {comment.image && (
-                <a
-                  href={comment.image.displayUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1.5 block"
+                <button
+                  type="button"
+                  onClick={() => setLightboxOpen(true)}
+                  aria-label="Open image"
+                  className="mt-1.5 block motion-safe:active:scale-[.98]"
                 >
                   <MediaImage
                     src={comment.image.thumbUrl}
@@ -253,7 +255,7 @@ export function CommentRow({
                     {...thumbSize(comment.image.width, comment.image.height, IMAGE_MAX_HEIGHT_PX)}
                     className="max-h-48 rounded-xl"
                   />
-                </a>
+                </button>
               )}
             </>
           )}
@@ -285,6 +287,15 @@ export function CommentRow({
         onConfirm={() => void commitEdit()}
         onCancel={() => setConfirmImageRelease(false)}
       />
+
+      {lightboxOpen && comment.image && (
+        <Lightbox
+          images={[{ src: comment.image.displayUrl, alt: comment.image.caption ?? "" }]}
+          index={0}
+          onClose={() => setLightboxOpen(false)}
+          onIndexChange={() => {}}
+        />
+      )}
     </div>
   );
 }

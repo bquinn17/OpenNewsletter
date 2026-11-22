@@ -52,7 +52,6 @@ How each subsystem works. Sections are numbered and cited from code.
 |---|---|
 | [`decisions.md`](decisions.md) | The owner's standing decisions (D1–D12 and others) and the reasoning behind them |
 | [`future-ideas.md`](future-ideas.md) | Designs kept for later but not scheduled |
-| [`frontend_design_review.md`](frontend_design_review.md) | Open review of the frontend's color, motion and reading, with a suggested order of work |
 
 ## Elsewhere in the repo
 

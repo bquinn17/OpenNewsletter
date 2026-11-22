@@ -190,7 +190,7 @@ function MemberRow({
               <button
                 role="menuitem"
                 onClick={onRemove}
-                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-coral hover:bg-cream"
+                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-danger hover:bg-cream"
               >
                 Remove from group
               </button>

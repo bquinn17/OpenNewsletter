@@ -49,7 +49,7 @@ describe("MarkdownBody sanitization", () => {
     );
   });
 
-  it("resolves an image: token to the media image", () => {
+  it("resolves an image: token to the full-size media image, blurred-thumb placeholder behind it", () => {
     render(
       <MarkdownBody
         body="![a photo](image:img1)"
@@ -63,7 +63,7 @@ describe("MarkdownBody sanitization", () => {
       />,
     );
     const img = screen.getByAltText("a photo");
-    expect(img).toHaveAttribute("src", expect.stringContaining("thumb.webp"));
+    expect(img).toHaveAttribute("src", expect.stringContaining("display.webp"));
   });
 
   it("keeps an inline image's retry state when re-rendered with fresh URLs", async () => {

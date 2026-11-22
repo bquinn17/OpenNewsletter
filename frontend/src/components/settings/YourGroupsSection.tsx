@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, apiErrorMessage } from "../../api/client";
 import { useLeaveGroup } from "../../api/mutations";
@@ -48,18 +49,18 @@ export function YourGroupsSection({ memberships }: Props) {
             </div>
             <button
               onClick={() => navigate(`/g/${m.groupId}`)}
-              className="text-xs font-semibold text-grape"
+              className="text-xs font-semibold text-grape-ink"
             >
               View
             </button>
             {m.role === "admin" && (
-              <Link to={`/g/${m.groupId}/admin`} className="text-xs font-semibold text-grape">
+              <Link to={`/g/${m.groupId}/admin`} className="text-xs font-semibold text-grape-ink">
                 Manage
               </Link>
             )}
             <button
               onClick={() => setLeaveTarget({ groupId: m.groupId, groupName: m.groupName })}
-              className="text-xs font-semibold text-coral"
+              className="text-xs font-semibold text-danger"
               disabled={leaveGroup.isPending}
             >
               Leave
@@ -74,10 +75,10 @@ export function YourGroupsSection({ memberships }: Props) {
           className="block flex w-full items-center gap-3 p-4 text-left hover:bg-cream"
         >
           <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-dashed border-line bg-cream text-inkmuted">
-            ＋
+            <Plus aria-hidden className="h-5 w-5" />
           </div>
           <div className="flex-1 text-sm font-semibold">Join with an invite code</div>
-          <span className="text-grape">→</span>
+          <span className="text-grape-ink">→</span>
         </Link>
       </div>
 

@@ -14,12 +14,16 @@ type PhaseStyle = {
 // Color coding for an edition's phase (`docs/design/frontend.md` §14a). Full class
 // strings, not interpolated, so Tailwind's scanner sees them.
 const PHASE_STYLES: Record<EditionPhase, PhaseStyle> = {
-  voting: { label: "Voting", header: "bg-phase-voting/90", chip: "bg-phase-voting text-grape" },
-  open: { label: "Open", header: "bg-phase-open/90", chip: "bg-phase-open text-rose-600" },
+  voting: {
+    label: "Voting",
+    header: "bg-phase-voting/90",
+    chip: "bg-phase-voting text-grape-ink",
+  },
+  open: { label: "Open", header: "bg-phase-open/90", chip: "bg-phase-open text-coral-ink" },
   published: {
     label: "Published",
     header: "bg-phase-published/90",
-    chip: "bg-phase-published text-emerald-700",
+    chip: "bg-phase-published text-mint-ink",
   },
 };
 

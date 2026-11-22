@@ -159,7 +159,7 @@ export function ResponseEditor({
             onChange={(e) => onBodyChange(e.target.value)}
             onBlur={onBlur}
             readOnly={readOnly}
-            className="min-h-[200px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-relaxed focus:outline-none"
+            className="min-h-[200px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-relaxed"
             placeholder="Tell us about it…"
           />
         )}

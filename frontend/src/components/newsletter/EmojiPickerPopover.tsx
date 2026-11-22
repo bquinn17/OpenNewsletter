@@ -2,6 +2,10 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { firstGrapheme, isValidEmoji, normalizeEmoji } from "../../utils/emoji";
 
+// One-tap quick picks shown in their own row above the curated grid
+// (`docs/design/frontend.md` §9).
+const QUICK_EMOJI = ["🔥", "🤣", "❤️", "😍", "👍", "🎉"];
+
 // A curated grid (~64) covering the common reaction categories, plus a
 // native text input for anything else (`docs/design/engagement.md` §2.5). No external
 // emoji-picker dependency — this is all plain Unicode text.
@@ -76,15 +80,19 @@ interface Props {
   anchorRef: RefObject<HTMLElement | null>;
   onPick: (emoji: string) => void;
   onClose: () => void;
+  /** Quick picks already shown as a reaction pill are skipped in the top row. */
+  usedEmoji?: string[];
 }
 
-// Portal-rendered popover anchored to the ＋ button. Closes on outside click,
+// Portal-rendered popover anchored to the add-reaction button. Closes on outside click,
 // Escape, and viewport resize/scroll (since the absolute position would drift).
 // Focus-return to the anchor on close is the caller's responsibility (so it
 // works the same whether `onClose` fires from here or from an emoji pick).
-export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props) {
+export default function EmojiPickerPopover({ anchorRef, onPick, onClose, usedEmoji = [] }: Props) {
   const popRef = useRef<HTMLDivElement>(null);
   const [customInput, setCustomInput] = useState("");
+  const shown = new Set(usedEmoji);
+  const quickPicks = QUICK_EMOJI.filter((emoji) => !shown.has(emoji));
 
   // Position the popover above the anchor (or below if there's no room).
   useEffect(() => {
@@ -95,7 +103,7 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
       const rect = anchor.getBoundingClientRect();
       const margin = 8;
       const popW = Math.min(300, window.innerWidth - 16);
-      const popH = 280;
+      const popH = 320;
       let left = rect.left + rect.width / 2 - popW / 2;
       left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
       const placeAbove = rect.top - popH - margin > 8;
@@ -147,10 +155,25 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
     <div
       ref={popRef}
       className="fixed z-50 flex animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-pop"
-      style={{ height: 280 }}
+      style={{ height: 320 }}
       role="dialog"
       aria-label="Choose an emoji"
     >
+      {quickPicks.length > 0 && (
+        <div role="group" aria-label="Quick picks" className="flex gap-1 border-b border-line p-2">
+          {quickPicks.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => onPick(emoji)}
+              aria-label={`React with ${emoji}`}
+              className="rounded-lg p-1.5 text-lg leading-none hover:bg-cream"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-8 gap-0.5 overflow-y-auto p-2">
         {CURATED_EMOJI.map((emoji) => (
           <button
@@ -180,13 +203,13 @@ export default function EmojiPickerPopover({ anchorRef, onPick, onClose }: Props
             }
           }}
           placeholder="Type an emoji…"
-          className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1 text-sm focus:ring-2 focus:ring-coral/30"
         />
         <button
           type="button"
           onClick={submitCustom}
           disabled={!isValidEmoji(customInput)}
-          className="rounded-lg bg-grape px-3 py-1 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg bg-grape-ink px-3 py-1 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
           Add
         </button>

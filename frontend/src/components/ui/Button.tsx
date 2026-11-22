@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "ink" | "ghost" | "soft";
+type Variant = "primary" | "ink" | "ghost" | "soft" | "danger";
 type Size = "sm" | "md" | "lg";
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -17,10 +17,11 @@ const sizes: Record<Size, string> = {
 };
 
 const variants: Record<Variant, string> = {
-  primary: "bg-coral text-white shadow-pop hover:brightness-105",
+  primary: "bg-coral text-ink shadow-pop hover:brightness-105",
   ink: "bg-ink text-cream hover:opacity-90",
   ghost: "bg-white border border-line text-ink hover:border-ink",
   soft: "bg-cream text-ink hover:bg-line/60",
+  danger: "bg-danger text-white shadow-pop hover:brightness-105",
 };
 
 /** `Button`'s look, for a router `Link` or `<a>` that should read as a button. */
@@ -30,7 +31,7 @@ export function buttonClassName({
   className,
 }: { variant?: Variant; size?: Size; className?: string } = {}): string {
   return clsx(
-    "inline-flex items-center justify-center gap-1.5 rounded-full font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex items-center justify-center gap-1.5 rounded-full font-semibold transition duration-fast motion-safe:active:scale-[.97] disabled:cursor-not-allowed disabled:opacity-50",
     sizes[size],
     variants[variant],
     className,

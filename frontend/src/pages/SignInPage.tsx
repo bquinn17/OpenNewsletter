@@ -42,7 +42,7 @@ export function SignInPage() {
           <span className="animate-wiggle motion-reduce:animate-none">✉️</span>
         </div>
 
-        <p className="mt-6 text-center text-xs font-bold uppercase tracking-widest text-grape">
+        <p className="mt-6 text-center text-xs font-bold uppercase tracking-widest text-grape-ink">
           {greeting(new Date().getHours())}
         </p>
         <h1 className="mt-1 text-center font-display text-3xl font-bold leading-tight">
@@ -62,7 +62,7 @@ export function SignInPage() {
         <InviteOnlyNote className="mt-8">
           <p className="text-inkmuted">
             Signing in is for members. New here?{" "}
-            <Link to="/join" className="font-semibold text-grape underline underline-offset-2">
+            <Link to="/join" className="font-semibold text-grape-ink underline underline-offset-2">
               Sign up with your invite code
             </Link>
           </p>

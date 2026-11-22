@@ -1,30 +1,52 @@
 import type { Config } from "tailwindcss";
 
+// Reads each token's CSS variable (`src/styles/tailwind.css` `:root`), so
+// opacity modifiers like `bg-coral/10` keep working (`docs/design/frontend.md` §4.2).
+function withOpacity(variable: string) {
+  return `rgb(var(${variable}) / <alpha-value>)`;
+}
+
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        cream: "#FBF6EE",
-        lavender: "#E4EAFF",
-        blush: "#FBE1E6",
-        mist: "#F4F5F9",
+        cream: withOpacity("--cream"),
+        lavender: withOpacity("--lavender"),
+        blush: withOpacity("--blush"),
+        mist: withOpacity("--mist"),
         // Edition phase tints (`utils/phase.ts`): pastel versions of grape, coral, mint.
         phase: {
-          voting: "#ECE6FF",
-          open: "#FFE3E7",
-          published: "#D8F5EA",
+          voting: withOpacity("--phase-voting"),
+          open: withOpacity("--phase-open"),
+          published: withOpacity("--phase-published"),
         },
-        surface: "#FFFFFF",
-        ink: "#181821",
-        inkmuted: "#6F6E7C",
-        coral: "#FF5A6B",
-        peach: "#FFB178",
-        grape: "#7B5BFF",
-        sky: "#5AC8FF",
-        mint: "#3DD9A4",
-        sun: "#FFD23F",
-        line: "#ECE5D8",
+        surface: withOpacity("--surface"),
+        ink: withOpacity("--ink"),
+        inkmuted: withOpacity("--inkmuted"),
+        coral: {
+          DEFAULT: withOpacity("--coral"),
+          ink: withOpacity("--coral-ink"),
+        },
+        peach: withOpacity("--peach"),
+        grape: {
+          DEFAULT: withOpacity("--grape"),
+          ink: withOpacity("--grape-ink"),
+        },
+        sky: {
+          DEFAULT: withOpacity("--sky"),
+          ink: withOpacity("--sky-ink"),
+        },
+        mint: {
+          DEFAULT: withOpacity("--mint"),
+          ink: withOpacity("--mint-ink"),
+        },
+        sun: {
+          DEFAULT: withOpacity("--sun"),
+          ink: withOpacity("--sun-ink"),
+        },
+        danger: withOpacity("--danger"),
+        line: withOpacity("--line"),
       },
       fontFamily: {
         sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
@@ -38,6 +60,15 @@ const config: Config = {
       borderRadius: {
         "4xl": "2rem",
         "5xl": "2.5rem",
+      },
+      transitionDuration: {
+        fast: "120ms",
+        base: "220ms",
+        slow: "400ms",
+      },
+      transitionTimingFunction: {
+        spring: "cubic-bezier(.34,1.56,.64,1)",
+        smooth: "cubic-bezier(.2,.8,.2,1)",
       },
       keyframes: {
         pop: {
@@ -61,12 +92,48 @@ const config: Config = {
             opacity: "0",
           },
         },
+        "pop-in": {
+          "0%": { opacity: "0", transform: "scale(.6)" },
+          "60%": { opacity: "1", transform: "scale(1.08)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        rise: {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "none" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
+        },
+        "float-up": {
+          "0%": { opacity: "1", transform: "translateY(0)" },
+          "100%": { opacity: "0", transform: "translateY(-32px)" },
+        },
+        "pulse-soft": {
+          "0%, 100%": { transform: "scale(1)", opacity: "1" },
+          "50%": { transform: "scale(1.04)", opacity: "0.85" },
+        },
+        draw: {
+          "0%": { strokeDashoffset: "1" },
+          "100%": { strokeDashoffset: "0" },
+        },
+        "gradient-drift": {
+          "0%, 100%": { backgroundPosition: "0% 50%" },
+          "50%": { backgroundPosition: "100% 50%" },
+        },
       },
       animation: {
         pop: "pop .25s ease-out both",
         float: "float 4s ease-in-out infinite",
         wiggle: "wiggle 1.2s ease-in-out infinite",
         confetti: "confetti 3s cubic-bezier(.25,.6,.4,1) both",
+        "pop-in": "pop-in .4s cubic-bezier(.34,1.56,.64,1) both",
+        rise: "rise .4s cubic-bezier(.2,.8,.2,1) both",
+        shimmer: "shimmer 1.6s linear infinite",
+        "float-up": "float-up .8s cubic-bezier(.2,.8,.2,1) both",
+        "pulse-soft": "pulse-soft 2s cubic-bezier(.2,.8,.2,1) infinite",
+        draw: "draw .5s cubic-bezier(.2,.8,.2,1) forwards",
+        "gradient-drift": "gradient-drift 12s ease-in-out infinite",
       },
     },
   },

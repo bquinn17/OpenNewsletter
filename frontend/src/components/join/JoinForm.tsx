@@ -48,7 +48,7 @@ export function JoinForm({ className }: Props) {
           aria-invalid={!!errors.code}
           aria-describedby="invite-code-error"
           placeholder="VHQM-2K8R-PX3F-T9JN"
-          className="flex-1 rounded-2xl border border-line bg-cream px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="flex-1 rounded-2xl border border-line bg-cream px-4 py-3 font-mono text-sm focus:ring-2 focus:ring-coral/30"
         />
         <Button type="submit">Join</Button>
       </div>
@@ -56,7 +56,7 @@ export function JoinForm({ className }: Props) {
         id="invite-code-error"
         role="alert"
         aria-live="polite"
-        className="mt-1.5 min-h-[1em] text-xs font-semibold text-coral"
+        className="mt-1.5 min-h-[1em] text-xs font-semibold text-danger"
       >
         {errors.code?.message ?? ""}
       </p>

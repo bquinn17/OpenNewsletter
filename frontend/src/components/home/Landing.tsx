@@ -62,7 +62,7 @@ export function Landing() {
       <EditionStack />
 
       <div className="mt-8 text-center">
-        <p className="text-xs font-bold uppercase tracking-widest text-grape">
+        <p className="text-xs font-bold uppercase tracking-widest text-grape-ink">
           By your people, for your people
         </p>
         <h1 className="mt-2 font-display text-4xl font-bold leading-tight">
@@ -93,7 +93,7 @@ export function Landing() {
             entering it has to be a full page load (`docs/design/frontend.md` §17). */}
         <a
           href={DEMO_BASENAME}
-          className="mt-4 inline-block text-sm font-semibold text-grape underline underline-offset-2"
+          className="mt-4 inline-block text-sm font-semibold text-grape-ink underline underline-offset-2"
         >
           See a demo
         </a>

@@ -275,7 +275,8 @@ describe("NewsletterPage", () => {
 
     render_("/g/g1/n/c1");
 
-    expect(await screen.findByText("Nov 15, 2026")).toBeInTheDocument();
+    // Both the page header and the masthead show the title; the masthead's is the only heading.
+    expect(await screen.findByRole("heading", { name: "Nov 15, 2026" })).toBeInTheDocument();
     expect(screen.getByText("That's a wrap on the Nov 15 edition 🎈")).toBeInTheDocument();
   });
 });

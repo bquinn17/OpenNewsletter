@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useState } from "react";
 import { useMediaRetry } from "./useMediaRetry";
 
 type Props = {
@@ -11,6 +12,11 @@ type Props = {
    */
   width?: number;
   height?: number;
+  /**
+   * A smaller, already-loaded variant (the 400px thumb) shown blurred behind `src` until it loads
+   * (`docs/design/frontend.md` §9). Omit for a plain `<img>` with no blur-up.
+   */
+  thumbSrc?: string | null;
 };
 
 /** A transparent `data:` SVG (allowed by the CSP's `img-src`) for the failed placeholder. */
@@ -28,8 +34,9 @@ const PLACEHOLDER_SRC = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
  * status and caches only 200s — every media `<img>` must use the same mode (`Avatar` too), or a
  * cached copy from one mode fails a request made in the other.
  */
-export function MediaImage({ src, alt, className, width, height }: Props) {
+export function MediaImage({ src, alt, className, width, height, thumbSrc }: Props) {
   const { attempt, failed, handleError } = useMediaRetry(src);
+  const [loaded, setLoaded] = useState(false);
 
   if (failed) {
     // Still an `<img>`, so `width`/`height` and `className` give it the same box as the image.
@@ -44,18 +51,54 @@ export function MediaImage({ src, alt, className, width, height }: Props) {
     );
   }
 
+  if (!thumbSrc) {
+    return (
+      <img
+        key={attempt}
+        src={src}
+        alt={alt}
+        crossOrigin="anonymous"
+        loading="lazy"
+        decoding="async"
+        width={width}
+        height={height}
+        className={className}
+        onError={handleError}
+      />
+    );
+  }
+
+  // Mimics a plain `<img width height>`'s auto aspect-ratio box, since the wrapper (not an
+  // `<img>`) can't rely on the browser inferring it from attributes.
+  const boxStyle =
+    width && height ? { aspectRatio: `${width} / ${height}`, maxWidth: `${width}px` } : undefined;
+
   return (
-    <img
-      key={attempt}
-      src={src}
-      alt={alt}
-      crossOrigin="anonymous"
-      loading="lazy"
-      decoding="async"
-      width={width}
-      height={height}
-      className={className}
-      onError={handleError}
-    />
+    <span
+      className={clsx("relative block w-full max-w-full overflow-hidden", className)}
+      style={boxStyle}
+    >
+      <img
+        src={thumbSrc}
+        alt=""
+        aria-hidden="true"
+        crossOrigin="anonymous"
+        className="absolute inset-0 h-full w-full scale-110 object-cover blur-lg"
+      />
+      <img
+        key={attempt}
+        src={src}
+        alt={alt}
+        crossOrigin="anonymous"
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={handleError}
+        className={clsx(
+          "absolute inset-0 h-full w-full object-cover transition-opacity motion-safe:duration-base",
+          loaded ? "opacity-100" : "opacity-0",
+        )}
+      />
+    </span>
   );
 }

@@ -72,7 +72,7 @@ export function ProviderButtons({ returnTo, invite }: Props) {
           {pending === id ? (
             <Spinner size="sm" label={`Opening ${id}`} />
           ) : last === id ? (
-            <span className="rounded-full bg-lavender px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-grape">
+            <span className="rounded-full bg-lavender px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-grape-ink">
               Last used
             </span>
           ) : (
@@ -88,7 +88,7 @@ export function ProviderButtons({ returnTo, invite }: Props) {
       <p
         role="alert"
         aria-live="polite"
-        className="min-h-[1.25rem] text-sm font-semibold text-coral"
+        className="min-h-[1.25rem] text-sm font-semibold text-danger"
       >
         {failed ? "Couldn't reach sign-in. Check your connection and try again." : ""}
       </p>

@@ -81,7 +81,7 @@ function LoadingShell({ groupId }: { groupId: string }) {
       <PageHeader title="Leaderboard" eyebrow="Loading…" back={`/g/${groupId}`} />
       <div className="space-y-3 px-5 pt-6">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-28 animate-pulse rounded-3xl border border-line bg-white" />
+          <div key={i} className="skeleton h-28 rounded-3xl border border-line" />
         ))}
       </div>
     </div>

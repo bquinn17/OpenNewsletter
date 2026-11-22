@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useInstallPrompt } from "../../state/installPrompt";
 import { isIOS, isStandaloneDisplay } from "../../utils/platform";
 import { Button } from "../ui/Button";
@@ -41,7 +42,7 @@ export function InstallPwaPrompt() {
           aria-label="Dismiss install banner"
           className="shrink-0 text-inkmuted"
         >
-          ✕
+          <X aria-hidden className="h-4 w-4" />
         </button>
       </div>
     );

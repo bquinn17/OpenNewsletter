@@ -2,13 +2,15 @@ import { useState } from "react";
 import { useConfig, useGroup, useMembership } from "../../api/queries";
 import type { components } from "../../types/api";
 import { avatarColorClass } from "../../utils/avatarColor";
+import { Avatar } from "../ui/Avatar";
 import { CommentComposer } from "./CommentComposer";
 import { CommentRow } from "./CommentRow";
 
 type S = components["schemas"];
 type Comment = S["CommentResponse"];
 
-const COLLAPSED_COUNT = 3;
+/** Avatars shown in the collapsed summary row (`docs/design/frontend.md` §7.2). */
+const SUMMARY_AVATAR_COUNT = 3;
 
 type Props = {
   comments: Comment[];
@@ -19,7 +21,12 @@ type Props = {
   timezone: string;
 };
 
-/** Collapsible comment thread + composer for one published answer (`docs/design/engagement.md` §1, §4.3). */
+/**
+ * Collapsible comment thread + composer for one published answer
+ * (`docs/design/engagement.md` §1, §4.3). With one or more comments, the thread collapses by
+ * default to a summary row ("💬 N" plus up to three commenter avatars) that expands into the full
+ * thread. The composer always shows, and posting expands the thread so the new comment is visible.
+ */
 export function CommentList({
   comments,
   groupId,
@@ -35,22 +42,55 @@ export function CommentList({
   const isAdmin = membership?.role === "admin";
   const callerId = config?.userId ?? null;
 
-  const visible = expanded ? comments : comments.slice(-COLLAPSED_COUNT);
-  const hiddenCount = comments.length - visible.length;
+  const composer = (
+    <CommentComposer
+      groupId={groupId}
+      cycleId={cycleId}
+      questionId={questionId}
+      responseId={responseId}
+      onPosted={() => setExpanded(true)}
+    />
+  );
 
-  return (
-    <div className="mt-4 space-y-3 border-t border-line pt-4 text-sm">
-      {hiddenCount > 0 && (
+  if (comments.length === 0) {
+    return <div className="mt-4 border-t border-line pt-4 text-sm">{composer}</div>;
+  }
+
+  if (!expanded) {
+    const summaryAvatars = comments.slice(-SUMMARY_AVATAR_COUNT);
+    return (
+      <div className="mt-4 border-t border-line pt-4 text-sm">
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="font-semibold text-grape"
+          aria-label={`Show ${comments.length} comment${comments.length === 1 ? "" : "s"}`}
+          className="flex items-center gap-2 font-semibold text-grape-ink"
         >
-          Show all {comments.length} comments
+          <span aria-hidden>💬 {comments.length}</span>
+          <span className="flex -space-x-2">
+            {summaryAvatars.map((comment) => {
+              const author = group?.members.find((m) => m.userId === comment.authorUserId);
+              return (
+                <Avatar
+                  key={comment.commentId}
+                  name={comment.displayName}
+                  size="xs"
+                  colorClassName={author ? avatarColorClass(author.avatarColor) : undefined}
+                  url={author?.avatarUrl}
+                  ringed
+                />
+              );
+            })}
+          </span>
         </button>
-      )}
+        {composer}
+      </div>
+    );
+  }
 
-      {visible.map((comment) => {
+  return (
+    <div className="mt-4 space-y-3 border-t border-line pt-4 text-sm">
+      {comments.map((comment) => {
         const author = group?.members.find((m) => m.userId === comment.authorUserId);
         return (
           <CommentRow
@@ -69,12 +109,7 @@ export function CommentList({
         );
       })}
 
-      <CommentComposer
-        groupId={groupId}
-        cycleId={cycleId}
-        questionId={questionId}
-        responseId={responseId}
-      />
+      {composer}
     </div>
   );
 }

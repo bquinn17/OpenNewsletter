@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { initial } from "../../utils/avatar";
+import { avatarColorClassForName } from "../../utils/avatarColor";
 import { useMediaRetry } from "./useMediaRetry";
 
 interface Props {
@@ -52,7 +53,7 @@ export function Avatar({ name, colorClassName, url, size = "md", className, ring
       className={clsx(
         "grid select-none place-items-center rounded-full font-bold",
         sizes[size],
-        colorClassName,
+        colorClassName ?? avatarColorClassForName(name),
         ringed && "ring-2 ring-white",
         className,
       )}

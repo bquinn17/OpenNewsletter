@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { phaseStyle, type EditionPhase } from "../../utils/phase";
@@ -11,14 +12,24 @@ interface Props {
   className?: string;
   /** Tints the bar with an edition's phase color; pages outside an edition stay lavender. */
   phase?: EditionPhase;
+  /** A 3px scroll-driven progress bar along the header's bottom edge (`docs/design/frontend.md` §7.2). */
+  showReadingProgress?: boolean;
 }
 
-export function PageHeader({ eyebrow, title, rightSlot, back, className, phase }: Props) {
+export function PageHeader({
+  eyebrow,
+  title,
+  rightSlot,
+  back,
+  className,
+  phase,
+  showReadingProgress,
+}: Props) {
   const navigate = useNavigate();
   return (
     <div
       className={clsx(
-        "sticky top-0 z-30 border-b border-ink/5 backdrop-blur",
+        "sticky top-[env(safe-area-inset-top)] z-30 border-b border-ink/5 backdrop-blur",
         phase ? phaseStyle(phase).header : "bg-lavender/85",
         className,
       )}
@@ -30,7 +41,7 @@ export function PageHeader({ eyebrow, title, rightSlot, back, className, phase }
             className="grid h-9 w-9 place-items-center rounded-full border border-line bg-white"
             aria-label="Back"
           >
-            ←
+            <ArrowLeft aria-hidden className="h-4 w-4" />
           </button>
         )}
         <div className="min-w-0 flex-1">
@@ -39,6 +50,9 @@ export function PageHeader({ eyebrow, title, rightSlot, back, className, phase }
         </div>
         {rightSlot}
       </div>
+      {showReadingProgress && (
+        <div aria-hidden className="reading-progress h-[3px] w-full bg-coral" />
+      )}
     </div>
   );
 }

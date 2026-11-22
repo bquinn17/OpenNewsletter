@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { X } from "lucide-react";
 import type { components } from "../../types/api";
 import { thumbSize } from "../../utils/media";
 import { Spinner } from "../ui/Spinner";
@@ -44,9 +45,9 @@ export function ImageUploaderTile({
           >
             {image.status === "failed" ? (
               <>
-                <span className="text-coral">{image.error}</span>
+                <span className="text-danger">{image.error}</span>
                 {image.file && (
-                  <button type="button" onClick={onRetry} className="font-semibold text-grape">
+                  <button type="button" onClick={onRetry} className="font-semibold text-grape-ink">
                     Retry
                   </button>
                 )}
@@ -70,7 +71,7 @@ export function ImageUploaderTile({
           aria-label={`Remove image ${image.file?.name ?? image.imageId}`}
           className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-ink text-xs font-bold text-cream disabled:opacity-50"
         >
-          ×
+          <X aria-hidden className="h-3.5 w-3.5" />
         </button>
       </div>
       {image.status === "ready" && (
@@ -84,7 +85,7 @@ export function ImageUploaderTile({
             value={image.altText}
             onChange={(e) => onAltTextChange(e.target.value)}
             placeholder="Describe this image"
-            className="w-full rounded-lg border border-line bg-cream px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-coral/30"
+            className="w-full rounded-lg border border-line bg-cream px-2 py-1 text-xs focus:ring-2 focus:ring-coral/30"
           />
         </div>
       )}

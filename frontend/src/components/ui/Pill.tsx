@@ -5,11 +5,11 @@ type Tone = "ink" | "coral" | "grape" | "mint" | "sky" | "sun" | "muted";
 
 const tones: Record<Tone, string> = {
   ink: "bg-ink text-cream",
-  coral: "bg-coral text-white",
-  grape: "bg-grape/10 text-grape",
-  mint: "bg-mint/15 text-mint",
-  sky: "bg-sky/15 text-sky",
-  sun: "bg-sun/30 text-ink",
+  coral: "bg-coral text-ink",
+  grape: "bg-grape/10 text-grape-ink",
+  mint: "bg-mint/15 text-mint-ink",
+  sky: "bg-sky/12 text-sky-ink",
+  sun: "bg-sun/30 text-sun-ink",
   muted: "bg-cream border border-line text-inkmuted",
 };
 

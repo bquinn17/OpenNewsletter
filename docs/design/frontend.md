@@ -65,13 +65,14 @@ frontend/
 │   │   └── pushSetup.ts              # subscribe + send to backend
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
 │   ├── components/
-│   │   ├── ui/                       # Avatar, Button, ConfettiBurst, MediaImage, ConfirmDialog, Pill, Spinner, Toast,
-│   │   │                             # useDismissableMenu
+│   │   ├── ui/                       # Avatar, Button, ConfettiBurst, AllInOverlay, Lightbox, MediaImage,
+│   │   │                             # ConfirmDialog, Pill, Spinner, Toast, useDismissableMenu
 │   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader, PageErrorState
 │   │   ├── auth/                     # ProviderButtons, ProviderLogos, SignUpSteps
-│   │   ├── home/                     # GroupEditions, EditionRow, Landing
+│   │   ├── home/                     # GroupEditions, EditionRow, OpenEditionHero, Landing
 │   │   ├── join/JoinForm.tsx
-│   │   ├── newsletter/               # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
+│   │   ├── newsletter/               # EditionMasthead, QuestionChips, PublishedQuestion, OpenQuestionRow,
+│   │   │                             # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
 │   │   │                             # CommentList (+ CommentRow, CommentComposer), ReactionBar,
 │   │   │                             # EmojiPickerPopover
 │   │   ├── candidates/               # CandidateList, CandidateCard, SuggestQuestionForm
@@ -101,10 +102,10 @@ frontend/
 │   │   ├── installPrompt.ts          # Zustand: stashed beforeinstallprompt event
 │   │   ├── celebration.ts            # Zustand: confetti bursts (§7.8)
 │   │   └── toast.ts
-│   ├── styles/tailwind.css           # Tailwind directives + the small prose ruleset
+│   ├── styles/tailwind.css           # Tailwind directives, color variables (§4.2), the prose ruleset
 │   ├── utils/                        # dates, markdown, media, uploadToS3, emoji, gradient, avatar,
 │   │                                 # avatarColor, inviteUrl, correlation (ULID), retry, platform,
-│   │                                 # userAgent, navigation, permanentDelete
+│   │                                 # userAgent, navigation, permanentDelete, readingTime, motion
 │   ├── test/                         # setup.ts (Vitest setup), virtualPwaRegisterMock.ts (stand-in for
 │   │                                 # vite-plugin-pwa's virtual:pwa-register module in tests);
 │   │                                 # unit tests sit next to their source files
@@ -178,13 +179,33 @@ Tailwind container choice: stick with `max-w-2xl` on large screens. The "middle 
 
 ### 4.2 Theming
 
-The palette is a set of fixed hex colors in `theme.extend.colors` in `tailwind.config.ts`: the neutrals (`cream`, `mist`, `surface`, `line`, `ink`, `inkmuted`), the pastels (`lavender`, `blush`, and the `phase.*` edition tints from `utils/phase.ts`) and the accents (`coral`, `peach`, `grape`, `sky`, `mint`, `sun`). Components use these token classes directly, alongside Tailwind's built-in `white`, such as `bg-white` for cards and the page background set on `body` in `styles/tailwind.css`. There are no CSS variables.
+Colors are CSS variables on `:root` in `styles/tailwind.css`, stored as RGB channels (`--coral: 255 90 107`). `tailwind.config.ts` reads each one as `rgb(var(--coral) / <alpha-value>)`, so opacity modifiers such as `bg-coral/10` still work. The tokens are:
+- **Neutrals:** `cream`, `mist`, `surface`, `line`, `ink`, `inkmuted`.
+- **Pastels:** `lavender`, `blush`, and the `phase.*` edition tints from `utils/phase.ts`.
+- **Accents:** `coral`, `peach`, `grape`, `sky`, `mint`, `sun`, and `danger`.
+- **Text shades:** `coral-ink`, `grape-ink`, `mint-ink`, `sky-ink` and `sun-ink`.
 
-The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../future-ideas.md#13-dark-mode).
+Components use the token classes directly, alongside Tailwind's built-in `white`.
+
+**Each accent has one meaning:**
+
+| Accent | Means |
+|---|---|
+| coral | the primary action, the open phase, urgency (the countdown) |
+| grape | links, secondary controls, the voting phase, "your pick" |
+| mint | success, published |
+| sun | draft, warning |
+| danger | destructive actions (delete, remove, revoke, leave) and errors |
+
+**Vivid accents are fills; text uses the `-ink` shade.** Coral, grape, mint, sky and sun fail WCAG AA as text on white or on their own tint, so text in an accent color uses its `-ink` shade, which passes on both. The primary `Button` is ink text on a coral fill, and the `danger` variant is white on `danger`. Avatar colors (`utils/avatarColor.ts`) and group gradients (`utils/gradient.ts`) pick white or ink text per color, so the text passes at both ends of every gradient.
+
+The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../future-ideas.md#13-dark-mode); because the colors are variables, it is mostly a matter of redefining them.
 
 ### 4.3 Typography
 
-Fonts: Plus Jakarta Sans and Fraunces from Google Fonts (§12.1). Body 16px, line-height 1.55. Markdown is styled by a small hand-written prose ruleset in `styles/tailwind.css`; `@tailwindcss/typography` isn't used.
+Fonts: Plus Jakarta Sans and Fraunces from Google Fonts (§12.1). Body 16px, line-height 1.55.
+
+Markdown is styled by a small hand-written ruleset, `.markdown-preview` in `styles/tailwind.css`, which `utils/markdown.tsx#MarkdownBody` applies; `@tailwindcss/typography` isn't used. Published answers are set for reading: 17px text, line-height 1.65, a measure capped near 65 characters, coral list markers, and blockquotes as italic Fraunces pull quotes with a grape rule.
 
 ---
 
@@ -300,6 +321,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - Signed out, Home is a landing page (`components/home/Landing.tsx`): a decorative stack of editions, the headline "Your group's newsletter, together.", a primary **Sign up** (`/join`) and a secondary **Sign in** (`/signin`), the invite-only notice, **See a demo** (§17), and a three-step "How it works" (suggest & vote, everyone answers, read it together). Its copy names no cadence, because a signed-out visitor has no `/config` to read it from. The header's **Sign in** links to `/signin`, and is hidden on that page.
 - Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
 - Renders editions newest first, in labeled sections (empty ones are hidden): **Taking suggestions** (the voting cycle), **Awaiting responses** (the open cycle), **This month's edition** (published, and its month is the current month in the group's timezone, via `utils/dates.ts#isCurrentCycleMonth`), **Past editions** (up to the 3 most recent published editions from earlier months). On a weekly deployment the third section is **This week's edition**: a published edition whose `publishedAt` is within the last 7 days (`utils/dates.ts#isCurrentEdition` covers both cadences; §14a). Open and voting cycles exist at once during the response window ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)).
+- The open edition, which has a deadline and needs the member's answers, is a hero card on the group's gradient. It shows progress from `NewsletterSummary.myPublishedCount` of `questionCount`, and a button: "Answer N more →" while questions are unanswered, otherwise one that opens the edition. The voting row shows the votes the member has left (`votesPerUserPerCycle − myVoteCount` from the cached candidates query that `CandidatesPage` also uses). Past editions stay plain rows.
 - Empty state when no memberships: "You haven't joined a group yet. Groups are invite-only: ask an admin of the group for an invite code, then paste it below." with a `<JoinForm/>`. This is where someone lands who signed in without an invite: Cognito still creates their identity ([`auth.md` §3.2](auth.md#32-why-this-is-fine)), but the app has nothing for them until they redeem one. It shows only once `/config` has loaded. Until then Home shows a spinner, and if `/config` fails, or is paused offline, it shows "Couldn't load your groups." with **Try again**, so a member never sees the join form.
 
 ### 7.2 NewsletterPage `/g/:g/n/:c`
@@ -312,8 +334,16 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - Notes:
   - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
   - The published payload carries no `responseOpenAt`, so the month/year label comes from the cycle's `NewsletterSummary` (`useNewsletters`), falling back to `publishedAt`.
-  - Published questions are expanded by default, with a collapse toggle.
+  - Published questions are expanded by default. Each has a chevron toggle that shows "N answers" while collapsed, and the header has **Collapse all** / **Expand all**.
   - Comments and reactions render in `AnswerCard` via `CommentList`/`ReactionBar`.
+  - Open-edition rows carry one meta line ("Poll · asked anonymously"); the status shows in the row's icon tile.
+- The published layout is built for reading a long edition:
+  - **Masthead:** the group's gradient (§14a), the edition label in large Fraunces, a stack of contributor avatars, and "N answers · M min read" (reading time, §14a).
+  - **Question chips:** a sticky, horizontally scrolling row with one chip per question under the page header. The chip for the question on screen is highlighted (IntersectionObserver), and tapping a chip jumps to its question.
+  - **Sticky prompts:** each question's prompt stays pinned under the chips while its answers scroll by.
+  - **Reading progress:** a 3px bar in the page header, pure CSS with `animation-timeline: scroll()`; browsers without scroll-driven animations show no bar.
+  - **Answers:** each question's answers share one surface, separated by dividers.
+  - **Under each answer:** the reactions already used plus one add button (§9). Comments collapse to a summary row ("💬 3" and small commenter avatars) that expands into the full thread. The composer is a one-line **Add a comment…** button; tapping it expands a textarea and a photo button, and the image dropzone appears only after tapping the photo button.
   - An `archived` cycle (410) shows a friendly "archived" state rather than an error.
 
 ### 7.3 RespondPage `/g/:g/n/:c/respond/:q`
@@ -322,7 +352,9 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
   - `useResponseEditor` hook manages in-memory `body` and a **debounced PUT** that fires once the user has stopped typing for `autosaveDebounceMs` (default 1500 ms). It also flushes on `blur` and on `visibilitychange → hidden`.
   - Image upload flow detailed in [`media.md` §3](media.md#3-upload-flow-browser--s3).
 - For poll questions: option list with single-select, Publish button.
-- Banner showing time-until-deadline (group TZ).
+- The page header reads "Question 2 of 5", with previous and next arrows to the neighbouring questions, so a member can answer every question without returning to the list. The prompt appears once, on the question card.
+- One banner shows the deadline (group TZ), and also carries the auto-publish note below while there's a draft. The header's countdown pill is the only other place the deadline shows.
+- A bottom bar holds the save state (a dot and a short label), **Done** and **Publish**. It's fixed to the bottom of the viewport but constrained to the app's width, and padded by `env(safe-area-inset-bottom)` (§11).
 - After publish, page becomes read-only with an "Edit" toggle that reopens editor (until cycle close).
 - Notes:
   - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID, then calls `DELETE /uploads/{id}` behind a permanent-delete `ConfirmDialog` ("This permanently deletes the image. It can't be recovered." — [`media.md` §8.0](media.md#80-explicit-deletion)/§9/§11.4), after the draft without it saves.
@@ -464,9 +496,9 @@ See [`media.md` §3](media.md#3-upload-flow-browser--s3) for the upload protocol
   - `react-markdown` runs its own `urlTransform` before `rehype-sanitize`, and its default blanks any URL that isn't `http(s)`/`mailto`/etc. `utils/markdown.tsx` therefore passes `image:` through explicitly and defers to `defaultUrlTransform` for everything else.
   - Only `image:{id}` tokens render inline. A remote `![](https://…)` renders as a link, because CSP `img-src` (§12.1) would block it and it would leak readers' IPs to its host.
   - Raw HTML is never parsed (no `rehype-raw`).
-- Image rendering uses `<picture>` with `<source srcset>` from `displayUrl` and a `thumbUrl` placeholder for blur-up.
+- Inline images in a published answer show the 1200px `displayUrl`, with the 400px `thumbUrl` as a blurred placeholder until it loads. Tapping an image in an answer's gallery or in a comment opens an in-app lightbox (`components/ui/Lightbox.tsx`) that swipes, or takes arrow keys, between that answer's images and closes on Escape, so the installed app never hands an image to a browser tab.
 - Polls render as horizontal stacked bars with percentages; caller's pick gets a ring highlight.
-- Reactions: pill buttons grouped by emoji with counts. Tap toggles. The `+` button opens `EmojiPickerPopover`: a curated 64-emoji grid plus a native text input for anything else (`emoji-picker-element` was tried and dropped — too heavy for the feature).
+- Reactions: pill buttons for the emoji already used, grouped with counts, plus one add button. Tap toggles. The add button opens `EmojiPickerPopover`: a top row of quick picks, then a curated 64-emoji grid, plus a native text input for anything else (`emoji-picker-element` was tried and dropped — too heavy for the feature).
 
 ---
 
@@ -486,9 +518,11 @@ See [`media.md` §3](media.md#3-upload-flow-browser--s3) for the upload protocol
 ## 11. Accessibility & UX
 
 - All interactive elements reachable by keyboard.
-- Focus-visible rings via Tailwind `focus-visible:ring-2`.
-- Color contrast: WCAG AA (4.5:1). Not checked automatically — axe is not wired into Playwright.
-- Reduced motion: respect `prefers-reduced-motion` (disable transitions on toasts, etc.).
+- Keyboard focus: a global `:focus-visible` outline in `styles/tailwind.css` (2px `grape-ink`, offset 2px). Inputs don't suppress it with `focus:outline-none`.
+- Color contrast: WCAG AA, 4.5:1 for text and 3:1 for large text and control boundaries, met through the `-ink` text shades (§4.2). Not checked automatically — axe is not wired into Playwright.
+- Reduced motion: a global `prefers-reduced-motion: reduce` rule in `styles/tailwind.css` cuts every animation and transition to near zero, and animations are written as `motion-safe:` utilities. Effects started from script (the Web Animations API, view transitions) check `prefers-reduced-motion` first and skip themselves (§18).
+- Safe areas: `index.html` sets `viewport-fit=cover`, so the sticky header pads by `env(safe-area-inset-top)` and fixed bottom bars by `env(safe-area-inset-bottom)`, keeping them clear of the iOS status bar and home indicator in the installed app.
+- Destructive confirmations (`ConfirmDialog` with `tone="danger"`) focus **Cancel**, so pressing Enter doesn't delete.
 - Form errors announced via `aria-live="polite"` regions.
 - Alt text input next to each uploaded thumbnail in the editor (not enforced on publish).
 
@@ -632,6 +666,8 @@ Several pieces of display state live entirely in the frontend rather than on the
 - **Edition labels** depend on the deployment's cadence, `GET /config`'s `cycleCadence.frequency` (`api/queries.ts#useCycleCadence`; [`lifecycle.md` §13.4](lifecycle.md#134-labels)). Helper: `utils/dates.ts#editionLabel(edition, timezone, frequency)`. `useCycleCadence` returns `undefined` until `/config` has loaded, and nothing cadence-dependent renders until then: no edition label, no "next month"/"next week" copy, and the settings form keeps its `responseWindowDays` field and Save button disabled, with no maximum applied. There is no client-side default cadence, so a weekly deployment never flashes monthly wording or a 28-day limit. Never accept a server-supplied label. Both forms use the group's `timezone`, which every `/config` membership carries ([`api.md` §2.1](api.md#21-get-config)).
   - **Monthly**: month and year (`"June 2026"`; the date tile reads `JUN` / `2026`), derived from `responseOpenAt` (`utils/dates.ts#cycleLabels`). Copy says "this month's edition" and "next month".
   - **Weekly**: the publication date (`"Nov 15, 2026"`; the tile reads `NOV` / `15`), from `publishedAt` once published and from the scheduled `responseCloseAt` before that. Copy says "this week's edition" and "next week". The Home row drops its "· published …" suffix, which would repeat the title.
+- **Reading time** in the published edition's masthead (§7.2): `utils/readingTime.ts`, the word count of every published text answer at 200 words a minute, rounded up, at least 1 minute.
+- **Avatar fallback color**: an `Avatar` with no avatar color gets one of the eight avatar color classes, picked by a stable hash of the member's name (`utils/avatarColor.ts`), so a member's initial always sits on the same circle.
 - **Word count** on the respond page footer: derived from the local `body` string. Trivial — no helper needed beyond `body.trim().split(/\s+/).length` (zero when empty).
 - **Reaction total** on the published-edition header: sum of `reactionGroups[].count` across all answers. Inline in `NewsletterPage.tsx`.
 - **"Hype check" banner** — not built; tracked in [`PROGRESS.md`](../../plans/PROGRESS.md). Would be computed from per-user draft counts in the open-newsletter payload. Sketch: a `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` helper would return either a string or `null` (suppress when there's nothing motivating to say).
@@ -689,5 +725,39 @@ Anyone can try the app without an account at `/demo`. The signed-out home screen
 **Sample photos.** The seeded published edition shows real photos, served from the site itself at `public/demo-media/` rather than S3. The service worker doesn't precache them (only JS, CSS, HTML and SVG are). They're freely licensed from Wikimedia Commons; `public/demo-media/CREDITS.txt`, deployed with them, gives the author, licence and source of each. The mock gives them absolute URLs, like presigned ones, because `mediaCacheKey` parses every image URL.
 
 **Copied invite links** (`utils/inviteUrl.ts`) are `/demo/join?code=…` in the demo, so they stay in it. `DEMO-JOIN-CODE` is the mock's working code.
+
+---
+
+## 18. Motion
+
+**Loud for accomplishments, quiet for routine actions.** Navigation and typing stay fast. Votes, reactions, publishing an answer and finishing the edition get a flourish.
+
+**Foundation.** `tailwind.config.ts` holds the motion tokens:
+- durations: `fast` 120ms, `base` 220ms, `slow` 400ms
+- easings: `spring` `cubic-bezier(.34,1.56,.64,1)` and `smooth` `cubic-bezier(.2,.8,.2,1)`
+- keyframes: `pop-in`, `rise`, `shimmer`, `float-up`, `pulse-soft`, `draw`, plus the older `pop`, `float`, `wiggle` and `confetti`
+
+Buttons, edition rows, candidate cards and interactive pills press down slightly (`active:scale-[.97]`). Loading skeletons shimmer (`.skeleton`).
+
+**Moments:**
+
+| Moment | Effect |
+|---|---|
+| Publish an answer | The Publish button turns into a ✓ and `ConfettiBurst` plays (`state/celebration.ts`) |
+| Publish the last unanswered question | A full-screen "You're all in for {edition} 🎉", with a bigger burst |
+| Upvote | The vote tile springs and coral sparks burst. On the Top sort, the list reorders smoothly in a view transition. |
+| Reaction | The emoji pops, a copy floats up and fades, and the count bumps |
+| Home → edition | The edition row's date tile morphs into the edition masthead (a view transition through `<Link viewTransition>` and a shared `view-transition-name`) |
+| Published edition loads | The masthead gradient drifts slowly, and the first 8 answers rise in one after another |
+| Poll results scroll into view | The bars grow from zero, and the winning option gets ✨ |
+| Saving a draft | The save dot pulses, then a check draws in |
+| Under 24 hours left | The countdown pill pulses gently |
+| Toasts | Spring up, and swipe away to dismiss |
+
+**Rules:**
+- Reduced motion turns all of it off (§11). Effects started from script check `matchMedia("(prefers-reduced-motion: reduce)")` themselves, because the global CSS rule doesn't reach them.
+- View transitions and scroll-driven animations are progressive enhancement: a browser without them simply skips the animation.
+- Every animation helper is a static import, because the app ships no lazy chunks (§14.2).
+- The confetti is hand-rolled CSS (`components/ui/ConfettiBurst.tsx`). `canvas-confetti`'s default instance builds a `blob:` worker, which CSP `worker-src 'self'` (§12.1) blocks.
 
 **Tests.** Unit tests cover the path check, the no-network session (`demo.test.ts`), `AuthProvider` in the demo, the banner and the notifications copy. The Playwright `demo` project ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) runs a non-mock build and checks that a demo session sends nothing off the site except web-font requests and leaves browser storage unchanged. It also checks that the sample photos load, and that an image uploaded to a comment shows the picked file.

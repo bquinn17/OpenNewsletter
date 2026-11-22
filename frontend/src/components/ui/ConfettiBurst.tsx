@@ -4,12 +4,14 @@ import { useCelebration } from "../../state/celebration";
 // The accent palette (`tailwind.config.ts`).
 const COLORS = ["#FF5A6B", "#FFB178", "#7B5BFF", "#5AC8FF", "#3DD9A4", "#FFD23F"];
 const PIECE_COUNT = 70;
+/** The "all in" burst (`docs/design/frontend.md` §18) — every question answered — is bigger. */
+const BIG_PIECE_COUNT = 160;
 const BURST_MS = 3600;
 
 type Piece = { id: number; style: CSSProperties };
 
-function makePieces(): Piece[] {
-  return Array.from({ length: PIECE_COUNT }, (_, id) => {
+function makePieces(count: number): Piece[] {
+  return Array.from({ length: count }, (_, id) => {
     const size = 6 + Math.random() * 6;
     return {
       id,
@@ -35,14 +37,15 @@ function makePieces(): Piece[] {
  */
 export function ConfettiBurst() {
   const burst = useCelebration((s) => s.burst);
+  const big = useCelebration((s) => s.big);
   const [pieces, setPieces] = useState<Piece[]>([]);
 
   useEffect(() => {
     if (burst === 0) return;
-    setPieces(makePieces());
+    setPieces(makePieces(big ? BIG_PIECE_COUNT : PIECE_COUNT));
     const timer = setTimeout(() => setPieces([]), BURST_MS);
     return () => clearTimeout(timer);
-  }, [burst]);
+  }, [burst, big]);
 
   if (pieces.length === 0) return null;
 
