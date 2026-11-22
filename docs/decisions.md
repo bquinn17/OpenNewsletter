@@ -214,6 +214,31 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 
 **Where.** [`frontend.md` §6](design/frontend.md#6-auth-in-the-spa), [§7.1](design/frontend.md#71-homepage-), [§7.8](design/frontend.md#78-joinpage-joincode), [§7.10](design/frontend.md#710-signinpage-signinreturnto), [`auth.md` §2](design/auth.md#2-end-to-end-first-signup-flow).
 
+<a id="d13"></a>
+### D13 — GIFs from GIPHY are on for every group
+
+**Decision.** Members of every group can add GIFs from GIPHY to answers and comments. There's no per-group or per-device switch. The rating is fixed at `pg-13`: search asks for it, and the renderer hides anything rated higher. The client makes every GIPHY call itself, on a free beta key that ships in the bundle (`VITE_GIPHY_API_KEY`). It sends no referrer and no cookies, and it never fires GIPHY's analytics pings or fetches a `random_id`. A build without a key hides the GIF picker and shows existing GIFs as their titles.
+
+**Why.** GIFs are for a few friends having fun, and a setting most admins would never touch isn't worth its form control and `/config` plumbing. The owner accepted the trade-off: every reader of a page with a GIF contacts GIPHY, which sees their IP address. The mitigations keep GIPHY from linking a poster's device to its readers' devices except by timing. GIPHY's terms forbid proxying or caching its media, so it can't be re-hosted the way images are. A per-device "tap to load" switch can still be added later, on the frontend only.
+
+**Where.** [`frontend.md`](design/frontend.md) (the attach menu, GIF picker and renderer, CSP §12.1).
+
+<a id="audio-via-ffmpeg"></a>
+### Voice clips are transcoded by a static ffmpeg in a Lambda layer
+
+Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-process`, which runs a static arm64 `ffmpeg` from a Lambda layer. The same ffmpeg's decode pass gives the duration and the waveform peaks, so no `ffprobe` is shipped. The binary is John Van Sickle's static build, pinned by version and SHA-256 in `scripts/fetch_ffmpeg.sh`. His versioned old releases stay downloadable; BtbN's builds are kept for only 14 days, so a pin there would break. That build is GPL, which doesn't matter here: the binary only runs inside our Lambda and is never distributed.
+
+**Why transcode.** Browsers record in different formats (WebM/Opus in Chrome and Firefox, MP4/AAC in Safari), and picked files can be anything, including large WAVs. Serving one format gives one playback and caching story. Opus is the most compact codec browsers play, and Safari plays it in WebM but not in Ogg. Pure Rust (`symphonia` plus libopus bindings) would leave WebM muxing, resampling and the long tail of input formats to us. MediaConvert charges per output minute and is far more than this needs. See [`media.md`](design/media.md).
+
+<a id="early-bird-uses-last-edit-not-first-publish"></a>
+### The year-in-review "Early bird" card uses the last edit, not the first publish
+
+**Decision.** The "Early bird" card ranks members by slack — `response_close_at` minus the last time they touched any answer in the cycle (`Response.updated_at`), not by how quickly they first published. No schema change: `updated_at` already exists and is already bumped on every save, draft or published.
+
+**Why.** Measuring from the first manual publish rewards gaming it: start a draft the moment the edition opens, publish something thin immediately, then quietly flesh it out right up to the deadline — first-publish time says "early" while the member actually used the whole window. The last edit says what actually happened. It also means auto-published drafts no longer need special-casing out of the card: their `updated_at` already reflects whenever the member last touched them, unlike `published_at`, which for an auto-published draft is always the close time itself.
+
+**Where.** [`future-ideas.md` §11.1](future-ideas.md#111-the-cards) (the card) and §16.4 (the leaderboard-timing question this partially resolves). Not yet built.
+
 ---
 
 ## Design review: performance and cost
