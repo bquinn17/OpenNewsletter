@@ -857,6 +857,7 @@ Today's signed-out Home ([`frontend.md` §7.1](design/frontend.md#71-homepage)) 
   - The existing "Drafts are published automatically when responses close" note and the **Edit** toggle on a published answer ([`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq)) already say answers stay editable up to the deadline; that copy carries over unchanged.
 - **A completion celebration.** When a member has a non-empty draft or answer on every question of the open edition, returning to the edition's question list (§7.2, the `open` layout) shows a one-time, full-screen congratulatory overlay — confetti/sparkle animation, "You completed the newsletter!" — with a line reminding them they can still edit any answer until the deadline. `prefers-reduced-motion` gets a static version. It shows once per edition per device (a flag in `localStorage`, since there's nothing server-side worth persisting this for); revisiting an already-celebrated, fully-answered edition doesn't show it again.
 - No API change: "every question answered" is derivable client-side from the same `GET /groups/{g}/newsletters/{c}` payload the question list already renders.
+- A narrower version exists: publishing the last unanswered question shows "You're all in for {edition} 🎉" with a big confetti burst (`components/ui/AllInOverlay.tsx`, [`frontend.md` §18](design/frontend.md#18-motion)). This idea would move the trigger to "every question has a draft or answer", and add the still-editable reminder.
 
 ### 16.3 Group page: Editions, Leaderboard and Members as tabs
 
