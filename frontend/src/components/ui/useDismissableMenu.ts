@@ -14,7 +14,7 @@ export function useDismissableMenu(
   useEffect(() => {
     if (!open) return;
     const container = containerRef.current;
-    container?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    container?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
 
     function onMouseDown(e: MouseEvent) {
       if (container && e.target instanceof Node && !container.contains(e.target)) close();

@@ -1413,3 +1413,18 @@ Three of the four owner UX review notes. The fourth, the group page tabs, landed
 - **Members** is a read-only list from `GET /groups/{g}`, in the same rows as the admin Members tab (shared `MemberSummary`). No API change.
 - The admin page and Home share a `TabBar`.
 
+## The "+" attach menu and GIFs from GIPHY — what landed
+
+Built from `future-ideas.md` §9–§10, frontend only. The response editor and the comment composer attach through one **+** button (Photo, GIF) instead of the dashed drop box; the whole composer is the drop target, and pasting an image attaches it. A GIF is a `giphy:{id}` token in the body, resolved by one batched GIPHY lookup per page. Design: [`frontend.md` §18](../../docs/design/frontend.md#18-the--attach-menu-and-gifs-from-giphy).
+
+**Owner decisions.** GIFs are on for every group, with no setting, and the rating is fixed at `pg-13` ([D13](../../docs/decisions.md#d13)). Shipped together with the picker rather than renderer-first, because prod hasn't launched.
+
+**Decisions (spec gaps).**
+- Without `VITE_GIPHY_API_KEY` the GIF item is hidden and tokens render as their titles, with no lookup.
+- No GIPHY analytics host in the CSP, because the client never pings it.
+- The optional `/gif` slash command in the comment box isn't built.
+- `useDismissableMenu` now skips disabled items when it picks the initial focus, since a menu item at its limit is disabled.
+- The GIPHY repo variables follow the repo's naming: `DEV_VITE_GIPHY_API_KEY` for dev, `VITE_GIPHY_API_KEY` for prod.
+
+**Found in review.** The renderer's 5-GIF cap counted tokens during render, so React's StrictMode double render hid the third GIF in dev; the cap now drops extra tokens from the body string before rendering (`capGiphyTokens`). Code comments cited `future-ideas.md`'s §9.x numbering as `frontend.md` sections; they cite §18 now.
+

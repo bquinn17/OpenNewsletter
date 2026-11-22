@@ -64,6 +64,7 @@ frontend/
 │   │   ├── swHelpers.ts              # pure push/notificationclick helpers
 │   │   └── pushSetup.ts              # subscribe + send to backend
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
+│   ├── giphy/                        # giphyClient, mockGiphy, GiphyLookupProvider (§18)
 │   ├── components/
 │   │   ├── ui/                       # Avatar, Button, ConfettiBurst, MediaImage, ConfirmDialog, Pill, Spinner, TabBar,
 │   │   │                             # Toast, useDismissableMenu
@@ -75,11 +76,11 @@ frontend/
 │   │   ├── join/JoinForm.tsx
 │   │   ├── newsletter/               # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
 │   │   │                             # CommentList (+ CommentRow, CommentComposer), ReactionBar,
-│   │   │                             # EmojiPickerPopover
+│   │   │                             # EmojiPickerPopover, GiphyEmbed
 │   │   ├── candidates/               # CandidateList, CandidateCard, SuggestQuestionForm
-│   │   ├── responses/                # ResponseEditor, useResponseEditor, ImageUploader (+ ImageDropzone,
-│   │   │                             # ImageUploaderTile, useHydratedImages), PollPicker,
-│   │   │                             # usePollResponse, DraftStatusBadge, PublishButton
+│   │   ├── responses/                # ResponseEditor, useResponseEditor, AttachMenu, GiphyPicker,
+│   │   │                             # ImageUploader (+ ImageDropzone, ImageUploaderTile,
+│   │   │                             # useHydratedImages), PollPicker, usePollResponse, DraftStatusBadge
 │   │   ├── settings/                 # ProfileCard, YourGroupsSection, NotificationsSection
 │   │   ├── pwa/InstallPwaPrompt.tsx
 │   │   └── admin/                    # GroupSettingsForm, useGroupSettingsForm, MembersTab, InvitesTab
@@ -102,11 +103,12 @@ frontend/
 │   │   ├── currentGroup.ts           # Zustand: currently-selected group
 │   │   ├── installPrompt.ts          # Zustand: stashed beforeinstallprompt event
 │   │   ├── celebration.ts            # Zustand: confetti bursts (§7.8)
+│   │   ├── giphyLimit.ts             # Zustand: the shared GIPHY rate-limit cooldown (§18.4)
 │   │   └── toast.ts
 │   ├── styles/tailwind.css           # Tailwind directives + the small prose ruleset
 │   ├── utils/                        # dates, markdown, media, uploadToS3, emoji, gradient, avatar,
 │   │                                 # avatarColor, inviteUrl, correlation (ULID), retry, platform,
-│   │                                 # userAgent, navigation, permanentDelete
+│   │                                 # userAgent, navigation, permanentDelete, reducedMotion
 │   ├── test/                         # setup.ts (Vitest setup), virtualPwaRegisterMock.ts (stand-in for
 │   │                                 # vite-plugin-pwa's virtual:pwa-register module in tests);
 │   │                                 # unit tests sit next to their source files
@@ -322,15 +324,16 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 ### 7.3 RespondPage `/g/:g/n/:c/respond/:q`
 
-- For text questions: a markdown editor (textarea with live preview toggle), drag-and-drop image uploader, autosave indicator, **Done** button.
+- For text questions: a markdown editor (textarea with live preview toggle), the "+" attach menu (§18) in place of a dedicated drop box, autosave indicator, **Done** button.
   - `useResponseEditor` hook manages in-memory `body` and a **debounced PUT** that fires once the user has stopped typing for `autosaveDebounceMs` (default 1500 ms). It also flushes on `blur` and on `visibilitychange → hidden`.
-  - Image upload flow detailed in [`media.md` §3](media.md#3-upload-flow-browser--s3).
+  - Image upload flow detailed in [`media.md` §3](media.md#3-upload-flow-browser--s3). Photos and GIFs both go through the "+" menu (§18); the whole editor (textarea and toolbar) is the drop target, and pasting an image into the textarea attaches it the same way.
 - For poll questions: option list with single-select, **Done** button.
 - Banner showing time-until-deadline (group TZ).
 - **No manual publish** ([decision](../decisions.md#answers-publish-at-close)). Every save sends `publish: false`, and every non-empty answer is published at close ([`engagement.md` §3.6](engagement.md#36-auto-publish-at-close)). **Done** flushes any pending save (a poll waits for its in-flight pick), then goes to the next unanswered question in `displayOrder` after this one, wrapping around (`utils/responseProgress.ts#nextUnansweredQuestionId`), or back to the edition page when none is left. "Answered" means a non-empty draft or answer. Done works on a blank question too; it's disabled while an upload is in flight or a save has stopped on a 4xx (text), or while a pick is saving (poll). There is no separate exit button: the header's back arrow returns to the edition page.
 - An answer that is already `published` (saved by an older release that still published by hand) opens read-only with an "Edit" toggle that reopens the editor (until cycle close).
 - Notes:
   - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID, then calls `DELETE /uploads/{id}` behind a permanent-delete `ConfirmDialog` ("This permanently deletes the image. It can't be recovered." — [`media.md` §8.0](media.md#80-explicit-deletion)/§9/§11.4), after the draft without it saves.
+  - A picked GIF is inserted as `![title](giphy:{gifId})` at the cursor, up to 5 per answer (§18). GIFs carry no ID in `imageMediaIds` and no delete call — removing one is just deleting its token from the body.
   - Editing a published answer autosaves with `publish: false` (publishing is sticky server-side), and the editor says so.
   - A poll selection change on a published poll answer saves immediately.
   - Saves are serialized (one in flight, later edits coalesce). A 409 `CYCLE_NOT_OPEN` stops saving and makes the page read-only. Other 4xx errors stop retrying; only network errors and 5xx retry with backoff.
@@ -460,13 +463,16 @@ The app's own sign-in screen, in its theme: "Welcome back" under a greeting for 
 
 See [`media.md` §3](media.md#3-upload-flow-browser--s3) for the upload protocol. The editor inserts an image-token into the markdown body (`![](image:01HX...)`) and tracks the imageId in `imageMediaIds`. The renderer (`utils/markdown.tsx`, `MarkdownBody`) renders these tokens as `MediaImage`s once the image is `ready` ([`media.md` §7](media.md#7-image-references-in-markdown)). Removing an image also calls `DELETE /uploads/{id}` (real deletion, [`media.md` §8.0](media.md#80-explicit-deletion)) behind a `ConfirmDialog`, after the draft without it saves (§7.3 above).
 
+The visible dashed drop box is gone. `ImageUploader` (`components/responses/ImageUploader.tsx`) now renders only a labelled hidden `<input type="file">` (`ImageDropzone`) plus its tiles grid, and exposes an imperative handle — `openPicker()` and `acceptFiles(files)` — so the "+" attach menu (§18) and the composer's own drag/paste handling can drive it without owning upload state themselves.
+
 ---
 
 ## 9. Renderers
 
-- Markdown: `react-markdown` + `remark-gfm` for tables/strikethrough/checkboxes. Sanitized via `rehype-sanitize` with a custom schema that allows our `image:` tokens but rejects `<script>`/`<iframe>`/`<style>`/event handlers/`javascript:` URLs.
-  - `react-markdown` runs its own `urlTransform` before `rehype-sanitize`, and its default blanks any URL that isn't `http(s)`/`mailto`/etc. `utils/markdown.tsx` therefore passes `image:` through explicitly and defers to `defaultUrlTransform` for everything else.
+- Markdown: `react-markdown` + `remark-gfm` for tables/strikethrough/checkboxes. Sanitized via `rehype-sanitize` with a custom schema that allows our `image:` and `giphy:` tokens but rejects `<script>`/`<iframe>`/`<style>`/event handlers/`javascript:` URLs.
+  - `react-markdown` runs its own `urlTransform` before `rehype-sanitize`, and its default blanks any URL that isn't `http(s)`/`mailto`/etc. `utils/markdown.tsx` therefore passes `image:` and `giphy:` through explicitly and defers to `defaultUrlTransform` for everything else.
   - Only `image:{id}` tokens render inline. A remote `![](https://…)` renders as a link, because CSP `img-src` (§12.1) would block it and it would leak readers' IPs to its host.
+  - `giphy:{gifId}` tokens render as a `GiphyEmbed` (§18), capped per body (5 in an answer, 1 in a comment) and gated on `GIPHY_ID_RE` (`^[A-Za-z0-9]+$`) rather than `allowImages` — a comment keeps `allowImages={false}` for everything except its one GIF.
   - Raw HTML is never parsed (no `rehype-raw`).
 - Image rendering uses `<picture>` with `<source srcset>` from `displayUrl` and a `thumbUrl` placeholder for blur-up.
 - Polls render as horizontal stacked bars with percentages; caller's pick gets a ring highlight.
@@ -523,14 +529,15 @@ Policy shape (origins substituted at build time):
   default-src 'self';
   script-src 'self';
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-  img-src 'self' data: blob: {mediaBaseUrl};
+  img-src 'self' data: blob: {mediaBaseUrl} https://*.giphy.com;
   connect-src 'self' {apiBaseUrl} {uploadOrigins}
-    https://cognito-idp.us-east-1.amazonaws.com https://{cognitoHostedDomain};
+    https://cognito-idp.us-east-1.amazonaws.com https://{cognitoHostedDomain} https://api.giphy.com;
   font-src 'self' https://fonts.gstatic.com;
   base-uri 'self';
   form-action 'self' https://{cognitoHostedDomain};
   worker-src 'self';
-  manifest-src 'self'">
+  manifest-src 'self';
+  media-src 'self' https://*.giphy.com">
 ```
 
 Notes:
@@ -539,6 +546,7 @@ Notes:
 - `{mediaBaseUrl}` is the one processed-bucket origin every presigned image/avatar URL resolves to ([`media.md` §4.4](media.md#44-spa-usage)). `{uploadOrigins}` in `connect-src` is `VITE_UPLOAD_ORIGINS` (§13) — the two originals buckets' endpoints that `uploadToS3` `PUT`s against directly, space-separated.
 - `worker-src`/`manifest-src 'self'` cover the service worker and the PWA manifest.
 - Google Fonts origins (`fonts.googleapis.com`/`fonts.gstatic.com`) are needed because `index.html` loads Plus Jakarta Sans and Fraunces from Google. Self-hosting would drop the third-party origins and work offline, at the cost of adding font packages and `woff2` globs to the precache — not done.
+- `https://*.giphy.com` in `img-src` and `media-src`, and `https://api.giphy.com` in `connect-src`, are static additions (§18) — not built from a `VITE_*` origin, since GIPHY's hosts are fixed. There's no analytics-host entry: the client never fires GIPHY's `onload`/`onclick`/`onsent` URLs. `media-src` exists only for GIPHY today; a later voice-clips feature adds `blob:` and the clip media origin to it.
 - `frame-ancestors` cannot be expressed in a meta CSP — clickjacking protection is out of scope on a GitHub Pages host.
 - A Playwright "no CSP violations" test ([`testing-and-ci.md`](../development/testing-and-ci.md)) asserts the meta tag is present and that `img-src` includes the media origin and `connect-src` includes both upload origins.
 
@@ -692,6 +700,65 @@ Anyone can try the app without an account at `/demo`. The signed-out home screen
 
 **Sample photos.** The seeded published edition shows real photos, served from the site itself at `public/demo-media/` rather than S3. The service worker doesn't precache them (only JS, CSS, HTML and SVG are). They're freely licensed from Wikimedia Commons; `public/demo-media/CREDITS.txt`, deployed with them, gives the author, licence and source of each. The mock gives them absolute URLs, like presigned ones, because `mediaCacheKey` parses every image URL.
 
+**GIFs make no GIPHY calls either (§18).** `giphy/mockGiphy.ts` answers both the search and the batched "get by ID" call with a few fixed fixtures — small looping files generated locally at `public/demo-media/demo-gif-*.gif`, since GIPHY's terms forbid re-hosting its own media (§18, `future-ideas.md` §9.3). One seeded published answer carries a `giphy:demo_party` token. The off-site-request check below covers this the same way it covers the sample photos.
+
 **Copied invite links** (`utils/inviteUrl.ts`) are `/demo/join?code=…` in the demo, so they stay in it. `DEMO-JOIN-CODE` is the mock's working code.
 
 **Tests.** Unit tests cover the path check, the no-network session (`demo.test.ts`), `AuthProvider` in the demo, the banner and the notifications copy. The Playwright `demo` project ([`testing-and-ci.md` §4.3](../development/testing-and-ci.md#43-playwright-e2e)) runs a non-mock build and checks that a demo session sends nothing off the site except web-font requests and leaves browser storage unchanged. It also checks that the sample photos load, and that an image uploaded to a comment shows the picked file.
+
+---
+
+## 18. The "+" attach menu and GIFs from GIPHY
+
+GIFs are **on for every group** — there is no `Group.gifs_enabled` and no backend involvement at all; the only gate is whether `VITE_GIPHY_API_KEY` is set for the running build (§18.5).
+
+### 18.1 `AttachMenu`
+
+`components/responses/AttachMenu.tsx` is the single **+** button and its menu, used by both `ResponseEditor` (§7.3/§8.4) and `CommentComposer` (`engagement.md` §1). It takes an `items: AttachMenuItem[]` prop — `{ key, icon, label, subtitle?, disabled?, onSelect }` — so each caller lists only what it has built; a later voice-clips item is one more entry, not a layout change. Today that's **Photo** (always) and **GIF** (only when `env.giphyApiKey` is set).
+
+- Built on `useDismissableMenu` (`components/ui/useDismissableMenu.ts`, shared with `GroupSwitcher`/`MembersTab`): outside click or Escape closes it, and Escape returns focus to the **+** button. Opening focuses the first *enabled* `[role="menuitem"]` — `useDismissableMenu`'s selector skips `:disabled` ones, since a capped item stays visible but inert.
+- `AttachMenu` itself handles Arrow Down/Up/Home/End to move focus between enabled items; Enter/Space activate the focused button natively.
+- `forwardRef`'s handle (`AttachMenuHandle.getAnchorEl()`) hands back the button's own wrapper element, so `GiphyPicker` (§18.2) can anchor its desktop popover to it without `AttachMenu` knowing anything about GIFs.
+- An item at its limit stays visible, `disabled`, with the reason as its `subtitle` — e.g. `"10/10 images"` for Photo, `"Already attached"` for a comment's one photo/GIF, or `"GIF limit reached · try again in 9 min"` while the shared cooldown (§18.4) is active.
+
+### 18.2 Dropping, pasting, and the image uploader's new shape
+
+The dashed drop box is gone (§8.4). `ImageUploader` is now `forwardRef`-based: it exposes `openPicker()` (click its own hidden, labelled `<input type="file">`) and `acceptFiles(files)` (run the existing validation/upload path on an arbitrary file list). `ResponseEditor` and `CommentComposer` each:
+- wire the Photo menu item's `onSelect` to `openPicker()`;
+- make their whole composer (textarea + toolbar, not just the old box) the drop target, calling `acceptFiles` on drop — a non-image file still gets `ImageUploader`'s own "That file type isn't supported" error, since `acceptFiles` runs the same `validateFile` check a picked file would;
+- call `acceptFiles` with any image files found on `textarea`'s `onPaste`, so pasting a screenshot attaches it.
+
+`ImageDropzone` (`components/responses/ImageDropzone.tsx`) shrank to just that hidden input, with an accessible `label` prop (`"Add photos"` in the editor, `"Add a photo"` in a comment) — tests select it by label now, not a bare `input[type=file]` selector, since a later audio input would otherwise make that selector ambiguous.
+
+### 18.3 GIPHY picker and renderer
+
+- **`GiphyPicker`** (`components/responses/GiphyPicker.tsx`): a popover anchored to the **+** button on desktop, a bottom sheet on mobile (pure CSS breakpoint, same markup). Hard-coded suggestion chips (`lol`/`yes`/`wow`/`thank you`/`celebrate`); a search fires only on the search button, Enter, a chip, or **More GIFs** — never on keystroke. A query already searched while the picker is open is served from an in-memory `Map`, not a repeat request. States: idle, loading, results (2/3-column grid, paginated 50 at a time via `SEARCH_PAGE_SIZE`), empty, offline, generic error (with Retry), and rate-limited (§18.4).
+- **`giphy/giphyClient.ts`** is the one place that calls the real GIPHY API: `searchGifs(query, offset)` (Search) and `getGifsByIds(ids)` (Get GIFs by ID), both behind `isMockMode` (routes to `giphy/mockGiphy.ts` instead — §17). Every real fetch sets `referrerPolicy: "no-referrer"` and `credentials: "omit"`, checks the shared rate-limit store first, and marks it on a `429`. No `random_id` and no analytics ping is ever fetched or fired.
+- **`giphy/GiphyLookupProvider.tsx`** is a React context that makes the page's one batched `GET /v1/gifs?ids=…`: a caller collects every `giphy:` id the page will render (e.g. `NewsletterPage`'s `pageGiphyIds`, across every answer and comment; `ResponseEditor`'s own preview) and wraps that subtree once. `useGiphyGif(id)` resolves to `loading` / `rate-limited` / `error` / `{ gif }` (`gif: null` means GIPHY no longer returns that id). The underlying `useQuery` has `staleTime: Infinity` and isn't persisted — there's no React Query persister in this app to exclude it from.
+- **`GiphyEmbed`** (`components/newsletter/GiphyEmbed.tsx`) renders one resolved GIF: an autoplaying, looping, muted `<video>` of the `fixed_width` mp4 (mock/demo fixtures are animated `.gif` files instead, rendered as `<img>`), aspect ratio reserved from the GIF's own dimensions, a small "GIPHY" badge, and a reduced-motion fallback (the still frame behind a play/pause button). A rating above `pg-13` (`isAllowedGiphyRating`) renders nothing, even for a hand-typed token.
+- **Markdown**: `utils/markdown.tsx`'s sanitize schema and `urlTransform` allow `giphy:` alongside `image:`; `GIPHY_ID_RE` (`^[A-Za-z0-9]+$`) gates which ids are looked up at all. `MarkdownBody` takes `maxGiphy`/`giphyVariant` props (5/`"answer"` for an answer, 1/`"comment"` for a comment) and enforces the cap at render time via a per-render counter, independent of whatever the editor already enforced when the token was inserted.
+- **Storage**: a pick is `![title](giphy:{id})` in the body — plain text, so no route or schema change, and old clients render it as a link to its title. Comments append the token to the body on send rather than composing it inline; they show a preview chip (thumbnail + title + ✕) above the Post button while composing.
+
+### 18.4 The shared rate limit
+
+`state/giphyLimit.ts` is a small Zustand store, `useGiphyLimit`, holding `until: number | null` — when it's in the future, GIPHY's shared hourly allowance is assumed used up. `markRateLimited()` sets it 10 minutes out (`GIPHY_COOLDOWN_MS`); a later `429` restarts the window. It isn't persisted, so a reload clears it. `giphyClient.ts` checks it before every real call (search or lookup) and sets it on every `429`, so a limit hit by either side blocks the other.
+
+Consumers:
+- `GiphyPicker` shows the "GIF limit reached" banner in place of the suggestion chips, disables the search field/button/chips/More GIFs, and counts down live (a 1-second interval re-renders the remaining minutes).
+- `AttachMenu`'s GIF item subtitle becomes "GIF limit reached · try again in N min", but stays enabled — earlier results already in the picker can still be picked, since picking doesn't call GIPHY.
+- `GiphyEmbed` shows a 4:3 placeholder card (title from the token, "GIF limit reached — it'll load later.", a disabled **Load GIF** button) when its `GiphyLookupProvider` lookup itself hit the limit; the button, once enabled again, retries the page's one batched call.
+
+### 18.5 Environment and CSP
+
+`VITE_GIPHY_API_KEY` (`src/env.ts`, `env.giphyApiKey: string | null`) is optional everywhere. Unset: the GIF menu item is hidden and `giphy:` tokens render as their title text with no lookup — the same degraded path an old client takes. `deploy.yml`/`release.yml` pass it in from the repo variables `DEV_VITE_GIPHY_API_KEY` (dev) and `VITE_GIPHY_API_KEY` (prod), set up in [`operator-setup.md` §11](../operations/operator-setup.md#11-giphy-api-keys) (variables, not secrets — GIPHY keys are public by design). CSP additions are in §12.1. The service worker's media routes only match the processed-media origin's `/img/`/`/avatar/` paths, so GIPHY traffic was never at risk of being cached there; nothing changed in `src/pwa/sw.ts`.
+
+### 18.6 Privacy
+
+GIFs are the one feature where something a member posts makes other members' browsers contact a third party ([D13](../decisions.md#d13)). A member searching sends GIPHY the search text; every reader of a page with a GIF sends the IDs of that page's GIFs and one media request per GIF. Both come with the reader's IP address, user agent and the time. GIPHY never receives names, emails, group names or any body text: a token carries only the GIF's ID and GIPHY's own title.
+
+The client keeps that to the minimum GIPHY's API needs:
+- **No referrer.** Every GIPHY fetch sets `referrerPolicy: "no-referrer"` and every media element `referrerpolicy="no-referrer"`, so the path, which contains the group ID, never leaves. `Origin` is still sent on API calls; it names only the app.
+- **No cookies.** API fetches use `credentials: "omit"`, and media elements use `crossorigin="anonymous"` (GIPHY's media hosts answer `Access-Control-Allow-Origin: *`).
+- **No analytics.** The client never fires the `onload`/`onclick`/`onsent` URLs in GIPHY's responses and never fetches a `random_id`, which would let GIPHY link a poster's device to the devices that view what they posted.
+- **No caching or proxying.** GIPHY's terms forbid both, so results live only in React Query memory and the service worker never stores GIPHY media (§18.5).
+- **Plain labelling.** The "Search GIPHY" placeholder and the "Powered by GIPHY" mark say where a search goes.

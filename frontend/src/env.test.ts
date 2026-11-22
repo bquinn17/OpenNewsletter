@@ -51,4 +51,10 @@ describe("buildEnv", () => {
     );
     expect(() => buildEnv({ VITE_USE_MOCKS: "true" })).not.toThrow();
   });
+
+  it("leaves the GIPHY key null when unset, and passes it through otherwise", () => {
+    expect(buildEnv(devVars).giphyApiKey).toBeNull();
+    expect(buildEnv({ ...devVars, VITE_GIPHY_API_KEY: "" }).giphyApiKey).toBeNull();
+    expect(buildEnv({ ...devVars, VITE_GIPHY_API_KEY: "beta-key" }).giphyApiKey).toBe("beta-key");
+  });
 });

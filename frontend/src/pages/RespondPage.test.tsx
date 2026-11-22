@@ -580,7 +580,7 @@ describe("RespondPage", () => {
     renderAt("q1");
 
     const textarea = await screen.findByPlaceholderText("Tell us about it…");
-    const fileInput = document.querySelector("input[type=file]") as HTMLInputElement;
+    const fileInput = screen.getByLabelText("Add photos") as HTMLInputElement;
     const file = new File([new Uint8Array(100)], "photo.jpg", { type: "image/jpeg" });
 
     vi.useFakeTimers();

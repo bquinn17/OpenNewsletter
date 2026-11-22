@@ -47,7 +47,8 @@ export function buildCspPolicy(vars: CspEnvVars): string {
     // Google Fonts: `index.html` links the stylesheet, which pulls the font
     // files from gstatic (decided M13, `docs/design/frontend.md` §12.1).
     ["style-src", ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"]],
-    ["img-src", ["'self'", "data:", "blob:", mediaOrigin]],
+    // GIPHY media is served from several `mediaN.giphy.com` hosts (`docs/design/frontend.md` §9).
+    ["img-src", ["'self'", "data:", "blob:", mediaOrigin, "https://*.giphy.com"]],
     [
       "connect-src",
       [
@@ -56,6 +57,7 @@ export function buildCspPolicy(vars: CspEnvVars): string {
         ...uploadOrigins,
         "https://cognito-idp.us-east-1.amazonaws.com",
         hostedOrigin,
+        "https://api.giphy.com",
       ],
     ],
     ["font-src", ["'self'", "https://fonts.gstatic.com"]],
@@ -63,6 +65,9 @@ export function buildCspPolicy(vars: CspEnvVars): string {
     ["form-action", ["'self'", hostedOrigin]],
     ["worker-src", ["'self'"]],
     ["manifest-src", ["'self'"]],
+    // `GiphyEmbed` plays the `fixed_width` mp4 rendition (`docs/design/frontend.md` §9); the voice
+    // clips agent will add `blob:` and the clip media origin here.
+    ["media-src", ["'self'", "https://*.giphy.com"]],
   ];
 
   return directives

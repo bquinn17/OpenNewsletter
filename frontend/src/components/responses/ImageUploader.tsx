@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../../api/client";
 import { queryKeys, useUploads } from "../../api/queries";
@@ -8,7 +8,7 @@ import { uploadToS3 } from "../../utils/uploadToS3";
 import { useToasts } from "../../state/toast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
-import { ImageDropzone } from "./ImageDropzone";
+import { ImageDropzone, type ImageDropzoneHandle } from "./ImageDropzone";
 import { ImageUploaderTile } from "./ImageUploaderTile";
 import type { PendingImage } from "./imageUploaderTypes";
 
@@ -48,6 +48,15 @@ type Props = {
    * upload. Resolving drops the image from the list; rejecting restores it.
    */
   onRemove?: (imageId: string) => Promise<void>;
+  /** The hidden file input's accessible name (`docs/design/frontend.md` §18.2). */
+  inputLabel?: string;
+};
+
+export type ImageUploaderHandle = {
+  /** Opens the native file picker — called by the "+" menu's Photo item (`docs/design/frontend.md` §18.1). */
+  openPicker: () => void;
+  /** Routes dropped or pasted files into the same validation/upload path as the picker (§10.3). */
+  acceptFiles: (files: File[]) => void;
 };
 
 function tempId(): string {
@@ -101,18 +110,23 @@ function toUploaderImage(
   };
 }
 
-export function ImageUploader({
-  groupId,
-  cycleId,
-  questionId,
-  purpose = "response",
-  maxImages = 10,
-  initialImages,
-  onChange,
-  confirmRemove = false,
-  onRemove,
-}: Props) {
+export const ImageUploader = forwardRef<ImageUploaderHandle, Props>(function ImageUploader(
+  {
+    groupId,
+    cycleId,
+    questionId,
+    purpose = "response",
+    maxImages = 10,
+    initialImages,
+    onChange,
+    confirmRemove = false,
+    onRemove,
+    inputLabel = "Add images",
+  },
+  ref,
+) {
   const qc = useQueryClient();
+  const dropzoneRef = useRef<ImageDropzoneHandle>(null);
   const [images, setImages] = useState<PendingImage[]>(() =>
     (initialImages ?? []).map((row) => ({
       imageId: row.imageId,
@@ -305,6 +319,11 @@ export function ImageUploader({
     for (const file of accepted) void startUpload(file);
   }
 
+  useImperativeHandle(ref, () => ({
+    openPicker: () => dropzoneRef.current?.openPicker(),
+    acceptFiles: handleFiles,
+  }));
+
   function setRemoving(imageId: string, removing: boolean) {
     setRemovingIds((prev) => {
       const next = new Set(prev);
@@ -364,12 +383,19 @@ export function ImageUploader({
 
   return (
     <div>
-      <ImageDropzone
-        imageCount={images.length}
-        maxImages={maxImages}
-        fileErrors={fileErrors}
-        onFilesSelected={handleFiles}
-      />
+      <ImageDropzone ref={dropzoneRef} label={inputLabel} onFilesSelected={handleFiles} />
+
+      {fileErrors.length > 0 && (
+        <ul
+          role="alert"
+          aria-live="polite"
+          className="mt-2 space-y-1 text-xs font-semibold text-coral"
+        >
+          {fileErrors.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      )}
 
       {images.length > 0 && (
         <ul aria-label="Attached images" className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -402,4 +428,4 @@ export function ImageUploader({
       />
     </div>
   );
-}
+});

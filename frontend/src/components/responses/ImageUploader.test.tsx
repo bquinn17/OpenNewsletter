@@ -47,7 +47,7 @@ function makeFile(name: string, type: string, size: number): File {
 }
 
 function getFileInput(): HTMLInputElement {
-  return document.querySelector("input[type=file]") as HTMLInputElement;
+  return screen.getByLabelText("Add images") as HTMLInputElement;
 }
 
 /**
@@ -111,12 +111,6 @@ describe("ImageUploader", () => {
 
     expect(createUpload).toHaveBeenCalledTimes(1);
     expect(screen.getByText("b.jpg: You can attach up to 1 image.")).toBeInTheDocument();
-  });
-
-  it("counts a one-image uploader's slots in the singular", () => {
-    render(<ImageUploader groupId="g1" cycleId="202606" questionId="q1" maxImages={1} />);
-
-    expect(screen.getByText(/^0\/1 image · JPEG/)).toBeInTheDocument();
   });
 
   it("uploads, PUTs with every presign header, polls, and shows the ready thumbnail", async () => {

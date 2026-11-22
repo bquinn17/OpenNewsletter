@@ -238,6 +238,8 @@ export function CommentRow({
                 body={comment.body}
                 images={[]}
                 allowImages={false}
+                maxGiphy={1}
+                giphyVariant="comment"
                 className="mt-0.5"
               />
               {comment.image && (

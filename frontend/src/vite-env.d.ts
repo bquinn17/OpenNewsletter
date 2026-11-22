@@ -16,6 +16,8 @@ interface ImportMetaEnv {
   readonly VITE_BUILD_SHA: string;
   readonly VITE_USE_MOCKS: string;
   readonly VITE_AUTOSAVE_DEBOUNCE_MS?: string;
+  /** GIPHY beta API key (`docs/design/frontend.md` §18.5). Optional — unset hides the GIF picker. */
+  readonly VITE_GIPHY_API_KEY?: string;
 }
 
 interface ImportMeta {
