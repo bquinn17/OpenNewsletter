@@ -239,6 +239,15 @@ Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-
 
 **Where.** [`future-ideas.md` §11.1](future-ideas.md#111-the-cards) (the card) and §16.4 (the leaderboard-timing question this partially resolves). Not yet built.
 
+<a id="editions-answered-counted-at-close"></a>
+### `editions_answered` is counted at close, not at first publish
+
+**Decision.** `MemberStats.editions_answered` (§2.17) stops bumping in real time when a member first publishes an answer. It's decided once, at close, by `publish(nl)`'s existing content check ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a) widened to cover every response row in the cycle, not just ones still `draft`: a member counts if any of their answers is non-empty at the moment of close, whatever its `status`. **This reverses shipped behavior** — `editions_answered` currently bumps inside `save_response`'s transaction (`backend/crates/persistence/src/responses.rs`) — so it needs an actual code change, not just a doc update.
+
+**Why.** `PUT …/my-response` accepts an empty `body` even on an already-published response (`validation::body("")` is accepted, and publishing is sticky: `status` never reverts). So today a member can publish early, then clear their answer entirely before close, and still be credited with having answered, because the bump already fired at first publish. Deciding it from the content that's actually there at close removes that gap. It also means the leaderboard no longer updates live during the response window — standing is visible only once the edition is out, which the owner preferred anyway. Poll answers are unaffected: a `pollOptionId`, once set, can't be cleared.
+
+**Where.** [`future-ideas.md` §16.4](future-ideas.md#164-decision-editions_answered-counts-only-once-the-edition-closes). Not yet implemented — see that section for the migration-free rollout shape.
+
 ---
 
 ## Design review: performance and cost
