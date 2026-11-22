@@ -98,7 +98,7 @@ paths:
                 avatarColor: "teal"
                 avatarMediaId: null
                 avatarUrl: null
-                createdAt: "2026-01-15T18:04:00Z"
+                createdAt: "2026-01-15T18:04:00.000Z"
         "401":
           $ref: "#/components/responses/Unauthenticated"
     patch:
@@ -129,7 +129,7 @@ paths:
                 avatarColor: "teal"
                 avatarMediaId: null
                 avatarUrl: null
-                createdAt: "2026-01-15T18:04:00Z"
+                createdAt: "2026-01-15T18:04:00.000Z"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "401":
@@ -161,7 +161,7 @@ paths:
               example:
                 code: "ABCD-EFGH-JKMN-PQRS"
                 groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
-                expiresAt: "2026-02-01T00:00:00Z"
+                expiresAt: "2026-02-01T00:00:00.000Z"
                 roleOnRedeem: "admin"
                 boundEmail: "quinn@example.com"
         "403":
@@ -190,8 +190,8 @@ paths:
                     status: "pending"
                     roleOnRedeem: "member"
                     createdBy: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
-                    createdAt: "2026-01-25T00:00:00Z"
-                    expiresAt: "2026-02-01T00:00:00Z"
+                    createdAt: "2026-01-25T00:00:00.000Z"
+                    expiresAt: "2026-02-01T00:00:00.000Z"
                     consumedBy: null
                     consumedAt: null
                     boundEmail: null
@@ -296,14 +296,14 @@ paths:
                   onCycleOpen: true
                 memberCount: 1
                 memberSoftCap: 50
-                createdAt: "2026-01-01T00:00:00Z"
+                createdAt: "2026-01-01T00:00:00.000Z"
                 members:
                   - userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
                     displayName: "Quinn"
                     role: "admin"
                     avatarColor: "teal"
                     avatarUrl: null
-                    joinedAt: "2026-01-01T00:00:00Z"
+                    joinedAt: "2026-01-01T00:00:00.000Z"
                     editionsAnswered: 0
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -353,14 +353,14 @@ paths:
                   onCycleOpen: true
                 memberCount: 1
                 memberSoftCap: 50
-                createdAt: "2026-01-01T00:00:00Z"
+                createdAt: "2026-01-01T00:00:00.000Z"
                 members:
                   - userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
                     displayName: "Quinn"
                     role: "admin"
                     avatarColor: "teal"
                     avatarUrl: null
-                    joinedAt: "2026-01-01T00:00:00Z"
+                    joinedAt: "2026-01-01T00:00:00.000Z"
                     editionsAnswered: 0
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -427,7 +427,7 @@ paths:
                 role: "admin"
                 avatarColor: "teal"
                 avatarUrl: null
-                joinedAt: "2026-01-01T00:00:00Z"
+                joinedAt: "2026-01-01T00:00:00.000Z"
                 editionsAnswered: 0
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -495,8 +495,8 @@ paths:
                 items:
                   - cycleId: "202606"
                     status: "open"
-                    responseOpenAt: "2026-06-01T00:00:00Z"
-                    responseCloseAt: "2026-06-05T00:00:00Z"
+                    responseOpenAt: "2026-06-01T00:00:00.000Z"
+                    responseCloseAt: "2026-06-05T00:00:00.000Z"
                     publishedAt: null
                     questionCount: 5
                     myDraftCount: 2
@@ -526,8 +526,8 @@ paths:
               example:
                 cycleId: "202606"
                 status: "published"
-                responseCloseAt: "2026-06-05T00:00:00Z"
-                publishedAt: "2026-06-05T00:00:01Z"
+                responseCloseAt: "2026-06-05T00:00:00.000Z"
+                publishedAt: "2026-06-05T00:00:01.000Z"
                 questions:
                   - questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
                     kind: "text"
@@ -545,7 +545,7 @@ paths:
                         displayName: "Quinn"
                         body: "Lake 22, hands down."
                         images: []
-                        publishedAt: "2026-06-03T12:00:00Z"
+                        publishedAt: "2026-06-03T12:00:00.000Z"
                         comments: []
                         reactionGroups:
                           - emoji: "🔥"
@@ -605,7 +605,7 @@ paths:
                     isAnonymous: false
                     voteCount: 7
                     votedByMe: true
-                    submittedAt: "2026-05-20T00:00:00Z"
+                    submittedAt: "2026-05-20T00:00:00.000Z"
                   - questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
                     kind: "poll"
                     prompt: "Which trailhead should we carpool from?"
@@ -618,7 +618,7 @@ paths:
                     isAnonymous: true
                     voteCount: 5
                     votedByMe: false
-                    submittedAt: "2026-05-21T00:00:00Z"
+                    submittedAt: "2026-05-21T00:00:00.000Z"
                 nextCursor: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -659,7 +659,7 @@ paths:
                 isAnonymous: false
                 voteCount: 0
                 votedByMe: false
-                submittedAt: "2026-05-22T00:00:00Z"
+                submittedAt: "2026-05-22T00:00:00.000Z"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
@@ -778,7 +778,7 @@ paths:
                 status: "draft"
                 body: "Lake 22, hands down."
                 imageMediaIds: []
-                updatedAt: "2026-06-02T10:00:00Z"
+                updatedAt: "2026-06-02T10:00:00.000Z"
                 publishedAt: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -823,7 +823,7 @@ paths:
                     displayName: "Alex"
                     body: "Same — the switchbacks are brutal."
                     image: null
-                    createdAt: "2026-06-05T09:00:00Z"
+                    createdAt: "2026-06-05T09:00:00.000Z"
                     editedAt: null
                     deletedAt: null
                 nextCursor: null
@@ -880,7 +880,7 @@ paths:
                   width: 1200
                   height: 800
                   caption: null
-                createdAt: "2026-06-05T09:00:00Z"
+                createdAt: "2026-06-05T09:00:00.000Z"
                 editedAt: null
                 deletedAt: null
         "403":
@@ -930,8 +930,8 @@ paths:
                 displayName: "Alex"
                 body: "Same — the switchbacks are brutal. Worth it though."
                 image: null
-                createdAt: "2026-06-05T09:00:00Z"
-                editedAt: "2026-06-05T09:10:00Z"
+                createdAt: "2026-06-05T09:00:00.000Z"
+                editedAt: "2026-06-05T09:10:00.000Z"
                 deletedAt: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -1167,8 +1167,8 @@ paths:
                 displayUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 errorMessage: null
-                uploadedAt: "2026-06-02T10:00:00Z"
-                processedAt: "2026-06-02T10:00:04Z"
+                uploadedAt: "2026-06-02T10:00:00.000Z"
+                processedAt: "2026-06-02T10:00:04.000Z"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1214,7 +1214,7 @@ paths:
                 displayUrl: null
                 thumbUrl: null
                 errorMessage: null
-                uploadedAt: "2026-06-02T10:00:00Z"
+                uploadedAt: "2026-06-02T10:00:00.000Z"
                 processedAt: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -1280,8 +1280,8 @@ paths:
                 displayUrl: null
                 thumbUrl: null
                 errorMessage: "IMAGE_TOO_LARGE"
-                uploadedAt: "2026-06-02T10:00:00Z"
-                processedAt: "2026-06-02T10:00:02Z"
+                uploadedAt: "2026-06-02T10:00:00.000Z"
+                processedAt: "2026-06-02T10:00:02.000Z"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1348,8 +1348,8 @@ paths:
                 bytes: 204800
                 avatarUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 errorMessage: null
-                uploadedAt: "2026-06-02T10:00:00Z"
-                processedAt: "2026-06-02T10:00:01Z"
+                uploadedAt: "2026-06-02T10:00:00.000Z"
+                processedAt: "2026-06-02T10:00:01.000Z"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
@@ -1453,8 +1453,8 @@ paths:
                   - subscriptionId: "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu"
                     endpoint: "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG"
                     userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0"
-                    createdAt: "2026-10-05T14:00:00Z"
-                    lastSuccessAt: "2026-10-05T14:01:00Z"
+                    createdAt: "2026-10-05T14:00:00.000Z"
+                    lastSuccessAt: "2026-10-05T14:01:00.000Z"
                     failureCount: 0
         "401":
           $ref: "#/components/responses/Unauthenticated"
@@ -1566,7 +1566,7 @@ paths:
               example:
                 status: "ok"
                 version: "161cb16"
-                buildAt: "2026-09-27T18:00:00Z"
+                buildAt: "2026-09-27T18:00:00.000Z"
         "401":
           $ref: "#/components/responses/Unauthenticated"
 

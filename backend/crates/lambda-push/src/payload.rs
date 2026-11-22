@@ -1,9 +1,8 @@
 //! Push payload JSON and per-kind copy (`docs/design/notifications.md` §5,
 //! M11 decision D6). Pure formatting — no I/O, no persistence lookups.
 
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
-use domain::{CycleId, GroupId};
+use domain::{CycleId, GroupId, Timestamp};
+use jiff::tz::TimeZone;
 use serde::Serialize;
 use shared::config::MAX_PUSH_PAYLOAD_BYTES;
 use shared::cycle_time::{cycle_period, CyclePeriod};
@@ -60,8 +59,8 @@ pub fn deadline_reminder(
     group_id: &GroupId,
     cycle_id: &CycleId,
     offset_hours: u32,
-    response_close_at: DateTime<Utc>,
-    tz: Tz,
+    response_close_at: Timestamp,
+    tz: &TimeZone,
     n_published: u32,
     total_questions: u32,
     is_done: bool,
@@ -103,8 +102,8 @@ fn deadline_title(group_name: &str, offset_hours: u32) -> String {
 
 fn deadline_body(
     offset_hours: u32,
-    response_close_at: DateTime<Utc>,
-    tz: Tz,
+    response_close_at: Timestamp,
+    tz: &TimeZone,
     n_published: u32,
     total_questions: u32,
 ) -> String {
@@ -125,13 +124,19 @@ fn deadline_body(
 }
 
 /// `%A, %b %-d` in the group's timezone, e.g. "Friday, Oct 9".
-pub fn format_due_date(at: DateTime<Utc>, tz: Tz) -> String {
-    at.with_timezone(&tz).format("%A, %b %-d").to_string()
+pub fn format_due_date(at: Timestamp, tz: &TimeZone) -> String {
+    at.as_jiff()
+        .to_zoned_datetime(tz.clone())
+        .strftime("%A, %b %-d")
+        .to_string()
 }
 
 /// `%-I:%M %p %Z` in the group's timezone, e.g. "9:00 PM EDT".
-pub fn format_due_time(at: DateTime<Utc>, tz: Tz) -> String {
-    at.with_timezone(&tz).format("%-I:%M %p %Z").to_string()
+pub fn format_due_time(at: Timestamp, tz: &TimeZone) -> String {
+    at.as_jiff()
+        .to_zoned_datetime(tz.clone())
+        .strftime("%-I:%M %p %Z")
+        .to_string()
 }
 
 /// `publication` (`docs/design/notifications.md` §8, D6). `answers` is published
@@ -223,8 +228,10 @@ fn enforce_payload_budget(payload: &mut PushPayload) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
-    use chrono_tz::America::New_York;
+
+    fn new_york() -> TimeZone {
+        shared::cycle_time::time_zone("America/New_York").unwrap()
+    }
 
     fn gid() -> GroupId {
         GroupId::new("01HG2")
@@ -265,28 +272,27 @@ mod tests {
 
     #[test]
     fn deadline_body_by_offset_band() {
-        let close = New_York
-            .with_ymd_and_hms(2026, 10, 9, 21, 0, 0)
-            .unwrap()
-            .with_timezone(&Utc);
+        // 2026-10-09T21:00:00 America/New_York (EDT, UTC-4).
+        let close = "2026-10-10T01:00:00Z".parse::<Timestamp>().unwrap();
+        let tz = new_york();
         assert_eq!(
-            deadline_body(96, close, New_York, 0, 5),
+            deadline_body(96, close, &tz, 0, 5),
             "Don't forget — write your answers before Friday, Oct 9."
         );
         assert_eq!(
-            deadline_body(48, close, New_York, 2, 5),
+            deadline_body(48, close, &tz, 2, 5),
             "2 of 5 answers written. 3 to go."
         );
         assert_eq!(
-            deadline_body(12, close, New_York, 2, 5),
+            deadline_body(12, close, &tz, 2, 5),
             "Last call — answers lock at 9:00 PM EDT."
         );
     }
 
     #[test]
     fn deadline_reminder_done_member_gets_the_soft_message() {
-        let close = Utc::now();
-        let p = deadline_reminder("G", &gid(), &cid(), 48, close, New_York, 5, 5, true);
+        let close = Timestamp::now();
+        let p = deadline_reminder("G", &gid(), &cid(), 48, close, &new_york(), 5, 5, true);
         assert_eq!(
             p.body,
             "5/5 answers in. You're done — but you can still edit."

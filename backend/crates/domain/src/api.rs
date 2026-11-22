@@ -8,13 +8,13 @@
 //! against these types — any new route's DTOs belong here, with an entry added to
 //! that test's mapping table in the same PR.
 
+use crate::Timestamp;
 use crate::{
     AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, ImageMedia,
     ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, MemberStats, NewsletterStatus,
     NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response, ResponseId,
     ResponseStatus, Role, SubscriptionId, User, UserId,
 };
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -76,7 +76,7 @@ pub struct UserResponse {
     pub avatar_color: String,
     pub avatar_media_id: Option<AvatarId>,
     pub avatar_url: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl UserResponse {
@@ -130,7 +130,7 @@ pub struct CreateInviteRequest {
 pub struct CreateInviteResponse {
     pub code: String,
     pub group_id: GroupId,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub role_on_redeem: Role,
     pub bound_email: Option<String>,
 }
@@ -144,10 +144,10 @@ pub struct InviteSummary {
     pub status: InviteStatus,
     pub role_on_redeem: Role,
     pub created_by: UserId,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub expires_at: Timestamp,
     pub consumed_by: Option<UserId>,
-    pub consumed_at: Option<DateTime<Utc>>,
+    pub consumed_at: Option<Timestamp>,
     pub bound_email: Option<String>,
 }
 
@@ -203,7 +203,7 @@ pub struct MemberResponse {
     pub role: Role,
     pub avatar_color: String,
     pub avatar_url: Option<String>,
-    pub joined_at: DateTime<Utc>,
+    pub joined_at: Timestamp,
     pub editions_answered: u32,
 }
 
@@ -259,7 +259,7 @@ pub struct GroupResponse {
     pub notification_settings: NotificationSettingsResponse,
     pub member_count: u32,
     pub member_soft_cap: u32,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub members: Vec<MemberResponse>,
 }
 
@@ -419,7 +419,7 @@ pub struct CandidateItemResponse {
     pub is_anonymous: bool,
     pub vote_count: u32,
     pub voted_by_me: bool,
-    pub submitted_at: DateTime<Utc>,
+    pub submitted_at: Timestamp,
 }
 
 /// `GET /groups/{groupId}/candidate-questions` response (§6.1).
@@ -469,9 +469,9 @@ pub struct CandidateVoteResponse {
 pub struct NewsletterSummary {
     pub cycle_id: CycleId,
     pub status: NewsletterStatus,
-    pub response_open_at: DateTime<Utc>,
-    pub response_close_at: DateTime<Utc>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub response_open_at: Timestamp,
+    pub response_close_at: Timestamp,
+    pub published_at: Option<Timestamp>,
     pub question_count: u32,
     pub my_draft_count: u32,
     pub my_published_count: u32,
@@ -497,8 +497,8 @@ pub struct MyResponseSummary {
     pub image_media_ids: Vec<ImageId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_option_id: Option<PollOptionId>,
-    pub updated_at: DateTime<Utc>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub updated_at: Timestamp,
+    pub published_at: Option<Timestamp>,
 }
 
 /// One locked question in the `open`-cycle detail view (§5.2).
@@ -547,7 +547,7 @@ pub struct PublishedAnswerResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     pub images: Vec<PublishedImageResponse>,
-    pub published_at: DateTime<Utc>,
+    pub published_at: Timestamp,
     pub comments: Vec<CommentResponse>,
     pub reaction_groups: Vec<ReactionGroupResponse>,
 }
@@ -592,15 +592,15 @@ pub enum NewsletterDetailResponse {
     #[serde(rename_all = "camelCase")]
     Open {
         cycle_id: CycleId,
-        response_open_at: DateTime<Utc>,
-        response_close_at: DateTime<Utc>,
+        response_open_at: Timestamp,
+        response_close_at: Timestamp,
         questions: Vec<OpenQuestionResponse>,
     },
     #[serde(rename_all = "camelCase")]
     Published {
         cycle_id: CycleId,
-        response_close_at: DateTime<Utc>,
-        published_at: DateTime<Utc>,
+        response_close_at: Timestamp,
+        published_at: Timestamp,
         questions: Vec<PublishedQuestionResponse>,
     },
 }
@@ -623,8 +623,8 @@ pub struct ResponseDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_option_id: Option<PollOptionId>,
     pub image_media_ids: Vec<ImageId>,
-    pub updated_at: DateTime<Utc>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub updated_at: Timestamp,
+    pub published_at: Option<Timestamp>,
 }
 
 impl From<Response> for ResponseDto {
@@ -693,9 +693,9 @@ pub struct CommentResponse {
     pub display_name: String,
     pub body: String,
     pub image: Option<CommentImageResponse>,
-    pub created_at: DateTime<Utc>,
-    pub edited_at: Option<DateTime<Utc>>,
-    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub edited_at: Option<Timestamp>,
+    pub deleted_at: Option<Timestamp>,
 }
 
 /// `GET .../comments` response (§8.1). AP18.
@@ -804,8 +804,8 @@ pub struct ImageMediaResponse {
     /// §4.2); `null` until `status=ready`.
     pub thumb_url: Option<String>,
     pub error_message: Option<String>,
-    pub uploaded_at: DateTime<Utc>,
-    pub processed_at: Option<DateTime<Utc>>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
 }
 
 impl ImageMediaResponse {
@@ -874,8 +874,8 @@ pub struct AvatarMediaResponse {
     /// §4.2); `null` until `status=ready`.
     pub avatar_url: Option<String>,
     pub error_message: Option<String>,
-    pub uploaded_at: DateTime<Utc>,
-    pub processed_at: Option<DateTime<Utc>>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
 }
 
 impl AvatarMediaResponse {
@@ -937,8 +937,8 @@ pub struct PushSubscriptionResponse {
     pub subscription_id: SubscriptionId,
     pub endpoint: String,
     pub user_agent: String,
-    pub created_at: DateTime<Utc>,
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub last_success_at: Option<Timestamp>,
     pub failure_count: u32,
 }
 
@@ -1158,8 +1158,8 @@ mod tests {
 
         let published = NewsletterDetailResponse::Published {
             cycle_id: CycleId::new("202606"),
-            response_close_at: Utc::now(),
-            published_at: Utc::now(),
+            response_close_at: crate::Timestamp::now(),
+            published_at: crate::Timestamp::now(),
             questions: Vec::new(),
         };
         let value = serde_json::to_value(&published).unwrap();

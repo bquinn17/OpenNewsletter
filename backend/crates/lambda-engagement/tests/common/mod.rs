@@ -4,11 +4,10 @@
 #![allow(dead_code, unused_imports)]
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{TimeZone, Utc};
 use domain::{
     CycleId, Group, GroupId, GroupMembership, ImageId, ImageMedia, ImageMimeType, ImagePurpose,
     LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, QuestionId, QuestionKind, Response,
-    ResponseId, ResponseStatus, Role, UserId,
+    ResponseId, ResponseStatus, Role, Timestamp, UserId,
 };
 use engagement::state::AppState;
 use media_delete::fakes::{fake_deleter, RecordingObjectStore};
@@ -114,7 +113,7 @@ pub async fn put_user(repo: &Repo, user_id: &str) {
 pub fn published_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
     let mut nl = voting_newsletter(group_id, cycle_id);
     nl.status = NewsletterStatus::Published;
-    nl.published_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    nl.published_at = Some("2026-06-05T00:00:00Z".parse::<Timestamp>().unwrap());
     nl.next_transition_at = None;
     nl
 }
@@ -189,8 +188,8 @@ pub async fn put_published_text_answer(
         body: Some(body.to_owned()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+        published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count: 0,
     };
     put_response(repo, &response).await;
@@ -217,8 +216,8 @@ pub async fn put_published_poll_answer(
         body: None,
         poll_option_id: Some(domain::PollOptionId::new("opt-a")),
         image_media_ids: Vec::new(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+        published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count: 0,
     };
     put_response(repo, &response).await;
@@ -245,7 +244,7 @@ pub async fn put_draft_text_answer(
         body: Some("still drafting".into()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
         published_at: None,
         reaction_count: 0,
     };
@@ -307,8 +306,8 @@ pub async fn seed_comment_image(
         width: Some(1200),
         height: Some(800),
         caption: None,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 4, 0, 0, 0).unwrap(),
-        processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 4, 0, 1, 0).unwrap()),
+        uploaded_at: "2026-06-04T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: Some("2026-06-04T00:01:00Z".parse::<Timestamp>().unwrap()),
         error_message: None,
         attached_comment_id: None,
     };

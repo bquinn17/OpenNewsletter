@@ -205,8 +205,8 @@ async fn a_streak_carries_across_a_switch_from_monthly_to_weekly_cycles() {
     // Streaks count consecutive published editions, not calendar months, so
     // a weekly edition straight after a monthly one extends the streak.
     let cadence = CycleCadence::Weekly {
-        weekday: chrono::Weekday::Sun,
-        at: chrono::NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        weekday: jiff::civil::Weekday::Sunday,
+        at: jiff::civil::Time::new(21, 0, 0, 0).unwrap(),
     };
     let (_c, repo) = common::make_test_repo().await;
     let nl =

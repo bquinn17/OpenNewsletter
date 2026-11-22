@@ -3,9 +3,8 @@
 
 mod common;
 
-use chrono::Utc;
 use domain::api::PatchMeRequest;
-use domain::{AvatarId, AvatarMedia, ImageMimeType, MediaStatus, UserId};
+use domain::{AvatarId, AvatarMedia, ImageMimeType, MediaStatus, Timestamp, UserId};
 use groups::me;
 use persistence::{media, test_factories, users, Repo};
 use pretty_assertions::assert_eq;
@@ -19,8 +18,8 @@ async fn seed_avatar(repo: &Repo, user_id: &str, avatar_id: &str) -> AvatarId {
         display_key: Some(format!("avatar/{avatar_id}/display.webp")),
         status: MediaStatus::Ready,
         bytes: 65_536,
-        uploaded_at: Utc::now(),
-        processed_at: Some(Utc::now()),
+        uploaded_at: Timestamp::now(),
+        processed_at: Some(Timestamp::now()),
         error_message: None,
     };
     media::put_avatar(repo, &avatar).await.unwrap();

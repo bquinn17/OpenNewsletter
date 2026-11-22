@@ -5,10 +5,9 @@
 use crate::payload::{self, PushPayload};
 use crate::state::AppState;
 use crate::{delivery, metrics::FanoutMetrics};
-use chrono::Utc;
 use domain::{
     CycleId, Group, GroupId, Newsletter, NewsletterStatus, NotificationPref, PushSubscription,
-    QuestionKind, ResponseStatus, UserId,
+    QuestionKind, ResponseStatus, Timestamp, UserId,
 };
 use futures::{stream, StreamExt};
 use persistence::{groups, newsletters, push as push_repo, questions, responses};
@@ -39,7 +38,7 @@ pub async fn cycle_open_fanout(state: &AppState, group_id: &GroupId, cycle_id: &
 
     let total_questions = nl.locked_question_ids.len() as u32;
     let window_hours = (nl.response_close_at - nl.response_open_at)
-        .num_hours()
+        .as_hours()
         .max(0);
     let window_days = ((window_hours as f64) / 24.0).round().max(1.0) as u32;
     let payload = payload::cycle_open(
@@ -145,7 +144,7 @@ async fn claim_marker(
     cycle_id: &CycleId,
     marker: Marker,
 ) -> bool {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let claimed = match marker {
         Marker::Open => {
             push_repo::claim_open_notified_marker(&state.repo, group_id, cycle_id, now).await

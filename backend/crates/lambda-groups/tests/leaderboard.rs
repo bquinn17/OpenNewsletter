@@ -5,11 +5,10 @@
 
 mod common;
 
-use chrono::{TimeZone, Utc};
 use common::{put_locked_question, put_reacted_response, seed, state};
 use domain::{
     ApiErrorCode, CycleId, GroupId, LockedQuestion, MemberStats, QuestionId, QuestionKind,
-    Response, ResponseId, ResponseStatus, Role, UserId,
+    Response, ResponseId, ResponseStatus, Role, Timestamp, UserId,
 };
 use groups::group_routes;
 use persistence::test_factories;
@@ -31,7 +30,7 @@ fn locked_question(
         display_order: 0,
         submitted_by: UserId::new("u1"),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     }
 }
 
@@ -54,8 +53,8 @@ fn reacted_answer(
         body: Some("An answer.".into()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+        published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count,
     }
 }

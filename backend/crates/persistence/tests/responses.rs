@@ -1,6 +1,6 @@
 mod common;
 
-use chrono::{TimeZone, Utc};
+use common::utc;
 use domain::{
     CycleId, GroupId, ImageId, PollOptionId, QuestionId, QuestionKind, ResponseStatus, UserId,
 };
@@ -21,8 +21,8 @@ async fn editions_answered(repo: &persistence::Repo, group_id: &GroupId, user_id
 fn open_newsletter(group_id: &str, cycle_id: &str) -> domain::Newsletter {
     let mut nl = common::voting_newsletter(group_id, cycle_id);
     nl.status = domain::NewsletterStatus::Open;
-    nl.response_open_at = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
-    nl.response_close_at = Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap();
+    nl.response_open_at = utc("2026-06-01T00:00:00Z");
+    nl.response_close_at = utc("2026-06-05T00:00:00Z");
     nl.next_transition_at = Some(nl.response_close_at);
     nl
 }
@@ -160,7 +160,7 @@ async fn save_response_creates_a_draft_and_keeps_the_response_id_stable_across_s
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     let save = text_save(
         &group_id,
@@ -182,7 +182,7 @@ async fn save_response_creates_a_draft_and_keeps_the_response_id_stable_across_s
     assert_eq!(first.status, ResponseStatus::Draft);
     assert_eq!(first.body.as_deref(), Some("first draft"));
 
-    let later = Utc.with_ymd_and_hms(2026, 6, 2, 1, 0, 0).unwrap();
+    let later = utc("2026-06-02T01:00:00Z");
     let save2 = text_save(
         &group_id,
         &cycle_id,
@@ -220,7 +220,7 @@ async fn save_response_with_publish_sets_published_at_and_bumps_editions_answere
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     let save = text_save(
         &group_id,
@@ -256,8 +256,8 @@ async fn publishing_after_a_draft_keeps_the_same_publish_call_semantics() {
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let draft_at = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
-    let publish_at = Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap();
+    let draft_at = utc("2026-06-02T00:00:00Z");
+    let publish_at = utc("2026-06-03T00:00:00Z");
 
     responses::save_response(
         &repo,
@@ -312,8 +312,8 @@ async fn a_non_publishing_save_after_publish_keeps_the_response_published() {
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let publish_at = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
-    let edit_at = Utc.with_ymd_and_hms(2026, 6, 2, 1, 0, 0).unwrap();
+    let publish_at = utc("2026-06-02T00:00:00Z");
+    let edit_at = utc("2026-06-02T01:00:00Z");
 
     responses::save_response(
         &repo,
@@ -375,7 +375,7 @@ async fn a_second_publish_in_the_same_cycle_does_not_bump_editions_answered_agai
     let group_id = GroupId::new("g5");
     let cycle_id = CycleId::new("202606");
     let user_id = UserId::new("u1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     responses::save_response(
         &repo,
@@ -431,7 +431,7 @@ async fn concurrent_first_publishes_to_different_questions_count_the_cycle_once(
     let user_id = UserId::new("u1");
     let q1 = QuestionId::new("q1");
     let q2 = QuestionId::new("q2");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
     let save1 = text_save(&group_id, &cycle_id, &q1, &user_id, "answer one", &[], true);
     let save2 = text_save(&group_id, &cycle_id, &q2, &user_id, "answer two", &[], true);
 
@@ -466,7 +466,7 @@ async fn a_repeated_bump_request_in_the_same_cycle_still_saves_and_counts_once()
     let user_id = UserId::new("u1");
     let q1 = QuestionId::new("q1");
     let q2 = QuestionId::new("q2");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     let first = text_save(&group_id, &cycle_id, &q1, &user_id, "one", &[], true);
     responses::save_response(&repo, &first, now, true)
@@ -499,7 +499,7 @@ async fn save_response_is_a_lost_race_when_the_cycle_is_not_open() {
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     let err = responses::save_response(
         &repo,
@@ -532,7 +532,7 @@ async fn save_response_is_a_lost_race_once_the_deadline_has_passed() {
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
     // open_newsletter's responseCloseAt is 2026-06-05T00:00:00Z.
-    let past_deadline = Utc.with_ymd_and_hms(2026, 6, 6, 0, 0, 0).unwrap();
+    let past_deadline = utc("2026-06-06T00:00:00Z");
 
     let err = responses::save_response(
         &repo,
@@ -565,7 +565,7 @@ async fn save_response_stores_a_poll_vote() {
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
     let option_id = PollOptionId::new("opt-1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
 
     let save = ResponseSave {
         group_id: &group_id,
@@ -634,7 +634,7 @@ async fn editions_answered_survives_a_leave_and_rejoin() {
     let cycle_id = CycleId::new("202606");
     let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let now = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
+    let now = utc("2026-06-02T00:00:00Z");
     let save = text_save(
         &group_id,
         &cycle_id,

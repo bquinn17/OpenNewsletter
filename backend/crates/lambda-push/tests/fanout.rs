@@ -3,9 +3,9 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
 use domain::{
-    CycleId, GroupId, LockedQuestion, NotificationPref, QuestionId, QuestionKind, Role, UserId,
+    CycleId, GroupId, LockedQuestion, NotificationPref, QuestionId, QuestionKind, Role,
+    SignedDuration, Timestamp, UserId,
 };
 use pretty_assertions::assert_eq;
 use push::fanout;
@@ -37,8 +37,8 @@ async fn cycle_open_fanout_respects_prefs_zero_subs_and_is_idempotent() {
     common::put_user(&state.repo, "u2").await;
     common::put_user(&state.repo, "u3").await;
 
-    let open_at = Utc::now();
-    let close_at = open_at + Duration::days(4);
+    let open_at = Timestamp::now();
+    let close_at = open_at + SignedDuration::from_hours(4 * 24);
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
@@ -61,7 +61,7 @@ async fn cycle_open_fanout_respects_prefs_zero_subs_and_is_idempotent() {
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -77,7 +77,7 @@ async fn cycle_open_fanout_respects_prefs_zero_subs_and_is_idempotent() {
         &p2,
         &a2,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -123,14 +123,14 @@ async fn cycle_open_fanout_is_skipped_entirely_when_the_group_switch_is_off() {
     common::seed_group_and_membership(&state.repo, &group, "u1", Role::Admin).await;
     common::put_user(&state.repo, "u1").await;
 
-    let open_at = Utc::now();
+    let open_at = Timestamp::now();
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
             "gfan2",
             "202610",
             open_at,
-            open_at + Duration::days(4),
+            open_at + SignedDuration::from_hours(4 * 24),
             vec![QuestionId::new("q1")],
         ),
     )
@@ -145,7 +145,7 @@ async fn cycle_open_fanout_is_skipped_entirely_when_the_group_switch_is_off() {
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -224,7 +224,7 @@ async fn publication_fanout_sends_to_every_subscribed_member_regardless_of_pref(
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -238,7 +238,7 @@ async fn publication_fanout_sends_to_every_subscribed_member_regardless_of_pref(
         &p2,
         &a2,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )

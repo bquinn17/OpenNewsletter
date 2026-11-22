@@ -2,8 +2,8 @@
 
 mod common;
 
-use chrono::{TimeZone, Utc};
 use domain::api::NewsletterDetailResponse;
+use domain::Timestamp;
 use domain::{
     ApiErrorCode, Comment, CommentId, CycleId, GroupId, ImageId, ImageMedia, ImageMimeType,
     ImagePurpose, LockedQuestion, MediaStatus, PollOption, PollOptionId, QuestionId, QuestionKind,
@@ -94,7 +94,7 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
             body: Some("draft answer".into()),
             poll_option_id: None,
             image_media_ids: Vec::new(),
-            updated_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
+            updated_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
             published_at: None,
             reaction_count: 0,
         },
@@ -190,7 +190,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
         display_order: 0,
         submitted_by: UserId::new("u1"),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
     put_locked_question_directly(&repo, &lq).await;
 
@@ -207,7 +207,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
             body: Some("u2's secret draft".into()),
             poll_option_id: None,
             image_media_ids: Vec::new(),
-            updated_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
+            updated_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
             published_at: None,
             reaction_count: 0,
         },
@@ -250,7 +250,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
 
     let mut published = common::voting_newsletter("gpd", "202606");
     published.status = domain::NewsletterStatus::Published;
-    published.published_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    published.published_at = Some("2026-06-05T00:00:00Z".parse::<Timestamp>().unwrap());
     published.locked_question_ids = vec![QuestionId::new("q1"), QuestionId::new("q2")];
     nl_repo::write_status_transition(&repo, &published)
         .await
@@ -266,7 +266,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
         display_order: 0,
         submitted_by: UserId::new("u1"),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
     let poll_lq = LockedQuestion {
         question_id: QuestionId::new("q2"),
@@ -287,7 +287,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
         display_order: 1,
         submitted_by: UserId::new("u2"),
         is_anonymous: true,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
     for lq in [&text_lq, &poll_lq] {
         put_locked_question_directly(&repo, lq).await;
@@ -306,8 +306,8 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             body: Some("Lake 22, hands down.".into()),
             poll_option_id: None,
             image_media_ids: Vec::new(),
-            updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-            published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+            updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+            published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
             reaction_count: 0,
         },
     )
@@ -325,8 +325,8 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             body: None,
             poll_option_id: Some(PollOptionId::new("opt-north")),
             image_media_ids: Vec::new(),
-            updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-            published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+            updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+            published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
             reaction_count: 0,
         },
     )
@@ -343,7 +343,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             author_user_id: UserId::new("u1"),
             body: "Nice answer!".into(),
             image_media_id: None,
-            created_at: Utc.with_ymd_and_hms(2026, 6, 4, 0, 0, 0).unwrap(),
+            created_at: "2026-06-04T00:00:00Z".parse::<Timestamp>().unwrap(),
             edited_at: None,
             deleted_at: None,
         },
@@ -359,7 +359,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             answer_user_id: UserId::new("u2"),
             reactor_user_id: UserId::new("u1"),
             emoji: "🔥".into(),
-            created_at: Utc.with_ymd_and_hms(2026, 6, 4, 0, 0, 0).unwrap(),
+            created_at: "2026-06-04T00:00:00Z".parse::<Timestamp>().unwrap(),
         },
     )
     .await
@@ -416,8 +416,8 @@ fn ready_image(image_id: &str, owner: &str, purpose: ImagePurpose) -> ImageMedia
         width: Some(1200),
         height: Some(800),
         caption: None,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
-        processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 2, 0, 1, 0).unwrap()),
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: Some("2026-06-02T00:01:00Z".parse::<Timestamp>().unwrap()),
         error_message: None,
         attached_comment_id: None,
     }
@@ -435,8 +435,8 @@ fn published_text(user: &str, response_id: &str, images: &[&str]) -> Response {
         body: Some(format!("{user}'s answer")),
         poll_option_id: None,
         image_media_ids: images.iter().map(|id| ImageId::new(*id)).collect(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+        published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count: 0,
     }
 }
@@ -451,7 +451,9 @@ fn comment_on_u2(comment_id: &str, author: &str, image: Option<&str>, hour: u32)
         author_user_id: UserId::new(author),
         body: format!("comment {comment_id}"),
         image_media_id: image.map(ImageId::new),
-        created_at: Utc.with_ymd_and_hms(2026, 6, 4, hour, 0, 0).unwrap(),
+        created_at: format!("2026-06-04T{hour:02}:00:00Z")
+            .parse::<Timestamp>()
+            .unwrap(),
         edited_at: None,
         deleted_at: None,
     }
@@ -477,7 +479,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
 
     let mut published = common::voting_newsletter("gpi", "202606");
     published.status = domain::NewsletterStatus::Published;
-    published.published_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    published.published_at = Some("2026-06-05T00:00:00Z".parse::<Timestamp>().unwrap());
     published.locked_question_ids = vec![QuestionId::new("q1"), QuestionId::new("q2")];
     nl_repo::write_status_transition(&repo, &published)
         .await
@@ -493,7 +495,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
         display_order: 0,
         submitted_by: UserId::new("u1"),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
     let poll_lq = LockedQuestion {
         question_id: QuestionId::new("q2"),
@@ -514,7 +516,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
         display_order: 1,
         submitted_by: UserId::new("u2"),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
     for lq in [&text_lq, &poll_lq] {
         put_locked_question_directly(&repo, lq).await;
@@ -572,7 +574,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
     engagement::put_comment(
         &repo,
         &Comment {
-            deleted_at: Some(Utc.with_ymd_and_hms(2026, 6, 4, 3, 0, 0).unwrap()),
+            deleted_at: Some("2026-06-04T03:00:00Z".parse::<Timestamp>().unwrap()),
             ..comment_on_u2("c2", "u1", Some("img-d"), 2)
         },
     )

@@ -3,9 +3,8 @@
 //! feature rather than duplicating it.
 #![allow(dead_code)]
 
-use chrono::{TimeZone, Utc};
 use domain::{AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia, ImageMimeType};
-use domain::{ImagePurpose, MediaStatus, QuestionId, UserId};
+use domain::{ImagePurpose, MediaStatus, QuestionId, Timestamp, UserId};
 use persistence::{test_factories, Repo};
 use serde_json::json;
 
@@ -38,7 +37,7 @@ pub fn pending_image(
         width: None,
         height: None,
         caption: None,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 12, 0, 0).unwrap(),
+        uploaded_at: "2026-06-02T12:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: None,
         error_message: None,
         attached_comment_id: None,
@@ -54,16 +53,16 @@ pub fn pending_avatar(user_id: &str, avatar_id: &str) -> AvatarMedia {
         display_key: None,
         status: MediaStatus::Pending,
         bytes: 0,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 12, 0, 0).unwrap(),
+        uploaded_at: "2026-06-02T12:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: None,
         error_message: None,
     }
 }
 
-/// Builds an `aws_lambda_events::event::s3::S3Event` with one record, in the
+/// Builds an `image_process::s3_event::S3Event` with one record, in the
 /// real S3-notification JSON shape, for `bucket`/`key` (pass the already
 /// URL-encoded key, exactly as S3 would deliver it).
-pub fn s3_event(bucket: &str, key: &str) -> aws_lambda_events::event::s3::S3Event {
+pub fn s3_event(bucket: &str, key: &str) -> image_process::s3_event::S3Event {
     let value = json!({
         "Records": [{
             "eventVersion": "2.1",

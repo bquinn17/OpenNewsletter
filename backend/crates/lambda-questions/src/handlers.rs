@@ -5,14 +5,13 @@ use crate::state::AppState;
 use crate::validation;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chrono::Utc;
 use domain::api::{
     AskedBy, CandidateItemResponse, CandidateListResponse, CandidateVoteResponse,
     CreateCandidateRequest, PollOptionResponse,
 };
 use domain::{
     ApiError, ApiErrorCode, CandidateQuestion, CandidateVote, CycleId, GroupId, QuestionId, Role,
-    User, UserId,
+    Timestamp, User, UserId,
 };
 use persistence::questions::VoteTxError;
 use persistence::{auth, groups, newsletters, questions, users, RepoError};
@@ -125,7 +124,7 @@ pub async fn create_candidate(
         vote_count: 0,
         submitted_by: caller.clone(),
         is_anonymous: request.is_anonymous,
-        submitted_at: Utc::now(),
+        submitted_at: Timestamp::now(),
     };
 
     questions::put_candidate(&state.repo, &candidate)
@@ -176,7 +175,7 @@ pub async fn cast_vote(
         group_id: group_id.clone(),
         cycle_id: next_cycle.cycle_id.clone(),
         question_id: question_id.clone(),
-        voted_at: Utc::now(),
+        voted_at: Timestamp::now(),
     };
     let vote_count =
         cast_vote_with_retry(state, group_id, &next_cycle.cycle_id, &vote, candidate, cap).await?;
@@ -268,7 +267,7 @@ pub async fn withdraw_vote(
         group_id: group_id.clone(),
         cycle_id: next_cycle.cycle_id.clone(),
         question_id: question_id.clone(),
-        voted_at: Utc::now(),
+        voted_at: Timestamp::now(),
     };
     let vote_count =
         withdraw_vote_with_retry(state, group_id, &next_cycle.cycle_id, &vote, candidate).await?;

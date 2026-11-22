@@ -1,7 +1,6 @@
 mod common;
 
-use chrono::{DateTime, Utc};
-use domain::{CycleId, GroupId, NewsletterStatus, QuestionId, UserId};
+use domain::{CycleId, GroupId, NewsletterStatus, QuestionId, Timestamp, UserId};
 use persistence::questions::{self, VoteTxError};
 use pretty_assertions::assert_eq;
 
@@ -53,7 +52,7 @@ async fn it_lists_locked_questions_for_a_cycle() {
     // Use promote_candidates_tx to write them with the newsletter.
     let mut nl = common::voting_newsletter("g1", "202606");
     nl.locked_question_ids = vec![lq1.question_id.clone(), lq2.question_id.clone()];
-    nl.next_transition_at = Some(Utc::now());
+    nl.next_transition_at = Some(Timestamp::now());
     persistence::newsletters::write_status_transition(&repo, &nl)
         .await
         .unwrap();
@@ -149,7 +148,7 @@ async fn promote_candidates_tx_creates_locked_questions_and_flips_status_to_open
     let lq = common::locked_question("g1", "202606", "q1", "u1");
     nl.status = NewsletterStatus::Open;
     nl.locked_question_ids = vec![lq.question_id.clone()];
-    let close_at: DateTime<Utc> = "2026-06-08T00:00:00Z".parse().unwrap();
+    let close_at: Timestamp = "2026-06-08T00:00:00Z".parse().unwrap();
     assert_ne!(nl.next_transition_at, Some(close_at));
     nl.next_transition_at = Some(close_at);
     questions::promote_candidates_tx(&repo, std::slice::from_ref(&lq), &nl)
@@ -205,7 +204,7 @@ async fn promote_candidates_tx_bumps_questions_asked_excluding_anonymous() {
         lq2.question_id.clone(),
         lq3.question_id.clone(),
     ];
-    nl.next_transition_at = Some(Utc::now());
+    nl.next_transition_at = Some(Timestamp::now());
     questions::promote_candidates_tx(&repo, &[lq1, lq2, lq3], &nl)
         .await
         .unwrap();

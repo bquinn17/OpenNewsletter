@@ -13,9 +13,9 @@ use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem, Update};
-use chrono::{DateTime, Utc};
 use domain::{
-    Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId, UserId,
+    Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId, Timestamp,
+    UserId,
 };
 use serde_dynamo::{from_item, to_item};
 use shared::config::COMMENT_WRITE_ATTEMPTS;
@@ -196,7 +196,7 @@ pub struct NewComment<'a> {
     pub author_user_id: &'a UserId,
     pub body: &'a str,
     pub image_media_id: Option<&'a ImageId>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// `POST .../comments` (§8.2) — puts the comment row, bumps the author's
@@ -326,7 +326,7 @@ pub struct CommentLocation<'a> {
     pub question_id: &'a QuestionId,
     pub answer_user_id: &'a UserId,
     pub comment_id: &'a CommentId,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 fn comment_update_builder(repo: &Repo, loc: &CommentLocation<'_>) -> UpdateBuilder {
@@ -383,7 +383,7 @@ pub async fn update_comment(
     loc: &CommentLocation<'_>,
     body: Option<&str>,
     set_image_media_id: Option<Option<&ImageId>>,
-    edited_at: DateTime<Utc>,
+    edited_at: Timestamp,
     current_image_id: Option<&ImageId>,
     detach_image_id: Option<&ImageId>,
     attach_image_id: Option<&ImageId>,
@@ -391,7 +391,7 @@ pub async fn update_comment(
     let mut set_clauses = vec!["edited_at = :edited_at".to_owned()];
     let mut remove_clauses: Vec<String> = Vec::new();
     let mut builder = comment_update_builder(repo, loc)
-        .expression_attribute_values(":edited_at", AttributeValue::S(edited_at.to_rfc3339()));
+        .expression_attribute_values(":edited_at", AttributeValue::S(edited_at.to_string()));
 
     if let Some(body) = body {
         set_clauses.push("body = :body".to_owned());
@@ -463,7 +463,7 @@ pub async fn soft_delete_comment(
     repo: &Repo,
     loc: &CommentLocation<'_>,
     author_user_id: &UserId,
-    deleted_at: DateTime<Utc>,
+    deleted_at: Timestamp,
     image_id: Option<&ImageId>,
 ) -> Result<(), RepoError> {
     let (image_condition, expected_image) = image_unchanged_condition(image_id);
@@ -474,7 +474,7 @@ pub async fn soft_delete_comment(
              AND {image_condition}"
         ))
         .expression_attribute_names("#pk", attr::PK)
-        .expression_attribute_values(":t", AttributeValue::S(deleted_at.to_rfc3339()))
+        .expression_attribute_values(":t", AttributeValue::S(deleted_at.to_string()))
         .expression_attribute_values(":empty", AttributeValue::S("".into()))
         .expression_attribute_values(":null", AttributeValue::Null(true))
         .expression_attribute_values(":expected_image", expected_image)

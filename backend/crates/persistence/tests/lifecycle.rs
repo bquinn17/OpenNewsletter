@@ -13,12 +13,17 @@
 
 mod common;
 
-use chrono::{Duration, TimeZone, Utc};
-use chrono_tz::America;
-use domain::{CandidateQuestion, CycleId, GroupId, NewsletterStatus, UserId};
+use common::utc;
+use domain::{
+    CandidateQuestion, CycleId, GroupId, NewsletterStatus, SignedDuration, Timestamp, UserId,
+};
 use persistence::{newsletters, questions};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
+
+fn new_york() -> jiff::tz::TimeZone {
+    shared::cycle_time::time_zone("America/New_York").expect("valid timezone")
+}
 
 fn settings() -> domain::CycleSettings {
     persistence::test_factories::group("unused", "unused").cycle_settings
@@ -92,18 +97,18 @@ async fn tick_auto_publishes_an_open_cycle_past_its_deadline() {
 
     let mut nl = common::voting_newsletter("g1", "202606");
     nl.status = NewsletterStatus::Open;
-    nl.next_transition_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    nl.next_transition_at = Some(utc("2026-06-05T00:00:00Z"));
     newsletters::write_status_transition(&repo, &nl)
         .await
         .unwrap();
 
-    let now = Utc.with_ymd_and_hms(2026, 6, 6, 0, 0, 0).unwrap();
+    let now = utc("2026-06-06T00:00:00Z");
     let due = newsletters::list_cycles_due(&repo, NewsletterStatus::Open, now)
         .await
         .unwrap();
     assert_eq!(due.len(), 1);
 
-    let published_at = Utc.with_ymd_and_hms(2026, 6, 6, 0, 0, 0).unwrap();
+    let published_at = utc("2026-06-06T00:00:00Z");
     newsletters::publish_cycle(&repo, &group_id, &cycle_id, published_at)
         .await
         .unwrap();
@@ -161,7 +166,7 @@ async fn publish_is_idempotent_across_rapid_reruns() {
         .await
         .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     newsletters::publish_cycle(&repo, &group_id, &cycle_id, now)
         .await
         .unwrap();
@@ -175,9 +180,9 @@ async fn publish_is_idempotent_across_rapid_reruns() {
 async fn create_next_voting_cycle_is_idempotent_across_rapid_reruns() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("g1");
-    let after = Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap();
+    let after = utc("2026-05-15T00:00:00Z");
     let schedule =
-        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
+        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, &new_york(), 4);
 
     newsletters::create_next_voting_cycle(&repo, &group_id, schedule.clone(), &settings())
         .await
@@ -221,7 +226,7 @@ async fn a_cycle_with_no_candidates_still_opens_and_publishes_empty() {
     assert_eq!(opened.locked_question_ids, Vec::new());
 
     // The empty edition still auto-publishes on schedule.
-    let published_at = Utc::now();
+    let published_at = Timestamp::now();
     newsletters::publish_cycle(&repo, &group_id, &cycle_id, published_at)
         .await
         .unwrap();
@@ -241,7 +246,7 @@ async fn settings_change_recomputes_a_voting_cycle_with_no_candidates() {
     // canned `cycle_id` under the real schedule formula, so pin it explicitly
     // to an instant that actually derives "202606" in `America/New_York`.
     let mut nl = common::voting_newsletter("g1", "202606");
-    nl.vote_window_open_at = Utc.with_ymd_and_hms(2026, 5, 15, 12, 0, 0).unwrap();
+    nl.vote_window_open_at = utc("2026-05-15T12:00:00Z");
     newsletters::write_status_transition(&repo, &nl)
         .await
         .unwrap();
@@ -260,7 +265,7 @@ async fn settings_change_recomputes_a_voting_cycle_with_no_candidates() {
     let schedule = shared::cycle_time::next_cycle_schedule(
         CycleCadence::Monthly,
         voting.vote_window_open_at,
-        chrono_tz::America::New_York,
+        &new_york(),
         7, // was 4
     );
     assert_eq!(
@@ -283,7 +288,7 @@ async fn settings_change_recomputes_a_voting_cycle_with_no_candidates() {
         .unwrap();
     assert_eq!(
         updated.response_close_at - updated.response_open_at,
-        Duration::days(7)
+        SignedDuration::from_hours(7 * 24)
     );
 }
 
@@ -372,18 +377,15 @@ async fn create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_ds
     // docs/design/lifecycle.md §11 #8: a New York cycle whose responseOpenAt
     // is 2026-03-01 must land at the right UTC instant. 2026 US DST starts
     // March 8, so March 1 is still EST (UTC-5).
-    let after = Utc.with_ymd_and_hms(2026, 2, 10, 0, 0, 0).unwrap();
+    let after = utc("2026-02-10T00:00:00Z");
     let schedule =
-        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
+        shared::cycle_time::next_cycle_schedule(CycleCadence::Monthly, after, &new_york(), 4);
     let created = newsletters::create_next_voting_cycle(&repo, &group_id, schedule, &settings())
         .await
         .unwrap();
 
     assert_eq!(created.cycle_id, CycleId::new("202603"));
-    assert_eq!(
-        created.response_open_at,
-        Utc.with_ymd_and_hms(2026, 3, 1, 5, 0, 0).unwrap()
-    );
+    assert_eq!(created.response_open_at, utc("2026-03-01T05:00:00Z"));
 
     let persisted = newsletters::get_newsletter(&repo, &group_id, &created.cycle_id)
         .await

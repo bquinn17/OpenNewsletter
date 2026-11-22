@@ -80,7 +80,7 @@ mod tests {
             display_order: 0,
             submitted_by: domain::UserId::new("u1"),
             is_anonymous: false,
-            locked_at: chrono::Utc::now(),
+            locked_at: domain::Timestamp::now(),
         }
     }
 

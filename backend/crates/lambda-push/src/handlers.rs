@@ -5,13 +5,14 @@ use crate::validation;
 use crate::{delivery, metrics, payload};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chrono::Utc;
 use domain::api::{
     PushDeliveryOutcome, PushPreferenceListResponse, PushPreferenceResponse, PushSubscribeRequest,
     PushSubscribeResponse, PushSubscriptionListResponse, PushSubscriptionResponse,
     PushTestResponse, PushTestResult, PushUnsubscribeRequest, PutPushPreferenceRequest,
 };
-use domain::{ApiError, GroupId, NotificationPref, PushSubscription, SubscriptionId, UserId};
+use domain::{
+    ApiError, GroupId, NotificationPref, PushSubscription, SubscriptionId, Timestamp, UserId,
+};
 use persistence::{auth, groups, push as push_repo};
 use sha2::{Digest, Sha256};
 use shared::config::PUSH_TEST_SEND_CUTOFF_SECS;
@@ -37,7 +38,7 @@ pub async fn subscribe(
         &p256dh,
         &auth_secret,
         &user_agent,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .map_err(|e| {

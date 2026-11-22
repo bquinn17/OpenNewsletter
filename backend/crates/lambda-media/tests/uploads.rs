@@ -627,7 +627,7 @@ async fn stripping_a_draft_fails_once_the_draft_has_changed() {
         &repo,
         &read,
         &ImageId::new("img-1"),
-        chrono::Utc::now(),
+        domain::Timestamp::now(),
     )
     .await
     .expect_err("the draft is no longer what was read");
@@ -771,7 +771,7 @@ async fn mark_ready_with_keys(
             height: 800,
             display_key: "img/gurls/202606/q1/u1/img-1/display.webp",
             thumb_key: "img/gurls/202606/q1/u1/img-1/thumb.webp",
-            processed_at: chrono::Utc::now(),
+            processed_at: domain::Timestamp::now(),
         },
     )
     .await

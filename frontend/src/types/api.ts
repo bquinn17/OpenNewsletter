@@ -1409,7 +1409,7 @@ export interface operations {
                      *       "avatarColor": "teal",
                      *       "avatarMediaId": null,
                      *       "avatarUrl": null,
-                     *       "createdAt": "2026-01-15T18:04:00Z"
+                     *       "createdAt": "2026-01-15T18:04:00.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["UserResponse"];
@@ -1452,7 +1452,7 @@ export interface operations {
                      *       "avatarColor": "teal",
                      *       "avatarMediaId": null,
                      *       "avatarUrl": null,
-                     *       "createdAt": "2026-01-15T18:04:00Z"
+                     *       "createdAt": "2026-01-15T18:04:00.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["UserResponse"];
@@ -1493,7 +1493,7 @@ export interface operations {
                      * @example {
                      *       "code": "ABCD-EFGH-JKMN-PQRS",
                      *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
-                     *       "expiresAt": "2026-02-01T00:00:00Z",
+                     *       "expiresAt": "2026-02-01T00:00:00.000Z",
                      *       "roleOnRedeem": "admin",
                      *       "boundEmail": "quinn@example.com"
                      *     }
@@ -1532,8 +1532,8 @@ export interface operations {
                      *           "status": "pending",
                      *           "roleOnRedeem": "member",
                      *           "createdBy": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
-                     *           "createdAt": "2026-01-25T00:00:00Z",
-                     *           "expiresAt": "2026-02-01T00:00:00Z",
+                     *           "createdAt": "2026-01-25T00:00:00.000Z",
+                     *           "expiresAt": "2026-02-01T00:00:00.000Z",
                      *           "consumedBy": null,
                      *           "consumedAt": null,
                      *           "boundEmail": null
@@ -1668,7 +1668,7 @@ export interface operations {
                      *       },
                      *       "memberCount": 1,
                      *       "memberSoftCap": 50,
-                     *       "createdAt": "2026-01-01T00:00:00Z",
+                     *       "createdAt": "2026-01-01T00:00:00.000Z",
                      *       "members": [
                      *         {
                      *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
@@ -1676,7 +1676,7 @@ export interface operations {
                      *           "role": "admin",
                      *           "avatarColor": "teal",
                      *           "avatarUrl": null,
-                     *           "joinedAt": "2026-01-01T00:00:00Z",
+                     *           "joinedAt": "2026-01-01T00:00:00.000Z",
                      *           "editionsAnswered": 0
                      *         }
                      *       ]
@@ -1742,7 +1742,7 @@ export interface operations {
                      *       },
                      *       "memberCount": 1,
                      *       "memberSoftCap": 50,
-                     *       "createdAt": "2026-01-01T00:00:00Z",
+                     *       "createdAt": "2026-01-01T00:00:00.000Z",
                      *       "members": [
                      *         {
                      *           "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
@@ -1750,7 +1750,7 @@ export interface operations {
                      *           "role": "admin",
                      *           "avatarColor": "teal",
                      *           "avatarUrl": null,
-                     *           "joinedAt": "2026-01-01T00:00:00Z",
+                     *           "joinedAt": "2026-01-01T00:00:00.000Z",
                      *           "editionsAnswered": 0
                      *         }
                      *       ]
@@ -1850,7 +1850,7 @@ export interface operations {
                      *       "role": "admin",
                      *       "avatarColor": "teal",
                      *       "avatarUrl": null,
-                     *       "joinedAt": "2026-01-01T00:00:00Z",
+                     *       "joinedAt": "2026-01-01T00:00:00.000Z",
                      *       "editionsAnswered": 0
                      *     }
                      */
@@ -1943,8 +1943,8 @@ export interface operations {
                      *         {
                      *           "cycleId": "202606",
                      *           "status": "open",
-                     *           "responseOpenAt": "2026-06-01T00:00:00Z",
-                     *           "responseCloseAt": "2026-06-05T00:00:00Z",
+                     *           "responseOpenAt": "2026-06-01T00:00:00.000Z",
+                     *           "responseCloseAt": "2026-06-05T00:00:00.000Z",
                      *           "publishedAt": null,
                      *           "questionCount": 5,
                      *           "myDraftCount": 2,
@@ -1987,8 +1987,8 @@ export interface operations {
                      * @example {
                      *       "cycleId": "202606",
                      *       "status": "published",
-                     *       "responseCloseAt": "2026-06-05T00:00:00Z",
-                     *       "publishedAt": "2026-06-05T00:00:01Z",
+                     *       "responseCloseAt": "2026-06-05T00:00:00.000Z",
+                     *       "publishedAt": "2026-06-05T00:00:01.000Z",
                      *       "questions": [
                      *         {
                      *           "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
@@ -2009,7 +2009,7 @@ export interface operations {
                      *               "displayName": "Quinn",
                      *               "body": "Lake 22, hands down.",
                      *               "images": [],
-                     *               "publishedAt": "2026-06-03T12:00:00Z",
+                     *               "publishedAt": "2026-06-03T12:00:00.000Z",
                      *               "comments": [],
                      *               "reactionGroups": [
                      *                 {
@@ -2097,7 +2097,7 @@ export interface operations {
                      *           "isAnonymous": false,
                      *           "voteCount": 7,
                      *           "votedByMe": true,
-                     *           "submittedAt": "2026-05-20T00:00:00Z"
+                     *           "submittedAt": "2026-05-20T00:00:00.000Z"
                      *         },
                      *         {
                      *           "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
@@ -2117,7 +2117,7 @@ export interface operations {
                      *           "isAnonymous": true,
                      *           "voteCount": 5,
                      *           "votedByMe": false,
-                     *           "submittedAt": "2026-05-21T00:00:00Z"
+                     *           "submittedAt": "2026-05-21T00:00:00.000Z"
                      *         }
                      *       ],
                      *       "nextCursor": null
@@ -2173,7 +2173,7 @@ export interface operations {
                      *       "isAnonymous": false,
                      *       "voteCount": 0,
                      *       "votedByMe": false,
-                     *       "submittedAt": "2026-05-22T00:00:00Z"
+                     *       "submittedAt": "2026-05-22T00:00:00.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["CandidateItemResponse"];
@@ -2329,7 +2329,7 @@ export interface operations {
                      *       "status": "draft",
                      *       "body": "Lake 22, hands down.",
                      *       "imageMediaIds": [],
-                     *       "updatedAt": "2026-06-02T10:00:00Z",
+                     *       "updatedAt": "2026-06-02T10:00:00.000Z",
                      *       "publishedAt": null
                      *     }
                      */
@@ -2384,7 +2384,7 @@ export interface operations {
                      *           "displayName": "Alex",
                      *           "body": "Same — the switchbacks are brutal.",
                      *           "image": null,
-                     *           "createdAt": "2026-06-05T09:00:00Z",
+                     *           "createdAt": "2026-06-05T09:00:00.000Z",
                      *           "editedAt": null,
                      *           "deletedAt": null
                      *         }
@@ -2453,7 +2453,7 @@ export interface operations {
                      *         "height": 800,
                      *         "caption": null
                      *       },
-                     *       "createdAt": "2026-06-05T09:00:00Z",
+                     *       "createdAt": "2026-06-05T09:00:00.000Z",
                      *       "editedAt": null,
                      *       "deletedAt": null
                      *     }
@@ -2549,8 +2549,8 @@ export interface operations {
                      *       "displayName": "Alex",
                      *       "body": "Same — the switchbacks are brutal. Worth it though.",
                      *       "image": null,
-                     *       "createdAt": "2026-06-05T09:00:00Z",
-                     *       "editedAt": "2026-06-05T09:10:00Z",
+                     *       "createdAt": "2026-06-05T09:00:00.000Z",
+                     *       "editedAt": "2026-06-05T09:10:00.000Z",
                      *       "deletedAt": null
                      *     }
                      */
@@ -2823,8 +2823,8 @@ export interface operations {
                      *       "displayUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "thumbUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "errorMessage": null,
-                     *       "uploadedAt": "2026-06-02T10:00:00Z",
-                     *       "processedAt": "2026-06-02T10:00:04Z"
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
+                     *       "processedAt": "2026-06-02T10:00:04.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["ImageMediaResponse"];
@@ -2917,7 +2917,7 @@ export interface operations {
                      *       "displayUrl": null,
                      *       "thumbUrl": null,
                      *       "errorMessage": null,
-                     *       "uploadedAt": "2026-06-02T10:00:00Z",
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
                      *       "processedAt": null
                      *     }
                      */
@@ -2972,8 +2972,8 @@ export interface operations {
                      *       "displayUrl": null,
                      *       "thumbUrl": null,
                      *       "errorMessage": "IMAGE_TOO_LARGE",
-                     *       "uploadedAt": "2026-06-02T10:00:00Z",
-                     *       "processedAt": "2026-06-02T10:00:02Z"
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
+                     *       "processedAt": "2026-06-02T10:00:02.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["ImageMediaResponse"];
@@ -3052,8 +3052,8 @@ export interface operations {
                      *       "bytes": 204800,
                      *       "avatarUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/avatar/018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "errorMessage": null,
-                     *       "uploadedAt": "2026-06-02T10:00:00Z",
-                     *       "processedAt": "2026-06-02T10:00:01Z"
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
+                     *       "processedAt": "2026-06-02T10:00:01.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["AvatarMediaResponse"];
@@ -3176,8 +3176,8 @@ export interface operations {
                      *           "subscriptionId": "Wk0fV7cQx8yHn2Jp3sLqT9aBcDeFgHiJkLmNoPqRsTu",
                      *           "endpoint": "https://fcm.googleapis.com/fcm/send/c1KrmpTuRm0:APA91bG",
                      *           "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/129.0",
-                     *           "createdAt": "2026-10-05T14:00:00Z",
-                     *           "lastSuccessAt": "2026-10-05T14:01:00Z",
+                     *           "createdAt": "2026-10-05T14:00:00.000Z",
+                     *           "lastSuccessAt": "2026-10-05T14:01:00.000Z",
                      *           "failureCount": 0
                      *         }
                      *       ]
@@ -3316,7 +3316,7 @@ export interface operations {
                      * @example {
                      *       "status": "ok",
                      *       "version": "161cb16",
-                     *       "buildAt": "2026-09-27T18:00:00Z"
+                     *       "buildAt": "2026-09-27T18:00:00.000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["HealthResponse"];

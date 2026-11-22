@@ -2,10 +2,9 @@
 #![allow(dead_code, unused_imports)]
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{DateTime, Duration, Utc};
 use domain::{
     CycleId, Group, GroupId, Newsletter, NewsletterStatus, PollOptionId, QuestionId, QuestionKind,
-    Role, UserId,
+    Role, SignedDuration, Timestamp, UserId,
 };
 use persistence::keys::{
     attr, membership_gsi1pk, membership_gsi1sk, membership_sk, response_pk, response_sk, user_pk,
@@ -61,18 +60,18 @@ pub async fn seed_open_cycle_with_cadence(
 ) -> Newsletter {
     let group: Group = group(group_id, "u1");
     groups::put_group(repo, &group).await.unwrap();
-    let now = Utc::now();
-    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let now = Timestamp::now();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
     let nl = Newsletter {
         group_id: GroupId::new(group_id),
-        cycle_id: shared::cycle_time::cycle_id_for(cadence, now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(cadence, now, &tz),
         status: NewsletterStatus::Open,
-        vote_window_open_at: now - Duration::days(30),
-        vote_window_close_at: now - Duration::days(1),
-        response_open_at: now - Duration::days(1),
-        response_close_at: now + Duration::days(5),
+        vote_window_open_at: now - SignedDuration::from_hours(30 * 24),
+        vote_window_close_at: now - SignedDuration::from_hours(24),
+        response_open_at: now - SignedDuration::from_hours(24),
+        response_close_at: now + SignedDuration::from_hours(5 * 24),
         published_at: None,
-        next_transition_at: Some(now + Duration::days(5)),
+        next_transition_at: Some(now + SignedDuration::from_hours(5 * 24)),
         locked_question_ids: locked.iter().map(|q| QuestionId::new(*q)).collect(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
@@ -131,7 +130,7 @@ pub async fn save(
         image_media_ids: &images,
         publish,
     };
-    responses::save_response(repo, &save, Utc::now(), publish)
+    responses::save_response(repo, &save, Timestamp::now(), publish)
         .await
         .unwrap();
 }
@@ -165,8 +164,8 @@ pub async fn put_ready_image(
         width: Some(100),
         height: Some(100),
         caption: None,
-        uploaded_at: Utc::now(),
-        processed_at: Some(Utc::now()),
+        uploaded_at: Timestamp::now(),
+        processed_at: Some(Timestamp::now()),
         error_message: None,
         attached_comment_id: None,
     };
@@ -200,10 +199,14 @@ pub async fn put_unreadable_answer(repo: &Repo, nl: &Newsletter, question_id: &s
 /// Move the open cycle's close into the past, as the dev fast-forward does,
 /// and return the row as the tick will now see it.
 pub async fn close_cycle(repo: &Repo, nl: &Newsletter) -> Newsletter {
-    newsletters::rewind_active_cycle_deadline(repo, &nl.group_id, Duration::days(6))
-        .await
-        .unwrap()
-        .expect("the group has an open cycle")
+    newsletters::rewind_active_cycle_deadline(
+        repo,
+        &nl.group_id,
+        SignedDuration::from_hours(6 * 24),
+    )
+    .await
+    .unwrap()
+    .expect("the group has an open cycle")
 }
 
 pub async fn response(
@@ -242,8 +245,8 @@ pub async fn status(repo: &Repo, group_id: &GroupId, cycle_id: &CycleId) -> News
         .status
 }
 
-pub fn seconds(dt: DateTime<Utc>) -> i64 {
-    dt.timestamp()
+pub fn seconds(ts: Timestamp) -> i64 {
+    ts.as_unix_seconds()
 }
 
 /// A member's `MemberStats` row, or `None` if it has never been written.

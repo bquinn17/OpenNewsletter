@@ -3,14 +3,13 @@
 
 use crate::code;
 use crate::state::AppState;
-use chrono::{Duration, Utc};
 use domain::api::{
     CreateInviteRequest, CreateInviteResponse, InviteListResponse, InviteSummary, RedeemRequest,
     RedeemResponse,
 };
 use domain::{
     ApiError, ApiErrorCode, Group, GroupId, GroupMembership, Invite, InviteCode, InviteStatus,
-    User, UserId,
+    SignedDuration, Timestamp, User, UserId,
 };
 use persistence::{auth, groups, invites, RepoError};
 use shared::config::{
@@ -40,8 +39,8 @@ pub async fn create_invite(
         .map(normalize_bound_email)
         .transpose()?;
 
-    let now = Utc::now();
-    let expires_at = now + Duration::days(i64::from(ttl_days));
+    let now = Timestamp::now();
+    let expires_at = now + SignedDuration::from_hours(i64::from(ttl_days) * 24);
     let invite = Invite {
         code: code::generate(),
         group_id: request.group_id,
@@ -56,7 +55,9 @@ pub async fn create_invite(
     };
 
     // The row outlives the invite itself so admins can audit who joined with what.
-    let ttl_epoch_seconds = (expires_at + Duration::days(INVITE_AUDIT_RETENTION_DAYS)).timestamp();
+    let ttl_epoch_seconds = (expires_at
+        + SignedDuration::from_hours(INVITE_AUDIT_RETENTION_DAYS * 24))
+    .as_unix_seconds();
 
     invites::put_invite(&state.repo, &invite, ttl_epoch_seconds)
         .await
@@ -210,7 +211,7 @@ pub async fn redeem(
         ));
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (user_id, new_user) = match &existing_user_id {
         Some(user_id) => (user_id.clone(), None),
         None => {
@@ -242,7 +243,7 @@ pub async fn redeem(
         &invite,
         &membership,
         new_user.as_ref(),
-        &now.to_rfc3339(),
+        &now.to_string(),
         group.member_soft_cap,
     )
     .await
@@ -290,7 +291,7 @@ fn check_redeemable(invite: &Invite) -> Result<(), ApiError> {
             ApiErrorCode::InviteInvalid,
             "invite has been revoked",
         )),
-        InviteStatus::Pending if invite.expires_at <= Utc::now() => Err(ApiError::new(
+        InviteStatus::Pending if invite.expires_at <= Timestamp::now() => Err(ApiError::new(
             ApiErrorCode::InviteExpired,
             "invite has expired",
         )),
@@ -327,12 +328,12 @@ async fn load_group(state: &AppState, group_id: &GroupId) -> Result<Group, ApiEr
 mod tests {
     use super::*;
 
-    fn invite_with(status: InviteStatus, expires_at: chrono::DateTime<Utc>) -> Invite {
+    fn invite_with(status: InviteStatus, expires_at: Timestamp) -> Invite {
         Invite {
             code: InviteCode::new("ABCDEFGHJKMNPQRS"),
             group_id: GroupId::new("01HG2"),
             created_by: UserId::new("01HX1"),
-            created_at: Utc::now() - Duration::days(1),
+            created_at: Timestamp::now() - SignedDuration::from_hours(24),
             expires_at,
             status,
             consumed_by: None,
@@ -344,27 +345,39 @@ mod tests {
 
     #[test]
     fn a_pending_unexpired_invite_is_redeemable() {
-        let invite = invite_with(InviteStatus::Pending, Utc::now() + Duration::days(1));
+        let invite = invite_with(
+            InviteStatus::Pending,
+            Timestamp::now() + SignedDuration::from_hours(24),
+        );
         assert!(check_redeemable(&invite).is_ok());
     }
 
     #[test]
     fn an_expired_invite_is_refused() {
-        let invite = invite_with(InviteStatus::Pending, Utc::now() - Duration::minutes(1));
+        let invite = invite_with(
+            InviteStatus::Pending,
+            Timestamp::now() - SignedDuration::from_mins(1),
+        );
         let err = check_redeemable(&invite).expect_err("expired");
         assert_eq!(err.code, ApiErrorCode::InviteExpired);
     }
 
     #[test]
     fn a_consumed_invite_is_refused() {
-        let invite = invite_with(InviteStatus::Consumed, Utc::now() + Duration::days(1));
+        let invite = invite_with(
+            InviteStatus::Consumed,
+            Timestamp::now() + SignedDuration::from_hours(24),
+        );
         let err = check_redeemable(&invite).expect_err("consumed");
         assert_eq!(err.code, ApiErrorCode::InviteConsumed);
     }
 
     #[test]
     fn a_revoked_invite_is_refused() {
-        let invite = invite_with(InviteStatus::Revoked, Utc::now() + Duration::days(1));
+        let invite = invite_with(
+            InviteStatus::Revoked,
+            Timestamp::now() + SignedDuration::from_hours(24),
+        );
         let err = check_redeemable(&invite).expect_err("revoked");
         assert_eq!(err.code, ApiErrorCode::InviteInvalid);
     }

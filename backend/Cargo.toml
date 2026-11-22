@@ -46,8 +46,9 @@ thiserror = "1"
 tracing = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v7", "v4", "serde"] }
-chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
-chrono-tz = "0.9"
+# The IANA time-zone database is compiled in: provided.al2023 may not
+# ship /usr/share/zoneinfo (`docs/decisions.md#jiff`).
+jiff = { version = "1", features = ["serde", "tzdb-bundle-always"] }
 async-trait = "0.1"
 futures = "0.3"
 pretty_assertions = "1"

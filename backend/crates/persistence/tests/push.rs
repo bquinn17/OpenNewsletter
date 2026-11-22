@@ -1,6 +1,7 @@
 mod common;
 
-use chrono::{Duration, TimeZone, Utc};
+use common::utc;
+use domain::SignedDuration;
 use domain::{CycleId, PushSubscription};
 use domain::{GroupId, UserId};
 use persistence::push;
@@ -93,7 +94,7 @@ async fn it_resubscribe_keeps_created_at_and_last_success_but_resets_failures() 
     let (_c, repo) = common::make_repo().await;
     let s = common::push_subscription("u1", "hash-aaa");
     upsert(&repo, &s).await;
-    let delivered_at = s.created_at + Duration::hours(1);
+    let delivered_at = s.created_at + SignedDuration::from_hours(1);
     push::mark_delivered(&repo, &s.user_id, "hash-aaa", delivered_at)
         .await
         .unwrap();
@@ -102,7 +103,7 @@ async fn it_resubscribe_keeps_created_at_and_last_success_but_resets_failures() 
         .unwrap();
 
     let mut again = s.clone();
-    again.created_at = s.created_at + Duration::days(3);
+    again.created_at = s.created_at + SignedDuration::from_hours(3 * 24);
     again.p256dh = "rotated".into();
     upsert(&repo, &again).await;
 
@@ -117,10 +118,10 @@ async fn it_resubscribe_keeps_created_at_and_last_success_but_resets_failures() 
 #[tokio::test]
 async fn it_evicts_the_least_recently_successful_sub_at_the_cap() {
     let (_c, repo) = common::make_repo().await;
-    let base = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+    let base = utc("2026-06-01T00:00:00Z");
     for i in 0..MAX_PUSH_SUBSCRIPTIONS_PER_USER {
         let mut s = common::push_subscription("u1", &format!("hash-{i:02}"));
-        s.created_at = base + Duration::minutes(i as i64);
+        s.created_at = base + SignedDuration::from_mins(i as i64);
         upsert(&repo, &s).await;
         // Every sub but hash-05 has delivered at least once, so hash-05 is
         // the eviction victim despite not being the oldest.
@@ -129,7 +130,7 @@ async fn it_evicts_the_least_recently_successful_sub_at_the_cap() {
                 &repo,
                 &s.user_id,
                 &s.endpoint_hash,
-                base + Duration::days(1),
+                base + SignedDuration::from_hours(24),
             )
             .await
             .unwrap();
@@ -200,7 +201,7 @@ async fn it_claims_each_notified_marker_at_most_once() {
     let (_c, repo) = common::make_repo().await;
     let g = GroupId::new("g-markers");
     let c = CycleId::new("202606");
-    let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+    let now = utc("2026-06-01T00:00:00Z");
 
     assert!(push::claim_open_notified_marker(&repo, &g, &c, now)
         .await

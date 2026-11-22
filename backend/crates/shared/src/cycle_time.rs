@@ -5,12 +5,10 @@
 //! a deployment picks (`docs/design/lifecycle.md` §13): `monthly` (`cycleId =
 //! yyyymm`) or `weekly` (`cycleId = yyyymmdd`).
 
-use chrono::{
-    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
-    Weekday,
-};
-use chrono_tz::Tz;
-use domain::CycleId;
+use domain::{CycleId, Timestamp};
+use jiff::civil::{Date, Time, Weekday};
+use jiff::tz::{AmbiguousOffset, TimeZone};
+use jiff::ToSpan;
 
 /// How often this deployment runs a cycle, set once per deployment via Lambda
 /// env vars (`CYCLE_FREQUENCY`/`CYCLE_WEEKLY_START`), never per group.
@@ -20,7 +18,7 @@ pub enum CycleCadence {
     /// The group-local instant each weekly cycle opens (`responseOpenAt`).
     Weekly {
         weekday: Weekday,
-        at: NaiveTime,
+        at: Time,
     },
 }
 
@@ -89,10 +87,23 @@ impl CycleCadence {
     }
 }
 
+/// The one time-zone lookup: an exact, case-sensitive IANA name. jiff's
+/// `TimeZone::get` is case-insensitive (`america/new_york` resolves), so this
+/// rejects any name whose `iana_name()` doesn't echo `name` back exactly, and
+/// a group's stored `timezone` is always the canonical spelling.
+pub fn time_zone(name: &str) -> Option<TimeZone> {
+    let tz = TimeZone::get(name).ok()?;
+    if tz.iana_name() == Some(name) {
+        Some(tz)
+    } else {
+        None
+    }
+}
+
 /// `<day> <HH>:<MM>`: `<day>` is a 3-letter or full English weekday name
 /// (case-insensitive), one space, then a strict two-digit `HH:MM` (`00`-`23`,
 /// `00`-`59`) — no single-digit hours/minutes, no missing separator.
-fn parse_weekly_start(raw: &str) -> Option<(Weekday, NaiveTime)> {
+fn parse_weekly_start(raw: &str) -> Option<(Weekday, Time)> {
     let (day, time) = raw.split_once(' ')?;
     if time.contains(' ') {
         return None;
@@ -102,28 +113,28 @@ fn parse_weekly_start(raw: &str) -> Option<(Weekday, NaiveTime)> {
 
 fn parse_weekday(raw: &str) -> Option<Weekday> {
     match raw.to_ascii_lowercase().as_str() {
-        "mon" | "monday" => Some(Weekday::Mon),
-        "tue" | "tuesday" => Some(Weekday::Tue),
-        "wed" | "wednesday" => Some(Weekday::Wed),
-        "thu" | "thursday" => Some(Weekday::Thu),
-        "fri" | "friday" => Some(Weekday::Fri),
-        "sat" | "saturday" => Some(Weekday::Sat),
-        "sun" | "sunday" => Some(Weekday::Sun),
+        "mon" | "monday" => Some(Weekday::Monday),
+        "tue" | "tuesday" => Some(Weekday::Tuesday),
+        "wed" | "wednesday" => Some(Weekday::Wednesday),
+        "thu" | "thursday" => Some(Weekday::Thursday),
+        "fri" | "friday" => Some(Weekday::Friday),
+        "sat" | "saturday" => Some(Weekday::Saturday),
+        "sun" | "sunday" => Some(Weekday::Sunday),
         _ => None,
     }
 }
 
-fn parse_hhmm(raw: &str) -> Option<NaiveTime> {
+fn parse_hhmm(raw: &str) -> Option<Time> {
     let (hh, mm) = raw.split_once(':')?;
     if hh.len() != 2 || mm.len() != 2 {
         return None;
     }
-    let hour: u32 = hh.parse().ok()?;
-    let minute: u32 = mm.parse().ok()?;
-    if hour > 23 || minute > 59 {
+    let hour: i8 = hh.parse().ok()?;
+    let minute: i8 = mm.parse().ok()?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
         return None;
     }
-    NaiveTime::from_hms_opt(hour, minute, 0)
+    Time::new(hour, minute, 0, 0).ok()
 }
 
 /// A newly computed cycle's identity and window, derived from `(after, tz,
@@ -133,14 +144,14 @@ fn parse_hhmm(raw: &str) -> Option<NaiveTime> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CycleSchedule {
     pub cycle_id: CycleId,
-    pub response_open_at: DateTime<Utc>,
-    pub response_close_at: DateTime<Utc>,
+    pub response_open_at: Timestamp,
+    pub response_close_at: Timestamp,
 }
 
 /// `cycleId` of `response_open_at` in the group's local time zone (§4.1, §13):
 /// `yyyymm` for monthly, `yyyymmdd` for weekly.
-pub fn cycle_id_for(cadence: CycleCadence, response_open_at: DateTime<Utc>, tz: Tz) -> CycleId {
-    let local = response_open_at.with_timezone(&tz);
+pub fn cycle_id_for(cadence: CycleCadence, response_open_at: Timestamp, tz: &TimeZone) -> CycleId {
+    let local = tz.to_datetime(response_open_at.as_jiff());
     match cadence {
         CycleCadence::Monthly => CycleId::new(format!("{:04}{:02}", local.year(), local.month())),
         CycleCadence::Weekly { .. } => CycleId::new(format!(
@@ -155,18 +166,18 @@ pub fn cycle_id_for(cadence: CycleCadence, response_open_at: DateTime<Utc>, tz: 
 /// The local calendar date a `cycleId` encodes: a 6-digit id is `(year,
 /// month, 1)`, an 8-digit id is `(year, month, day)`. `None` unless it is a
 /// real calendar date — the digit-length check doubles as the format check.
-fn parse_cycle_id(cycle_id: &CycleId) -> Option<NaiveDate> {
+fn parse_cycle_id(cycle_id: &CycleId) -> Option<Date> {
     let id = cycle_id.as_str();
     if !id.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let year: i32 = id.get(..4)?.parse().ok()?;
-    let month: u32 = id.get(4..6)?.parse().ok()?;
+    let year: i16 = id.get(..4)?.parse().ok()?;
+    let month: i8 = id.get(4..6)?.parse().ok()?;
     match id.len() {
-        6 => NaiveDate::from_ymd_opt(year, month, 1),
+        6 => Date::new(year, month, 1).ok(),
         8 => {
-            let day: u32 = id.get(6..8)?.parse().ok()?;
-            NaiveDate::from_ymd_opt(year, month, day)
+            let day: i8 = id.get(6..8)?.parse().ok()?;
+            Date::new(year, month, day).ok()
         }
         _ => None,
     }
@@ -205,12 +216,12 @@ pub fn cycle_period(cycle_id: &CycleId) -> Option<CyclePeriod> {
 /// February), and the dev-only deadline rewind (`docs/design/api.md` §11a.1)
 /// moves `responseOpenAt` back by an arbitrary amount — the id is fixed at
 /// creation, so it always yields the following period.
-pub fn period_start(cadence: CycleCadence, cycle_id: &CycleId, tz: Tz) -> Option<DateTime<Utc>> {
+pub fn period_start(cadence: CycleCadence, cycle_id: &CycleId, tz: &TimeZone) -> Option<Timestamp> {
     let date = parse_cycle_id(cycle_id)?;
     match cadence {
         CycleCadence::Monthly => {
-            let first = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)?;
-            Some(local_to_utc(tz, first, NaiveTime::MIN))
+            let first = Date::new(date.year(), date.month(), 1).ok()?;
+            Some(local_to_utc(tz, first, Time::MIN))
         }
         CycleCadence::Weekly { at, .. } => Some(local_to_utc(tz, date, at)),
     }
@@ -218,14 +229,14 @@ pub fn period_start(cadence: CycleCadence, cycle_id: &CycleId, tz: Tz) -> Option
 
 /// The first period boundary strictly after `after`, in the group's local
 /// time zone — used for a group's very first cycle. Monthly is the 1st of the
-/// next month at local midnight. Weekly steps local calendar dates (never `+
-/// Duration::days(7)` in UTC, so DST can't drift the wall-clock hour) to the
-/// first `(weekday, at)` instant after `after`.
-pub fn next_period_start(cadence: CycleCadence, after: DateTime<Utc>, tz: Tz) -> DateTime<Utc> {
+/// next month at local midnight. Weekly steps local calendar dates (never a
+/// fixed UTC duration, so DST can't drift the wall-clock hour) to the first
+/// `(weekday, at)` instant after `after`.
+pub fn next_period_start(cadence: CycleCadence, after: Timestamp, tz: &TimeZone) -> Timestamp {
     match cadence {
         CycleCadence::Monthly => {
-            let local_date = after.with_timezone(&tz).date_naive();
-            local_to_utc(tz, next_month_first_day(local_date), NaiveTime::MIN)
+            let local_date = tz.to_datetime(after.as_jiff()).date();
+            local_to_utc(tz, next_month_first_day(local_date), Time::MIN)
         }
         CycleCadence::Weekly { weekday, at } => weekly_instant(after, tz, weekday, at, false),
     }
@@ -235,8 +246,8 @@ pub fn next_period_start(cadence: CycleCadence, after: DateTime<Utc>, tz: Tz) ->
 /// schedule formula. `response_window_days` is clamped to the cadence's cap.
 pub fn next_cycle_schedule(
     cadence: CycleCadence,
-    after: DateTime<Utc>,
-    tz: Tz,
+    after: Timestamp,
+    tz: &TimeZone,
     response_window_days: u32,
 ) -> CycleSchedule {
     let response_open_at = next_period_start(cadence, after, tz);
@@ -272,8 +283,8 @@ pub fn next_cycle_schedule(
 pub fn successor_schedule(
     cadence: CycleCadence,
     current_id: &CycleId,
-    current_close: DateTime<Utc>,
-    tz: Tz,
+    current_close: Timestamp,
+    tz: &TimeZone,
     response_window_days: u32,
 ) -> Option<CycleSchedule> {
     match cadence {
@@ -288,7 +299,7 @@ pub fn successor_schedule(
         }
         CycleCadence::Weekly { weekday, at } => {
             let id_date = parse_cycle_id(current_id)?;
-            let floor_from_id = local_to_utc(tz, id_date + Duration::days(7), NaiveTime::MIN);
+            let floor_from_id = local_to_utc(tz, id_date + 7.days(), Time::MIN);
             let floor = floor_from_id.max(current_close);
             let response_open_at = weekly_instant(floor, tz, weekday, at, true);
             let response_close_at = add_local_days(
@@ -306,8 +317,8 @@ pub fn successor_schedule(
 }
 
 /// The first day on/after `date` whose weekday is `weekday`.
-fn next_or_same_weekday(date: NaiveDate, weekday: Weekday) -> NaiveDate {
-    date + Duration::days(weekday.days_since(date.weekday()).into())
+fn next_or_same_weekday(date: Date, weekday: Weekday) -> Date {
+    date + date.weekday().until(weekday).days()
 }
 
 /// The first `(weekday, at)` group-local instant satisfying `floor`: on-or-after
@@ -315,13 +326,13 @@ fn next_or_same_weekday(date: NaiveDate, weekday: Weekday) -> NaiveDate {
 /// weeks from `floor`'s local date — never a fixed UTC duration — so a DST
 /// transition inside the gap can't drift the wall-clock hour.
 fn weekly_instant(
-    floor: DateTime<Utc>,
-    tz: Tz,
+    floor: Timestamp,
+    tz: &TimeZone,
     weekday: Weekday,
-    at: NaiveTime,
+    at: Time,
     inclusive: bool,
-) -> DateTime<Utc> {
-    let mut candidate_date = next_or_same_weekday(floor.with_timezone(&tz).date_naive(), weekday);
+) -> Timestamp {
+    let mut candidate_date = next_or_same_weekday(tz.to_datetime(floor.as_jiff()).date(), weekday);
     loop {
         let candidate = local_to_utc(tz, candidate_date, at);
         let satisfied = if inclusive {
@@ -332,12 +343,12 @@ fn weekly_instant(
         if satisfied {
             return candidate;
         }
-        candidate_date += Duration::days(7);
+        candidate_date += 7.days();
     }
 }
 
 /// The first day of the month after `date`.
-fn next_month_first_day(date: NaiveDate) -> NaiveDate {
+fn next_month_first_day(date: Date) -> Date {
     let (year, month) = if date.month() == 12 {
         (date.year() + 1, 1)
     } else {
@@ -345,8 +356,8 @@ fn next_month_first_day(date: NaiveDate) -> NaiveDate {
     };
     // Day 1 is valid in every month — this is an invariant, not a reachable
     // runtime failure.
-    NaiveDate::from_ymd_opt(year, month, 1)
-        .unwrap_or_else(|| unreachable!("day 1 is invalid in {year:04}-{month:02}"))
+    Date::new(year, month, 1)
+        .unwrap_or_else(|_| unreachable!("day 1 is invalid in {year:04}-{month:02}"))
 }
 
 /// `start`'s local date advanced by `days`, keeping its local time-of-day,
@@ -357,14 +368,14 @@ fn next_month_first_day(date: NaiveDate) -> NaiveDate {
 /// could land an hour after the next period's own local start across a
 /// spring-forward week, pushing `successor_schedule`'s `max()` floor a whole
 /// week late).
-fn add_local_days(start: DateTime<Utc>, days: u32, tz: Tz) -> DateTime<Utc> {
-    let local = start.with_timezone(&tz);
-    let date = local.date_naive() + Duration::days(days.into());
+fn add_local_days(start: Timestamp, days: u32, tz: &TimeZone) -> Timestamp {
+    let local = tz.to_datetime(start.as_jiff());
+    let date = local.date() + i64::from(days).days();
     local_to_utc(tz, date, local.time())
 }
 
 /// Resolve `date` at `time`, local to `tz`, to a UTC instant, without ever
-/// unwrapping a `LocalResult`.
+/// unwrapping an ambiguous offset.
 ///
 /// A local `(date, time)` can be ambiguous (DST fall-back) or nonexistent
 /// (DST spring-forward landing exactly on it). Neither case may panic: an
@@ -373,31 +384,56 @@ fn add_local_days(start: DateTime<Utc>, days: u32, tz: Tz) -> DateTime<Utc> {
 /// normally later the same day, but a gap that runs past midnight (a late
 /// `CYCLE_WEEKLY_START` in a zone that springs forward at 23:00) carries
 /// into the next day rather than failing.
-fn local_to_utc(tz: Tz, date: NaiveDate, time: NaiveTime) -> DateTime<Utc> {
-    let start = NaiveDateTime::new(date, time);
+fn local_to_utc(tz: &TimeZone, date: Date, time: Time) -> Timestamp {
+    let start = date.at(
+        time.hour(),
+        time.minute(),
+        time.second(),
+        time.subsec_nanosecond(),
+    );
     for hours in 0..24 {
-        match tz.from_local_datetime(&(start + Duration::hours(hours))) {
-            LocalResult::Single(dt) => return dt.with_timezone(&Utc),
-            LocalResult::Ambiguous(earliest, _latest) => return earliest.with_timezone(&Utc),
-            LocalResult::None => continue,
+        let candidate = start + hours.hours();
+        match tz.to_ambiguous_timestamp(candidate).offset() {
+            AmbiguousOffset::Unambiguous { offset } => {
+                let ts = offset
+                    .to_timestamp(candidate)
+                    .unwrap_or_else(|_| unreachable!("in-range civil datetime overflowed"));
+                return Timestamp::from_jiff(ts);
+            }
+            // The earliest instant in a fold: the offset from before the
+            // fold, applied to the (repeated) civil time.
+            AmbiguousOffset::Fold { before, .. } => {
+                let ts = before
+                    .to_timestamp(candidate)
+                    .unwrap_or_else(|_| unreachable!("in-range civil datetime overflowed"));
+                return Timestamp::from_jiff(ts);
+            }
+            // Nonexistent — step forward another hour.
+            AmbiguousOffset::Gap { .. } => continue,
         }
     }
     // No real IANA zone skips a whole day's worth of hours — DST shifts are at
     // most a few hours. This is an invariant, not a reachable runtime failure.
-    unreachable!("no valid local time within 24h of {start} in {tz}");
+    unreachable!("no valid local time within 24h of {start} in {tz:?}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono_tz::{America, Pacific, Tz, UTC};
+    use domain::SignedDuration;
 
-    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).unwrap()
+    fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> Timestamp {
+        format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+            .parse()
+            .expect("valid test timestamp")
     }
 
-    fn hms(h: u32, mi: u32, s: u32) -> NaiveTime {
-        NaiveTime::from_hms_opt(h, mi, s).unwrap()
+    fn hms(h: i8, mi: i8, s: i8) -> Time {
+        Time::new(h, mi, s, 0).unwrap()
+    }
+
+    fn tz(name: &str) -> TimeZone {
+        TimeZone::get(name).unwrap_or_else(|e| panic!("{name}: {e}"))
     }
 
     // -- CycleCadence::parse -------------------------------------------------
@@ -423,7 +459,7 @@ mod tests {
         assert_eq!(
             CycleCadence::parse(Some("Weekly"), Some("sun 21:00")).unwrap(),
             CycleCadence::Weekly {
-                weekday: Weekday::Sun,
+                weekday: Weekday::Sunday,
                 at: hms(21, 0, 0)
             }
         );
@@ -434,14 +470,14 @@ mod tests {
         assert_eq!(
             CycleCadence::parse(Some("weekly"), Some("sun 21:00")).unwrap(),
             CycleCadence::Weekly {
-                weekday: Weekday::Sun,
+                weekday: Weekday::Sunday,
                 at: hms(21, 0, 0)
             }
         );
         assert_eq!(
             CycleCadence::parse(Some("weekly"), Some("SUNDAY 09:05")).unwrap(),
             CycleCadence::Weekly {
-                weekday: Weekday::Sun,
+                weekday: Weekday::Sunday,
                 at: hms(9, 5, 0)
             }
         );
@@ -450,7 +486,7 @@ mod tests {
     #[test]
     fn parse_defaults_weekly_start_when_unset_or_empty() {
         let expected = CycleCadence::Weekly {
-            weekday: Weekday::Sun,
+            weekday: Weekday::Sunday,
             at: hms(21, 0, 0),
         };
         assert_eq!(CycleCadence::parse(Some("weekly"), None).unwrap(), expected);
@@ -483,6 +519,16 @@ mod tests {
         );
     }
 
+    // -- time_zone ------------------------------------------------------------
+
+    #[test]
+    fn time_zone_is_exact_and_case_sensitive() {
+        assert!(time_zone("America/New_York").is_some());
+        assert!(time_zone("america/new_york").is_none());
+        assert!(time_zone("Not/AZone").is_none());
+        assert!(time_zone("UTC").is_some());
+    }
+
     // -- max_response_window_days / clamp_window -----------------------------
 
     #[test]
@@ -495,7 +541,7 @@ mod tests {
     #[test]
     fn weekly_caps_the_response_window_at_7_days() {
         let weekly = CycleCadence::Weekly {
-            weekday: Weekday::Sun,
+            weekday: Weekday::Sunday,
             at: hms(21, 0, 0),
         };
         assert_eq!(weekly.max_response_window_days(), 7);
@@ -508,7 +554,7 @@ mod tests {
     #[test]
     fn rolls_over_from_december_to_january() {
         let after = utc(2026, 12, 15, 12, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, America::New_York);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("America/New_York"));
         // EST (UTC-5) in January.
         assert_eq!(got, utc(2027, 1, 1, 5, 0, 0));
     }
@@ -516,7 +562,7 @@ mod tests {
     #[test]
     fn mid_month_rolls_to_next_month_same_year() {
         let after = utc(2026, 6, 10, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, America::New_York);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("America/New_York"));
         // EDT (UTC-4) in July.
         assert_eq!(got, utc(2026, 7, 1, 4, 0, 0));
     }
@@ -527,7 +573,7 @@ mod tests {
     #[test]
     fn dst_spring_forward_boundary_is_respected() {
         let after = utc(2026, 2, 5, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, America::New_York);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("America/New_York"));
         assert_eq!(got, utc(2026, 3, 1, 5, 0, 0));
     }
 
@@ -536,14 +582,14 @@ mod tests {
     #[test]
     fn southern_hemisphere_timezone_is_handled() {
         let after = utc(2026, 1, 5, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, Pacific::Auckland);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("Pacific/Auckland"));
         assert_eq!(got, utc(2026, 1, 31, 11, 0, 0));
     }
 
     #[test]
     fn non_dst_timezone_is_handled() {
         let after = utc(2026, 3, 5, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, chrono_tz::Asia::Tokyo);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("Asia/Tokyo"));
         // JST is a fixed UTC+9 offset year-round.
         assert_eq!(got, utc(2026, 3, 31, 15, 0, 0));
     }
@@ -551,19 +597,19 @@ mod tests {
     #[test]
     fn utc_timezone_round_trips_trivially() {
         let after = utc(2026, 4, 1, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, UTC);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz("UTC"));
         assert_eq!(got, utc(2026, 5, 1, 0, 0, 0));
     }
 
     /// Brazil historically shifted DST at local midnight, so a specific
-    /// calendar date's midnight did not exist. Whatever chrono-tz's bundled
-    /// tzdata says for this instant, the function must not panic and must
-    /// return a time on-or-after the requested day.
+    /// calendar date's midnight did not exist. Whatever jiff's bundled tzdata
+    /// says for this instant, the function must not panic and must return a
+    /// time on-or-after the requested day.
     #[test]
     fn nonexistent_local_midnight_does_not_panic() {
-        let tz: Tz = America::Sao_Paulo;
+        let tz = tz("America/Sao_Paulo");
         let after = utc(2018, 10, 5, 0, 0, 0);
-        let got = next_period_start(CycleCadence::Monthly, after, tz);
+        let got = next_period_start(CycleCadence::Monthly, after, &tz);
         assert!(got >= utc(2018, 11, 1, 0, 0, 0));
         assert!(got < utc(2018, 11, 2, 0, 0, 0));
     }
@@ -571,7 +617,11 @@ mod tests {
     #[test]
     fn cycle_id_uses_the_response_open_at_local_date() {
         let response_open_at = utc(2026, 6, 1, 4, 0, 0); // EDT midnight on June 1
-        let id = cycle_id_for(CycleCadence::Monthly, response_open_at, America::New_York);
+        let id = cycle_id_for(
+            CycleCadence::Monthly,
+            response_open_at,
+            &tz("America/New_York"),
+        );
         assert_eq!(id, CycleId::new("202606"));
     }
 
@@ -579,14 +629,19 @@ mod tests {
     fn cycle_id_can_differ_from_the_utc_calendar_date() {
         // 2026-01-31T11:00:00Z is already 2026-02-01 midnight in NZDT (UTC+13).
         let response_open_at = utc(2026, 1, 31, 11, 0, 0);
-        let id = cycle_id_for(CycleCadence::Monthly, response_open_at, Pacific::Auckland);
+        let id = cycle_id_for(
+            CycleCadence::Monthly,
+            response_open_at,
+            &tz("Pacific/Auckland"),
+        );
         assert_eq!(id, CycleId::new("202602"));
     }
 
     #[test]
     fn next_cycle_schedule_matches_the_default_formula() {
         let after = utc(2026, 5, 15, 0, 0, 0);
-        let schedule = next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 4);
+        let schedule =
+            next_cycle_schedule(CycleCadence::Monthly, after, &tz("America/New_York"), 4);
         assert_eq!(schedule.cycle_id, CycleId::new("202606"));
         assert_eq!(schedule.response_open_at, utc(2026, 6, 1, 4, 0, 0));
         assert_eq!(schedule.response_close_at, utc(2026, 6, 5, 4, 0, 0));
@@ -595,10 +650,11 @@ mod tests {
     #[test]
     fn next_cycle_schedule_clamps_a_window_beyond_the_monthly_cap() {
         let after = utc(2026, 5, 15, 0, 0, 0);
-        let schedule = next_cycle_schedule(CycleCadence::Monthly, after, America::New_York, 90);
+        let schedule =
+            next_cycle_schedule(CycleCadence::Monthly, after, &tz("America/New_York"), 90);
         assert_eq!(
             schedule.response_close_at - schedule.response_open_at,
-            Duration::days(28)
+            SignedDuration::from_hours(28 * 24)
         );
     }
 
@@ -607,7 +663,7 @@ mod tests {
         let got = period_start(
             CycleCadence::Monthly,
             &CycleId::new("202711"),
-            America::New_York,
+            &tz("America/New_York"),
         );
         // EST (UTC-5): US DST ends 2027-11-07.
         assert_eq!(got, Some(utc(2027, 11, 1, 4, 0, 0)));
@@ -620,14 +676,19 @@ mod tests {
     /// repeat a month.
     #[test]
     fn period_start_maps_back_to_its_own_cycle_id_monthly() {
-        let zones: [Tz; 4] = [America::New_York, Pacific::Honolulu, Pacific::Auckland, UTC];
-        for tz in zones {
+        let zones = [
+            tz("America/New_York"),
+            tz("Pacific/Honolulu"),
+            tz("Pacific/Auckland"),
+            tz("UTC"),
+        ];
+        for z in &zones {
             for id in ["202607", "202701", "202711"] {
-                let start = period_start(CycleCadence::Monthly, &CycleId::new(id), tz).unwrap();
+                let start = period_start(CycleCadence::Monthly, &CycleId::new(id), z).unwrap();
                 assert_eq!(
-                    cycle_id_for(CycleCadence::Monthly, start, tz),
+                    cycle_id_for(CycleCadence::Monthly, start, z),
                     CycleId::new(id),
-                    "{id} in {tz}"
+                    "{id} in {z:?}"
                 );
             }
         }
@@ -638,29 +699,29 @@ mod tests {
     /// on the cycle's own month, the next cycle is March.
     #[test]
     fn a_full_length_february_window_does_not_skip_march() {
-        let tz = America::New_York;
-        let feb = next_cycle_schedule(CycleCadence::Monthly, utc(2027, 1, 15, 0, 0, 0), tz, 28);
+        let tz = tz("America/New_York");
+        let feb = next_cycle_schedule(CycleCadence::Monthly, utc(2027, 1, 15, 0, 0, 0), &tz, 28);
         assert_eq!(feb.cycle_id, CycleId::new("202702"));
         assert_eq!(feb.response_close_at, utc(2027, 3, 1, 5, 0, 0));
 
-        let anchor = period_start(CycleCadence::Monthly, &feb.cycle_id, tz).unwrap();
-        let next = next_cycle_schedule(CycleCadence::Monthly, anchor, tz, 28);
+        let anchor = period_start(CycleCadence::Monthly, &feb.cycle_id, &tz).unwrap();
+        let next = next_cycle_schedule(CycleCadence::Monthly, anchor, &tz, 28);
         assert_eq!(next.cycle_id, CycleId::new("202703"));
 
         // The bug this guards against.
-        let from_close = next_cycle_schedule(CycleCadence::Monthly, feb.response_close_at, tz, 28);
+        let from_close = next_cycle_schedule(CycleCadence::Monthly, feb.response_close_at, &tz, 28);
         assert_eq!(from_close.cycle_id, CycleId::new("202704"));
     }
 
     #[test]
     fn monthly_successor_schedule_matches_the_existing_rule() {
-        let tz = America::New_York;
-        let feb = next_cycle_schedule(CycleCadence::Monthly, utc(2027, 1, 15, 0, 0, 0), tz, 28);
+        let tz = tz("America/New_York");
+        let feb = next_cycle_schedule(CycleCadence::Monthly, utc(2027, 1, 15, 0, 0, 0), &tz, 28);
         let successor = successor_schedule(
             CycleCadence::Monthly,
             &feb.cycle_id,
             feb.response_close_at,
-            tz,
+            &tz,
             28,
         )
         .unwrap();
@@ -687,7 +748,7 @@ mod tests {
 
     #[test]
     fn malformed_ids_return_none_for_period_start_and_successor_schedule() {
-        let tz = UTC;
+        let tz = tz("UTC");
         for bad in [
             "",
             "2027",
@@ -703,18 +764,18 @@ mod tests {
         ] {
             let id = CycleId::new(bad);
             assert_eq!(
-                period_start(CycleCadence::Monthly, &id, tz),
+                period_start(CycleCadence::Monthly, &id, &tz),
                 None,
                 "{bad:?}"
             );
-            assert_eq!(period_start(weekly_sun_2100(), &id, tz), None, "{bad:?}");
+            assert_eq!(period_start(weekly_sun_2100(), &id, &tz), None, "{bad:?}");
             assert_eq!(
-                successor_schedule(CycleCadence::Monthly, &id, utc(2026, 1, 1, 0, 0, 0), tz, 7),
+                successor_schedule(CycleCadence::Monthly, &id, utc(2026, 1, 1, 0, 0, 0), &tz, 7),
                 None,
                 "{bad:?}"
             );
             assert_eq!(
-                successor_schedule(weekly_sun_2100(), &id, utc(2026, 1, 1, 0, 0, 0), tz, 7),
+                successor_schedule(weekly_sun_2100(), &id, utc(2026, 1, 1, 0, 0, 0), &tz, 7),
                 None,
                 "{bad:?}"
             );
@@ -725,7 +786,7 @@ mod tests {
 
     fn weekly_sun_2100() -> CycleCadence {
         CycleCadence::Weekly {
-            weekday: Weekday::Sun,
+            weekday: Weekday::Sunday,
             at: hms(21, 0, 0),
         }
     }
@@ -733,16 +794,16 @@ mod tests {
     #[test]
     fn weekly_cycle_id_is_yyyymmdd() {
         let response_open_at = utc(2026, 11, 9, 2, 0, 0); // Sun Nov 8 21:00 EST
-        let id = cycle_id_for(weekly_sun_2100(), response_open_at, America::New_York);
+        let id = cycle_id_for(weekly_sun_2100(), response_open_at, &tz("America/New_York"));
         assert_eq!(id, CycleId::new("20261108"));
     }
 
     #[test]
     fn next_period_start_finds_the_next_weekly_occurrence() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         // A Wednesday, well before the following Sunday.
         let after = utc(2026, 11, 4, 12, 0, 0);
-        let got = next_period_start(weekly_sun_2100(), after, tz);
+        let got = next_period_start(weekly_sun_2100(), after, &tz);
         assert_eq!(got, utc(2026, 11, 9, 2, 0, 0)); // Sun Nov 8 21:00 EST
     }
 
@@ -750,9 +811,9 @@ mod tests {
     /// the following week, not return the same instant.
     #[test]
     fn next_period_start_is_strictly_after_an_exact_boundary() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let boundary = utc(2026, 11, 9, 2, 0, 0); // Sun Nov 8 21:00 EST exactly
-        let got = next_period_start(weekly_sun_2100(), boundary, tz);
+        let got = next_period_start(weekly_sun_2100(), boundary, &tz);
         assert_eq!(got, utc(2026, 11, 16, 2, 0, 0)); // the following Sunday, Nov 15 21:00 EST
     }
 
@@ -762,18 +823,10 @@ mod tests {
     /// is still EDT (UTC-4).
     #[test]
     fn weekly_anchor_across_us_dst_end() {
-        let tz = America::New_York;
-        let nov1 = local_to_utc(
-            tz,
-            NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
-            hms(21, 0, 0),
-        );
+        let tz = tz("America/New_York");
+        let nov1 = local_to_utc(&tz, Date::new(2026, 11, 1).unwrap(), hms(21, 0, 0));
         assert_eq!(nov1, utc(2026, 11, 2, 2, 0, 0));
-        let oct25 = local_to_utc(
-            tz,
-            NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(),
-            hms(21, 0, 0),
-        );
+        let oct25 = local_to_utc(&tz, Date::new(2026, 10, 25).unwrap(), hms(21, 0, 0));
         assert_eq!(oct25, utc(2026, 10, 26, 1, 0, 0));
     }
 
@@ -781,14 +834,10 @@ mod tests {
     /// exactly 7 local calendar days, not 168 fixed UTC hours.
     #[test]
     fn weekly_stepping_across_a_spring_forward_week() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         // Sun Mar 1 2026 21:00 EST.
-        let after = local_to_utc(
-            tz,
-            NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
-            hms(21, 0, 0),
-        );
-        let got = next_period_start(weekly_sun_2100(), after, tz);
+        let after = local_to_utc(&tz, Date::new(2026, 3, 1).unwrap(), hms(21, 0, 0));
+        let got = next_period_start(weekly_sun_2100(), after, &tz);
         // Sun Mar 8 2026 21:00 EDT — the clocks sprang forward at 2am that
         // same day, so the UTC offset is now -4, one hour less than before.
         assert_eq!(got, utc(2026, 3, 9, 1, 0, 0));
@@ -796,10 +845,10 @@ mod tests {
 
     #[test]
     fn weekly_cadence_in_pacific_auckland() {
-        let tz = Pacific::Auckland;
+        let tz = tz("Pacific/Auckland");
         // A Monday in NZ summer (NZDT, UTC+13).
         let after = utc(2026, 1, 5, 0, 0, 0);
-        let got = next_period_start(weekly_sun_2100(), after, tz);
+        let got = next_period_start(weekly_sun_2100(), after, &tz);
         assert_eq!(got, utc(2026, 1, 11, 8, 0, 0)); // Sun Jan 11 21:00 NZDT
     }
 
@@ -807,14 +856,19 @@ mod tests {
     /// weekly `yyyymmdd` format.
     #[test]
     fn weekly_id_maps_back_to_itself_across_zones() {
-        let zones: [Tz; 4] = [America::New_York, Pacific::Honolulu, Pacific::Auckland, UTC];
-        for tz in zones {
+        let zones = [
+            tz("America/New_York"),
+            tz("Pacific/Honolulu"),
+            tz("Pacific/Auckland"),
+            tz("UTC"),
+        ];
+        for z in &zones {
             for id in ["20260607", "20270103", "20271128"] {
-                let start = period_start(weekly_sun_2100(), &CycleId::new(id), tz).unwrap();
+                let start = period_start(weekly_sun_2100(), &CycleId::new(id), z).unwrap();
                 assert_eq!(
-                    cycle_id_for(weekly_sun_2100(), start, tz),
+                    cycle_id_for(weekly_sun_2100(), start, z),
                     CycleId::new(id),
-                    "{id} in {tz}"
+                    "{id} in {z:?}"
                 );
             }
         }
@@ -828,18 +882,18 @@ mod tests {
     /// the still-open legacy cycle.
     #[test]
     fn legacy_monthly_id_gets_the_correct_weekly_successor() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let current_id = CycleId::new("202611");
         let current_close = utc(2026, 11, 8, 5, 0, 0); // Nov 8 00:00 EST
 
         let successor =
-            successor_schedule(weekly_sun_2100(), &current_id, current_close, tz, 7).unwrap();
+            successor_schedule(weekly_sun_2100(), &current_id, current_close, &tz, 7).unwrap();
 
         assert_eq!(successor.cycle_id, CycleId::new("20261108"));
         assert_eq!(successor.response_open_at, utc(2026, 11, 9, 2, 0, 0)); // Sun Nov 8 21:00 EST
         assert_eq!(
             successor.response_close_at,
-            successor.response_open_at + Duration::days(7)
+            successor.response_open_at + SignedDuration::from_hours(7 * 24)
         );
     }
 
@@ -848,12 +902,12 @@ mod tests {
     /// is also exactly when the current cycle closes.
     #[test]
     fn weekly_successor_follows_the_anchor_in_the_normal_case() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let current_id = CycleId::new("20261101"); // Sun Nov 1 2026
         let current_close = utc(2026, 11, 9, 2, 0, 0); // Nov 8 21:00 EST, a 7-day window
 
         let successor =
-            successor_schedule(weekly_sun_2100(), &current_id, current_close, tz, 7).unwrap();
+            successor_schedule(weekly_sun_2100(), &current_id, current_close, &tz, 7).unwrap();
 
         assert_eq!(successor.cycle_id, CycleId::new("20261108"));
         assert_eq!(successor.response_open_at, current_close);
@@ -864,14 +918,14 @@ mod tests {
     /// cycle's own close.
     #[test]
     fn weekly_successor_never_opens_before_the_current_close() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let current_id = CycleId::new("20261101"); // Sun Nov 1 2026
                                                    // A close far later than a plain `id_date + 7 days` would suggest —
                                                    // as if the window had been extended before the cadence switched.
         let current_close = utc(2026, 11, 20, 0, 0, 0);
 
         let successor =
-            successor_schedule(weekly_sun_2100(), &current_id, current_close, tz, 7).unwrap();
+            successor_schedule(weekly_sun_2100(), &current_id, current_close, &tz, 7).unwrap();
 
         assert!(successor.response_open_at >= current_close);
         assert_eq!(successor.cycle_id, CycleId::new("20261122")); // Sun Nov 22 21:00 EST
@@ -883,14 +937,10 @@ mod tests {
     /// `successor_schedule`'s `max()` floor pushes the next id a whole week.
     #[test]
     fn weekly_close_lands_exactly_on_the_next_periods_open_across_spring_forward() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         // Sun Feb 22 2026 21:00 EST — one week before the cycle under test.
-        let after = local_to_utc(
-            tz,
-            NaiveDate::from_ymd_opt(2026, 2, 22).unwrap(),
-            hms(21, 0, 0),
-        );
-        let first = next_cycle_schedule(weekly_sun_2100(), after, tz, 7);
+        let after = local_to_utc(&tz, Date::new(2026, 2, 22).unwrap(), hms(21, 0, 0));
+        let first = next_cycle_schedule(weekly_sun_2100(), after, &tz, 7);
         assert_eq!(first.cycle_id, CycleId::new("20260301"));
         // Sun Mar 8 2026 21:00 EDT — the local close time is preserved.
         assert_eq!(first.response_close_at, utc(2026, 3, 9, 1, 0, 0));
@@ -899,7 +949,7 @@ mod tests {
             weekly_sun_2100(),
             &first.cycle_id,
             first.response_close_at,
-            tz,
+            &tz,
             7,
         )
         .unwrap();
@@ -913,19 +963,15 @@ mod tests {
     /// cycle's open.
     #[test]
     fn weekly_successor_chain_has_no_gap_across_spring_forward_and_fall_back() {
-        let tz = America::New_York;
-        let start = local_to_utc(
-            tz,
-            NaiveDate::from_ymd_opt(2026, 2, 15).unwrap(),
-            hms(21, 0, 0),
-        );
-        let mut schedule = next_cycle_schedule(weekly_sun_2100(), start, tz, 7);
+        let tz = tz("America/New_York");
+        let start = local_to_utc(&tz, Date::new(2026, 2, 15).unwrap(), hms(21, 0, 0));
+        let mut schedule = next_cycle_schedule(weekly_sun_2100(), start, &tz, 7);
         for _ in 0..40 {
             let successor = successor_schedule(
                 weekly_sun_2100(),
                 &schedule.cycle_id,
                 schedule.response_close_at,
-                tz,
+                &tz,
                 7,
             )
             .unwrap();
@@ -938,7 +984,7 @@ mod tests {
             let next_date = parse_cycle_id(&successor.cycle_id).unwrap();
             assert_eq!(
                 next_date,
-                prev_date + Duration::days(7),
+                prev_date + 7.days(),
                 "non-consecutive Sunday after {}",
                 schedule.cycle_id
             );
@@ -953,9 +999,9 @@ mod tests {
     /// pre-DST open would have landed an hour early.
     #[test]
     fn monthly_window_close_is_local_midnight_based() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let schedule =
-            next_cycle_schedule(CycleCadence::Monthly, utc(2026, 2, 15, 0, 0, 0), tz, 14);
+            next_cycle_schedule(CycleCadence::Monthly, utc(2026, 2, 15, 0, 0, 0), &tz, 14);
         assert_eq!(schedule.cycle_id, CycleId::new("202603"));
         assert_eq!(schedule.response_open_at, utc(2026, 3, 1, 5, 0, 0)); // EST
         assert_eq!(schedule.response_close_at, utc(2026, 3, 15, 4, 0, 0)); // EDT
@@ -963,14 +1009,14 @@ mod tests {
 
     #[test]
     fn weekly_window_clamp_through_successor_schedule() {
-        let tz = America::New_York;
+        let tz = tz("America/New_York");
         let current_id = CycleId::new("20261101");
         let current_close = utc(2026, 11, 9, 2, 0, 0);
         let successor =
-            successor_schedule(weekly_sun_2100(), &current_id, current_close, tz, 10).unwrap();
+            successor_schedule(weekly_sun_2100(), &current_id, current_close, &tz, 10).unwrap();
         assert_eq!(
             successor.response_close_at - successor.response_open_at,
-            Duration::days(7)
+            SignedDuration::from_hours(7 * 24)
         );
     }
 }

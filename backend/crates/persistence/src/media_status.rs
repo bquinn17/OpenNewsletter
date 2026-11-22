@@ -12,8 +12,7 @@ use crate::repo::Repo;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput};
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{DateTime, Utc};
-use domain::{AvatarId, CycleId, GroupId, ImageId, UserId};
+use domain::{AvatarId, CycleId, GroupId, ImageId, Timestamp, UserId};
 
 /// Outcome of a conditional status-transition update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +48,7 @@ pub struct ImageReady<'a> {
     pub height: u32,
     pub display_key: &'a str,
     pub thumb_key: &'a str,
-    pub processed_at: DateTime<Utc>,
+    pub processed_at: Timestamp,
 }
 
 /// `pending -> ready` for an `ImageMedia` row: records the oriented original's
@@ -86,10 +85,7 @@ pub async fn mark_image_ready(
         .expression_attribute_values(":height", AttributeValue::N(height.to_string()))
         .expression_attribute_values(":display_key", AttributeValue::S(display_key.into()))
         .expression_attribute_values(":thumb_key", AttributeValue::S(thumb_key.into()))
-        .expression_attribute_values(
-            ":processed_at",
-            AttributeValue::S(processed_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
         .send()
         .await;
     outcome_from_update(result)
@@ -102,7 +98,7 @@ pub async fn mark_image_failed(
     cycle_id: &CycleId,
     image_id: &ImageId,
     error_message: &str,
-    processed_at: DateTime<Utc>,
+    processed_at: Timestamp,
 ) -> Result<UpdateOutcome, RepoError> {
     let result = repo
         .client
@@ -118,10 +114,7 @@ pub async fn mark_image_failed(
         .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
         .expression_attribute_values(":failed", AttributeValue::S("failed".into()))
         .expression_attribute_values(":error_message", AttributeValue::S(error_message.into()))
-        .expression_attribute_values(
-            ":processed_at",
-            AttributeValue::S(processed_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
         .send()
         .await;
     outcome_from_update(result)
@@ -133,7 +126,7 @@ pub async fn mark_avatar_ready(
     user_id: &UserId,
     avatar_id: &AvatarId,
     display_key: &str,
-    processed_at: DateTime<Utc>,
+    processed_at: Timestamp,
 ) -> Result<UpdateOutcome, RepoError> {
     let result = repo
         .client
@@ -149,10 +142,7 @@ pub async fn mark_avatar_ready(
         .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
         .expression_attribute_values(":ready", AttributeValue::S("ready".into()))
         .expression_attribute_values(":display_key", AttributeValue::S(display_key.into()))
-        .expression_attribute_values(
-            ":processed_at",
-            AttributeValue::S(processed_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
         .send()
         .await;
     outcome_from_update(result)
@@ -164,7 +154,7 @@ pub async fn mark_avatar_failed(
     user_id: &UserId,
     avatar_id: &AvatarId,
     error_message: &str,
-    processed_at: DateTime<Utc>,
+    processed_at: Timestamp,
 ) -> Result<UpdateOutcome, RepoError> {
     let result = repo
         .client
@@ -180,10 +170,7 @@ pub async fn mark_avatar_failed(
         .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
         .expression_attribute_values(":failed", AttributeValue::S("failed".into()))
         .expression_attribute_values(":error_message", AttributeValue::S(error_message.into()))
-        .expression_attribute_values(
-            ":processed_at",
-            AttributeValue::S(processed_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
         .send()
         .await;
     outcome_from_update(result)

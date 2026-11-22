@@ -4,17 +4,17 @@
 
 mod common;
 
-use chrono::{Duration, NaiveTime, Utc, Weekday};
 use cycle_tick::tick::run_tick;
-use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId};
+use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId, SignedDuration, Timestamp};
+use jiff::civil::{Time, Weekday};
 use persistence::{groups, newsletters, questions};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
 
 fn weekly_sun_2100() -> CycleCadence {
     CycleCadence::Weekly {
-        weekday: Weekday::Sun,
-        at: NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        weekday: Weekday::Sunday,
+        at: Time::new(21, 0, 0, 0).unwrap(),
     }
 }
 
@@ -27,21 +27,21 @@ async fn a_weekly_tick_promotes_a_cycle_and_creates_a_yyyymmdd_successor_at_the_
     groups::put_group(&repo, &group).await.unwrap();
 
     let cadence = weekly_sun_2100();
-    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
 
     // A voting cycle that's due now. Its close stays in the future, so the
     // same tick doesn't go on to publish it.
-    let now = Utc::now();
+    let now = Timestamp::now();
     let voting = Newsletter {
         group_id: GroupId::new("g-weekly"),
-        cycle_id: shared::cycle_time::cycle_id_for(cadence, now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(cadence, now, &tz),
         status: NewsletterStatus::Voting,
-        vote_window_open_at: now - Duration::days(7),
-        vote_window_close_at: now - Duration::minutes(1),
-        response_open_at: now - Duration::minutes(1),
-        response_close_at: now + Duration::days(7),
+        vote_window_open_at: now - SignedDuration::from_hours(7 * 24),
+        vote_window_close_at: now - SignedDuration::from_mins(1),
+        response_open_at: now - SignedDuration::from_mins(1),
+        response_close_at: now + SignedDuration::from_hours(7 * 24),
         published_at: None,
-        next_transition_at: Some(now - Duration::minutes(1)),
+        next_transition_at: Some(now - SignedDuration::from_mins(1)),
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
@@ -79,7 +79,7 @@ async fn a_weekly_tick_promotes_a_cycle_and_creates_a_yyyymmdd_successor_at_the_
         cadence,
         &voting.cycle_id,
         opened.response_close_at,
-        tz,
+        &tz,
         group.cycle_settings.response_window_days,
     )
     .expect("a valid weekly successor");
