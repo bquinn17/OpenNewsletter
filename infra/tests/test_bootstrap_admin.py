@@ -147,8 +147,8 @@ def test_prod_invite_expires_in_30_days_and_ttl_adds_the_audit_window(
     prod_items: list[dict[str, Any]],
 ) -> None:
     invite = _item(prod_items, "Invite")
-    assert invite["created_at"] == {"S": "2026-10-07T15:30:45Z"}
-    assert invite["expires_at"] == {"S": "2026-11-06T15:30:45Z"}
+    assert invite["created_at"] == {"S": "2026-10-07T15:30:45.000Z"}
+    assert invite["expires_at"] == {"S": "2026-11-06T15:30:45.000Z"}
     ttl = _NOW + timedelta(days=30 + 30)
     assert invite["ttl"] == {"N": str(int(ttl.timestamp()))}
 
