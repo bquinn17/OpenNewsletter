@@ -334,12 +334,13 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - Notes:
   - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
   - The published payload carries no `responseOpenAt`, so the month/year label comes from the cycle's `NewsletterSummary` (`useNewsletters`), falling back to `publishedAt`.
-  - Published questions are expanded by default. Each has a chevron toggle that shows "N answers" while collapsed, and the header has **Collapse all** / **Expand all**.
+  - Published questions are expanded by default. Each has a chevron toggle that shows "N answers" while collapsed, and the question chips row ends in a **Collapse all** / **Expand all** toggle.
   - Comments and reactions render in `AnswerCard` via `CommentList`/`ReactionBar`.
   - Open-edition rows carry one meta line ("Poll · asked anonymously"); the status shows in the row's icon tile.
 - The published layout is built for reading a long edition:
-  - **Masthead:** the group's gradient (§14a), the edition label in large Fraunces, a stack of contributor avatars, and "N answers · M min read" (reading time, §14a).
-  - **Question chips:** a sticky, horizontally scrolling row with one chip per question under the page header. The chip for the question on screen is highlighted (IntersectionObserver), and tapping a chip jumps to its question.
+  - **Page header:** the edition label, "<group> · published <date>" as its eyebrow (monthly; weekly labels are already the publish date), and a trophy button linking to the leaderboard (§7.9).
+  - **Masthead:** one slim band in the group's gradient (§14a) with a stack of contributor avatars and "N answers · M min read · K reactions" (reading time, §14a). It doesn't repeat the header's label or date, so the first answer starts above the fold on a phone.
+  - **Question chips:** a sticky, horizontally scrolling row with one chip per question under the page header. The chip for the question on screen is highlighted (a scroll listener), and tapping a chip jumps to its question.
   - **Sticky prompts:** each question's prompt stays pinned under the chips while its answers scroll by.
   - **Reading progress:** a 3px bar in the page header, pure CSS with `animation-timeline: scroll()`; browsers without scroll-driven animations show no bar.
   - **Answers:** each question's answers share one surface, separated by dividers.

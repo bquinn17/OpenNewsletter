@@ -1,4 +1,5 @@
 import { Link, Navigate, useParams } from "react-router-dom";
+import { ChevronsDownUp, ChevronsUpDown, Trophy } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiError } from "../api/client";
 import {
@@ -16,16 +17,16 @@ import { OpenQuestionRow } from "../components/newsletter/OpenQuestionRow";
 import { PublishedQuestion } from "../components/newsletter/PublishedQuestion";
 import { QuestionChips } from "../components/newsletter/QuestionChips";
 import { useElementHeight } from "../components/newsletter/useElementHeight";
+import { avatarColorClass } from "../utils/avatarColor";
+import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
+import { readingTimeMinutes } from "../utils/readingTime";
+import type { components } from "../types/api";
 
 /**
  * How far below the pinned prompts a question's section must reach before its chip lights up, so
  * the chip switches as a question fills the screen rather than only once its prompt pins.
  */
 const READING_LINE_OFFSET_PX = 120;
-import { avatarColorClass } from "../utils/avatarColor";
-import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
-import { readingTimeMinutes } from "../utils/readingTime";
-import type { components } from "../types/api";
 
 type S = components["schemas"];
 type OpenDetail = Extract<S["NewsletterDetailResponse"], { status: "open" }>;
@@ -278,12 +279,27 @@ function PublishedLayout({
 
   return (
     <div className="pb-12">
+      {/* The header carries the label, the publish date and the leaderboard link; the masthead
+          below adds only what the header doesn't say (`docs/design/frontend.md` §7.2). */}
       <PageHeader
         ref={headerRef}
-        eyebrow={`${groupName} · editions`}
+        eyebrow={
+          frequency === "weekly"
+            ? `${groupName} · published`
+            : `${groupName} · published ${formatInZone(data.publishedAt, timezone, { month: "short", day: "numeric" })}`
+        }
         title={title}
         back="/"
-        rightSlot={<Pill tone="ink">Published</Pill>}
+        rightSlot={
+          <Link
+            to={`/g/${groupId}/leaderboard`}
+            aria-label="Group leaderboard"
+            title="Group leaderboard"
+            className="grid h-9 w-9 place-items-center rounded-full border border-line bg-white text-grape-ink"
+          >
+            <Trophy aria-hidden className="h-4 w-4" />
+          </Link>
+        }
         phase="published"
         showReadingProgress
       />
@@ -295,6 +311,7 @@ function PublishedLayout({
         contributors={contributors}
         answerCount={textAnswers.length}
         readingMinutes={readingMinutes}
+        reactionCount={reactionTotal}
       />
 
       <QuestionChips
@@ -302,30 +319,21 @@ function PublishedLayout({
         navRef={chipsRef}
         stickyTopPx={headerHeight}
         readingLinePx={promptTop + READING_LINE_OFFSET_PX}
-      />
-
-      <div className="px-5 pt-4 text-sm text-inkmuted">
-        Published {formatInZone(data.publishedAt, timezone)}
-        {reactionTotal > 0 && ` · ${reactionTotal} reaction${reactionTotal === 1 ? "" : "s"}`}
-      </div>
-
-      <div className="flex items-center justify-between gap-3 px-5 pt-2 text-sm font-semibold">
-        <Link
-          to={`/g/${groupId}/leaderboard`}
-          className="inline-flex items-center gap-1 text-grape-ink"
-        >
-          🏆 Group leaderboard
-        </Link>
-        {sorted.length > 1 && (
+        trailing={
           <button
             type="button"
             onClick={toggleAll}
-            className="shrink-0 whitespace-nowrap text-grape-ink"
+            className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-1.5 text-xs font-semibold text-grape-ink"
           >
+            {allCollapsed ? (
+              <ChevronsUpDown aria-hidden className="h-4 w-4" />
+            ) : (
+              <ChevronsDownUp aria-hidden className="h-4 w-4" />
+            )}
             {allCollapsed ? "Expand all" : "Collapse all"}
           </button>
-        )}
-      </div>
+        }
+      />
 
       {sorted.map((q) => (
         <PublishedQuestion
