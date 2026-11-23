@@ -6,7 +6,7 @@ Where the project stands, what's blocking it, and what's next. It's read at the 
 
 ## Status
 
-- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard and the app's own sign-in pages.
+- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages and the [frontend design review](archive/frontend-design-review.md).
 - **Dev runs the latest `main`.** Every push to `main` deploys it ([D6](../docs/decisions.md#d6)).
 - **Deploy-shaped gates:** the API side of every dev gate has passed; [`build-order.md`](build-order.md) marks each check. What's left needs a browser, a second Google account or a phone (next step 3).
 - **M1** is partly done (B5).
@@ -46,7 +46,6 @@ Release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo
    - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5)
 3. **Finish the unmarked gates in [`build-order.md`](build-order.md) against dev.** If `scripts/backfill_member_stats.py --env dev` hasn't been run since the leaderboard deployed, run it first, while the group is quiet: until it runs, the leaderboard and `editionsAnswered` count only what happened since that deploy ([`scripts/README.md`](../scripts/README.md)). The unmarked gates are the UI and device checks: uploading and the media CORS check in a browser (M8), the simulated month (M9), push on Chrome and an installed iOS PWA (M11), the rename showing without a reload (M12), `make redeploy-volatile` (M3.5), the full [`smoke-test.md`](../docs/operations/smoke-test.md), and the cadence settings pass in [`frontend-walkthrough.md`](../docs/operations/frontend-walkthrough.md) §16.2.
 4. **M14:** check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14) and run `scripts/backfill_member_stats.py --env prod` once. The prod hostnames are already set as repo variables.
-5. **Address the [frontend design review](../docs/frontend_design_review.md).** Fix its §1 defects before M14, then follow its §7 order. Each step updates [`frontend.md`](../docs/design/frontend.md) in the same change. The rest of the review doesn't block M14.
 
 Workstation setup for either machine: [`environments.md` §0](../docs/development/environments.md#0-workstation-setup).
 

@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Plus, X } from "lucide-react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -150,7 +151,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
           <p
             role="alert"
             aria-live="polite"
-            className="rounded-2xl bg-coral/10 p-3 text-sm text-coral"
+            className="rounded-2xl bg-danger/[.04] p-3 text-sm text-danger"
           >
             {errors.root.message}
           </p>
@@ -161,7 +162,9 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
         <label
           className={clsx(
             "block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition",
-            isAnonymous ? "border-grape/40 bg-grape/5 text-grape" : "border-line bg-white text-ink",
+            isAnonymous
+              ? "border-grape/40 bg-grape/5 text-grape-ink"
+              : "border-line bg-white text-ink",
           )}
         >
           <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
@@ -225,7 +228,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
           {...register("prompt")}
           aria-invalid={!!errors.prompt}
           aria-describedby="suggest-prompt-hint"
-          className="min-h-[100px] w-full rounded-2xl border border-line bg-white px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="min-h-[100px] w-full rounded-2xl border border-line bg-white px-4 py-3 text-[15px] focus:ring-2 focus:ring-coral/30"
           placeholder="Try something specific. The best questions invite stories."
         />
         <div
@@ -233,7 +236,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
           aria-live="polite"
           className="mt-1.5 flex items-center justify-between text-xs"
         >
-          <span className={errors.prompt ? "font-semibold text-coral" : "text-inkmuted"}>
+          <span className={errors.prompt ? "font-semibold text-danger" : "text-inkmuted"}>
             {errors.prompt?.message ?? `${MIN_PROMPT_CHARS}–${MAX_PROMPT_CHARS} characters`}
           </span>
           <span className="text-inkmuted">
@@ -257,16 +260,16 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
                   id={`option-${field.id}`}
                   {...register(`pollOptions.${i}.label` as const)}
                   placeholder={`Option ${i + 1}`}
-                  className="flex-1 rounded-2xl border border-line bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                  className="flex-1 rounded-2xl border border-line bg-white px-4 py-2.5 text-sm focus:ring-2 focus:ring-coral/30"
                 />
                 {fields.length > MIN_POLL_OPTIONS && (
                   <button
                     type="button"
                     onClick={() => remove(i)}
-                    className="h-9 w-9 rounded-full border border-line text-inkmuted hover:border-coral hover:text-coral"
+                    className="grid h-9 w-9 place-items-center rounded-full border border-line text-inkmuted hover:border-danger hover:text-danger"
                     aria-label={`Remove option ${i + 1}`}
                   >
-                    ×
+                    <X aria-hidden className="h-4 w-4" />
                   </button>
                 )}
               </div>
@@ -276,13 +279,13 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
             <button
               type="button"
               onClick={() => append({ label: "" })}
-              className="mt-2 text-sm font-semibold text-grape"
+              className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-grape-ink"
             >
-              ＋ Add option
+              <Plus aria-hidden className="h-4 w-4" /> Add option
             </button>
           )}
           {errors.pollOptions?.message && (
-            <div aria-live="polite" className="mt-2 text-xs font-semibold text-coral">
+            <div aria-live="polite" className="mt-2 text-xs font-semibold text-danger">
               {errors.pollOptions.message}
             </div>
           )}
@@ -293,7 +296,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
                 <div
                   key={field.id}
                   aria-live="polite"
-                  className="mt-2 text-xs font-semibold text-coral"
+                  className="mt-2 text-xs font-semibold text-danger"
                 >
                   {message}
                 </div>

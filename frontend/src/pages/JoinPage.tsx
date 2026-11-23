@@ -106,7 +106,7 @@ export function JoinPage() {
     return (
       <div className="px-5 py-10">
         <h1 className="font-display text-2xl font-bold">Couldn&apos;t join</h1>
-        <p role="alert" aria-live="polite" className="mt-2 text-coral">
+        <p role="alert" aria-live="polite" className="mt-2 text-danger">
           {messageForError(redeemError.error)}
         </p>
         <div className="mt-5 rounded-3xl border border-line bg-white p-5 shadow-soft">
@@ -151,7 +151,7 @@ function SignUpStart() {
       </InviteOnlyNote>
       <p className="mt-4 text-sm text-inkmuted">
         Already a member?{" "}
-        <Link to="/signin" className="font-semibold text-grape underline underline-offset-2">
+        <Link to="/signin" className="font-semibold text-grape-ink underline underline-offset-2">
           Sign in
         </Link>
       </p>
@@ -194,7 +194,7 @@ function InviteTicket({ code }: { code: string }) {
       </div>
       <p className="mt-6 text-center text-sm text-inkmuted">
         Wrong code?{" "}
-        <Link to="/join" className="font-semibold text-grape underline underline-offset-2">
+        <Link to="/join" className="font-semibold text-grape-ink underline underline-offset-2">
           Enter a different one
         </Link>
       </p>

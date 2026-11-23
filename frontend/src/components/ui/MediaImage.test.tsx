@@ -149,4 +149,21 @@ describe("MediaImage", () => {
     expect(img).toHaveAttribute("loading", "lazy");
     expect(img).toHaveAttribute("decoding", "async");
   });
+
+  it("with a thumbSrc, shows the full image faded in and hides the blurred thumb once loaded", () => {
+    render(
+      <MediaImage
+        src="https://media.test.invalid/img/g1/display.webp"
+        thumbSrc="https://media.test.invalid/img/g1/thumb.webp"
+        alt="a photo"
+      />,
+    );
+
+    const full = screen.getByAltText("a photo");
+    expect(full).toHaveClass("opacity-0");
+
+    fireEvent.load(full);
+
+    expect(full).toHaveClass("opacity-100");
+  });
 });

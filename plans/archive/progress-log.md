@@ -1374,3 +1374,43 @@ The API side of the M4–M13.5 gates ran against dev, on a build from before the
 - **Smoke-test CORS expectation.** S3 sends `Access-Control-Allow-Credentials: true` for any matched non-`*` origin and can't be told not to; [`smoke-test.md`](../../docs/operations/smoke-test.md) §6 no longer expects it absent.
 
 Also answered: API Gateway passes the reaction emoji path parameter decoded ([`api.md` §8.6](../../docs/design/api.md#86-put-reactionsemoji)).
+
+## Frontend design review — what landed (2026-11-22)
+
+The [frontend design review](frontend-design-review.md) is implemented, frontend only, with no API change. The design is in [`frontend.md`](../../docs/design/frontend.md) §4.2 (tokens and hue meanings), §4.3, §7.1–§7.3, §9, §11 and the new §18 (motion).
+
+**What landed.**
+- **Color:**
+  - colors became CSS variables, with `-ink` text shades, a `danger` red and a darker `inkmuted`
+  - every text pair is WCAG AA
+  - the primary button is ink on coral
+  - destructive actions and errors are `danger`
+  - avatar colors and gradient stops were darkened where white text failed
+- **Defects fixed:**
+  - markdown in answers renders (`.markdown-preview` applied)
+  - destructive dialogs focus Cancel
+  - avatars without a color get a hashed one
+  - a global reduced-motion rule and a global `:focus-visible` outline
+  - safe-area insets on the headers and the Respond bottom bar
+- **Reading:**
+  - a masthead with reading time
+  - question chips that follow the scroll
+  - sticky prompts and a CSS-only progress bar
+  - one surface per question
+  - collapsed comment threads and composer
+  - only used reactions plus an add button
+  - full-size inline images and an in-app `Lightbox`
+- **Flow:** Respond has "Question N of M" with arrows, one deadline banner, and a bottom bar the width of the app with **Done**. Home has a hero card for the open edition, and its voting row shows votes left. lucide-react icons replace text glyphs.
+- **Motion:** tokens and keyframes, press feedback and shimmer skeletons. Publishing shows a ✓ with confetti, and finishing the edition shows an all-in overlay. Upvotes spark and reorder in a view transition, reactions float up, and poll bars grow. Home morphs into the edition, and toasts spring up and swipe away.
+
+**Decisions (spec gaps).**
+- **Dark mode left out.** [`future-ideas.md` §13](../../docs/future-ideas.md#13-dark-mode) designs it with a saved preference, which is an API change. The CSS variables make it mostly a variable swap.
+- **No app-bar hide-on-scroll** (review §3.3). `PageHeader` is also sticky at the top and already covers the app bar once you scroll, so hiding the bar changes nothing on screen. `PageHeader` now sticks at `env(safe-area-inset-top)`, so it stays clear of the iOS status bar.
+- **The phase tints were lightened a little,** so each phase's `-ink` text passes on them. Inline error alerts use `bg-danger/[.04]`, because a `/10` tint dropped `danger` text to 4.14:1.
+- **The comment composer shows even while a thread is collapsed,** and posting expands the thread. Otherwise, commenting on an answer with comments would take an extra tap.
+- **The confetti reuses the CSS `ConfettiBurst`,** not `canvas-confetti`, whose worker the CSP blocks. `celebrate({ big: true })` drives the all-in burst.
+- **The question chips follow the scroll with a listener, not an IntersectionObserver.** The sections can render after the chips, so an observer attached on mount found nothing to watch.
+- **The Respond page's eyebrow is the edition label** (plus "Poll" for a poll), now that its title is "Question N of M".
+- **The open edition's hero link keeps "you've published N of M" in its accessible name.**
+
+**Tests.** Vitest 441 → 489. Playwright 17, unchanged in count; the steps for the reaction picker, the collapsed composer, the "Idea" link and the comment image were updated.

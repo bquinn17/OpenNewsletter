@@ -15,7 +15,7 @@ test("suggests a candidate question and sees it in the voting list", async ({ pa
   await gotoHome(page);
   await openUpcoming(page);
 
-  await page.getByRole("link", { name: "＋ Idea" }).click();
+  await page.getByRole("link", { name: "Idea", exact: true }).click();
   await page.getByLabel("Your question").fill(prompt);
   await page.getByRole("button", { name: "Submit" }).click();
 
@@ -67,7 +67,12 @@ test("reacts to a published answer, toggles it off, then reacts with a different
     "false",
   );
 
-  await answer.getByRole("button", { name: "React with 🤣" }).click();
+  await answer.getByRole("button", { name: "Add reaction" }).click();
+  await page
+    .getByRole("dialog", { name: "Choose an emoji" })
+    .getByRole("group", { name: "Quick picks" })
+    .getByRole("button", { name: "React with 🤣" })
+    .click();
   const laughPill = answer.getByRole("button", { name: /React with 🤣, 1 reaction/ });
   await expect(laughPill).toHaveAttribute("aria-pressed", "true");
 });
@@ -82,6 +87,7 @@ test("comments on a published answer and sees it without reloading", async ({ pa
     .click();
 
   const answer = page.locator("article", { hasText: "ridge walk" });
+  await answer.getByRole("button", { name: "Add a comment…" }).click();
   await answer.getByLabel("Add a comment").fill(commentBody);
   await answer.getByRole("button", { name: "Post" }).click();
 

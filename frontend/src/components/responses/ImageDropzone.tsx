@@ -37,7 +37,7 @@ export function ImageDropzone({ imageCount, maxImages, fileErrors, onFilesSelect
           onFilesSelected(Array.from(e.dataTransfer.files));
         }}
         className={clsx(
-          "flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-cream px-4 py-6 text-center text-sm text-inkmuted transition focus:outline-none focus:ring-2 focus:ring-coral/30",
+          "flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-cream px-4 py-6 text-center text-sm text-inkmuted transition focus:ring-2 focus:ring-coral/30",
           dragOver && "border-grape bg-grape/5",
         )}
       >
@@ -53,7 +53,7 @@ export function ImageDropzone({ imageCount, maxImages, fileErrors, onFilesSelect
           }}
         />
         <p>
-          Drag photos here, or <span className="font-semibold text-grape">choose files</span>
+          Drag photos here, or <span className="font-semibold text-grape-ink">choose files</span>
         </p>
         <p className="mt-1 text-xs">
           {imageCount}/{maxImages} image{maxImages === 1 ? "" : "s"} · JPEG, PNG, WebP or GIF · up
@@ -65,7 +65,7 @@ export function ImageDropzone({ imageCount, maxImages, fileErrors, onFilesSelect
         <ul
           role="alert"
           aria-live="polite"
-          className="mt-2 space-y-1 text-xs font-semibold text-coral"
+          className="mt-2 space-y-1 text-xs font-semibold text-danger"
         >
           {fileErrors.map((message) => (
             <li key={message}>{message}</li>

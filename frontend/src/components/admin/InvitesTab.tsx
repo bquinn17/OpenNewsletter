@@ -153,7 +153,7 @@ function NewInvite({
 
   return (
     <div className="mb-4 rounded-3xl border border-grape/30 bg-grape/5 p-4">
-      <div className="text-sm font-semibold text-grape">Invite created</div>
+      <div className="text-sm font-semibold text-grape-ink">Invite created</div>
       <label htmlFor="new-invite-url" className="sr-only">
         Invite link
       </label>
@@ -201,14 +201,14 @@ function InviteRow({
         </div>
         <button
           onClick={() => void copyInviteLink(invite.code, pushToast)}
-          className="shrink-0 text-xs font-semibold text-grape"
+          className="shrink-0 text-xs font-semibold text-grape-ink"
         >
           Copy
         </button>
         <button
           onClick={onRevoke}
           disabled={revoking}
-          className="shrink-0 text-xs font-semibold text-coral disabled:opacity-50"
+          className="shrink-0 text-xs font-semibold text-danger disabled:opacity-50"
         >
           Revoke
         </button>

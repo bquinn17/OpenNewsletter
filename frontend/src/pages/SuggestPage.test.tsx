@@ -152,10 +152,10 @@ describe("SuggestPage", () => {
     expect(screen.queryByLabelText("Remove option 1")).not.toBeInTheDocument();
 
     for (let i = 0; i < 4; i++) {
-      await user.click(screen.getByRole("button", { name: "＋ Add option" }));
+      await user.click(screen.getByRole("button", { name: "Add option" }));
     }
     expect(screen.getAllByPlaceholderText(/Option \d/)).toHaveLength(6);
-    expect(screen.queryByRole("button", { name: "＋ Add option" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add option" })).not.toBeInTheDocument();
 
     for (let i = 0; i < 4; i++) {
       await user.click(screen.getAllByLabelText(/Remove option/)[0]!);

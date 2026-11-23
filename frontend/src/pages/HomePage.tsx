@@ -85,13 +85,14 @@ function SignedInHome() {
       <section className="mt-3 px-5">
         {isLoading && <Spinner size="sm" />}
         {isError && (
-          <p className="text-sm text-coral">Couldn&apos;t load this group&apos;s editions.</p>
+          <p className="text-sm text-danger">Couldn&apos;t load this group&apos;s editions.</p>
         )}
         {data && (
           <GroupEditions
             groupId={current.groupId}
             timezone={current.timezone}
             frequency={config.cycleCadence.frequency}
+            gradient={current.gradient}
             items={data.items}
           />
         )}

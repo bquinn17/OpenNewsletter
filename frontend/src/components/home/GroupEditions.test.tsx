@@ -1,10 +1,19 @@
+import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../../api/client";
 import type { components } from "../../types/api";
 import { GroupEditions } from "./GroupEditions";
 
+vi.mock("../../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/client")>();
+  return { ...actual, api: { listCandidates: vi.fn() } };
+});
+
 type NewsletterSummary = components["schemas"]["NewsletterSummary"];
+type CandidateListResponse = components["schemas"]["CandidateListResponse"];
 
 function cycle(
   cycleId: string,
@@ -23,14 +32,38 @@ function cycle(
   };
 }
 
+function candidateList(overrides: Partial<CandidateListResponse> = {}): CandidateListResponse {
+  return {
+    nextCycleId: "next",
+    votesPerUserPerCycle: 3,
+    myVoteCount: 0,
+    items: [],
+    nextCursor: null,
+    ...overrides,
+  };
+}
+
+function renderWithProviders(children: ReactNode) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 function renderEditions(
   items: NewsletterSummary[],
   frequency: components["schemas"]["CycleCadence"]["frequency"] = "monthly",
 ) {
-  render(
-    <MemoryRouter>
-      <GroupEditions groupId="g1" timezone="UTC" frequency={frequency} items={items} />
-    </MemoryRouter>,
+  renderWithProviders(
+    <GroupEditions
+      groupId="g1"
+      timezone="UTC"
+      frequency={frequency}
+      gradient="grape-sky"
+      items={items}
+    />,
   );
 }
 
@@ -52,6 +85,10 @@ function weeklyRowLabels(section: string) {
 }
 
 describe("GroupEditions", () => {
+  beforeEach(() => {
+    vi.mocked(api.listCandidates).mockResolvedValue(candidateList());
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -101,10 +138,14 @@ describe("GroupEditions", () => {
       cycle("202608", "published", "08"),
     ];
 
-    render(
-      <MemoryRouter>
-        <GroupEditions groupId="g1" timezone="UTC" frequency="monthly" items={items} />
-      </MemoryRouter>,
+    renderWithProviders(
+      <GroupEditions
+        groupId="g1"
+        timezone="UTC"
+        frequency="monthly"
+        gradient="grape-sky"
+        items={items}
+      />,
     );
 
     expect(screen.getByRole("link", { name: /September 2026/ })).toHaveAttribute(
@@ -139,15 +180,62 @@ describe("GroupEditions", () => {
       cycle("202608", "published", "08"),
     ];
 
-    render(
-      <MemoryRouter>
-        <GroupEditions groupId="g1" timezone="UTC" frequency="monthly" items={items} />
-      </MemoryRouter>,
+    renderWithProviders(
+      <GroupEditions
+        groupId="g1"
+        timezone="UTC"
+        frequency="monthly"
+        gradient="grape-sky"
+        items={items}
+      />,
     );
 
     expect(screen.getByRole("link", { name: /October 2026/ })).toHaveTextContent("Voting");
-    expect(screen.getByRole("link", { name: /September 2026/ })).toHaveTextContent("Open");
     expect(screen.getByRole("link", { name: /August 2026/ })).toHaveTextContent("Published");
+  });
+
+  it("shows the open edition as a hero card with progress and an 'answer more' CTA", () => {
+    renderWithProviders(
+      <GroupEditions
+        groupId="g1"
+        timezone="UTC"
+        frequency="monthly"
+        gradient="grape-sky"
+        items={[{ ...cycle("202609", "open", "09"), questionCount: 4, myPublishedCount: 1 }]}
+      />,
+    );
+
+    const hero = screen.getByRole("link", { name: /September 2026/ });
+    expect(hero).toHaveTextContent("1 of 4 answered");
+    expect(hero).toHaveTextContent("Answer 3 more");
+    expect(hero).toHaveAttribute("href", "/g/g1/n/202609");
+  });
+
+  it("shows 'Open the edition' on the hero once every question is answered", () => {
+    renderWithProviders(
+      <GroupEditions
+        groupId="g1"
+        timezone="UTC"
+        frequency="monthly"
+        gradient="grape-sky"
+        items={[{ ...cycle("202609", "open", "09"), questionCount: 4, myPublishedCount: 4 }]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /September 2026/ })).toHaveTextContent(
+      "Open the edition",
+    );
+  });
+
+  it("shows votes left on the voting row once the shared candidates query loads", async () => {
+    vi.mocked(api.listCandidates).mockResolvedValue(
+      candidateList({ votesPerUserPerCycle: 3, myVoteCount: 1 }),
+    );
+    renderEditions([cycle("202610", "voting", "10")]);
+
+    expect(
+      await screen.findByText(/Suggest and vote on questions for next month · 2 votes left/),
+    ).toBeInTheDocument();
   });
 
   it("weekly: labels editions by publication date and titles the current section 'This week's edition'", () => {

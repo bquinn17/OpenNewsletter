@@ -144,7 +144,7 @@ export function NotificationsSection({ config }: { config: S["ConfigResponse"] }
         <div className="flex-1">
           <div className="text-sm font-semibold">Push notifications</div>
           {denied && (
-            <p className="mt-0.5 text-xs text-coral">
+            <p className="mt-0.5 text-xs text-danger">
               Blocked for this browser — enable them in your browser settings, then reload.
             </p>
           )}
@@ -202,7 +202,7 @@ export function NotificationsSection({ config }: { config: S["ConfigResponse"] }
               <button
                 type="button"
                 onClick={() => void handleRemoveDevice(d.endpoint)}
-                className="text-xs font-semibold text-coral"
+                className="text-xs font-semibold text-danger"
               >
                 Remove
               </button>

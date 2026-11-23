@@ -1,6 +1,8 @@
 # Frontend design review: color, motion and reading
 
-Reviewed 2026-10-20 on branch `bquinn/dev-stack-deploy`; line references re-checked 2026-10-25. The goal: a frontend that is clean but fun and modern, feels effortless, has more striking animation, and reads well when an edition is long. Nothing in this review has been implemented yet.
+Reviewed 2026-10-20 on branch `bquinn/dev-stack-deploy`; line references re-checked 2026-10-25. The goal: a frontend that is clean but fun and modern, feels effortless, has more striking animation, and reads well when an edition is long.
+
+**Archived: implemented.** Everything below landed except dark mode (§2.4), which stays in [`future-ideas.md` §13](../../docs/future-ideas.md#13-dark-mode) because it needs a saved per-member preference. What landed, and where it departed from this review, is in [`progress-log.md`](progress-log.md). The current design is [`frontend.md`](../../docs/design/frontend.md) §4.2, §4.3, §7.1–§7.4, §9, §11 and §18. Links below are relative to the review's original home in `docs/`.
 
 **How it was reviewed.** I read the theme ([`tailwind.config.ts`](../frontend/tailwind.config.ts), [`tailwind.css`](../frontend/src/styles/tailwind.css)) and every page and component. I also rendered the app in mock mode (`VITE_USE_MOCKS=true`) with Playwright at 390px and 1280px wide, and computed WCAG 2.x contrast ratios for each color pair the components use.
 

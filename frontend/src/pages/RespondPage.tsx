@@ -1,14 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { useConfig, useMembership, useNewsletter, useUploads } from "../api/queries";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import clsx from "clsx";
+import {
+  useConfig,
+  useCycleCadence,
+  useMembership,
+  useNewsletter,
+  useUploads,
+} from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { Button } from "../components/ui/Button";
 import { Spinner } from "../components/ui/Spinner";
+import { AllInOverlay } from "../components/ui/AllInOverlay";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
 import { ResponseEditor } from "../components/responses/ResponseEditor";
-import { AUTO_PUBLISH_BADGE, DraftStatusBadge } from "../components/responses/DraftStatusBadge";
+import {
+  AUTO_PUBLISH_BADGE,
+  DraftStatusBadge,
+  SaveStateDot,
+} from "../components/responses/DraftStatusBadge";
 import { PublishButton } from "../components/responses/PublishButton";
 import { useResponseEditor } from "../components/responses/useResponseEditor";
 import { useHydratedImages } from "../components/responses/useHydratedImages";
@@ -16,7 +29,8 @@ import { usePollResponse } from "../components/responses/usePollResponse";
 import { PollPicker } from "../components/responses/PollPicker";
 import { MarkdownBody } from "../utils/markdown";
 import { useToasts } from "../state/toast";
-import { formatInZone, shortCountdown } from "../utils/dates";
+import { useCelebration } from "../state/celebration";
+import { countdownTo, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -26,6 +40,7 @@ export function RespondPage() {
   const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
   const membership = useMembership(groupId);
   const timezone = membership?.timezone ?? "UTC";
+  const cadence = useCycleCadence();
 
   if (isLoading) return <LoadingShell groupId={groupId} cycleId={cycleId} />;
 
@@ -36,7 +51,7 @@ export function RespondPage() {
         back={`/g/${groupId}/n/${cycleId}`}
         message={error instanceof Error ? error.message : "Couldn't load this question."}
         onRetry={() => refetch()}
-        className="pb-32"
+        className="pb-40"
       />
     );
   }
@@ -44,26 +59,43 @@ export function RespondPage() {
   if (!data) return null;
   if (data.status !== "open") return <Navigate to={`/g/${groupId}/n/${cycleId}`} replace />;
 
-  const question = data.questions.find((q) => q.questionId === questionId);
-  if (!question) return <NotFoundState groupId={groupId} cycleId={cycleId} />;
+  // Display order is the edition's question order (`docs/design/frontend.md` §7.3): "Question
+  // 2 of 5" and the previous/next arrows walk this order, not the array's raw order.
+  const ordered = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
+  const index = ordered.findIndex((q) => q.questionId === questionId);
+  if (index === -1) return <NotFoundState groupId={groupId} cycleId={cycleId} />;
+
+  const editionLabelText = cadence
+    ? editionLabel(data, timezone, cadence.frequency).short
+    : undefined;
 
   return (
     <QuestionBody
-      question={question}
+      // A fresh key per question forces a full remount when the arrows navigate, so the old
+      // question's `useResponseEditor` unmounts (flushing its pending autosave, the same as
+      // leaving the page) before the new one mounts fresh.
+      key={questionId}
+      question={ordered[index]!}
+      questions={ordered}
+      questionNumber={index + 1}
+      questionCount={ordered.length}
+      prevQuestionId={index > 0 ? ordered[index - 1]!.questionId : null}
+      nextQuestionId={index < ordered.length - 1 ? ordered[index + 1]!.questionId : null}
       groupId={groupId}
       cycleId={cycleId}
       timezone={timezone}
       responseCloseAt={data.responseCloseAt}
+      editionLabelText={editionLabelText}
     />
   );
 }
 
 function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="pb-32">
+    <div className="pb-40">
       <PageHeader title="Loading…" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="space-y-3 px-5 pt-6">
-        <div className="h-32 animate-pulse rounded-3xl border border-line bg-white" />
+        <div className="skeleton h-32 rounded-3xl border border-line" />
       </div>
     </div>
   );
@@ -71,7 +103,7 @@ function LoadingShell({ groupId, cycleId }: { groupId: string; cycleId: string }
 
 function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string }) {
   return (
-    <div className="pb-32">
+    <div className="pb-40">
       <PageHeader title="Question" eyebrow="Not found" back={`/g/${groupId}/n/${cycleId}`} />
       <div className="px-5 pt-8 text-center">
         <div className="mb-3 text-5xl">🔍</div>
@@ -83,19 +115,33 @@ function NotFoundState({ groupId, cycleId }: { groupId: string; cycleId: string 
 
 function QuestionBody({
   question,
+  questions,
+  questionNumber,
+  questionCount,
+  prevQuestionId,
+  nextQuestionId,
   groupId,
   cycleId,
   timezone,
   responseCloseAt,
+  editionLabelText,
 }: {
   question: S["OpenQuestionResponse"];
+  /** Every question in the edition, in display order — used to tell whether a fresh publish answers the last one. */
+  questions: S["OpenQuestionResponse"][];
+  questionNumber: number;
+  questionCount: number;
+  prevQuestionId: string | null;
+  nextQuestionId: string | null;
   groupId: string;
   cycleId: string;
   timezone: string;
   responseCloseAt: string;
+  editionLabelText: string | undefined;
 }) {
   const navigate = useNavigate();
   const pushToast = useToasts((s) => s.push);
+  const celebrate = useCelebration((s) => s.celebrate);
   const { data: config } = useConfig();
   const isText = question.kind === "text";
 
@@ -116,19 +162,48 @@ function QuestionBody({
 
   const [showEditor, setShowEditor] = useState(() => question.myResponse?.status !== "published");
   const [uploading, setUploading] = useState(false);
+  const [justPublished, setJustPublished] = useState(false);
+  const [showAllIn, setShowAllIn] = useState(false);
   const prevStatusRef = useRef<S["ResponseStatus"] | undefined>(question.myResponse?.status);
+
+  // Whether answering `question` just now would leave every other question in the edition
+  // published too — the trigger for the full-screen "all in" overlay and a bigger confetti burst.
+  function isLastUnanswered(): boolean {
+    return questions.every(
+      (q) => q.questionId === question.questionId || q.myResponse?.status === "published",
+    );
+  }
+
+  // Shared by the text and poll publish paths below: the UI reaction to a fresh publish (the
+  // toast itself differs — the poll hook already pushes its own). `celebrate({ big })` fires the
+  // bigger burst, and the full-screen overlay opens too, exactly when this was the last
+  // unanswered question in the edition (`docs/design/frontend.md` §7.3, §18).
+  function onFreshPublish() {
+    setShowEditor(false);
+    setJustPublished(true);
+    const allIn = isLastUnanswered();
+    celebrate({ big: allIn });
+    if (allIn) setShowAllIn(true);
+  }
 
   useEffect(() => {
     const newStatus = editor.lastResponse?.status;
     if (newStatus && newStatus !== prevStatusRef.current) {
       if (newStatus === "published") {
         pushToast("Published — friends can see this when the edition publishes.", "success");
-        setShowEditor(false);
+        onFreshPublish();
       }
       prevStatusRef.current = newStatus;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pushToast` is a stable zustand setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pushToast`/`celebrate` are stable zustand setters.
   }, [editor.lastResponse]);
+
+  // Editing again after a fresh publish drops the button back to its normal "Save changes" state.
+  useEffect(() => {
+    if (justPublished && (editor.status.kind === "dirty" || editor.status.kind === "saving")) {
+      setJustPublished(false);
+    }
+  }, [justPublished, editor.status.kind]);
 
   // The read-only view follows the current draft, including images added on this visit. Their
   // rows are the uploader's own `uploadQuery` entries, already cached.
@@ -144,10 +219,25 @@ function QuestionBody({
     questionId: question.questionId,
     initialResponse: question.myResponse,
   });
+  // `usePollResponse` already pushes its own "Published —…" toast; this only drives the
+  // celebration + overlay, the same as the text path's effect above.
+  const prevPollPublishedRef = useRef(poll.isPublished);
+  useEffect(() => {
+    if (poll.isPublished && !prevPollPublishedRef.current) onFreshPublish();
+    prevPollPublishedRef.current = poll.isPublished;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `onFreshPublish` closes over fresh state each render; only the transition matters.
+  }, [poll.isPublished]);
+  useEffect(() => {
+    if (justPublished && poll.saving) setJustPublished(false);
+  }, [justPublished, poll.saving]);
+
   // `docs/design/frontend.md` §7.3 (D2): a non-empty draft auto-publishes when responses close.
   const showAutoPublishNote = isText
     ? textIsUnpublishedDraft && !editor.readOnly
     : poll.isUnpublishedDraft && !poll.closed;
+
+  const closeCountdown = countdownTo(responseCloseAt);
+  const pulseCountdown = !closeCountdown.expired && closeCountdown.days === 0;
 
   async function handlePublish() {
     if (isText) {
@@ -158,34 +248,59 @@ function QuestionBody({
   }
 
   return (
-    <div className="pb-32">
+    <div className="pb-40">
       <PageHeader
-        eyebrow={`Question · ${question.kind === "poll" ? "poll" : "question"}`}
-        title={question.prompt}
+        eyebrow={[editionLabelText, question.kind === "poll" ? "Poll" : null]
+          .filter(Boolean)
+          .join(" · ")}
+        title={`Question ${questionNumber} of ${questionCount}`}
         back={`/g/${groupId}/n/${cycleId}`}
-        rightSlot={<Pill tone="coral">{shortCountdown(responseCloseAt)}</Pill>}
+        rightSlot={
+          <Pill tone="coral" className={clsx(pulseCountdown && "motion-safe:animate-pulse-soft")}>
+            {shortCountdown(responseCloseAt)}
+          </Pill>
+        }
         phase="open"
       />
 
-      <div className="px-5 pt-5">
-        <div className="rounded-3xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
-          Closes {formatInZone(responseCloseAt, timezone)}
-        </div>
+      <div className="flex items-center justify-between px-5 pt-3">
+        {prevQuestionId ? (
+          <Link
+            to={`/g/${groupId}/n/${cycleId}/respond/${prevQuestionId}`}
+            aria-label="Previous question"
+            className="grid h-9 w-9 place-items-center rounded-full border border-line bg-white transition hover:border-ink motion-safe:active:scale-[.97]"
+          >
+            <ChevronLeft aria-hidden className="h-4 w-4" />
+          </Link>
+        ) : (
+          <span aria-hidden="true" className="h-9 w-9" />
+        )}
+        {nextQuestionId ? (
+          <Link
+            to={`/g/${groupId}/n/${cycleId}/respond/${nextQuestionId}`}
+            aria-label="Next question"
+            className="grid h-9 w-9 place-items-center rounded-full border border-line bg-white transition hover:border-ink motion-safe:active:scale-[.97]"
+          >
+            <ChevronRight aria-hidden className="h-4 w-4" />
+          </Link>
+        ) : (
+          <span aria-hidden="true" className="h-9 w-9" />
+        )}
       </div>
 
-      {showAutoPublishNote && (
-        <div className="px-5 pt-3">
-          <p
-            role="note"
-            className="rounded-3xl border border-sun/60 bg-sun/20 p-3 text-sm text-ink"
-          >
-            Drafts are published automatically when responses close on{" "}
-            {formatInZone(responseCloseAt, timezone)}.
-            {/* A poll pick can be changed but not cleared (`pollOptionId` is required). */}
-            {isText && " Clear your answer if you don't want it included."}
-          </p>
+      <div className="px-5 pt-3">
+        <div className="rounded-3xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral-ink">
+          <p>Closes {formatInZone(responseCloseAt, timezone)}</p>
+          {showAutoPublishNote && (
+            <p role="note" className="mt-1 text-ink">
+              Drafts are published automatically when responses close on{" "}
+              {formatInZone(responseCloseAt, timezone)}.
+              {/* A poll pick can be changed but not cleared (`pollOptionId` is required). */}
+              {isText && " Clear your answer if you don't want it included."}
+            </p>
+          )}
         </div>
-      )}
+      </div>
 
       <div className="px-5 pt-5">
         <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
@@ -206,7 +321,7 @@ function QuestionBody({
               <button
                 type="button"
                 onClick={() => setShowEditor(true)}
-                className="mt-3 text-sm font-semibold text-grape"
+                className="mt-3 text-sm font-semibold text-grape-ink"
               >
                 Edit
               </button>
@@ -257,41 +372,56 @@ function QuestionBody({
         </div>
       )}
 
-      <div className="fixed bottom-3 left-3 right-3 z-40">
-        <div className="flex items-center gap-3 rounded-3xl bg-ink p-3 text-cream shadow-pop">
-          <div className="text-xs leading-tight">
-            {isText ? (
-              <DraftStatusBadge status={editor.status} unpublishedDraft={textIsUnpublishedDraft} />
-            ) : poll.saving ? (
-              <Pill tone="grape">● Saving…</Pill>
-            ) : (poll.response || question.myResponse) && poll.isUnpublishedDraft ? (
-              <Pill tone="mint">{AUTO_PUBLISH_BADGE}</Pill>
-            ) : poll.response || question.myResponse ? (
-              <Pill tone="mint">Saved</Pill>
-            ) : (
-              <Pill tone="sun">Pick one</Pill>
-            )}
+      <div className="fixed inset-x-0 bottom-0 z-40">
+        <div className="mx-auto w-full px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:max-w-3xl lg:max-w-2xl">
+          <div className="rounded-3xl bg-ink p-3 text-cream shadow-pop">
+            <div className="px-1 pb-2">
+              {isText ? (
+                <DraftStatusBadge
+                  status={editor.status}
+                  unpublishedDraft={textIsUnpublishedDraft}
+                />
+              ) : poll.saving ? (
+                <SaveStateDot tone="grape" label="Saving…" pulsing />
+              ) : (poll.response || question.myResponse) && poll.isUnpublishedDraft ? (
+                <SaveStateDot tone="mint" label={AUTO_PUBLISH_BADGE} justSaved />
+              ) : poll.response || question.myResponse ? (
+                <SaveStateDot tone="mint" label="Saved" justSaved />
+              ) : (
+                <SaveStateDot tone="sun" label="Pick one" />
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
+                Done
+              </Button>
+              <span className="flex-1" />
+              {isText && !editor.readOnly && (
+                <PublishButton
+                  isPublished={isPublished}
+                  disabled={!canPublishText || uploading}
+                  onPublish={() => void handlePublish()}
+                  justPublished={justPublished}
+                />
+              )}
+              {!isText && !poll.closed && (
+                <PublishButton
+                  isPublished={poll.isPublished}
+                  disabled={!poll.pollOptionId || poll.saving}
+                  onPublish={() => void handlePublish()}
+                  justPublished={justPublished}
+                />
+              )}
+            </div>
           </div>
-          <span className="flex-1" />
-          <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
-            Save &amp; exit
-          </Button>
-          {isText && !editor.readOnly && (
-            <PublishButton
-              isPublished={isPublished}
-              disabled={!canPublishText || uploading}
-              onPublish={() => void handlePublish()}
-            />
-          )}
-          {!isText && !poll.closed && (
-            <PublishButton
-              isPublished={poll.isPublished}
-              disabled={!poll.pollOptionId || poll.saving}
-              onPublish={() => void handlePublish()}
-            />
-          )}
         </div>
       </div>
+
+      <AllInOverlay
+        open={showAllIn}
+        editionLabel={editionLabelText}
+        onDismiss={() => setShowAllIn(false)}
+      />
     </div>
   );
 }

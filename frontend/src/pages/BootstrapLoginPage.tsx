@@ -61,7 +61,7 @@ export function BootstrapLoginPage(): JSX.Element {
             {...register("username")}
           />
           {errors.username && (
-            <p id="bootstrap-username-error" role="alert" className="mt-1 text-sm text-coral">
+            <p id="bootstrap-username-error" role="alert" className="mt-1 text-sm text-danger">
               {errors.username.message}
             </p>
           )}
@@ -79,13 +79,13 @@ export function BootstrapLoginPage(): JSX.Element {
             {...register("password")}
           />
           {errors.password && (
-            <p id="bootstrap-password-error" role="alert" className="mt-1 text-sm text-coral">
+            <p id="bootstrap-password-error" role="alert" className="mt-1 text-sm text-danger">
               {errors.password.message}
             </p>
           )}
         </div>
         <div aria-live="polite">
-          {authError && <p className="text-sm text-coral">{authError}</p>}
+          {authError && <p className="text-sm text-danger">{authError}</p>}
         </div>
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Signing in…" : "Sign in"}

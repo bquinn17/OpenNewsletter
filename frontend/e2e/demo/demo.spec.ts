@@ -130,6 +130,8 @@ test("an image uploaded to a comment shows the picture that was picked", async (
     .click();
   const answer = page.locator("article", { hasText: "ridge walk" });
 
+  await answer.getByRole("button", { name: "Add a comment…" }).click();
+  await answer.getByRole("button", { name: "Add a photo" }).click();
   await answer.locator('input[type="file"]').setInputFiles(PHOTO);
   await expect(answer.getByText(/Uploading \d+%/)).toBeVisible();
   await expect(answer.getByPlaceholder("Describe this image")).toBeVisible({
@@ -137,7 +139,7 @@ test("an image uploaded to a comment shows the picture that was picked", async (
   });
   await answer.getByRole("button", { name: "Post" }).click();
 
-  const posted = answer.locator('a[href^="blob:"] img');
+  const posted = answer.getByRole("button", { name: "Open image" }).locator('img[src^="blob:"]');
   await expect(posted).toBeVisible();
   expect(await renderedWidth(posted)).toBe(3);
 });

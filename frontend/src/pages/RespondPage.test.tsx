@@ -638,6 +638,192 @@ describe("RespondPage", () => {
     expect(screen.getByRole("button", { name: "Option A" })).toHaveClass("border-grape");
   });
 
+  describe("moving between questions (§7.3)", () => {
+    function threeQuestions(): S["OpenQuestionResponse"][] {
+      return [
+        { ...textQuestion(null), questionId: "q1", displayOrder: 0, prompt: "First?" },
+        { ...textQuestion(null), questionId: "q2", displayOrder: 1, prompt: "Second?" },
+        { ...textQuestion(null), questionId: "q3", displayOrder: 2, prompt: "Third?" },
+      ];
+    }
+
+    it("titles the header by the edition's question order and links to the neighbours", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(openDetail(threeQuestions()));
+
+      renderAt("q2");
+
+      expect(await screen.findByText("Question 2 of 3")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Previous question" })).toHaveAttribute(
+        "href",
+        "/g/g1/n/c1/respond/q1",
+      );
+      expect(screen.getByRole("link", { name: "Next question" })).toHaveAttribute(
+        "href",
+        "/g/g1/n/c1/respond/q3",
+      );
+    });
+
+    it("has no previous link on the first question", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(openDetail(threeQuestions()));
+
+      renderAt("q1");
+      await screen.findByText("Question 1 of 3");
+      expect(screen.queryByRole("link", { name: "Previous question" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Next question" })).toBeInTheDocument();
+    });
+
+    it("has no next link on the last question", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(openDetail(threeQuestions()));
+
+      renderAt("q3");
+      await screen.findByText("Question 3 of 3");
+      expect(screen.queryByRole("link", { name: "Next question" })).not.toBeInTheDocument();
+    });
+
+    it("flushes a pending autosave when the next arrow navigates away", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(openDetail(threeQuestions()));
+      saveMyResponse.mockResolvedValue({
+        responseId: "r1",
+        userId: "u_quinn",
+        questionId: "q1",
+        groupId: "g1",
+        cycleId: "c1",
+        kind: "text",
+        status: "draft",
+        body: "Not done typing",
+        imageMediaIds: [],
+        updatedAt: "2026-06-02T00:00:00Z",
+        publishedAt: null,
+      });
+
+      renderAt("q1");
+      const textarea = await screen.findByPlaceholderText("Tell us about it…");
+      fireEvent.change(textarea, { target: { value: "Not done typing" } });
+
+      // Well before the 1500ms autosave debounce — only navigating away should flush it.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("link", { name: "Next question" }));
+        await flush();
+      });
+
+      expect(saveMyResponse).toHaveBeenCalledWith("g1", "c1", "q1", {
+        kind: "text",
+        body: "Not done typing",
+        imageMediaIds: [],
+        publish: false,
+      });
+      expect(await screen.findByText("Question 2 of 3")).toBeInTheDocument();
+    });
+  });
+
+  it("merges the deadline and auto-publish note into one banner, and renames Save & exit to Done", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        textQuestion({
+          responseId: "r1",
+          status: "draft",
+          body: "Half-written",
+          imageMediaIds: [],
+          updatedAt: "2026-06-02T00:00:00Z",
+          publishedAt: null,
+        }),
+      ]),
+    );
+
+    renderAt("q1");
+
+    expect(await screen.findByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save.*exit/ })).not.toBeInTheDocument();
+
+    const closesBanner = await screen.findByText(/^Closes /);
+    const note = screen.getByRole("note");
+    // Both live in the same container, not two separate banners.
+    expect(closesBanner.closest("div")).toBe(note.closest("div"));
+  });
+
+  describe("the all-in overlay (§7.3, §18)", () => {
+    it("shows after publishing the last unanswered question in the edition, and dismisses", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(
+        openDetail([
+          { ...textQuestion(null), questionId: "q1" },
+          {
+            ...textQuestion({
+              responseId: "r2",
+              status: "published",
+              body: "Already done",
+              imageMediaIds: [],
+              updatedAt: "2026-06-01T00:00:00Z",
+              publishedAt: "2026-06-01T00:00:00Z",
+            }),
+            questionId: "q2",
+            displayOrder: 1,
+          },
+        ]),
+      );
+      saveMyResponse.mockResolvedValue({
+        responseId: "r1",
+        userId: "u_quinn",
+        questionId: "q1",
+        groupId: "g1",
+        cycleId: "c1",
+        kind: "text",
+        status: "published",
+        body: "Last one",
+        imageMediaIds: [],
+        updatedAt: "2026-06-02T00:00:00Z",
+        publishedAt: "2026-06-02T00:00:00Z",
+      });
+
+      renderAt("q1");
+      const textarea = await screen.findByPlaceholderText("Tell us about it…");
+      fireEvent.change(textarea, { target: { value: "Last one" } });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+        await flush();
+      });
+
+      const overlay = await screen.findByRole("status");
+      expect(overlay).toHaveTextContent("You're all in");
+
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("doesn't show when another question is still unanswered", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(
+        openDetail([
+          { ...textQuestion(null), questionId: "q1" },
+          { ...textQuestion(null), questionId: "q2", displayOrder: 1 },
+        ]),
+      );
+      saveMyResponse.mockResolvedValue({
+        responseId: "r1",
+        userId: "u_quinn",
+        questionId: "q1",
+        groupId: "g1",
+        cycleId: "c1",
+        kind: "text",
+        status: "published",
+        body: "Done with this one",
+        imageMediaIds: [],
+        updatedAt: "2026-06-02T00:00:00Z",
+        publishedAt: "2026-06-02T00:00:00Z",
+      });
+
+      renderAt("q1");
+      const textarea = await screen.findByPlaceholderText("Tell us about it…");
+      fireEvent.change(textarea, { target: { value: "Done with this one" } });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+        await flush();
+      });
+
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+  });
+
   describe("auto-publish note (D2)", () => {
     const closeAt = "2026-06-08T03:59:00Z";
 

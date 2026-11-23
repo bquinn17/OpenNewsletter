@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import clsx from "clsx";
+import { Plus, X } from "lucide-react";
 import { Button } from "../ui/Button";
 import { GRADIENT_SLUGS, gradientClasses } from "../../utils/gradient";
 import type { components } from "../../types/api";
@@ -33,7 +34,7 @@ export function GroupSettingsForm({ group }: Props) {
         <p
           role="alert"
           aria-live="polite"
-          className="rounded-2xl bg-coral/10 p-3 text-sm text-coral"
+          className="rounded-2xl bg-danger/[.04] p-3 text-sm text-danger"
         >
           {errors.root.message}
         </p>
@@ -45,7 +46,7 @@ export function GroupSettingsForm({ group }: Props) {
           {...register("name")}
           maxLength={MAX_NAME_CHARS}
           aria-invalid={!!errors.name}
-          className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
         />
       </Field>
 
@@ -81,7 +82,7 @@ export function GroupSettingsForm({ group }: Props) {
           <select
             id="group-timezone"
             {...register("timezone")}
-            className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+            className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
           >
             {timezoneOptions(group.timezone).map((tz) => (
               <option key={tz} value={tz}>
@@ -93,7 +94,7 @@ export function GroupSettingsForm({ group }: Props) {
           <input
             id="group-timezone"
             {...register("timezone")}
-            className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+            className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
           />
         )}
       </Field>
@@ -107,7 +108,7 @@ export function GroupSettingsForm({ group }: Props) {
           id="group-questions-per-cycle"
           type="number"
           {...register("questionsPerCycle")}
-          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
         />
       </Field>
 
@@ -120,7 +121,7 @@ export function GroupSettingsForm({ group }: Props) {
           id="group-votes-per-cycle"
           type="number"
           {...register("votesPerUserPerCycle")}
-          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
         />
       </Field>
 
@@ -134,7 +135,7 @@ export function GroupSettingsForm({ group }: Props) {
           type="number"
           disabled={!cadenceLoaded}
           {...register("responseWindowDays")}
-          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30 disabled:opacity-60"
+          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30 disabled:opacity-60"
         />
       </Field>
 
@@ -157,16 +158,16 @@ export function GroupSettingsForm({ group }: Props) {
                 id={`reminder-${field.id}`}
                 type="number"
                 {...register(`reminderOffsets.${i}.hours` as const)}
-                className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
               />
               {fields.length > 1 && (
                 <button
                   type="button"
                   onClick={() => remove(i)}
                   aria-label={`Remove reminder ${i + 1}`}
-                  className="h-9 w-9 rounded-full border border-line text-inkmuted hover:border-coral hover:text-coral"
+                  className="grid h-9 w-9 place-items-center rounded-full border border-line text-inkmuted hover:border-danger hover:text-danger"
                 >
-                  ×
+                  <X aria-hidden className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -175,19 +176,19 @@ export function GroupSettingsForm({ group }: Props) {
         <button
           type="button"
           onClick={() => append({ hours: 24 })}
-          className="mt-2 text-sm font-semibold text-grape"
+          className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-grape-ink"
         >
-          ＋ Add reminder
+          <Plus aria-hidden className="h-4 w-4" /> Add reminder
         </button>
         {errors.reminderOffsets?.message && (
-          <p aria-live="polite" className="mt-2 text-xs font-semibold text-coral">
+          <p aria-live="polite" className="mt-2 text-xs font-semibold text-danger">
             {errors.reminderOffsets.message}
           </p>
         )}
         {fields.map((field, i) => {
           const message = errors.reminderOffsets?.[i]?.hours?.message;
           return message ? (
-            <p key={field.id} aria-live="polite" className="mt-1 text-xs font-semibold text-coral">
+            <p key={field.id} aria-live="polite" className="mt-1 text-xs font-semibold text-danger">
               {message}
             </p>
           ) : null;
@@ -213,7 +214,7 @@ export function GroupSettingsForm({ group }: Props) {
           id="group-member-soft-cap"
           type="number"
           {...register("memberSoftCap")}
-          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+          className="w-24 rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
         />
       </Field>
 
@@ -250,7 +251,7 @@ function Field({
       {children}
       {hint && !error && <p className="mt-1 text-xs text-inkmuted">{hint}</p>}
       {error && (
-        <p role="alert" aria-live="polite" className="mt-1 text-xs font-semibold text-coral">
+        <p role="alert" aria-live="polite" className="mt-1 text-xs font-semibold text-danger">
           {error}
         </p>
       )}

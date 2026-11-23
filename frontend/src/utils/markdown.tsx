@@ -67,6 +67,11 @@ type Props = {
    * `image:` token path.
    */
   allowImages?: boolean;
+  /**
+   * `"preview"` (default, 15px — the respond-page editor's Preview pane) or `"reading"`, the
+   * larger measure-capped typography for published answers (`docs/design/frontend.md` §4.3).
+   */
+  size?: "preview" | "reading";
 };
 
 type ImageRendering = {
@@ -78,7 +83,7 @@ const ImageRenderingContext = createContext<ImageRendering>({ byId: new Map(), a
 
 function MarkdownLink({ href, children }: ComponentProps<"a">) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-grape underline">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-grape-ink underline">
       {children}
     </a>
   );
@@ -92,7 +97,7 @@ function MarkdownImg({ src, alt }: ComponentProps<"img">) {
   // its host, so it degrades to a link.
   if (!src.startsWith("image:")) {
     return (
-      <a href={src} target="_blank" rel="noopener noreferrer" className="text-grape underline">
+      <a href={src} target="_blank" rel="noopener noreferrer" className="text-grape-ink underline">
         {alt || src}
       </a>
     );
@@ -111,7 +116,8 @@ function MarkdownImg({ src, alt }: ComponentProps<"img">) {
   }
   return (
     <MediaImage
-      src={image.thumbUrl ?? image.displayUrl}
+      src={image.displayUrl}
+      thumbSrc={image.thumbUrl}
       alt={alt ?? ""}
       {...thumbSize(image.width, image.height)}
       className="rounded-xl"
@@ -132,7 +138,13 @@ const components: Components = { a: MarkdownLink, img: MarkdownImg };
  * `image:{id}` tokens against `images` into `<MediaImage>`s. An id with no
  * match (not yet uploaded, or removed) renders nothing.
  */
-export function MarkdownBody({ body, images, className, allowImages = true }: Props) {
+export function MarkdownBody({
+  body,
+  images,
+  className,
+  allowImages = true,
+  size = "preview",
+}: Props) {
   const rendering = useMemo(
     () => ({
       byId: new Map(images.map((image) => [image.imageId, image])),
@@ -142,7 +154,13 @@ export function MarkdownBody({ body, images, className, allowImages = true }: Pr
   );
 
   return (
-    <div className={clsx("prose prose-sm max-w-none text-[15px] leading-relaxed", className)}>
+    <div
+      className={clsx(
+        "markdown-preview",
+        size === "reading" ? "markdown-reading" : "text-[15px] leading-relaxed",
+        className,
+      )}
+    >
       <ImageRenderingContext.Provider value={rendering}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "../../api/client";
@@ -80,45 +80,24 @@ function cachedGroups(qc: QueryClient): S["ReactionGroupResponse"][] {
 }
 
 describe("ReactionBar", () => {
-  it("shows existing groups as toggle pills and quick picks for the rest", () => {
+  it("shows only the emoji already used, plus one add-reaction button", () => {
     renderBar([{ emoji: "🔥", count: 4, reactedByMe: true }]);
 
     const firePill = screen.getByRole("button", { name: /React with 🔥, 4 reactions/ });
     expect(firePill).toHaveAttribute("aria-pressed", "true");
-
-    // 🔥 is already a group, so it shouldn't also appear as a quick pick.
-    expect(screen.getByRole("button", { name: "React with 🤣" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "React with 🔥" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add reaction" })).toBeInTheDocument();
+    // Nothing else not already used shows directly on the bar.
+    expect(screen.queryByRole("button", { name: "React with 🤣" })).not.toBeInTheDocument();
   });
 
-  it("optimistically turns a pill on, then reconciles with the server's response", async () => {
-    const user = userEvent.setup();
-    let resolvePut!: (value: S["ReactionsResponse"]) => void;
-    vi.mocked(api.engagement.putReaction).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvePut = resolve;
-        }),
-    );
+  it("with no reactions yet, shows just the add-reaction button", () => {
+    renderBar([]);
 
-    const qc = renderBar([]);
-
-    await user.click(screen.getByRole("button", { name: "React with 🤣" }));
-
-    // Optimistic: appears immediately, before the mocked promise resolves.
-    expect(cachedGroups(qc)).toEqual([{ emoji: "🤣", count: 1, reactedByMe: true }]);
-    expect(api.engagement.putReaction).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "🤣");
-
-    resolvePut({
-      reactionGroups: [{ emoji: "🤣", count: 5, reactedByMe: true }],
-      myReactions: ["🤣"],
-    });
-    await waitFor(() =>
-      expect(cachedGroups(qc)).toEqual([{ emoji: "🤣", count: 5, reactedByMe: true }]),
-    );
+    expect(screen.getByRole("button", { name: "Add reaction" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /^React with/ })).toHaveLength(0);
   });
 
-  it("optimistically turns a pill off, rolling back on a server error", async () => {
+  it("toggles an existing pill off, rolling back on a server error", async () => {
     const user = userEvent.setup();
     let rejectDelete!: (error: unknown) => void;
     vi.mocked(api.engagement.deleteReaction).mockImplementation(
@@ -141,24 +120,7 @@ describe("ReactionBar", () => {
     );
   });
 
-  it("toggles a pill off and keeps the server's count once the request succeeds", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.engagement.deleteReaction).mockResolvedValue({
-      reactionGroups: [],
-      myReactions: [],
-    });
-
-    const qc = renderBar([{ emoji: "🔥", count: 1, reactedByMe: true }]);
-
-    await user.click(screen.getByRole("button", { name: /React with 🔥, 1 reaction/ }));
-
-    // Optimistic removal, then confirmed by the server's response.
-    expect(cachedGroups(qc)).toEqual([]);
-    expect(api.engagement.deleteReaction).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "🔥");
-    await waitFor(() => expect(cachedGroups(qc)).toEqual([]));
-  });
-
-  it("opens the picker and adds a new emoji", async () => {
+  it("opens the picker with the quick picks in their own top row, and adds an emoji from the grid", async () => {
     const user = userEvent.setup();
     vi.mocked(api.engagement.putReaction).mockResolvedValue({
       reactionGroups: [{ emoji: "🚀", count: 1, reactedByMe: true }],
@@ -168,14 +130,48 @@ describe("ReactionBar", () => {
     renderBar([]);
 
     await user.click(screen.getByRole("button", { name: "Add reaction" }));
-    expect(await screen.findByRole("dialog", { name: "Choose an emoji" })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Choose an emoji" });
+    expect(within(dialog).getByRole("group", { name: "Quick picks" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "React with 🚀" }));
+    await user.click(within(dialog).getByRole("button", { name: "React with 🚀" }));
 
     await waitFor(() =>
       expect(api.engagement.putReaction).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "🚀"),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("adds a reaction from the picker's quick-pick row", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.engagement.putReaction).mockResolvedValue({
+      reactionGroups: [{ emoji: "🔥", count: 1, reactedByMe: true }],
+      myReactions: ["🔥"],
+    });
+
+    renderBar([]);
+
+    await user.click(screen.getByRole("button", { name: "Add reaction" }));
+    const dialog = await screen.findByRole("dialog");
+    const quickPicks = within(dialog).getByRole("group", { name: "Quick picks" });
+
+    await user.click(within(quickPicks).getByRole("button", { name: "React with 🔥" }));
+
+    await waitFor(() =>
+      expect(api.engagement.putReaction).toHaveBeenCalledWith("g1", "c1", "q1", "r1", "🔥"),
+    );
+  });
+
+  it("skips an already-used emoji in the picker's quick-pick row", async () => {
+    const user = userEvent.setup();
+    renderBar([{ emoji: "🔥", count: 1, reactedByMe: true }]);
+
+    await user.click(screen.getByRole("button", { name: "Add reaction" }));
+    const dialog = await screen.findByRole("dialog");
+    const quickPicks = within(dialog).getByRole("group", { name: "Quick picks" });
+
+    expect(
+      within(quickPicks).queryByRole("button", { name: "React with 🔥" }),
+    ).not.toBeInTheDocument();
   });
 
   it("closes the picker on Escape and returns focus to the + button", async () => {

@@ -30,14 +30,17 @@ export function ConfirmDialog({
   onCancel,
 }: Props) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    // Focus the confirm button on open so keyboard users can act immediately,
-    // and snap-restore focus / scroll on close.
+    // Focus Cancel for a destructive dialog so pressing Enter doesn't delete
+    // anything by reflex; otherwise focus Confirm so keyboard users can act
+    // immediately. Either way, snap-restore focus / scroll on close.
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const t = setTimeout(() => confirmRef.current?.focus(), 0);
+    const target = tone === "danger" ? cancelRef : confirmRef;
+    const t = setTimeout(() => target.current?.focus(), 0);
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !busy) onCancel();
     }
@@ -47,7 +50,7 @@ export function ConfirmDialog({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [open, busy, onCancel]);
+  }, [open, busy, onCancel, tone]);
 
   if (!open) return null;
 
@@ -70,6 +73,7 @@ export function ConfirmDialog({
         {message && <p className="mt-2 text-sm leading-relaxed text-inkmuted">{message}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             disabled={busy}
@@ -85,7 +89,7 @@ export function ConfirmDialog({
             className={clsx(
               "rounded-full px-4 py-2 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60",
               tone === "danger"
-                ? "bg-coral shadow-pop hover:brightness-105"
+                ? "bg-danger shadow-pop hover:brightness-105"
                 : "bg-ink hover:opacity-90",
             )}
           >

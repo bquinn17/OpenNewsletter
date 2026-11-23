@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import clsx from "clsx";
+import { ArrowRight, Plus } from "lucide-react";
 import {
   useCandidates,
   useCycleCadence,
@@ -79,7 +80,7 @@ export function CandidatesPage() {
         <PageHeader title="Loading…" eyebrow="Upcoming" back="/" phase="voting" />
         <div className="space-y-3 px-5 pt-6">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-24 animate-pulse rounded-3xl border border-line bg-white" />
+            <div key={i} className="skeleton h-24 rounded-3xl border border-line" />
           ))}
         </div>
       </div>
@@ -119,19 +120,17 @@ export function CandidatesPage() {
         rightSlot={
           <Link
             to={`/g/${groupId}/upcoming/suggest`}
-            className="inline-flex items-center justify-center gap-1.5 rounded-full bg-coral px-3 py-1.5 text-xs font-semibold text-white shadow-pop transition hover:brightness-105"
+            className="inline-flex items-center justify-center gap-1 rounded-full bg-coral px-3 py-1.5 text-xs font-semibold text-ink shadow-pop transition hover:brightness-105"
           >
-            ＋ Idea
+            <Plus aria-hidden className="h-3.5 w-3.5" /> Idea
           </Link>
         }
       />
 
       <div className="space-y-3 px-5 pt-5">
         {votingCycle && (
-          <div className="rounded-3xl bg-gradient-to-br from-grape to-sky p-5 text-white">
-            <div className="text-xs font-bold uppercase tracking-widest opacity-90">
-              Vote on the questions
-            </div>
+          <div className="rounded-3xl bg-gradient-to-br from-grape-ink to-sky-ink p-5 text-white">
+            <div className="text-xs font-bold uppercase tracking-widest">Vote on the questions</div>
             <h1 className="mt-1 font-display text-xl font-bold leading-tight">
               {opensLabel(votingCycle, timezone, frequency)}
             </h1>
@@ -141,13 +140,16 @@ export function CandidatesPage() {
         {openCycle && (
           <Link
             to={`/g/${groupId}/n/${openCycle.cycleId}`}
-            className="block rounded-3xl border border-line bg-white p-4 text-sm font-semibold text-ink shadow-soft hover:border-coral"
+            className="flex items-center gap-1.5 rounded-3xl border border-line bg-white p-4 text-sm font-semibold text-grape-ink underline-offset-2 shadow-soft hover:border-coral hover:underline"
           >
-            The{" "}
-            {frequency === "weekly"
-              ? editionLabel(openCycle, timezone, "weekly").short
-              : cycleLabels(openCycle.responseOpenAt, timezone).monthLabel}{" "}
-            edition is open — answer now
+            <span>
+              The{" "}
+              {frequency === "weekly"
+                ? editionLabel(openCycle, timezone, "weekly").short
+                : cycleLabels(openCycle.responseOpenAt, timezone).monthLabel}{" "}
+              edition is open — answer now
+            </span>
+            <ArrowRight aria-hidden className="h-4 w-4 shrink-0" />
           </Link>
         )}
       </div>
@@ -227,7 +229,7 @@ export function CandidatesPage() {
                           type="button"
                           onClick={() => handleToggleVote(item.questionId, false)}
                           disabled={toggleVote.isPending}
-                          className="shrink-0 rounded-full border border-line px-3 py-1 text-xs font-semibold text-coral hover:border-coral"
+                          className="shrink-0 rounded-full border border-line px-3 py-1 text-xs font-semibold text-danger hover:border-danger"
                         >
                           Remove vote
                         </button>
@@ -244,6 +246,7 @@ export function CandidatesPage() {
                 timezone={timezone}
                 myVoteCount={candidates.data.myVoteCount}
                 votesPerUserPerCycle={candidates.data.votesPerUserPerCycle}
+                sort={sort}
                 pendingQuestionId={
                   toggleVote.isPending ? (toggleVote.variables?.questionId ?? null) : null
                 }
@@ -257,7 +260,7 @@ export function CandidatesPage() {
       <div className="mt-6 px-5">
         <Link
           to={`/g/${groupId}/upcoming/suggest`}
-          className="block w-full rounded-3xl border-2 border-dashed border-line p-5 text-center text-inkmuted transition hover:border-coral hover:text-coral"
+          className="block w-full rounded-3xl border-2 border-dashed border-line p-5 text-center text-inkmuted transition hover:border-coral hover:text-coral-ink"
         >
           <div className="mb-1 text-2xl">✨</div>
           <div className="font-semibold">Got an idea? Suggest a question</div>

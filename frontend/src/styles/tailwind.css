@@ -3,6 +3,36 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Color tokens as space-separated RGB channels (`docs/design/frontend.md` §4.2), read by
+       `tailwind.config.ts` as `rgb(var(--token) / <alpha-value>)` so opacity modifiers keep working. */
+    --cream: 251 246 238;
+    --lavender: 228 234 255;
+    --blush: 251 225 230;
+    --mist: 244 245 249;
+    /* Lightened slightly from the original #ECE6FF/#FFE3E7/#D8F5EA so the fixed
+       `-ink` text shades below clear 4.5:1 against them (`docs/design/frontend.md` §4.2). */
+    --phase-voting: 240 236 255;
+    --phase-open: 255 237 239;
+    --phase-published: 228 249 241;
+    --surface: 255 255 255;
+    --ink: 24 24 33;
+    --inkmuted: 94 93 107;
+    --coral: 255 90 107;
+    --coral-ink: 189 67 79;
+    --peach: 255 177 120;
+    --grape: 123 91 255;
+    --grape-ink: 108 80 224;
+    --sky: 90 200 255;
+    --sky-ink: 54 120 153;
+    --mint: 61 217 164;
+    --mint-ink: 35 126 95;
+    --sun: 255 210 63;
+    --sun-ink: 138 90 0;
+    --danger: 220 38 38;
+    --line: 236 229 216;
+  }
+
   html,
   body,
   #root {
@@ -12,8 +42,24 @@
     @apply bg-white font-sans text-ink antialiased;
   }
   ::selection {
-    background: #181821;
-    color: #fbf6ee;
+    background: rgb(var(--ink));
+    color: rgb(var(--cream));
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--grape-ink));
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -63,14 +109,8 @@
   .hero-june {
     background: linear-gradient(135deg, #3dd9a4 0%, #5ac8ff 100%);
   }
-  .hero-march {
-    background: linear-gradient(135deg, #ffb178 0%, #ffd23f 100%);
-  }
   .hero-feb {
     background: linear-gradient(135deg, #7b5bff 0%, #ff5a6b 100%);
-  }
-  .hero-meeple {
-    background: linear-gradient(135deg, #2e7d5b 0%, #6fb98f 50%, #f2c94c 100%);
   }
   .toggle {
     position: relative;
@@ -83,7 +123,7 @@
     flex-shrink: 0;
   }
   .toggle.on {
-    background: #181821;
+    background: rgb(var(--ink));
   }
   .toggle::after {
     content: "";
@@ -106,6 +146,19 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Shimmering loading placeholder (`animate-shimmer`), static under reduced motion since the
+     media query above only neutralizes its animation-duration, not the gradient itself. */
+  .skeleton {
+    @apply animate-shimmer;
+    background: linear-gradient(
+      90deg,
+      rgb(var(--line) / 0.6) 25%,
+      rgb(var(--line) / 0.3) 37%,
+      rgb(var(--line) / 0.6) 63%
+    );
+    background-size: 400% 100%;
   }
 
   /* Lightweight markdown styles for the response Preview pane. We don't pull
@@ -150,13 +203,13 @@
     margin-top: 0.25em;
   }
   .markdown-preview blockquote {
-    border-left: 3px solid #7b5bff;
+    border-left: 3px solid rgb(var(--grape));
     padding-left: 0.875rem;
-    color: #6f6e7c;
+    color: rgb(var(--inkmuted));
     font-style: italic;
   }
   .markdown-preview a {
-    color: #7b5bff;
+    color: rgb(var(--grape-ink));
     text-decoration: underline;
   }
   .markdown-preview code {
@@ -166,8 +219,8 @@
     font-size: 0.9em;
   }
   .markdown-preview pre {
-    background: #181821;
-    color: #fbf6ee;
+    background: rgb(var(--ink));
+    color: rgb(var(--cream));
     padding: 0.875rem 1rem;
     border-radius: 0.875rem;
     overflow-x: auto;
@@ -180,11 +233,53 @@
   }
   .markdown-preview hr {
     border: 0;
-    border-top: 1px solid #ece5d8;
+    border-top: 1px solid rgb(var(--line));
     margin: 1.25em 0;
   }
   .markdown-preview img {
     border-radius: 0.875rem;
     max-width: 100%;
+  }
+
+  /* Reading typography for published answers (`docs/design/frontend.md` §4.3,
+     `docs/design/frontend.md` §4.3): larger text, a capped measure, coral list
+     markers, and blockquotes as italic Fraunces pull quotes. */
+  .markdown-reading {
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 65ch;
+  }
+  .markdown-reading li::marker {
+    color: rgb(var(--coral));
+  }
+  .markdown-reading blockquote {
+    border-left: 3px solid rgb(var(--grape));
+    padding-left: 1rem;
+    font-family: "Fraunces", ui-serif, serif;
+    font-style: italic;
+    font-size: 1.05em;
+    color: rgb(var(--ink));
+  }
+
+  /* Reading progress bar (`docs/design/frontend.md` §7.2): pure CSS, driven by document
+     scroll. Browsers without `animation-timeline: scroll()` just keep the base `scaleX(0)` —
+     no bar, no JS fallback. */
+  .reading-progress {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  @supports (animation-timeline: scroll()) {
+    .reading-progress {
+      animation: reading-progress linear both;
+      animation-timeline: scroll(root);
+    }
+  }
+  @keyframes reading-progress {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
   }
 }

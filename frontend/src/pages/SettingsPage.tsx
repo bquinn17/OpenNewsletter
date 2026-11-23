@@ -43,7 +43,7 @@ export function SettingsPage() {
       <div className="mt-6 px-5">
         <button
           onClick={() => void logout()}
-          className="w-full rounded-2xl border border-coral/20 bg-white p-3 text-sm font-semibold text-coral"
+          className="w-full rounded-2xl border border-line bg-white p-3 text-sm font-semibold text-inkmuted"
         >
           Sign out
         </button>

@@ -1,3 +1,5 @@
+import clsx from "clsx";
+import type { CSSProperties } from "react";
 import { useGroup } from "../../api/queries";
 import type { components } from "../../types/api";
 import { avatarColorClass } from "../../utils/avatarColor";
@@ -14,15 +16,32 @@ type Props = {
   cycleId: string;
   questionId: string;
   timezone: string;
+  /**
+   * This answer's position among the first 8 on the page, for the edition-load stagger
+   * (`docs/design/frontend.md` §18) — `undefined` plays no animation.
+   */
+  riseIndex?: number;
 };
 
-/** One published answer to a text question, with its reactions and comments (`docs/design/engagement.md` §4.1). */
-export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: Props) {
+/**
+ * One published answer to a text question, with its reactions and comments
+ * (`docs/design/engagement.md` §4.1). A question's answers share one surface separated by
+ * dividers (`docs/design/frontend.md` §7.2), so this renders unbordered content only — the
+ * surface and its dividers are the parent's job.
+ */
+export function AnswerCard({ answer, groupId, cycleId, questionId, timezone, riseIndex }: Props) {
   const { data: group } = useGroup(groupId);
   const member = group?.members.find((m) => m.userId === answer.userId);
 
   return (
-    <article className="mb-4 rounded-3xl border border-line bg-white p-5 shadow-soft">
+    <article
+      className={clsx(
+        "py-5",
+        riseIndex !== undefined &&
+          "motion-safe:animate-rise motion-safe:[animation-delay:calc(var(--i)*40ms)]",
+      )}
+      style={riseIndex !== undefined ? ({ "--i": riseIndex } as CSSProperties) : undefined}
+    >
       <header className="flex items-center gap-3">
         <Avatar
           name={member?.displayName ?? answer.displayName}
@@ -37,7 +56,9 @@ export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: P
         </div>
       </header>
 
-      {answer.body && <MarkdownBody body={answer.body} images={answer.images} className="mt-3" />}
+      {answer.body && (
+        <MarkdownBody body={answer.body} images={answer.images} size="reading" className="mt-3" />
+      )}
 
       <ImageGallery images={answer.images} body={answer.body ?? ""} />
 

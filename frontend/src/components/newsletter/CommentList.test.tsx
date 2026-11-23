@@ -154,33 +154,57 @@ function renderList(comments: S["CommentResponse"][], config: S["ConfigResponse"
   );
 }
 
+/** Expands the collapsed thread summary row, for tests that need to see comment rows. */
+async function expandThread(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: /^Show \d+ comments?$/ }));
+}
+
+/** Expands the collapsed "Add a comment…" composer button into its textarea + Post form. */
+async function expandComposer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Add a comment…" }));
+}
+
 describe("CommentList", () => {
-  it("collapses to the last 3 comments with a Show all button, which expands them all", async () => {
+  it("with no comments, shows just the composer button", () => {
+    renderList([]);
+
+    expect(screen.getByRole("button", { name: "Add a comment…" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Show \d+ comments?$/ })).not.toBeInTheDocument();
+  });
+
+  it("collapses to a summary row with commenter avatars, which expands into the full thread", async () => {
+    const user = userEvent.setup();
     const comments = [1, 2, 3, 4, 5].map((n) =>
       comment({ commentId: `c${n}`, body: `Comment ${n}`, createdAt: `2026-06-0${n}T00:00:00Z` }),
     );
     renderList(comments);
 
-    expect(screen.getByRole("button", { name: "Show all 5 comments" })).toBeInTheDocument();
+    const summary = screen.getByRole("button", { name: "Show 5 comments" });
+    expect(summary).toBeInTheDocument();
     expect(screen.queryByText("Comment 1")).not.toBeInTheDocument();
-    expect(screen.queryByText("Comment 2")).not.toBeInTheDocument();
-    expect(screen.getByText("Comment 3")).toBeInTheDocument();
-    expect(screen.getByText("Comment 4")).toBeInTheDocument();
-    expect(screen.getByText("Comment 5")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Show all 5 comments" }));
+    await user.click(summary);
 
     expect(screen.getByText("Comment 1")).toBeInTheDocument();
-    expect(screen.getByText("Comment 2")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Comment 5")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Show \d+ comments?$/ })).not.toBeInTheDocument();
+    // The full thread includes the composer too.
+    expect(screen.getByRole("button", { name: "Add a comment…" })).toBeInTheDocument();
+  });
+
+  it("singularizes the summary for exactly one comment", () => {
+    renderList([comment({})]);
+
+    expect(screen.getByRole("button", { name: "Show 1 comment" })).toBeInTheDocument();
   });
 
   it("disables Post for a whitespace-only body and enables it once there's text", async () => {
     const user = userEvent.setup();
     renderList([]);
+    await expandComposer(user);
 
-    const postButton = await screen.findByRole("button", { name: "Post" });
-    const textarea = screen.getByPlaceholderText("Add a comment…");
+    const postButton = screen.getByRole("button", { name: "Post" });
+    const textarea = screen.getByLabelText("Add a comment");
 
     expect(postButton).toBeDisabled();
 
@@ -191,14 +215,15 @@ describe("CommentList", () => {
     expect(postButton).toBeEnabled();
   });
 
-  it("posts a new comment with the typed body and clears the composer", async () => {
+  it("posts a new comment and collapses the composer back to its button", async () => {
     const user = userEvent.setup();
     vi.mocked(api.engagement.createComment).mockResolvedValue(
       comment({ commentId: "new1", authorUserId: "u_quinn", displayName: "Quinn", body: "Nice!" }),
     );
     renderList([]);
+    await expandComposer(user);
 
-    const textarea = await screen.findByPlaceholderText("Add a comment…");
+    const textarea = screen.getByLabelText("Add a comment");
     await user.type(textarea, "Nice!");
     await user.click(screen.getByRole("button", { name: "Post" }));
 
@@ -207,7 +232,33 @@ describe("CommentList", () => {
         body: "Nice!",
       }),
     );
-    await waitFor(() => expect(textarea).toHaveValue(""));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add a comment…" })).toBeInTheDocument(),
+    );
+  });
+
+  it("collapses the composer back to its button on Cancel", async () => {
+    const user = userEvent.setup();
+    renderList([]);
+    await expandComposer(user);
+
+    await user.type(screen.getByLabelText("Add a comment"), "Never mind");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("button", { name: "Add a comment…" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add a comment")).not.toBeInTheDocument();
+  });
+
+  it("only shows the image dropzone after tapping the photo button", async () => {
+    const user = userEvent.setup();
+    renderList([]);
+    await expandComposer(user);
+
+    expect(screen.queryByRole("button", { name: "Attach test image" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a photo" }));
+
+    expect(screen.getByRole("button", { name: "Attach test image" })).toBeInTheDocument();
   });
 
   it("resets the uploader after posting a comment with an image", async () => {
@@ -216,6 +267,8 @@ describe("CommentList", () => {
       comment({ commentId: "new2", authorUserId: "u_quinn", displayName: "Quinn", body: "" }),
     );
     renderList([]);
+    await expandComposer(user);
+    await user.click(screen.getByRole("button", { name: "Add a photo" }));
 
     await user.click(await screen.findByRole("button", { name: "Attach test image" }));
     expect(screen.getByText("attached img-new")).toBeInTheDocument();
@@ -227,10 +280,8 @@ describe("CommentList", () => {
         imageMediaId: "img-new",
       }),
     );
-    // A fresh, empty uploader — the posted image no longer fills its slot.
-    expect(await screen.findByRole("button", { name: "Attach test image" })).toBeInTheDocument();
-    expect(screen.queryByText("attached img-new")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Post" })).toBeDisabled();
+    // Back to the collapsed button — the posted image doesn't linger in any slot.
+    expect(await screen.findByRole("button", { name: "Add a comment…" })).toBeInTheDocument();
   });
 
   it("replaces a comment's image when the author removes it and uploads another", async () => {
@@ -254,11 +305,11 @@ describe("CommentList", () => {
       },
     });
     renderList([mine]);
+    await expandThread(user);
 
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Remove image" }));
-    // The composer has its own uploader; the edit form's comes first in the DOM.
-    await user.click(screen.getAllByRole("button", { name: "Attach test image" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Attach test image" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     // D8: replacing deletes the old image for real, so it's confirmed first.
@@ -296,8 +347,9 @@ describe("CommentList", () => {
       },
     });
     renderList([mine]);
+    await expandThread(user);
 
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Remove image" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -331,8 +383,9 @@ describe("CommentList", () => {
       },
     });
     renderList([mine]);
+    await expandThread(user);
 
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Remove image" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete the attached image?" });
@@ -362,8 +415,9 @@ describe("CommentList", () => {
       },
     });
     renderList([mine]);
+    await expandThread(user);
 
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     const box = screen.getByLabelText("Edit comment");
     await user.clear(box);
     await user.type(box, "New");
@@ -396,8 +450,9 @@ describe("CommentList", () => {
       },
     });
     renderList([mine]);
+    await expandThread(user);
 
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete this comment?" });
     expect(dialog).toHaveTextContent(
       "This also permanently deletes the attached image. It can't be recovered.",
@@ -434,13 +489,14 @@ describe("CommentList", () => {
       body: "Their text",
     });
     renderList([mine, theirs]);
+    await expandThread(user);
 
     await screen.findByText("Original");
     await screen.findByText("Their text");
 
     // Own comment gets both Edit and Delete; a plain member gets neither on
     // someone else's comment — so exactly one of each should exist.
-    const editButton = await screen.findByRole("button", { name: "Edit" });
+    const editButton = screen.getByRole("button", { name: "Edit" });
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
 
     await user.click(editButton);
@@ -466,9 +522,10 @@ describe("CommentList", () => {
       body: "Their text",
     });
     renderList([theirs], adminConfig());
+    await expandThread(user);
 
     await screen.findByText("Their text");
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Delete this comment?" });
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
@@ -479,6 +536,7 @@ describe("CommentList", () => {
   });
 
   it("renders a soft-deleted comment as a muted placeholder with no actions", async () => {
+    const user = userEvent.setup();
     const deleted = comment({
       commentId: "gone",
       authorUserId: "u_quinn",
@@ -487,6 +545,7 @@ describe("CommentList", () => {
       deletedAt: "2026-06-06T00:00:00Z",
     });
     renderList([deleted], adminConfig());
+    await expandThread(user);
 
     await screen.findByText("[deleted]");
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();

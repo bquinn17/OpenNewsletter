@@ -230,7 +230,7 @@ export function ProfileCard({ me }: Props) {
                   reset({ displayName: me.displayName, avatarColor: me.avatarColor });
                   setEditing(true);
                 }}
-                className="text-sm font-semibold text-grape"
+                className="text-sm font-semibold text-grape-ink"
               >
                 Edit profile
               </button>
@@ -241,7 +241,7 @@ export function ProfileCard({ me }: Props) {
                 type="button"
                 onClick={chooseAvatarFile}
                 disabled={avatarUpload.phase === "uploading" || avatarUpload.phase === "processing"}
-                className="text-sm font-semibold text-grape disabled:opacity-50"
+                className="text-sm font-semibold text-grape-ink disabled:opacity-50"
               >
                 {avatarUpload.phase === "uploading"
                   ? `Uploading ${Math.round(avatarUpload.progress * 100)}%`
@@ -253,7 +253,7 @@ export function ProfileCard({ me }: Props) {
                 <button
                   type="button"
                   onClick={() => setAvatarConfirm("remove")}
-                  className="text-sm font-semibold text-coral"
+                  className="text-sm font-semibold text-danger"
                 >
                   Remove photo
                 </button>
@@ -272,7 +272,7 @@ export function ProfileCard({ me }: Props) {
               }}
             />
             {avatarUpload.phase === "error" && (
-              <p role="alert" aria-live="polite" className="mt-1 text-xs font-semibold text-coral">
+              <p role="alert" aria-live="polite" className="mt-1 text-xs font-semibold text-danger">
                 {avatarUpload.message}
               </p>
             )}
@@ -299,13 +299,13 @@ export function ProfileCard({ me }: Props) {
                 maxLength={40}
                 aria-invalid={!!errors.displayName}
                 aria-describedby="displayName-error"
-                className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-coral/30"
+                className="w-full rounded-2xl border border-line bg-cream px-3 py-2 text-sm focus:ring-2 focus:ring-coral/30"
               />
               <p
                 id="displayName-error"
                 role="alert"
                 aria-live="polite"
-                className="mt-1 min-h-[1em] text-xs font-semibold text-coral"
+                className="mt-1 min-h-[1em] text-xs font-semibold text-danger"
               >
                 {errors.displayName?.message ?? ""}
               </p>

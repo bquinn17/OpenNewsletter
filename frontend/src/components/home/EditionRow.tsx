@@ -13,21 +13,30 @@ type Props = {
   timezone: string;
   frequency: CycleCadence["frequency"];
   newsletter: NewsletterSummary;
+  /**
+   * Votes left this cycle (`votesPerUserPerCycle − myVoteCount`), shown on a voting-status row
+   * (`docs/design/frontend.md` §7.1). `undefined` while the candidates query hasn't loaded yet —
+   * the text is hidden rather than guessed.
+   */
+  votesLeft?: number;
 };
 
-export function EditionRow({ groupId, timezone, frequency, newsletter }: Props) {
+export function EditionRow({ groupId, timezone, frequency, newsletter, votesLeft }: Props) {
   const { title, tileTop, tileBottom } = editionLabel(newsletter, timezone, frequency);
   // Home never lists archived editions; style one as published if it slips through.
   const phase = phaseStyle(newsletter.status === "archived" ? "published" : newsletter.status);
-  const href =
-    newsletter.status === "voting"
-      ? `/g/${groupId}/upcoming`
-      : `/g/${groupId}/n/${newsletter.cycleId}`;
+  const isVoting = newsletter.status === "voting";
+  const href = isVoting ? `/g/${groupId}/upcoming` : `/g/${groupId}/n/${newsletter.cycleId}`;
+  // The voting row links to `/upcoming`, not an edition page with a masthead to morph into, so
+  // only a row that lands on the edition page carries the shared `view-transition-name`
+  // (`docs/design/frontend.md` §18) — unique per cycle, and only one element per cycle gets it.
   const description =
     newsletter.status === "open"
       ? `${shortCountdown(newsletter.responseCloseAt)} left · you've published ${newsletter.myPublishedCount} of ${newsletter.questionCount}`
       : newsletter.status === "voting"
-        ? `Suggest and vote on questions for next ${cadenceNoun(frequency)}`
+        ? `Suggest and vote on questions for next ${cadenceNoun(frequency)}${
+            votesLeft === undefined ? "" : ` · ${votesLeft} vote${votesLeft === 1 ? "" : "s"} left`
+          }`
         : `${newsletter.questionCount} question${newsletter.questionCount === 1 ? "" : "s"}${
             // The weekly title is already the publication date, so the suffix would be redundant.
             newsletter.publishedAt && frequency === "monthly"
@@ -38,9 +47,11 @@ export function EditionRow({ groupId, timezone, frequency, newsletter }: Props) 
   return (
     <Link
       to={href}
-      className="flex items-center gap-3 rounded-3xl border border-line bg-white p-4 transition hover:border-ink"
+      viewTransition={!isVoting}
+      className="flex items-center gap-3 rounded-3xl border border-line bg-white p-4 transition hover:border-ink motion-safe:active:scale-[.97]"
     >
       <div
+        style={isVoting ? undefined : { viewTransitionName: `edition-${newsletter.cycleId}` }}
         className={clsx(
           "grid h-12 w-12 shrink-0 place-items-center rounded-2xl font-display font-bold",
           phase.chip,
