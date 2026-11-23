@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { ArrowLeft } from "lucide-react";
-import type { ReactNode } from "react";
+import { forwardRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { phaseStyle, type EditionPhase } from "../../utils/phase";
 
@@ -16,18 +16,14 @@ interface Props {
   showReadingProgress?: boolean;
 }
 
-export function PageHeader({
-  eyebrow,
-  title,
-  rightSlot,
-  back,
-  className,
-  phase,
-  showReadingProgress,
-}: Props) {
+export const PageHeader = forwardRef<HTMLDivElement, Props>(function PageHeader(
+  { eyebrow, title, rightSlot, back, className, phase, showReadingProgress },
+  ref,
+) {
   const navigate = useNavigate();
   return (
     <div
+      ref={ref}
       className={clsx(
         "sticky top-[env(safe-area-inset-top)] z-30 border-b border-ink/5 backdrop-blur",
         phase ? phaseStyle(phase).header : "bg-lavender/85",
@@ -55,4 +51,4 @@ export function PageHeader({
       )}
     </div>
   );
-}
+});

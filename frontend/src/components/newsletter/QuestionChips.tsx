@@ -6,25 +6,24 @@ type ChipQuestion = { questionId: string; prompt: string };
 
 type Props = {
   questions: ChipQuestion[];
+  /** Where the row sticks: the measured height of the page header above it. */
+  stickyTopPx: number;
+  /** A question counts as being read once its section's top scrolls above this line. */
+  readingLinePx: number;
+  navRef?: (node: HTMLElement | null) => void;
 };
 
-/** The id `PublishedQuestion` gives its section, so chips and the scroll observer can find it. */
+/** The id `PublishedQuestion` gives its section, so chips and the scroll listener can find it. */
 export function questionSectionId(questionId: string): string {
   return `question-${questionId}`;
 }
-
-/**
- * Below the sticky page header, chips and pinned prompt: a question counts as being read once its
- * section's top has scrolled above this line.
- */
-const READING_LINE_PX = 160;
 
 /**
  * Sticky, horizontally scrolling row of chips, one per question
  * (`docs/design/frontend.md` §7.2). The chip of the question being read is highlighted; tapping a
  * chip scrolls to it, smoothly unless `prefers-reduced-motion` is set.
  */
-export function QuestionChips({ questions }: Props) {
+export function QuestionChips({ questions, stickyTopPx, readingLinePx, navRef }: Props) {
   const [activeId, setActiveId] = useState<string | null>(questions[0]?.questionId ?? null);
   const questionIds = questions.map((q) => q.questionId).join(",");
 
@@ -36,7 +35,7 @@ export function QuestionChips({ questions }: Props) {
       let current = ids[0] ?? null;
       for (const id of ids) {
         const section = document.getElementById(questionSectionId(id));
-        if (section && section.getBoundingClientRect().top <= READING_LINE_PX) current = id;
+        if (section && section.getBoundingClientRect().top <= readingLinePx) current = id;
       }
       setActiveId(current);
     }
@@ -50,7 +49,7 @@ export function QuestionChips({ questions }: Props) {
       cancelAnimationFrame(frame);
       window.removeEventListener("scroll", onScroll);
     };
-  }, [questionIds]);
+  }, [questionIds, readingLinePx]);
 
   function jumpTo(questionId: string) {
     const el = document.getElementById(questionSectionId(questionId));
@@ -62,8 +61,10 @@ export function QuestionChips({ questions }: Props) {
 
   return (
     <nav
+      ref={navRef}
       aria-label="Jump to a question"
-      className="no-scrollbar sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 flex gap-2 overflow-x-auto border-b border-line bg-mist/95 px-5 py-2 backdrop-blur"
+      style={{ top: `calc(${stickyTopPx}px + env(safe-area-inset-top))` }}
+      className="no-scrollbar sticky z-20 flex gap-2 overflow-x-auto border-b border-line bg-mist px-5 py-2"
     >
       {questions.map((q, i) => (
         <button

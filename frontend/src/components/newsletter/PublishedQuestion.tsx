@@ -18,6 +18,8 @@ type Props = {
   cadenceNoun: "month" | "week";
   /** `responseId` → its rise-in position, for the first 8 answers on the page. */
   riseIndexByResponseId: Map<string, number>;
+  /** Where the prompt bar sticks: the measured height of the page header plus the chips row. */
+  stickyTopPx: number;
 };
 
 /**
@@ -34,17 +36,26 @@ export function PublishedQuestion({
   onToggle,
   cadenceNoun,
   riseIndexByResponseId,
+  stickyTopPx,
 }: Props) {
   const isExpanded = !collapsed;
   const answers = question.kind === "text" ? (question.answers ?? []) : [];
+  const stickyTop = `calc(${stickyTopPx}px + env(safe-area-inset-top))`;
 
   return (
-    <section id={questionSectionId(question.questionId)} className="mt-6 px-5">
+    <section
+      id={questionSectionId(question.questionId)}
+      style={{ scrollMarginTop: stickyTop }}
+      className="mt-4"
+    >
+      {/* Full width and styled like the chips row, so once pinned it reads as part of the
+          sticky header rather than a box floating over the page. */}
       <button
         type="button"
         aria-expanded={isExpanded}
         onClick={onToggle}
-        className="sticky top-[calc(6.75rem+env(safe-area-inset-top))] z-10 flex w-full items-start justify-between gap-3 bg-mist/95 py-2 text-left backdrop-blur"
+        style={{ top: stickyTop }}
+        className="sticky z-10 flex w-full items-start justify-between gap-3 border-b border-line bg-mist px-5 py-3 text-left"
       >
         <QuestionPrompt
           prompt={question.prompt}
@@ -70,7 +81,7 @@ export function PublishedQuestion({
 
       {isExpanded &&
         (question.kind === "text" ? (
-          <div className="divide-y divide-line rounded-3xl bg-white px-5 shadow-soft">
+          <div className="mx-5 mt-4 divide-y divide-line rounded-3xl bg-white px-5 shadow-soft">
             {answers.map((answer) => (
               <AnswerCard
                 key={answer.responseId}
@@ -89,7 +100,7 @@ export function PublishedQuestion({
             )}
           </div>
         ) : (
-          <div className="mt-3">
+          <div className="mx-5 mt-4">
             <PollWidget question={question} />
           </div>
         ))}

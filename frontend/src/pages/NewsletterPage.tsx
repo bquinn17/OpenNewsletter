@@ -15,6 +15,13 @@ import { EditionMasthead } from "../components/newsletter/EditionMasthead";
 import { OpenQuestionRow } from "../components/newsletter/OpenQuestionRow";
 import { PublishedQuestion } from "../components/newsletter/PublishedQuestion";
 import { QuestionChips } from "../components/newsletter/QuestionChips";
+import { useElementHeight } from "../components/newsletter/useElementHeight";
+
+/**
+ * How far below the pinned prompts a question's section must reach before its chip lights up, so
+ * the chip switches as a question fills the screen rather than only once its prompt pins.
+ */
+const READING_LINE_OFFSET_PX = 120;
 import { avatarColorClass } from "../utils/avatarColor";
 import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
 import { readingTimeMinutes } from "../utils/readingTime";
@@ -223,6 +230,11 @@ function PublishedLayout({
     [data.questions],
   );
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // The chips stick under the header and the question prompts under both, at their measured
+  // heights, so nothing overlaps or leaves a gap whatever the header's content.
+  const [headerRef, headerHeight] = useElementHeight<HTMLDivElement>();
+  const [chipsRef, chipsHeight] = useElementHeight<HTMLElement>();
+  const promptTop = headerHeight + chipsHeight;
 
   const textAnswers = useMemo(
     () => sorted.flatMap((q) => (q.kind === "text" ? (q.answers ?? []) : [])),
@@ -267,6 +279,7 @@ function PublishedLayout({
   return (
     <div className="pb-12">
       <PageHeader
+        ref={headerRef}
         eyebrow={`${groupName} · editions`}
         title={title}
         back="/"
@@ -286,27 +299,32 @@ function PublishedLayout({
 
       <QuestionChips
         questions={sorted.map((q) => ({ questionId: q.questionId, prompt: q.prompt }))}
+        navRef={chipsRef}
+        stickyTopPx={headerHeight}
+        readingLinePx={promptTop + READING_LINE_OFFSET_PX}
       />
 
-      <div className="flex items-center justify-between px-5 pt-3 text-sm text-inkmuted">
-        <span>
-          Published {formatInZone(data.publishedAt, timezone)}
-          {reactionTotal > 0 && ` · ${reactionTotal} reaction${reactionTotal === 1 ? "" : "s"}`}
-        </span>
-        {sorted.length > 1 && (
-          <button type="button" onClick={toggleAll} className="font-semibold text-grape-ink">
-            {allCollapsed ? "Expand all" : "Collapse all"}
-          </button>
-        )}
+      <div className="px-5 pt-4 text-sm text-inkmuted">
+        Published {formatInZone(data.publishedAt, timezone)}
+        {reactionTotal > 0 && ` · ${reactionTotal} reaction${reactionTotal === 1 ? "" : "s"}`}
       </div>
 
-      <div className="px-5 pt-2">
+      <div className="flex items-center justify-between gap-3 px-5 pt-2 text-sm font-semibold">
         <Link
           to={`/g/${groupId}/leaderboard`}
-          className="inline-flex items-center gap-1 text-sm font-semibold text-grape-ink"
+          className="inline-flex items-center gap-1 text-grape-ink"
         >
           🏆 Group leaderboard
         </Link>
+        {sorted.length > 1 && (
+          <button
+            type="button"
+            onClick={toggleAll}
+            className="shrink-0 whitespace-nowrap text-grape-ink"
+          >
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+        )}
       </div>
 
       {sorted.map((q) => (
@@ -322,6 +340,7 @@ function PublishedLayout({
           }
           cadenceNoun={cadenceNoun(frequency)}
           riseIndexByResponseId={riseIndexByResponseId}
+          stickyTopPx={promptTop}
         />
       ))}
 

@@ -36,7 +36,7 @@ export function AnswerCard({ answer, groupId, cycleId, questionId, timezone, ris
   return (
     <article
       className={clsx(
-        "py-5 first:pt-0 last:pb-0",
+        "py-5",
         riseIndex !== undefined &&
           "motion-safe:animate-rise motion-safe:[animation-delay:calc(var(--i)*40ms)]",
       )}
