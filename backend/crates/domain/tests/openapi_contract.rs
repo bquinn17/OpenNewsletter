@@ -18,11 +18,10 @@ use domain::api::{
     DevTickCycleResponse, DevTickNotifyResponse, GroupResponse, HealthResponse, ImageMediaResponse,
     InviteListResponse, LeaderboardResponse, MemberResponse, NewsletterDetailResponse,
     NewsletterListResponse, PatchCommentRequest, PatchGroupRequest, PatchMeRequest,
-    PatchMemberRequest, PatchUploadRequest, ProblemDetails, PushPreferenceListResponse,
-    PushPreferenceResponse, PushSubscribeRequest, PushSubscribeResponse,
-    PushSubscriptionListResponse, PushTestResponse, PushUnsubscribeRequest,
-    PutPushPreferenceRequest, ReactionsResponse, RedeemRequest, RedeemResponse, ResponseDto,
-    SaveResponseRequest, UserResponse,
+    PatchMemberRequest, ProblemDetails, PushPreferenceListResponse, PushPreferenceResponse,
+    PushSubscribeRequest, PushSubscribeResponse, PushSubscriptionListResponse, PushTestResponse,
+    PushUnsubscribeRequest, PutPushPreferenceRequest, ReactionsResponse, RedeemRequest,
+    RedeemResponse, ResponseDto, SaveResponseRequest, UserResponse,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -444,30 +443,6 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "GET",
         "/uploads/{imageId}",
         "404",
-        round_trip::<ProblemDetails>,
-    ),
-    (
-        "PATCH",
-        "/uploads/{imageId}",
-        "request",
-        round_trip::<PatchUploadRequest>,
-    ),
-    (
-        "PATCH",
-        "/uploads/{imageId}",
-        "200",
-        round_trip::<ImageMediaResponse>,
-    ),
-    (
-        "PATCH",
-        "/uploads/{imageId}",
-        "404",
-        round_trip::<ProblemDetails>,
-    ),
-    (
-        "PATCH",
-        "/uploads/{imageId}",
-        "422",
         round_trip::<ProblemDetails>,
     ),
     (

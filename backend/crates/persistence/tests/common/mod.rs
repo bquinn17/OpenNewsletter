@@ -233,7 +233,6 @@ pub fn image_media(group_id: &str, cycle_id: &str, image_id: &str, user_id: &str
         bytes: 12345,
         width: None,
         height: None,
-        caption: None,
         uploaded_at: utc("2026-06-02T12:00:00Z"),
         processed_at: None,
         error_message: None,

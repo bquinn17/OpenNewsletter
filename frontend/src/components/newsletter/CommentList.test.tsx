@@ -250,7 +250,6 @@ describe("CommentList", () => {
         displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
-        caption: null,
       },
     });
     renderList([mine]);
@@ -292,7 +291,6 @@ describe("CommentList", () => {
         displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
-        caption: null,
       },
     });
     renderList([mine]);
@@ -327,7 +325,6 @@ describe("CommentList", () => {
         displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
-        caption: null,
       },
     });
     renderList([mine]);
@@ -358,7 +355,6 @@ describe("CommentList", () => {
         displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
-        caption: null,
       },
     });
     renderList([mine]);
@@ -392,7 +388,6 @@ describe("CommentList", () => {
         displayUrl: "https://media.example.com/display.webp",
         width: 800,
         height: 600,
-        caption: null,
       },
     });
     renderList([mine]);

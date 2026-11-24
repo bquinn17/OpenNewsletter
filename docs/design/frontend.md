@@ -441,7 +441,7 @@ The app's own sign-in screen, in its theme: "Welcome back" under a greeting for 
 
 `useResponseEditor` keeps two layers:
 
-- **`server`**: last known `Response` from the server (`body`, `imageMediaIds`, etc. — image captions live on the `ImageMedia` row, not on the response)
+- **`server`**: last known `Response` from the server (`body`, `imageMediaIds`, etc.)
 - **`local`**: the user's working copy in the textarea
 
 ### 8.2 Save loop
@@ -500,7 +500,7 @@ The visible dashed drop box is gone. `ImageUploader` (`components/responses/Imag
 - Color contrast: WCAG AA (4.5:1). Not checked automatically — axe is not wired into Playwright.
 - Reduced motion: respect `prefers-reduced-motion` (disable transitions on toasts, etc.).
 - Form errors announced via `aria-live="polite"` regions.
-- Alt text input next to each uploaded thumbnail in the editor (not enforced on publish).
+- Uploaded images have no caption or alt-text field: the answer or comment text around an image gives its context. An answer image's `alt` comes from its markdown token, which the editor inserts empty (so the image is decorative) unless the member types one ([`media.md` §7](media.md#7-image-references-in-markdown)). A comment image's link reads "Attached image".
 
 ---
 

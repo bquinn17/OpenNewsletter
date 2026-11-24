@@ -104,7 +104,6 @@ pub const MAX_DECODED_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_GIF_FRAMES: usize = 300;
 pub const MAX_GIF_TOTAL_PIXELS: u64 = 100_000_000;
 pub const MAX_DISPLAY_NAME_CHARS: usize = 40;
-pub const MAX_IMAGE_CAPTION_CHARS: usize = 140;
 
 pub const MAX_POLL_OPTIONS: usize = 6;
 pub const MIN_POLL_OPTIONS: usize = 2;

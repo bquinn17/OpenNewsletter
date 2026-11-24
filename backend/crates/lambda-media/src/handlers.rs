@@ -5,7 +5,7 @@ use crate::state::AppState;
 use crate::validation;
 use domain::api::{
     AvatarMediaResponse, CreateAvatarRequest, CreateAvatarResponse, CreateUploadRequest,
-    CreateUploadResponse, ImageMediaResponse, PatchUploadRequest,
+    CreateUploadResponse, ImageMediaResponse,
 };
 use domain::{
     ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
@@ -122,7 +122,6 @@ pub async fn create_upload(
         bytes: request.byte_size,
         width: None,
         height: None,
-        caption: None,
         uploaded_at: now,
         processed_at: None,
         error_message: None,
@@ -175,36 +174,6 @@ pub async fn complete_upload(
     image_id: &ImageId,
 ) -> Result<ImageMediaResponse, ApiError> {
     get_upload(state, caller, group_id, cycle_id, image_id).await
-}
-
-/// `PATCH /uploads/{imageId}` (§9.6). Caller must own the image; allowed
-/// regardless of the image's processing status.
-pub async fn patch_upload(
-    state: &AppState,
-    caller: &UserId,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    image_id: &ImageId,
-    request: PatchUploadRequest,
-) -> Result<ImageMediaResponse, ApiError> {
-    auth::require_membership(&state.repo, caller, group_id, false).await?;
-    let image = load_image(state, group_id, cycle_id, image_id).await?;
-    require_owner(caller, &image)?;
-
-    let caption = validation::validate_caption(request.caption)?;
-    media::set_image_caption(&state.repo, group_id, cycle_id, image_id, caption.as_deref())
-        .await
-        .map_err(|e| match e {
-            // Deleted between the load above and this write.
-            RepoError::ConditionalCheckFailed => ApiError::not_found("image not found"),
-            e => {
-                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "caption update failed");
-                ApiError::internal("failed to update caption")
-            }
-        })?;
-
-    let updated = load_image(state, group_id, cycle_id, image_id).await?;
-    to_image_response(state, updated).await
 }
 
 /// `DELETE /uploads/{imageId}` (§9.4). Caller must own the image. Refused

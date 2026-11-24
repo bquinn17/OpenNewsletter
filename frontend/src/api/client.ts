@@ -259,17 +259,6 @@ export const api = {
         method: "POST",
       }),
 
-    patchUpload: (
-      imageId: string,
-      groupId: string,
-      cycleId: string,
-      body: S["PatchUploadRequest"],
-    ): Promise<S["ImageMediaResponse"]> =>
-      apiFetch(`/uploads/${encodeURIComponent(imageId)}?${mediaQuery(groupId, cycleId)}`, {
-        method: "PATCH",
-        body,
-      }),
-
     deleteUpload: (imageId: string, groupId: string, cycleId: string): Promise<void> =>
       apiFetch(`/uploads/${encodeURIComponent(imageId)}?${mediaQuery(groupId, cycleId)}`, {
         method: "DELETE",

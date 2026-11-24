@@ -9,6 +9,5 @@ export type PendingImage = {
   file: File | null;
   status: Status;
   progress: number;
-  altText: string;
   error: string | null;
 };

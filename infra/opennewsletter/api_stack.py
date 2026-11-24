@@ -60,7 +60,6 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("invites", "POST", "/invites/redeem"),
     ("media", "POST", "/uploads"),
     ("media", "GET", "/uploads/{imageId}"),
-    ("media", "PATCH", "/uploads/{imageId}"),
     ("media", "DELETE", "/uploads/{imageId}"),
     ("media", "POST", "/uploads/{imageId}/complete"),
     ("media", "POST", "/avatars"),

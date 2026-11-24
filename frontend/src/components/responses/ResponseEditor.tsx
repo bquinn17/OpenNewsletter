@@ -99,7 +99,6 @@ export function ResponseEditor({
     (initialImages ?? []).map((i) => ({
       imageId: i.imageId,
       status: i.status === "pending" ? "processing" : i.status,
-      altText: i.caption ?? "",
       thumbUrl: i.thumbUrl,
       displayUrl: i.displayUrl,
       width: i.width,

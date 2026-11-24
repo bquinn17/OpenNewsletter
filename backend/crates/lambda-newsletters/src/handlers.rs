@@ -558,7 +558,6 @@ async fn comment_response(
                     thumb_url: urls.thumb_url,
                     width: urls.width,
                     height: urls.height,
-                    caption: img.caption.clone(),
                 })
         }
         None => None,

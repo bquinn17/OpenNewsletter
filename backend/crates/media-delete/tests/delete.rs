@@ -26,7 +26,6 @@ fn pending_image() -> ImageMedia {
         bytes: 1_024,
         width: None,
         height: None,
-        caption: None,
         uploaded_at: Timestamp::now(),
         processed_at: None,
         error_message: None,

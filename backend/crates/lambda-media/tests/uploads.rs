@@ -1,6 +1,5 @@
-//! `POST /uploads`, `GET`/`PATCH`/`DELETE /uploads/{imageId}`, and
-//! `POST /uploads/{imageId}/complete` (`docs/design/api.md` §9.1-§9.4,
-//! §9.6).
+//! `POST /uploads`, `GET`/`DELETE /uploads/{imageId}`, and
+//! `POST /uploads/{imageId}/complete` (`docs/design/api.md` §9.1-§9.4).
 //!
 //! Each test uses its own group id (never a shared one): `persistence::auth`
 //! keeps a process-wide membership cache keyed by `(userId, groupId)` with a
@@ -10,7 +9,7 @@
 mod common;
 
 use ::media::handlers;
-use domain::api::{CreateUploadRequest, PatchUploadRequest};
+use domain::api::CreateUploadRequest;
 use domain::{
     ApiErrorCode, CycleId, GroupId, ImageId, ImagePurpose, MediaStatus, QuestionId, ResponseStatus,
     Role, UserId,
@@ -278,20 +277,6 @@ async fn non_member_is_forbidden_on_every_upload_route() {
         .expect_err("non-member must be refused");
     assert_eq!(get_err.code, ApiErrorCode::Forbidden);
 
-    let patch_err = handlers::patch_upload(
-        &state,
-        &outsider,
-        &group_id,
-        &cycle_id,
-        &image_id,
-        PatchUploadRequest {
-            caption: Some("hi".into()),
-        },
-    )
-    .await
-    .expect_err("non-member must be refused");
-    assert_eq!(patch_err.code, ApiErrorCode::Forbidden);
-
     let delete_err = handlers::delete_upload(&state, &outsider, &group_id, &cycle_id, &image_id)
         .await
         .expect_err("non-member must be refused");
@@ -328,121 +313,6 @@ async fn get_upload_is_readable_by_any_member_not_just_the_owner() {
     .expect("any member can read");
     assert_eq!(response.image_id, image_id);
     assert_eq!(response.user_id, UserId::new("u1"));
-}
-
-#[tokio::test]
-async fn patch_upload_by_non_owner_is_forbidden() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("gpatchfb", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
-    common::seed_group_and_membership(&repo, &group, "u2", Role::Member).await;
-    let image_id = common::seed_image(
-        &repo,
-        "gpatchfb",
-        "202606",
-        "q1",
-        "img-1",
-        "u1",
-        MediaStatus::Ready,
-        ImagePurpose::Response,
-    )
-    .await;
-    let state = common::test_state(repo);
-
-    let err = handlers::patch_upload(
-        &state,
-        &UserId::new("u2"),
-        &GroupId::new("gpatchfb"),
-        &CycleId::new("202606"),
-        &image_id,
-        PatchUploadRequest {
-            caption: Some("not yours".into()),
-        },
-    )
-    .await
-    .expect_err("non-owner must be refused");
-    assert_eq!(err.code, ApiErrorCode::Forbidden);
-}
-
-#[tokio::test]
-async fn patch_upload_sets_and_clears_the_caption() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("gpatchok", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    let image_id = common::seed_image(
-        &repo,
-        "gpatchok",
-        "202606",
-        "q1",
-        "img-1",
-        "u1",
-        MediaStatus::Ready,
-        ImagePurpose::Response,
-    )
-    .await;
-    let state = common::test_state(repo);
-    let group_id = GroupId::new("gpatchok");
-    let cycle_id = CycleId::new("202606");
-    let caller = UserId::new("u1");
-
-    let updated = handlers::patch_upload(
-        &state,
-        &caller,
-        &group_id,
-        &cycle_id,
-        &image_id,
-        PatchUploadRequest {
-            caption: Some("Cocoa thermos at mile two.".into()),
-        },
-    )
-    .await
-    .expect("owner can set a caption");
-    assert_eq!(updated.caption, Some("Cocoa thermos at mile two.".into()));
-
-    let cleared = handlers::patch_upload(
-        &state,
-        &caller,
-        &group_id,
-        &cycle_id,
-        &image_id,
-        PatchUploadRequest { caption: None },
-    )
-    .await
-    .expect("owner can clear a caption");
-    assert_eq!(cleared.caption, None);
-}
-
-#[tokio::test]
-async fn patch_upload_rejects_an_overlong_caption() {
-    let (_c, repo) = common::make_repo().await;
-    let group = common::group("gpatchlong", "u1");
-    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-    let image_id = common::seed_image(
-        &repo,
-        "gpatchlong",
-        "202606",
-        "q1",
-        "img-1",
-        "u1",
-        MediaStatus::Ready,
-        ImagePurpose::Response,
-    )
-    .await;
-    let state = common::test_state(repo);
-
-    let err = handlers::patch_upload(
-        &state,
-        &UserId::new("u1"),
-        &GroupId::new("gpatchlong"),
-        &CycleId::new("202606"),
-        &image_id,
-        PatchUploadRequest {
-            caption: Some("a".repeat(141)),
-        },
-    )
-    .await
-    .expect_err("141 chars is over the cap");
-    assert_eq!(err.code, ApiErrorCode::ValidationFailed);
 }
 
 #[tokio::test]
@@ -725,9 +595,6 @@ async fn ready_image_exposes_display_and_thumb_urls() {
     assert_eq!(pending.display_url, None);
     assert_eq!(pending.thumb_url, None);
 
-    persistence::media::set_image_caption(&state.repo, &group_id, &cycle_id, &image_id, None)
-        .await
-        .unwrap();
     // Flip the row to ready with display/thumb keys, as the image-process
     // Lambda would, and confirm the URLs presign against the processed bucket.
     mark_ready_with_keys(&state.repo, &group_id, &cycle_id, &image_id).await;

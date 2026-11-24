@@ -104,7 +104,7 @@ describe("mockFetch", () => {
       expect(secondPoll.displayUrl).toBeTruthy();
     });
 
-    it("sets a caption via PATCH and really deletes via DELETE (D8)", async () => {
+    it("really deletes via DELETE (D8)", async () => {
       const created = (await mockFetch("POST", "/uploads", {
         groupId: "g1",
         cycleId: "202606",
@@ -112,13 +112,6 @@ describe("mockFetch", () => {
         mimeType: "image/jpeg",
         byteSize: 1000,
       })) as components["schemas"]["CreateUploadResponse"];
-
-      const patched = (await mockFetch(
-        "PATCH",
-        `/uploads/${created.imageId}?groupId=g1&cycleId=202606`,
-        { caption: "Mile two." },
-      )) as components["schemas"]["ImageMediaResponse"];
-      expect(patched.caption).toBe("Mile two.");
 
       await mockFetch("DELETE", `/uploads/${created.imageId}?groupId=g1&cycleId=202606`);
       await expect(

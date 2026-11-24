@@ -2,7 +2,6 @@
 
 use base64::Engine;
 use domain::{ApiError, ApiErrorCode, ImageMimeType};
-use shared::config::MAX_IMAGE_CAPTION_CHARS;
 
 /// `mimeType` for `POST /uploads` — jpeg/png/webp/gif. An unrecognized
 /// string (including a type that's simply not one we accept, like an SVG)
@@ -87,25 +86,6 @@ fn invalid_sha256() -> ApiError {
     )
 }
 
-/// `caption` for `PATCH /uploads/{imageId}` (§9.6). Trims whitespace; an
-/// empty or all-whitespace string clears the caption, same as `null`.
-pub fn validate_caption(raw: Option<String>) -> Result<Option<String>, ApiError> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    if trimmed.chars().count() > MAX_IMAGE_CAPTION_CHARS {
-        return Err(ApiError::invalid_field(
-            "caption",
-            format!("caption must be at most {MAX_IMAGE_CAPTION_CHARS} characters"),
-        ));
-    }
-    Ok(Some(trimmed.to_owned()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,23 +161,6 @@ mod tests {
     #[test]
     fn sha256_rejects_non_base64() {
         let err = validate_sha256(Some("not base64!!")).expect_err("not valid base64");
-        assert_eq!(err.code, ApiErrorCode::ValidationFailed);
-    }
-
-    #[test]
-    fn caption_trims_and_clears_on_blank() {
-        assert_eq!(
-            validate_caption(Some("  hi  ".into())).unwrap(),
-            Some("hi".into())
-        );
-        assert_eq!(validate_caption(Some("   ".into())).unwrap(), None);
-        assert_eq!(validate_caption(None).unwrap(), None);
-    }
-
-    #[test]
-    fn caption_rejects_overlong() {
-        let err =
-            validate_caption(Some("a".repeat(MAX_IMAGE_CAPTION_CHARS + 1))).expect_err("too long");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
     }
 }

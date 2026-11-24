@@ -12,18 +12,10 @@ type Props = {
   removing: boolean;
   onRemove: () => void;
   onRetry: () => void;
-  onAltTextChange: (value: string) => void;
 };
 
-/** One attached image's thumbnail/progress/alt-text tile, for `ImageUploader`'s grid. */
-export function ImageUploaderTile({
-  image,
-  row,
-  removing,
-  onRemove,
-  onRetry,
-  onAltTextChange,
-}: Props) {
+/** One attached image's thumbnail/progress tile, for `ImageUploader`'s grid. */
+export function ImageUploaderTile({ image, row, removing, onRemove, onRetry }: Props) {
   return (
     <li
       aria-busy={removing || undefined}
@@ -33,7 +25,7 @@ export function ImageUploaderTile({
         {image.status === "ready" && row?.thumbUrl ? (
           <MediaImage
             src={row.thumbUrl}
-            alt={image.altText || "Uploaded image"}
+            alt="Uploaded image"
             {...thumbSize(row.width, row.height)}
             className="h-24 w-full rounded-xl object-cover"
           />
@@ -73,21 +65,6 @@ export function ImageUploaderTile({
           ×
         </button>
       </div>
-      {image.status === "ready" && (
-        <div className="mt-2">
-          <label htmlFor={`alt-${image.imageId}`} className="sr-only">
-            Describe this image for screen readers
-          </label>
-          <input
-            id={`alt-${image.imageId}`}
-            type="text"
-            value={image.altText}
-            onChange={(e) => onAltTextChange(e.target.value)}
-            placeholder="Describe this image"
-            className="w-full rounded-lg border border-line bg-cream px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-coral/30"
-          />
-        </div>
-      )}
     </li>
   );
 }

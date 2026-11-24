@@ -320,7 +320,7 @@ A language model has to write the questions, because they come from free-text an
 
 ### 12.2 What questions are made from
 
-- **Text answers** published in the chosen period, plus image captions.
+- **Text answers** published in the chosen period.
 - **Comments** on those answers, leaving out soft-deleted ones. A comment's author is the subject of any question made from it. Comments are sent with the answer they reply to, so the model can tell a fact ("I ran my first marathon last week!") from a joke that only makes sense in the thread.
 - **Not poll votes.** Polls promise aggregate-only tallies ([`engagement.md` §3.5](../docs/design/engagement.md#35-anonymity)), so a question can never say how one member voted. Questions about a poll's group-wide result ("What did most of the group pick for best pizza?") are allowed.
 - **Every current member's posts are used.** There's no opt-out (§12.5).
@@ -335,7 +335,7 @@ A language model has to write the questions, because they come from free-text an
 - **Amazon Bedrock, running Claude.** It's AWS-native, so `lambda-quiz-gen` calls it with IAM credentials and there's no API key to manage. Group content stays inside the AWS account that already stores it, and Bedrock doesn't use prompts or outputs for training. CDK grants `bedrock:InvokeModel` on the one model or inference profile chosen, and the model's access has to be enabled in the account first. Record the provider and model in [`decisions.md`](../docs/decisions.md).
 - **`lambda-quiz-gen`** is invoked asynchronously by the generate route. It:
   1. reads the period's locked questions, published text answers and their comments
-  2. labels each member with a short alias (`M1`, `M2`…) in place of their name, and keeps the mapping in memory. For each answer the model sees the question prompt, the author's alias, the answer text and captions, and its comments with their authors' aliases, and nothing else: no email addresses, no user IDs
+  2. labels each member with a short alias (`M1`, `M2`…) in place of their name, and keeps the mapping in memory. For each answer the model sees the question prompt, the author's alias, the answer text and its comments with their authors' aliases, and nothing else: no email addresses, no user IDs
   3. makes a single Converse call with a JSON output schema. It asks for about 1.5 times the number of questions wanted, so validation has spares. For each question it asks for the prompt, four options, the correct option, the subject's alias, the source (an answer's index, or a comment's index within it) and a **verbatim quote** from that source supporting the correct option
   4. validates every question and drops any that fail (below)
   5. picks the final set, spreading it evenly across subjects, and stores it with `status = ready`
@@ -343,7 +343,7 @@ A language model has to write the questions, because they come from free-text an
   A year for a 30-member group is about 100k words of answers, plus its comments, which fits in one call. A group with more material is trimmed oldest-first to a token budget (`QUIZ_INPUT_TOKEN_BUDGET`).
 - **Validation is the guard against made-up facts**, and with no human review it's the only one. A question is kept only if:
   - its source exists and was written by the subject: a published answer in the period, or a non-deleted comment on one
-  - the quote appears exactly in that answer's body or caption, or in the comment's body, after whitespace is normalized
+  - the quote appears exactly in that answer's body or in the comment's body, after whitespace is normalized
   - its four options are distinct and the correct option is one of them
   - for a "who" question, every option is a current member
 
@@ -382,7 +382,7 @@ A language model has to write the questions, because they come from free-text an
 Until now, members' answers and comments have only ever been read by the group, and AWS stores them. A quiz sends a year of them to a model. Bedrock keeps that inside AWS and doesn't train on it, which is a strong reason to choose it, but it's still a new use of what members wrote, and members wrote it for each other, not for a quiz generator.
 
 - **Consent is up to the admin.** There's no group setting and no member opt-out. It's the admin's job to make sure the group is happy for their posts to be used before they generate a quiz. To make that easy, the generate form says what will be sent: "Questions are written by an AI model (Claude, on Amazon Bedrock) from everyone's published answers and comments in this period. Nothing is used to train the model." It also links to a short explanation the admin can pass on to the group.
-- **Minimum data.** The model sees aliases, prompts, answer text, captions and comment text only. No images, names or emails are sent. Calls aren't logged with their payloads: CloudWatch logs record token counts and timing only.
+- **Minimum data.** The model sees aliases, prompts, answer text and comment text only. No images, names or emails are sent. Calls aren't logged with their payloads: CloudWatch logs record token counts and timing only.
 
 Record the provider choice and the no-opt-out rule in [`decisions.md`](../docs/decisions.md).
 

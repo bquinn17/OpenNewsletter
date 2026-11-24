@@ -80,7 +80,7 @@ test("the demo sends nothing off the site and stores nothing in the browser", as
   await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
   await page.getByPlaceholder("Tell us about it…").fill("A demo answer with a photo");
   await page.getByLabel("Add photos").setInputFiles(PHOTO);
-  await expect(page.getByPlaceholder("Describe this image")).toBeVisible({
+  await expect(page.getByAltText("Uploaded image")).toBeVisible({
     timeout: UPLOAD_TIMEOUT_MS,
   });
 
@@ -132,7 +132,7 @@ test("an image uploaded to a comment shows the picture that was picked", async (
 
   await answer.getByLabel("Add a photo", { exact: true }).setInputFiles(PHOTO);
   await expect(answer.getByText(/Uploading \d+%/)).toBeVisible();
-  await expect(answer.getByPlaceholder("Describe this image")).toBeVisible({
+  await expect(answer.getByAltText("Uploaded image")).toBeVisible({
     timeout: UPLOAD_TIMEOUT_MS,
   });
   await answer.getByRole("button", { name: "Post" }).click();

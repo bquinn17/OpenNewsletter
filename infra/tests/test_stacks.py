@@ -615,7 +615,6 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "POST /invites/redeem",
         "POST /uploads",
         "GET /uploads/{imageId}",
-        "PATCH /uploads/{imageId}",
         "DELETE /uploads/{imageId}",
         "POST /uploads/{imageId}/complete",
         "POST /avatars",

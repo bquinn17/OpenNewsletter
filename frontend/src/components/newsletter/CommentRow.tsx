@@ -251,7 +251,7 @@ export function CommentRow({
                 >
                   <MediaImage
                     src={comment.image.thumbUrl}
-                    alt={comment.image.caption ?? ""}
+                    alt="Attached image"
                     {...thumbSize(comment.image.width, comment.image.height, IMAGE_MAX_HEIGHT_PX)}
                     className="max-h-48 rounded-xl"
                   />

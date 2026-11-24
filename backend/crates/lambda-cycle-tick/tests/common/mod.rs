@@ -162,7 +162,6 @@ pub async fn put_ready_image(
         bytes: 1024,
         width: Some(100),
         height: Some(100),
-        caption: None,
         uploaded_at: Timestamp::now(),
         processed_at: Some(Timestamp::now()),
         error_message: None,

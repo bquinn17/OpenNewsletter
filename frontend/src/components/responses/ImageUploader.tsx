@@ -20,7 +20,6 @@ const MAX_BYTES = 15_728_640;
 export type UploaderImage = {
   imageId: string;
   status: PendingImage["status"];
-  altText: string;
   thumbUrl: string | null;
   displayUrl: string | null;
   width: number | null;
@@ -102,7 +101,6 @@ function toUploaderImage(
   return {
     imageId: image.imageId,
     status: image.status,
-    altText: image.altText,
     thumbUrl: row?.thumbUrl ?? null,
     displayUrl: row?.displayUrl ?? null,
     width: row?.width ?? null,
@@ -133,7 +131,6 @@ export const ImageUploader = forwardRef<ImageUploaderHandle, Props>(function Ima
       file: null,
       status: row.status === "pending" ? "processing" : row.status,
       progress: row.status === "ready" ? 1 : 0,
-      altText: row.caption ?? "",
       error: row.status === "failed" ? friendlyError(row.errorMessage, maxImages) : null,
     })),
   );
@@ -244,7 +241,6 @@ export const ImageUploader = forwardRef<ImageUploaderHandle, Props>(function Ima
         file,
         status: "uploading",
         progress: 0,
-        altText: "",
         error: null,
       },
     ]);
@@ -377,10 +373,6 @@ export const ImageUploader = forwardRef<ImageUploaderHandle, Props>(function Ima
     void startUpload(image.file);
   }
 
-  function handleAltTextChange(imageId: string, value: string) {
-    updateImage(imageId, { altText: value });
-  }
-
   return (
     <div>
       <ImageDropzone ref={dropzoneRef} label={inputLabel} onFilesSelected={handleFiles} />
@@ -407,7 +399,6 @@ export const ImageUploader = forwardRef<ImageUploaderHandle, Props>(function Ima
               removing={removingIds.has(image.imageId)}
               onRemove={() => requestRemove(image)}
               onRetry={() => handleRetry(image)}
-              onAltTextChange={(value) => handleAltTextChange(image.imageId, value)}
             />
           ))}
         </ul>

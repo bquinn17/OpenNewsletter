@@ -286,7 +286,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.3 Images
 
-- [ ] Click the dropzone and choose the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail with a "Describe this image" field. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
+- [ ] Click the dropzone and choose the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
 - [ ] Drag the PNG and the WebP onto the dropzone together: it highlights, and both upload. Add the animated GIF too.
 - [ ] Add one more image and reload while its tile reads "Processing…". After the reload the tile carries on and reaches its thumbnail.
 - [ ] **Preview** shows the images inline, where their tokens are.

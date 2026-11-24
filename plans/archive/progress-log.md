@@ -1415,9 +1415,11 @@ Three of the four owner UX review notes. The fourth, the group page tabs, landed
 
 ## The "+" attach menu and GIFs from GIPHY — what landed
 
-Built from `future-ideas.md` §9–§10, frontend only. The response editor and the comment composer attach through one **+** button (Photo, GIF) instead of the dashed drop box; the whole composer is the drop target, and pasting an image attaches it. A GIF is a `giphy:{id}` token in the body, resolved by one batched GIPHY lookup per page. Design: [`frontend.md` §18](../../docs/design/frontend.md#18-the--attach-menu-and-gifs-from-giphy).
+Built from `future-ideas.md` §9–§10. GIFs are frontend only; the image-caption removal below touches the API too. The response editor and the comment composer attach through one **+** button (Photo, GIF) instead of the dashed drop box; the whole composer is the drop target, and pasting an image attaches it. A GIF is a `giphy:{id}` token in the body, resolved by one batched GIPHY lookup per page. Design: [`frontend.md` §18](../../docs/design/frontend.md#18-the--attach-menu-and-gifs-from-giphy).
 
 **Owner decisions.** GIFs are on for every group, with no setting, and the rating is fixed at `pg-13` ([D13](../../docs/decisions.md#d13)). Shipped together with the picker rather than renderer-first, because prod hasn't launched.
+
+**Image captions removed.** The editor's "Describe this image" field was never saved (nothing called `PATCH /uploads/{imageId}`), and the owner chose to drop captions rather than wire it up: the answer or comment text already gives an image its context. Gone: the field, `PATCH /uploads/{imageId}`, `PatchUploadRequest`, `MAX_IMAGE_CAPTION_CHARS`, and `caption` on `ImageMedia`, `ImageMediaResponse` and `CommentImageResponse`. This is safe for installed PWAs, which never called the route and read `caption` with a null fallback. Existing rows' `caption` attribute is ignored on read. An answer image's `alt` comes from its markdown token, and a comment image's link reads "Attached image" ([`frontend.md` §11](../../docs/design/frontend.md#11-accessibility--ux)).
 
 **Decisions (spec gaps).**
 - Without `VITE_GIPHY_API_KEY` the GIF item is hidden and tokens render as their titles, with no lookup.

@@ -880,7 +880,6 @@ paths:
                   thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                   width: 1200
                   height: 800
-                  caption: null
                 createdAt: "2026-06-05T09:00:00.000Z"
                 editedAt: null
                 deletedAt: null
@@ -1164,7 +1163,6 @@ paths:
                 bytes: 4823920
                 width: 4032
                 height: 3024
-                caption: null
                 displayUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                 errorMessage: null
@@ -1174,55 +1172,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
-      operationId: patchUpload
-      tags: [media]
-      summary: >
-        Set or clear an image's caption (`docs/design/api.md` §9.6). Caller must
-        own the image.
-      parameters:
-        - $ref: "#/components/parameters/ImageIdPath"
-        - $ref: "#/components/parameters/GroupIdQuery"
-        - $ref: "#/components/parameters/CycleIdQuery"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PatchUploadRequest"
-            example:
-              caption: "Cocoa thermos at mile two."
-      responses:
-        "200":
-          description: The updated image.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ImageMediaResponse"
-              example:
-                imageId: "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
-                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
-                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
-                cycleId: "202606"
-                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
-                purpose: "response"
-                mimeType: "image/png"
-                status: "pending"
-                bytes: 1048576
-                width: null
-                height: null
-                caption: "Cocoa thermos at mile two."
-                displayUrl: null
-                thumbUrl: null
-                errorMessage: null
-                uploadedAt: "2026-06-02T10:00:00.000Z"
-                processedAt: null
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
     delete:
       operationId: deleteUpload
       tags: [media]
@@ -1277,7 +1226,6 @@ paths:
                 bytes: 16777216
                 width: null
                 height: null
-                caption: null
                 displayUrl: null
                 thumbUrl: null
                 errorMessage: "IMAGE_TOO_LARGE"
@@ -2670,7 +2618,7 @@ components:
 
     CommentImageResponse:
       type: object
-      required: [imageId, displayUrl, thumbUrl, width, height, caption]
+      required: [imageId, displayUrl, thumbUrl, width, height]
       properties:
         imageId:
           type: string
@@ -2682,8 +2630,6 @@ components:
           type: integer
         height:
           type: integer
-        caption:
-          type: [string, "null"]
 
     CommentResponse:
       type: object
@@ -2936,9 +2882,7 @@ components:
           format: date-time
 
     SaveResponseRequest:
-      description: >
-        Tagged by `kind`. Image captions are set separately via
-        `PATCH /uploads/{imageId}` (§9.6), not part of this payload.
+      description: Tagged by `kind`.
       oneOf:
         - type: object
           required: [kind, body, imageMediaIds, publish]
@@ -3042,7 +2986,6 @@ components:
         - bytes
         - width
         - height
-        - caption
         - displayUrl
         - thumbUrl
         - errorMessage
@@ -3071,8 +3014,6 @@ components:
           type: [integer, "null"]
         height:
           type: [integer, "null"]
-        caption:
-          type: [string, "null"]
         displayUrl:
           type: [string, "null"]
           description: Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`.
@@ -3091,15 +3032,6 @@ components:
         processedAt:
           type: [string, "null"]
           format: date-time
-
-    PatchUploadRequest:
-      type: object
-      required: [caption]
-      properties:
-        caption:
-          type: [string, "null"]
-          maxLength: 140
-          description: "`null` or an all-whitespace string clears the caption."
 
     CreateAvatarRequest:
       type: object
