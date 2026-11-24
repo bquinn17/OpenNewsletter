@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { queryKeys, useConfig, useMembership, useNewsletter, useUploads } from "../api/queries";
+import { queryKeys, useConfig, useNewsletter, useUploads } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
@@ -15,7 +15,7 @@ import { useHydratedImages } from "../components/responses/useHydratedImages";
 import { usePollResponse } from "../components/responses/usePollResponse";
 import { PollPicker } from "../components/responses/PollPicker";
 import { MarkdownBody } from "../utils/markdown";
-import { formatInZone, shortCountdown } from "../utils/dates";
+import { shortCountdown } from "../utils/dates";
 import { nextUnansweredQuestionId } from "../utils/responseProgress";
 import type { components } from "../types/api";
 
@@ -24,8 +24,6 @@ type S = components["schemas"];
 export function RespondPage() {
   const { groupId = "", cycleId = "", questionId = "" } = useParams();
   const { data, isLoading, isError, error, refetch } = useNewsletter(groupId, cycleId);
-  const membership = useMembership(groupId);
-  const timezone = membership?.timezone ?? "UTC";
 
   if (isLoading) return <LoadingShell groupId={groupId} cycleId={cycleId} />;
 
@@ -52,7 +50,6 @@ export function RespondPage() {
       question={question}
       groupId={groupId}
       cycleId={cycleId}
-      timezone={timezone}
       responseCloseAt={data.responseCloseAt}
     />
   );
@@ -85,13 +82,11 @@ function QuestionBody({
   question,
   groupId,
   cycleId,
-  timezone,
   responseCloseAt,
 }: {
   question: S["OpenQuestionResponse"];
   groupId: string;
   cycleId: string;
-  timezone: string;
   responseCloseAt: string;
 }) {
   const navigate = useNavigate();
@@ -131,11 +126,6 @@ function QuestionBody({
     questionId: question.questionId,
     initialResponse: question.myResponse,
   });
-  // `docs/design/frontend.md` §7.3 (D2): a non-empty draft auto-publishes when responses close.
-  const showAutoPublishNote = isText
-    ? textIsUnpublishedDraft && !editor.readOnly
-    : poll.isUnpublishedDraft && !poll.closed;
-
   // "Done" (`docs/design/frontend.md` §7.3): flushes any pending edit, then moves on to the
   // next unanswered question of this edition, wrapping around, or back to the edition page
   // once every question has a non-empty draft or answer. The frontend no longer publishes
@@ -168,26 +158,6 @@ function QuestionBody({
         rightSlot={<Pill tone="coral">{shortCountdown(responseCloseAt)}</Pill>}
         phase="open"
       />
-
-      <div className="px-5 pt-5">
-        <div className="rounded-3xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
-          Closes {formatInZone(responseCloseAt, timezone)}
-        </div>
-      </div>
-
-      {showAutoPublishNote && (
-        <div className="px-5 pt-3">
-          <p
-            role="note"
-            className="rounded-3xl border border-sun/60 bg-sun/20 p-3 text-sm text-ink"
-          >
-            Drafts are published automatically when responses close on{" "}
-            {formatInZone(responseCloseAt, timezone)}.
-            {/* A poll pick can be changed but not cleared (`pollOptionId` is required). */}
-            {isText && " Clear your answer if you don't want it included."}
-          </p>
-        </div>
-      )}
 
       <div className="px-5 pt-5">
         <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
@@ -275,9 +245,6 @@ function QuestionBody({
             )}
           </div>
           <span className="flex-1" />
-          <Button variant="soft" onClick={() => navigate(`/g/${groupId}/n/${cycleId}`)}>
-            Save &amp; exit
-          </Button>
           {isText && !editor.readOnly && (
             <Button
               onClick={() => void handleDone()}

@@ -746,9 +746,6 @@ describe("RespondPage", () => {
     });
     expect(optionButton).toHaveClass("border-grape");
     expect(screen.getByText(AUTO_PUBLISH_BADGE)).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent(
-      /^Drafts are published automatically when responses close on .+\.$/,
-    );
   });
 
   it("saves immediately when the caller changes an already-published poll pick", async () => {
@@ -887,98 +884,40 @@ describe("RespondPage", () => {
     expect(screen.getByRole("button", { name: "Option A" })).toHaveClass("border-grape");
   });
 
-  describe("auto-publish note (D2)", () => {
-    const closeAt = "2026-06-08T03:59:00Z";
+  describe("auto-publish badge (D2)", () => {
+    const draft = {
+      responseId: "r1",
+      status: "draft" as const,
+      body: "Half-written",
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    };
 
-    function detailClosingAt(question: S["OpenQuestionResponse"]) {
-      return { ...openDetail([question]), responseCloseAt: closeAt };
-    }
-
-    it("shows the note, with the close date in the group's timezone, for a non-empty draft", async () => {
-      vi.mocked(api.getConfig).mockResolvedValue({
-        ...baseConfig(),
-        memberships: [
-          {
-            groupId: "g1",
-            role: "member",
-            groupName: "G",
-            timezone: "America/New_York",
-            gradient: "grape-sky",
-          },
-        ],
-      });
-      vi.mocked(api.getNewsletter).mockResolvedValue(
-        detailClosingAt(
-          textQuestion({
-            responseId: "r1",
-            status: "draft",
-            body: "Half-written",
-            imageMediaIds: [],
-            updatedAt: "2026-06-02T00:00:00Z",
-            publishedAt: null,
-          }),
-        ),
-      );
+    it("says a non-empty draft publishes at close, with no separate note", async () => {
+      vi.mocked(api.getNewsletter).mockResolvedValue(openDetail([textQuestion(draft)]));
 
       renderAt("q1");
 
-      const note = await screen.findByRole("note");
-      expect(note).toHaveTextContent(
-        "Drafts are published automatically when responses close on Jun 7, 11:59 PM EDT. " +
-          "Clear your answer if you don't want it included.",
-      );
-      expect(screen.getByText(AUTO_PUBLISH_BADGE)).toBeInTheDocument();
-    });
-
-    it("hides the note once the draft is cleared", async () => {
-      vi.mocked(api.getNewsletter).mockResolvedValue(
-        detailClosingAt(
-          textQuestion({
-            responseId: "r1",
-            status: "draft",
-            body: "Half-written",
-            imageMediaIds: [],
-            updatedAt: "2026-06-02T00:00:00Z",
-            publishedAt: null,
-          }),
-        ),
-      );
-
-      renderAt("q1");
-
-      const textarea = await screen.findByPlaceholderText("Tell us about it…");
-      expect(screen.getByRole("note")).toBeInTheDocument();
-      fireEvent.change(textarea, { target: { value: "   " } });
+      expect(await screen.findByText(AUTO_PUBLISH_BADGE)).toBeInTheDocument();
       expect(screen.queryByRole("note")).not.toBeInTheDocument();
     });
 
-    it("doesn't show the note with no answer yet", async () => {
-      vi.mocked(api.getNewsletter).mockResolvedValue(detailClosingAt(textQuestion(null)));
-
-      renderAt("q1");
-
-      await screen.findByPlaceholderText("Tell us about it…");
-      expect(screen.queryByRole("note")).not.toBeInTheDocument();
-    });
-
-    it("doesn't show the note for a published answer", async () => {
+    it("doesn't show the badge for a published answer", async () => {
       vi.mocked(api.getNewsletter).mockResolvedValue(
-        detailClosingAt(
+        openDetail([
           textQuestion({
-            responseId: "r1",
+            ...draft,
             status: "published",
             body: "Done",
-            imageMediaIds: [],
-            updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: "2026-06-02T00:00:00Z",
           }),
-        ),
+        ]),
       );
 
       renderAt("q1");
 
       await screen.findByRole("button", { name: "Edit" });
-      expect(screen.queryByRole("note")).not.toBeInTheDocument();
       expect(screen.queryByText(AUTO_PUBLISH_BADGE)).not.toBeInTheDocument();
     });
   });

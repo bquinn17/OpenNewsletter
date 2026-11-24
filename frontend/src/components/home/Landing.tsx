@@ -93,7 +93,11 @@ export function Landing() {
           <p className="font-semibold text-ink">Received an invite?</p>
           <Link
             to="/join"
-            className={buttonClassName({ variant: "soft", size: "sm", className: "mt-2" })}
+            className={buttonClassName({
+              variant: "soft",
+              size: "lg",
+              className: "mt-3 min-w-[8rem]",
+            })}
           >
             Sign up
           </Link>

@@ -118,22 +118,16 @@ test.describe("save draft → reload", () => {
   });
 });
 
-test("a poll pick saves as a draft at once and warns that drafts auto-publish", async ({
-  page,
-}) => {
+test("a poll pick saves as a draft at once and says it publishes at close", async ({ page }) => {
   // D2 (`docs/design/frontend.md` §7.3): every pick, the first included, saves with `publish:false`,
-  // and an unpublished non-empty answer shows the auto-publish note.
+  // and an unpublished non-empty answer's badge says it publishes at close.
   await gotoHome(page);
   await openCurrentEdition(page);
   await page.getByRole("link", { name: /which trail should we do next/i }).click();
 
-  await expect(page.getByRole("note")).toHaveCount(0);
   await page.getByRole("button", { name: "Lake 22" }).click();
 
-  await expect(page.getByText("Draft — publishes automatically at the deadline")).toBeVisible();
-  await expect(page.getByRole("note")).toContainText(
-    "Drafts are published automatically when responses close on",
-  );
+  await expect(page.getByText("Saved · publishes at close")).toBeVisible();
 
   // The draft really reached the (mock) server: it survives leaving and coming back.
   await page.goBack();

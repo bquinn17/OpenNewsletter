@@ -21,7 +21,7 @@ function useOnlineStatus(): boolean {
 }
 
 /** The badge copy for a saved, non-empty, unpublished draft (`docs/design/frontend.md` §7.3, D2). */
-export const AUTO_PUBLISH_BADGE = "Draft — publishes automatically at the deadline";
+export const AUTO_PUBLISH_BADGE = "Saved · publishes at close";
 
 type Props = {
   status: EditorStatus;
