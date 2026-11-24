@@ -141,10 +141,56 @@ describe("NewsletterPage", () => {
     const rows = await screen.findAllByRole("link");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("First question");
-    expect(rows[0]).toHaveTextContent("Published");
+    expect(rows[0]).toHaveTextContent("Answered");
     expect(rows[0]).toHaveAttribute("href", "/g/g1/n/c1/respond/q1");
     expect(rows[1]).toHaveTextContent("Second question");
     expect(rows[1]).toHaveTextContent("Not started");
+    expect(screen.getByText("You've answered 1 of 2")).toBeInTheDocument();
+  });
+
+  it("counts a non-empty draft as answered and an emptied one as not started", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue(baseConfig());
+    const draft = (responseId: string, body: string) => ({
+      responseId,
+      status: "draft" as const,
+      body,
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    });
+    vi.mocked(api.getNewsletter).mockResolvedValue({
+      status: "open",
+      cycleId: "c1",
+      responseOpenAt: "2026-06-01T00:00:00Z",
+      responseCloseAt: "2026-06-05T00:00:00Z",
+      questions: [
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "Drafted question",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: draft("r1", "Half an answer"),
+        },
+        {
+          questionId: "q2",
+          kind: "text",
+          prompt: "Emptied question",
+          displayOrder: 1,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: draft("r2", "   "),
+        },
+      ],
+    });
+
+    render_("/g/g1/n/c1");
+
+    const rows = await screen.findAllByRole("link");
+    expect(rows[0]).toHaveTextContent("Answered");
+    expect(rows[1]).toHaveTextContent("Not started");
+    expect(screen.getByText("You've answered 1 of 2")).toBeInTheDocument();
   });
 
   it("shows published answers and highlights the caller's poll vote", async () => {
@@ -161,6 +207,7 @@ describe("NewsletterPage", () => {
           questionCount: 2,
           myDraftCount: 0,
           myPublishedCount: 1,
+          myAnsweredCount: 1,
         },
       ],
       nextCursor: null,
@@ -261,6 +308,7 @@ describe("NewsletterPage", () => {
           questionCount: 1,
           myDraftCount: 0,
           myPublishedCount: 1,
+          myAnsweredCount: 1,
         },
       ],
       nextCursor: null,

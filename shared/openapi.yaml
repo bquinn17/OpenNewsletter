@@ -501,6 +501,7 @@ paths:
                     questionCount: 5
                     myDraftCount: 2
                     myPublishedCount: 0
+                    myAnsweredCount: 2
                 nextCursor: null
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2230,6 +2231,10 @@ components:
           type: string
           format: date-time
         editionsAnswered:
+          description: >
+            Editions with at least one non-empty answer from this member,
+            decided once at cycle close (not updated during the response
+            window).
           type: integer
 
     LeaderboardResponse:
@@ -2271,6 +2276,10 @@ components:
         userId:
           type: string
         editionsAnswered:
+          description: >
+            Editions with at least one non-empty answer from this member,
+            decided once at cycle close (not updated during the response
+            window).
           type: integer
         reactionsReceived:
           description: Reactions from other members on this member's answers.
@@ -2555,6 +2564,7 @@ components:
         - questionCount
         - myDraftCount
         - myPublishedCount
+        - myAnsweredCount
       properties:
         cycleId:
           type: string
@@ -2575,6 +2585,12 @@ components:
           type: integer
         myPublishedCount:
           type: integer
+        myAnsweredCount:
+          type: integer
+          description: >-
+            The caller's non-empty answers in this cycle, draft or published
+            (text with a non-blank body or an image, or a poll pick). Every one
+            publishes at close, so this is what "answered" means while a cycle is open.
 
     NewsletterListResponse:
       type: object

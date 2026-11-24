@@ -832,8 +832,8 @@ A read-through of plan docs `00`–`13` (now in `docs/`) after M13. Stale text w
 8. **Media deletes are real**: S3 objects, then the row. No bucket versioning. Permanent-delete warnings in the UI ([`media.md` §8](../../docs/design/media.md#8-cleanup-paths), [`api.md` §9.4](../../docs/design/api.md#94-delete-uploadsimageid)).
 9. **Shared-device privacy is accepted as-is.**
 10. **Settings changes apply to the current cycle where possible.** The voting cycle is rescheduled regardless of candidates. An open cycle's close moves if it's still in the future, otherwise 422 ([`lifecycle.md` §6](../../docs/design/lifecycle.md#6-settings-changes-mid-cycle)).
-11. **Flat comments, Web Push and the admin UI are confirmed.** Threaded comments and poll comments/reactions go to [`future-ideas.md`](../../docs/future-ideas.md).
-12. **Per-PR `ci-pr-*` stacks** move to [`future-ideas.md` §3](../../docs/future-ideas.md#3-ephemeral-per-pr-ci-stacks).
+11. **Flat comments, Web Push and the admin UI are confirmed.** Threaded comments and poll comments/reactions go to [`future-ideas.md`](../future-ideas.md).
+12. **Per-PR `ci-pr-*` stacks** move to [`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks).
 
 **Fixed in code:**
 - **Skipped month.** With `responseWindowDays = 28` in a non-leap February, the window closes Mar 1 00:00. `lambda-cycle-tick` anchored the next cycle on `response_close_at`, so it created April and skipped March. It now anchors on the current cycle's `cycleId` (`shared::cycle_time::cycle_month_start`, [`lifecycle.md` §5.4](../../docs/design/lifecycle.md#54-create_next_voting_cyclegroup-after)). `response_open_at` was the suggested fix, but the dev tick's `advanceCycleClosesBy` rewinds a voting cycle's `response_open_at` by any amount, which could give the "next" cycle the current cycle's own id. The put would then fail as a lost race, and the group would have no voting cycle. Regression test: `cycle_time::a_full_length_february_window_does_not_skip_march`. `lambda-questions/tests/lifecycle.rs` now derives its cycle id from its dates instead of hardcoding `202606`, and asserts that the seeded cycle is the following month.
@@ -1325,7 +1325,7 @@ CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-uti
 
 ## Group leaderboard — what landed (2026-11-07)
 
-`/g/:groupId/leaderboard`: a page of light-hearted superlatives, built from per-member counters kept at write time ([`future-ideas.md` §5](../../docs/future-ideas.md#5-group-leaderboard) had the sketch). Design in [`data-model.md` §2.17](../../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8, #9, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl), [`api.md` §4.4](../../docs/design/api.md#44-get-groupsgroupidleaderboard) and [`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
+`/g/:groupId/leaderboard`: a page of light-hearted superlatives, built from per-member counters kept at write time ([`future-ideas.md` §5](../future-ideas.md#5-group-leaderboard) had the sketch). Design in [`data-model.md` §2.17](../../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8, #9, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl), [`api.md` §4.4](../../docs/design/api.md#44-get-groupsgroupidleaderboard) and [`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
 
 **What landed.**
 - `MemberStats` row per member per group (`GROUP#{g}#STATS` / `MEMBER#{u}`), upserted with `UpdateItem` by every writer (`persistence::member_stats`).
@@ -1389,3 +1389,18 @@ CI's `cargo deny` started failing: RustSec marked `chrono`, `chrono-tz` and `chr
 **Bug fixed.** `save_response`'s `response_close_at > :now` check compared a data attribute with a whole-second key timestamp. It now uses the attribute form.
 
 **Tests.** Backend +12, all passing; scripts +8; `cargo deny` clean.
+
+## Owner UX review fixes — what landed (2026-11-22)
+
+Three of the four owner UX review notes. The fourth, the group page tabs, stays in [`future-ideas.md` §16](../future-ideas.md#16-group-page-editions-leaderboard-and-members-as-tabs) until the members page (§7) is built. The others now live in the design docs and [`decisions.md`](../../docs/decisions.md).
+
+- **Home.** The signed-out landing leads with **See a demo** and **Sign in**. **Sign up** sits under the invite-only notice, after "Received an invite?" ([`frontend.md` §7.1](../../docs/design/frontend.md#71-homepage-)).
+- **RespondPage.** The Publish button is gone. **Done** flushes the save and opens the next unanswered question, wrapping around, or the edition page when none is left. The SPA never sends `publish: true`; the API still accepts it for installed PWAs on an older release. A completion dialog shows once per edition per device, when every question has a non-empty answer ([`frontend.md` §7.2–§7.3](../../docs/design/frontend.md#73-respondpage-ggncrespondq)).
+- **`editions_answered` at close.** Saves no longer touch `MemberStats`. The close-time sweep bumps it once per member with a non-empty answer, whatever its status, through the `last_answered_cycle` marker. A bump that errors counts as a failed sweep, so the cycle stays `open` and the next tick retries. No migration: an open cycle already counted in real time has its marker set, so close doesn't count it again. The backfill counts published cycles only, and only non-empty answers ([`data-model.md` §4](../../docs/design/data-model.md#4-transactional-invariants) #4/#4a, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl)).
+
+**Found while verifying.** With no manual publish, every "answered" count the SPA showed would have stayed at zero until close: the open edition's "You've answered N of M", its progress bar and row pills, and Home's "you've published N of M". The edition page now counts non-empty answers, and its rows read **Answered** or **Not started**. `NewsletterSummary` gained `myAnsweredCount`, an additive field (non-empty answers, any status), which Home's row shows.
+
+**Decisions.**
+- [The app doesn't publish answers by hand](../../docs/decisions.md#answers-publish-at-close).
+- Streaks are unchanged: they still credit any published answer, including one emptied before close. Only `editions_answered` moved to the content check.
+

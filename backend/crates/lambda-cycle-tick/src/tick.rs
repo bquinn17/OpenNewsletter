@@ -414,7 +414,8 @@ async fn publish(
     nl: &Newsletter,
     now: Timestamp,
 ) -> Option<CycleTransition> {
-    let sweep = auto_publish_drafts(repo, nl).await;
+    let mut sweep = auto_publish_drafts(repo, nl).await;
+    sweep.failed += bump_answerers(repo, nl, &sweep.answerers).await;
     if sweep.failed > 0 {
         let max = shared::config::AUTO_PUBLISH_MAX_FAILED_SWEEPS;
         match newsletters::record_failed_sweep(repo, &nl.group_id, &nl.cycle_id).await {
@@ -468,13 +469,26 @@ pub struct SweepReport {
     pub published: u32,
     /// Drafts left unpublished by an error. An answer row that won't
     /// deserialize counts as one, and so does a question whose answers
-    /// couldn't be listed at all.
+    /// couldn't be listed at all. [`publish`] also folds in any
+    /// `editions_answered` bump that failed for a reason other than
+    /// "already counted", so a failed bump keeps the cycle open and retries
+    /// on the next tick, the same as a failed draft publish.
     pub failed: u32,
     /// Every user with at least one `published` answer to a locked question,
     /// after the sweep — i.e. answers that were already published plus
     /// drafts this pass just published. Feeds streak settlement (§5.3): the
     /// AP14 reads this sweep already did are reused instead of re-listing.
     pub authors: HashSet<UserId>,
+    /// Every user with at least one *non-empty* answer to a locked question,
+    /// after the sweep, regardless of status — a published row counts only
+    /// if [`Response::is_non_empty`] still holds, since publishing is sticky
+    /// and a member can empty an answer after publishing it. A draft counts
+    /// only if this pass (or a concurrent one) actually published it; one
+    /// skipped by [`responses::has_live_content`] doesn't. Feeds the
+    /// `editions_answered` bump (`docs/design/data-model.md` §4 #4a,
+    /// `docs/design/lifecycle.md` §5.3) — a separate set from `authors`,
+    /// which streak settlement keeps using unconditionally.
+    pub answerers: HashSet<UserId>,
 }
 
 /// §5.3's first step (`docs/design/data-model.md` §4 #4a): publish each locked question's non-empty
@@ -507,6 +521,9 @@ pub async fn auto_publish_drafts(repo: &Repo, nl: &Newsletter) -> SweepReport {
         for answer in &answers {
             if answer.status == ResponseStatus::Published {
                 report.authors.insert(answer.user_id.clone());
+                if answer.is_non_empty() {
+                    report.answerers.insert(answer.user_id.clone());
+                }
             }
         }
         for draft in answers
@@ -514,16 +531,19 @@ pub async fn auto_publish_drafts(repo: &Repo, nl: &Newsletter) -> SweepReport {
             .filter(|a| a.status == ResponseStatus::Draft && a.is_non_empty())
         {
             match auto_publish_one(repo, nl, draft).await {
-                Ok(Some(AutoPublishOutcome::Published { .. })) => {
+                Ok(Some(AutoPublishOutcome::Published)) => {
                     report.published += 1;
                     report.authors.insert(draft.user_id.clone());
+                    report.answerers.insert(draft.user_id.clone());
                 }
                 // A concurrent pass published it after this one listed it, so
                 // the author did answer: leaving them out would break their
                 // streak, and `streak_cycle` would keep the other pass from
-                // correcting it.
+                // correcting it. The row we read here (and filtered on above)
+                // was non-empty, so it counts as an answer too.
                 Ok(Some(AutoPublishOutcome::AlreadyPublished)) => {
                     report.authors.insert(draft.user_id.clone());
+                    report.answerers.insert(draft.user_id.clone());
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -553,6 +573,35 @@ async fn auto_publish_one(
     responses::auto_publish_draft(repo, draft, nl.response_close_at)
         .await
         .map(Some)
+}
+
+/// §5.3 — bump `editions_answered` once for each of the sweep's
+/// [`SweepReport::answerers`] (`docs/design/data-model.md` §4 #4a), after the
+/// draft sweep and before streak settlement and the cycle's publish. Members
+/// bump concurrently, up to `STREAK_SETTLE_CONCURRENCY` at a time.
+///
+/// Returns the number of bumps that failed for a reason other than "already
+/// counted" (`RepoError::is_lost_race`); the caller folds that into
+/// [`SweepReport::failed`] so a failed bump keeps the cycle open for the next
+/// tick to retry, same as a failed draft publish. Idempotent via the
+/// `last_answered_cycle` marker, so a retry never double-counts.
+async fn bump_answerers(repo: &Repo, nl: &Newsletter, answerers: &HashSet<UserId>) -> u32 {
+    let bumps = answerers.iter().map(|user_id| async move {
+        match member_stats::bump_editions_answered(repo, &nl.group_id, user_id, &nl.cycle_id)
+            .await
+        {
+            Ok(()) => 0,
+            Err(e) if e.is_lost_race() => 0,
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %nl.group_id, cycle_id = %nl.cycle_id, user_id = %user_id, "failed to bump editions_answered");
+                1
+            }
+        }
+    });
+    futures::stream::iter(bumps)
+        .buffer_unordered(STREAK_SETTLE_CONCURRENCY)
+        .fold(0u32, |total, failed| async move { total + failed })
+        .await
 }
 
 /// §5.3 — settle every current member's streak for this edition, after the

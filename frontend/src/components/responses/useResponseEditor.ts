@@ -330,8 +330,6 @@ export function useResponseEditor({
     setLocal((prev) => ({ ...prev, imageMediaIds }));
   }, []);
 
-  const publish = useCallback(() => flush(true), [flush]);
-
   /**
    * Drops `imageId` from the draft (its ID, and its tokens via
    * `transformBody`) and resolves once a save without it has landed — the
@@ -377,7 +375,6 @@ export function useResponseEditor({
     readOnly: status.kind === "closed",
     lastResponse,
     flush: () => flush(false),
-    publish,
     detachImage,
     onBlur: () => void flush(false),
   };

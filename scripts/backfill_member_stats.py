@@ -13,14 +13,15 @@ chronological (`cycle_id`) order:
     Response row, excluding self-reactions (reactor == author).
   - `reactions_received` / `reactions_given` per user, same self-exclusion.
   - `comments_written` per user, excluding soft-deleted comments.
-  - `editions_answered` per user (editions with at least one published
-    answer of theirs, text or poll) and the `last_answered_cycle` marker.
+  - `editions_answered` per user (published cycles with at least one
+    non-empty published answer of theirs, text or poll) and the
+    `last_answered_cycle` marker. Decided only at cycle close, like the live
+    code (`docs/design/lifecycle.md` §5.3), so an open cycle never counts.
   - `questions_asked` per user, excluding anonymous candidates (and any
     locked question with no `submitted_by`).
 
-An open cycle counts toward `editions_answered` and `questions_asked` too,
-since the live code counts both before publication (at an answer's first
-publish, and at promotion).
+An open cycle counts toward `questions_asked`, since the live code counts
+that at promotion, before the cycle publishes.
   - `current_streak` / `longest_streak` / `streak_cycle`, walking published
     cycles in order and skipping cycles with no locked questions (an empty
     edition neither extends nor breaks a streak).
@@ -147,6 +148,9 @@ class ResponseFact:
     author_user_id: str
     status: str  # "draft" | "published"
     kind: str  # "text" | "poll"
+    body: str | None = None
+    poll_option_id: str | None = None
+    image_media_ids: tuple[str, ...] = field(default_factory=tuple)
     reactions: tuple[ReactionFact, ...] = field(default_factory=tuple)
     comments: tuple[CommentFact, ...] = field(default_factory=tuple)
     # Whether the Response row, as currently stored, already has a
@@ -198,6 +202,17 @@ class MemberStatsResult:
 
 def published_text_responses(responses: Iterable[ResponseFact]) -> list[ResponseFact]:
     return [r for r in responses if r.status == "published" and r.kind == "text"]
+
+
+def response_is_non_empty(response: ResponseFact) -> bool:
+    """Mirrors `domain::Response::is_non_empty` (`backend/crates/domain/src/entities.rs`):
+    a text answer with a non-whitespace body or at least one image, or a poll
+    answer with a pick."""
+    if response.kind == "text":
+        return bool(response.body and response.body.strip()) or bool(
+            response.image_media_ids
+        )
+    return response.poll_option_id is not None
 
 
 def response_reaction_count(response: ResponseFact) -> int:
@@ -276,15 +291,19 @@ def accumulate_question_counters(cycles: Iterable[CycleFacts]) -> dict[str, int]
 def accumulate_editions_answered(
     cycles: Iterable[CycleFacts],
 ) -> tuple[dict[str, int], dict[str, str]]:
-    """`editions_answered` per user (cycles in which they published at least
-    one answer, text or poll) and `last_answered_cycle`, the latest such cycle.
-    `cycles` must be chronological, as the live bump's marker is the most
-    recent cycle it counted."""
+    """`editions_answered` per user (published cycles in which they have at
+    least one non-empty published answer, text or poll — a published row
+    whose content is empty doesn't count) and `last_answered_cycle`, the
+    latest such cycle. `cycles` must be published, chronological, as the live
+    close-time bump's marker is the most recent cycle it counted
+    (`docs/design/lifecycle.md` §5.3)."""
     answered: dict[str, int] = {}
     last: dict[str, str] = {}
     for cycle in cycles:
         for user in {
-            r.author_user_id for r in cycle.responses if r.status == "published"
+            r.author_user_id
+            for r in cycle.responses
+            if r.status == "published" and response_is_non_empty(r)
         }:
             answered[user] = answered.get(user, 0) + 1
             last[user] = cycle.cycle_id
@@ -340,14 +359,15 @@ def compute_member_stats(
     """The full per-user MemberStats recompute for one group: every counter
     plus the streak fields, absolute (not deltas). `cycles` are the published
     ones, chronological. `open_cycles` (open but not yet published) count only
-    where the live code already counted them: `questions_asked`, bumped at
-    promotion, and `editions_answered`, bumped at an answer's first publish.
-    An open cycle has no reactions or comments yet and settles no streak."""
+    where the live code already counts them: `questions_asked`, bumped at
+    promotion. `editions_answered` is decided only at cycle close
+    (`docs/design/lifecycle.md` §5.3), so it only ever counts `cycles`. An
+    open cycle has no reactions or comments yet and settles no streak."""
     received, given = accumulate_reaction_counters(cycles)
     comments_written = accumulate_comment_counters(cycles)
     counted = [*cycles, *open_cycles]
     questions_asked = accumulate_question_counters(counted)
-    editions_answered, last_answered_cycle = accumulate_editions_answered(counted)
+    editions_answered, last_answered_cycle = accumulate_editions_answered(cycles)
     streaks = compute_streaks(cycles, universe_user_ids, current_member_ids)
 
     results = []
@@ -582,6 +602,9 @@ def fetch_group_cycles(
                         author_user_id=str(raw["user_id"]),
                         status=status,
                         kind=kind,
+                        body=raw.get("body"),
+                        poll_option_id=raw.get("poll_option_id"),
+                        image_media_ids=tuple(raw.get("image_media_ids") or ()),
                         reactions=tuple(reactions),
                         comments=tuple(comments),
                         had_reaction_count_attr="reaction_count" in raw,
@@ -616,8 +639,8 @@ def write_member_stats(
     }
     if result.streak_cycle is not None:
         item["streak_cycle"] = result.streak_cycle
-    # The live bump's "already counted this cycle" marker (§4 #4): without it,
-    # a later publish in the cycle it names would count that cycle twice.
+    # The live close-time bump's "already counted this cycle" marker (§4 #4a):
+    # without it, a retried tick over the cycle it names would count it twice.
     if result.last_answered_cycle is not None:
         item["last_answered_cycle"] = result.last_answered_cycle
     if dry_run:

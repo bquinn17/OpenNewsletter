@@ -20,6 +20,7 @@ function cycle(
     questionCount: 4,
     myDraftCount: 0,
     myPublishedCount: 1,
+    myAnsweredCount: 1,
   };
 }
 

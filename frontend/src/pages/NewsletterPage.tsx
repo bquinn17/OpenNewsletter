@@ -6,10 +6,12 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
 import { AnswerCard } from "../components/newsletter/AnswerCard";
+import { CompletionCelebration } from "../components/newsletter/CompletionCelebration";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
 import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
 import { stripImageTokens } from "../utils/markdown";
+import { allQuestionsAnswered, isQuestionAnswered } from "../utils/responseProgress";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -33,11 +35,10 @@ function draftPreview(question: S["OpenQuestionResponse"]): string | null {
     : stripped;
 }
 
-function statusLabel(
-  myResponse: S["MyResponseSummary"] | null,
-): "Not started" | "Draft" | "Published" {
-  if (!myResponse) return "Not started";
-  return myResponse.status === "published" ? "Published" : "Draft";
+// Every non-empty answer publishes at close, so a row says whether there's an answer, not
+// whether it's published (`docs/design/frontend.md` §7.2).
+function statusLabel(question: S["OpenQuestionResponse"]): "Not started" | "Answered" {
+  return isQuestionAnswered(question) ? "Answered" : "Not started";
 }
 
 export function NewsletterPage() {
@@ -146,11 +147,18 @@ function OpenLayout({
 }) {
   const sorted = [...data.questions].sort((a, b) => a.displayOrder - b.displayOrder);
   const totalQs = sorted.length;
-  const publishedCount = sorted.filter((q) => q.myResponse?.status === "published").length;
+  const answeredCount = sorted.filter(isQuestionAnswered).length;
   const { title } = editionLabel(data, timezone, frequency);
 
   return (
     <div className="pb-12">
+      <CompletionCelebration
+        groupId={groupId}
+        cycleId={data.cycleId}
+        allAnswered={allQuestionsAnswered(sorted)}
+        responseCloseAt={data.responseCloseAt}
+        timezone={timezone}
+      />
       <PageHeader
         eyebrow={`${groupName} · editions`}
         title={title}
@@ -170,17 +178,12 @@ function OpenLayout({
           <div className="mb-1.5 mt-3 flex items-center justify-between text-xs text-inkmuted">
             <span>Your progress</span>
             <span>
-              You&apos;ve answered {publishedCount} of {totalQs}
+              You&apos;ve answered {answeredCount} of {totalQs}
             </span>
           </div>
           <div className="flex gap-1.5">
             {sorted.map((q) => {
-              const tone =
-                q.myResponse?.status === "published"
-                  ? "bg-coral"
-                  : q.myResponse
-                    ? "bg-coral/50"
-                    : "bg-coral/15";
+              const tone = isQuestionAnswered(q) ? "bg-coral" : "bg-coral/15";
               return <div key={q.questionId} className={`h-2 flex-1 rounded-full ${tone}`} />;
             })}
           </div>
@@ -205,14 +208,12 @@ function QuestionRow({
   groupId: string;
   cycleId: string;
 }) {
-  const status = statusLabel(q.myResponse);
+  const status = statusLabel(q);
   const preview = draftPreview(q);
   const meta =
-    status === "Published"
+    status === "Answered"
       ? { iconBg: "bg-mint/15 text-mint", icon: "✓" }
-      : status === "Draft"
-        ? { iconBg: "bg-sun/30 text-ink", icon: "…" }
-        : { iconBg: "bg-cream text-inkmuted", icon: "○" };
+      : { iconBg: "bg-cream text-inkmuted", icon: "○" };
 
   return (
     <Link

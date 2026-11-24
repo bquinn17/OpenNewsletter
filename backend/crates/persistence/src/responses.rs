@@ -6,7 +6,6 @@ use crate::keys::{
     attr, group_pk, index, newsletter_sk, reacted_gsi2pk, response_gsi1pk, response_gsi1sk,
     response_pk, response_sk,
 };
-use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
@@ -289,32 +288,23 @@ pub struct ResponseSave<'a> {
 ///    responseCloseAt > now`. A cancelled transaction
 ///    (`RepoError::is_lost_race`) means this failed — the caller maps that to
 ///    409 `CYCLE_NOT_OPEN`.
-/// 3. IFF `bump_editions_answered`, an `Update` incrementing the caller's
-///    `MemberStats.editions_answered` and stamping `last_answered_cycle`,
-///    conditioned on `last_answered_cycle` not already being this cycle. The
-///    caller's AP15 pre-read ("first publish in this cycle") decides whether
-///    to ask for the bump; the marker makes it idempotent when two first
-///    publishes race past that pre-read (found M13).
 ///
-/// Cancellations are told apart by their per-item reasons:
-/// - **The bump's marker condition failed.** A concurrent publish already
-///   counted this cycle, so the transaction is retried without the bump.
-/// - **A `TransactionConflict`** with a concurrent write to one of the same
-///   items (e.g. the other racing publish's bump). The transaction is retried
-///   unchanged, up to [`SAVE_ATTEMPTS`] attempts in total.
-/// - **Anything else**, i.e. the cycle check, is returned as a lost race.
+/// `MemberStats.editionsAnswered` is not touched here: it's decided once, at
+/// cycle close, by `lambda-cycle-tick`'s sweep (`docs/design/lifecycle.md`
+/// §5.3, §4 #4a) over every member's answers as they stand at that moment.
+///
+/// A cancellation is a `TransactionConflict` with a concurrent write to the
+/// response row, retried unchanged up to [`SAVE_ATTEMPTS`] attempts in total;
+/// anything else, i.e. the cycle check, is returned as a lost race.
 pub async fn save_response(
     repo: &Repo,
     save: &ResponseSave<'_>,
     now: Timestamp,
-    bump_editions_answered: bool,
 ) -> Result<(), RepoError> {
-    let mut bump = bump_editions_answered;
     let mut attempt = 1;
     loop {
-        match save_response_once(repo, save, now, bump).await {
+        match save_response_once(repo, save, now).await {
             Ok(()) => return Ok(()),
-            Err(SaveFailure::AlreadyCounted) => bump = false,
             Err(SaveFailure::Conflict(_)) if attempt < SAVE_ATTEMPTS => {}
             Err(SaveFailure::Conflict(e) | SaveFailure::Other(e)) => return Err(e),
         }
@@ -325,13 +315,7 @@ pub async fn save_response(
 /// Total tries [`save_response`] makes when transactions keep conflicting.
 const SAVE_ATTEMPTS: u32 = 3;
 
-/// Positions in the transaction's item list (response update first).
-const CYCLE_CHECK_ITEM_INDEX: usize = 1;
-const BUMP_ITEM_INDEX: usize = 2;
-
 enum SaveFailure {
-    /// The bump's `lastAnsweredCycle` condition failed: this cycle is already counted.
-    AlreadyCounted,
     /// Cancelled only by `TransactionConflict`s; safe to retry as-is.
     Conflict(RepoError),
     Other(RepoError),
@@ -341,7 +325,6 @@ async fn save_response_once(
     repo: &Repo,
     save: &ResponseSave<'_>,
     now: Timestamp,
-    bump_editions_answered: bool,
 ) -> Result<(), SaveFailure> {
     let kind_str = match save.kind {
         QuestionKind::Text => "text",
@@ -439,18 +422,12 @@ async fn save_response_once(
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
-    let mut items = vec![
+    let items = vec![
         TransactWriteItem::builder().update(response_update).build(),
         TransactWriteItem::builder()
             .condition_check(cycle_check)
             .build(),
     ];
-
-    if bump_editions_answered {
-        let bump =
-            member_stats::editions_answered_bump(repo, save.group_id, save.user_id, save.cycle_id)?;
-        items.push(TransactWriteItem::builder().update(bump).build());
-    }
 
     let mut req = repo.client.transact_write_items();
     for i in items {
@@ -462,13 +439,6 @@ async fn save_response_once(
     };
     let codes = error::cancellation_codes(&err);
     let err = error::from_transact_write_error(err);
-    let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
-    if bump_editions_answered
-        && code_at(BUMP_ITEM_INDEX) == Some("ConditionalCheckFailed")
-        && code_at(CYCLE_CHECK_ITEM_INDEX) != Some("ConditionalCheckFailed")
-    {
-        return Err(SaveFailure::AlreadyCounted);
-    }
     if error::is_conflict_only(&codes) {
         Err(SaveFailure::Conflict(err))
     } else {
@@ -485,78 +455,34 @@ impl From<RepoError> for SaveFailure {
 /// What [`auto_publish_draft`] did with one draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoPublishOutcome {
-    /// The draft is now published. `counted` says whether this write also
-    /// bumped the author's `editions_answered` (false when the cycle was
-    /// already counted).
-    Published { counted: bool },
+    /// The draft is now published.
+    Published,
     /// The row was no longer a draft: an earlier pass (or the author) already
     /// published it.
     AlreadyPublished,
 }
 
-/// Transaction §4 #4a — auto-publish one non-empty draft at cycle close, in
-/// its own `TransactWriteItems` (a whole cycle's drafts can exceed the
-/// 100-item cap):
+/// §4 #4a — auto-publish one non-empty draft at cycle close: `Update` the
+/// response row, conditioned on `status = draft`, setting `status =
+/// published` and `published_at = published_at` (the cycle's
+/// `responseCloseAt`). Every other attribute a published row carries
+/// (`response_id`, GSI1 keys, `entity`) was already written by the draft
+/// save, exactly as [`save_response`] writes them.
 ///
-/// 1. `Update` the response row, conditioned on `status = draft`: set
-///    `status = published` and `published_at = published_at` (the cycle's
-///    `responseCloseAt`). Every other attribute a published row carries
-///    (`response_id`, GSI1 keys, `entity`) was already written by the draft
-///    save, exactly as [`save_response`] writes them.
-/// 2. The same `editions_answered` bump as [`save_response`], guarded by the
-///    `last_answered_cycle` marker. It lands on `MemberStats`, which survives a
-///    leave, so an author who has since left still gets the edition counted,
-///    like any other stat on their published answer.
-///
-/// If only the bump's condition failed, the draft is published without the
-/// bump. If the draft's condition failed, it was already published:
-/// [`AutoPublishOutcome::AlreadyPublished`]. Pure `TransactionConflict`s are
-/// retried, up to [`SAVE_ATTEMPTS`] in total. Anything else is an error.
+/// A failed condition means the row was no longer a draft — an earlier pass
+/// (or the author) already published it — and comes back as
+/// [`AutoPublishOutcome::AlreadyPublished`], not an error. `MemberStats` is
+/// not touched here: `lambda-cycle-tick`'s sweep bumps `editions_answered`
+/// separately, once per answerer, after every draft in the cycle has been
+/// swept (`docs/design/lifecycle.md` §5.3).
 pub async fn auto_publish_draft(
     repo: &Repo,
     draft: &Response,
     published_at: Timestamp,
 ) -> Result<AutoPublishOutcome, RepoError> {
-    let mut bump = true;
-    let mut attempt = 1;
-    loop {
-        match auto_publish_once(repo, draft, published_at, bump).await {
-            Ok(()) => return Ok(AutoPublishOutcome::Published { counted: bump }),
-            Err(AutoPublishFailure::NotADraft) => return Ok(AutoPublishOutcome::AlreadyPublished),
-            Err(AutoPublishFailure::BumpRefused) => bump = false,
-            Err(AutoPublishFailure::Conflict(_)) if attempt < SAVE_ATTEMPTS => {}
-            Err(AutoPublishFailure::Conflict(e) | AutoPublishFailure::Other(e)) => return Err(e),
-        }
-        attempt += 1;
-    }
-}
-
-/// Positions in the auto-publish transaction's item list.
-const AUTO_PUBLISH_DRAFT_ITEM_INDEX: usize = 0;
-const AUTO_PUBLISH_BUMP_ITEM_INDEX: usize = 1;
-
-enum AutoPublishFailure {
-    /// The row's `status = draft` condition failed.
-    NotADraft,
-    /// Only the bump's condition failed: this cycle is already counted.
-    BumpRefused,
-    Conflict(RepoError),
-    Other(RepoError),
-}
-
-impl From<RepoError> for AutoPublishFailure {
-    fn from(e: RepoError) -> Self {
-        AutoPublishFailure::Other(e)
-    }
-}
-
-async fn auto_publish_once(
-    repo: &Repo,
-    draft: &Response,
-    published_at: Timestamp,
-    bump_editions_answered: bool,
-) -> Result<(), AutoPublishFailure> {
-    let publish = Update::builder()
+    let result = repo
+        .client
+        .update_item()
         .table_name(&repo.table)
         .key(
             attr::PK,
@@ -573,42 +499,14 @@ async fn auto_publish_once(
         .expression_attribute_values(":published", AttributeValue::S("published".into()))
         .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
         .expression_attribute_values(":published_at", AttributeValue::S(published_at.to_string()))
-        .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
-
-    let mut req = repo
-        .client
-        .transact_write_items()
-        .transact_items(TransactWriteItem::builder().update(publish).build());
-    if bump_editions_answered {
-        let bump = member_stats::editions_answered_bump(
-            repo,
-            &draft.group_id,
-            &draft.user_id,
-            &draft.cycle_id,
-        )?;
-        req = req.transact_items(TransactWriteItem::builder().update(bump).build());
-    }
-
-    let err = match req.send().await {
-        Ok(_) => return Ok(()),
-        Err(err) => err,
-    };
-    let codes = error::cancellation_codes(&err);
-    let err = error::from_transact_write_error(err);
-    let code_at = |i: usize| codes.get(i).and_then(|c| c.as_deref());
-    if code_at(AUTO_PUBLISH_DRAFT_ITEM_INDEX) == Some("ConditionalCheckFailed") {
-        return Err(AutoPublishFailure::NotADraft);
-    }
-    if bump_editions_answered
-        && code_at(AUTO_PUBLISH_BUMP_ITEM_INDEX) == Some("ConditionalCheckFailed")
-    {
-        return Err(AutoPublishFailure::BumpRefused);
-    }
-    if error::is_conflict_only(&codes) {
-        Err(AutoPublishFailure::Conflict(err))
-    } else {
-        Err(AutoPublishFailure::Other(err))
+        .send()
+        .await;
+    match result {
+        Ok(_) => Ok(AutoPublishOutcome::Published),
+        Err(err) => match error::from_update_item_error(err) {
+            RepoError::ConditionalCheckFailed => Ok(AutoPublishOutcome::AlreadyPublished),
+            other => Err(other),
+        },
     }
 }
 

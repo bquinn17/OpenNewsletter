@@ -223,6 +223,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 0,
       myDraftCount: 0,
       myPublishedCount: 0,
+      myAnsweredCount: 0,
     },
     {
       cycleId: OPEN_CYCLE_ID,
@@ -233,6 +234,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 5,
       myDraftCount: 1,
       myPublishedCount: 1,
+      myAnsweredCount: 2,
     },
     {
       cycleId: PUBLISHED_CYCLE_ID,
@@ -243,6 +245,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 5,
       myDraftCount: 0,
       myPublishedCount: 5,
+      myAnsweredCount: 5,
     },
     {
       cycleId: PUBLISHED_CYCLE_ID_2,
@@ -253,6 +256,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 2,
       myDraftCount: 0,
       myPublishedCount: 2,
+      myAnsweredCount: 2,
     },
   ],
   g_game: [
@@ -265,6 +269,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 0,
       myDraftCount: 0,
       myPublishedCount: 0,
+      myAnsweredCount: 0,
     },
     {
       cycleId: PUBLISHED_CYCLE_ID,
@@ -275,6 +280,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 2,
       myDraftCount: 0,
       myPublishedCount: 2,
+      myAnsweredCount: 2,
     },
   ],
   g_meeple: [
@@ -287,6 +293,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 4,
       myDraftCount: 2,
       myPublishedCount: 0,
+      myAnsweredCount: 2,
     },
     {
       cycleId: PUBLISHED_CYCLE_ID,
@@ -297,6 +304,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       questionCount: 2,
       myDraftCount: 0,
       myPublishedCount: 2,
+      myAnsweredCount: 2,
     },
   ],
 };

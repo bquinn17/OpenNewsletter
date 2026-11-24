@@ -128,7 +128,7 @@ This matches user expectation: "what did people vote for?" shows totals, not "Qu
 
 ### 3.6 Auto-publish at close
 
-When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency)). An empty draft stays `draft` and is excluded. The explicit Publish button is unchanged in meaning ("I'm done"); this just means an unpublished-but-non-empty answer isn't lost at the deadline. See [`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq) for the RespondPage warning copy.
+When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency)). An empty draft stays `draft` and is excluded. This is the only way the SPA publishes answers: RespondPage has no Publish button ([decision](../decisions.md#answers-publish-at-close)), so every non-empty answer reaches the edition through this sweep. The same sweep counts `editions_answered` ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). See [`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq) for the RespondPage warning copy.
 
 ---
 
@@ -180,7 +180,7 @@ Two states:
 [Publish]
 ```
 
-Every pick saves immediately as a draft (`publish:false`), including the first one. This also means an unpublished pick auto-publishes at the response-window deadline (§3.6 below). Publish still exists and marks the answer `published:true`. Last-write-wins ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)).
+Every pick saves immediately as a draft (`publish:false`), including the first one, and auto-publishes at the response-window deadline (§3.6 below). There's no Publish button. Last-write-wins ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)).
 
 **Tally (after publish):**
 ```

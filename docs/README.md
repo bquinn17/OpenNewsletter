@@ -51,7 +51,6 @@ How each subsystem works. Sections are numbered and cited from code.
 | Page | Covers |
 |---|---|
 | [`decisions.md`](decisions.md) | The owner's standing decisions (D1–D12 and others) and the reasoning behind them |
-| [`future-ideas.md`](future-ideas.md) | Designs kept for later but not scheduled |
 | [`frontend_design_review.md`](frontend_design_review.md) | Open review of the frontend's color, motion and reading, with a suggested order of work |
 
 ## Elsewhere in the repo
@@ -60,7 +59,7 @@ How each subsystem works. Sections are numbered and cited from code.
 - [`backend/crates/shared/src/config.rs`](../backend/crates/shared/src/config.rs) holds every tunable number: windows, limits, debounces, image sizes.
 - [`.github/workflows/README.md`](../.github/workflows/README.md) lists the CI/CD workflows and the repo variables they need.
 - Each top-level directory and backend crate has a short `README.md`.
-- [`plans/`](../plans/) is project tracking, not documentation: [`PROGRESS.md`](../plans/PROGRESS.md) (status, blockers, known gaps), [`build-order.md`](../plans/build-order.md) (milestones and their done-when gates) and [`archive/`](../plans/archive/) (milestone history and the original spec).
+- [`plans/`](../plans/) is project tracking, not documentation: [`PROGRESS.md`](../plans/PROGRESS.md) (status, blockers, known gaps), [`build-order.md`](../plans/build-order.md) (milestones and their done-when gates), [`future-ideas.md`](../plans/future-ideas.md) (designs kept for later but not scheduled) and [`archive/`](../plans/archive/) (milestone history and the original spec).
 
 ## Keeping these docs current
 

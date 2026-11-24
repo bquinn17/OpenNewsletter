@@ -1,18 +1,18 @@
 //! `MemberStats` upserts and the all-members leaderboard query
-//! (`docs/design/data-model.md` §2.17; transactions §4 #3, #4, #4a, #6, #8, #9).
+//! (`docs/design/data-model.md` §2.17; transactions §4 #3, #4a, #6, #8, #9).
 //!
 //! Every write here is an upsert `UpdateItem` — `SET entity, group_id,
 //! user_id` plus the caller's own counter change — so a member's row appears
 //! on its first write and no writer ever needs to read it first. The `ADD`
 //! builder ([`add_update`]) is shared by the reaction transaction
 //! (`engagement.rs`), the comment transaction (`engagement.rs`), and the
-//! promotion transaction (`questions.rs`); the `editions_answered` bump
-//! ([`editions_answered_bump`]) by the publish transactions (`responses.rs`,
-//! §4 #4, #4a); the streak reset builder
+//! promotion transaction (`questions.rs`); the streak reset builder
 //! ([`reset_current_streak_update`]) is used by the leave transaction
-//! (`groups.rs`). [`settle_streak`] is the only write this module sends
-//! itself, for `lambda-cycle-tick`'s best-effort streak
-//! settlement, with a check that the member still belongs to the group.
+//! (`groups.rs`). [`settle_streak`] and [`bump_editions_answered`] are
+//! sent by this module itself, for `lambda-cycle-tick`'s close-time sweep
+//! (`docs/design/lifecycle.md` §5.3): the former with a check that the
+//! member still belongs to the group, the latter without one, since the
+//! count belongs to whoever answered even if they've since left.
 
 use crate::error::{self, RepoError};
 use crate::keys::{
@@ -75,18 +75,22 @@ pub(crate) fn add_update(
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
 }
 
-/// Builds (does not send) the `editions_answered` bump that rides in the
-/// publish transactions (§4 #4, #4a): `ADD editions_answered 1` and stamp
-/// `last_answered_cycle = cycle_id`, conditioned on the marker not already
-/// being this cycle, so two first publishes in one cycle count once. A failed
-/// condition means the cycle is already counted.
-pub(crate) fn editions_answered_bump(
+/// Bump one member's `editions_answered` by 1 and stamp `last_answered_cycle
+/// = cycle_id`, conditioned on that marker not already being this cycle, so a
+/// retried tick or several non-empty answers in the same cycle count it once
+/// (`docs/design/lifecycle.md` §5.3, `docs/design/data-model.md` §4 #4a). A
+/// standalone conditional `UpdateItem`, not part of a transaction: the
+/// cycle-tick sweep calls it once per answerer after the draft sweep. A
+/// `RepoError::ConditionalCheckFailed` means the cycle is already counted —
+/// callers treat that as success via `RepoError::is_lost_race`.
+pub async fn bump_editions_answered(
     repo: &Repo,
     group_id: &GroupId,
     user_id: &UserId,
     cycle_id: &CycleId,
-) -> Result<Update, RepoError> {
-    Update::builder()
+) -> Result<(), RepoError> {
+    repo.client
+        .update_item()
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(member_stats_pk(group_id)))
         .key(attr::SK, AttributeValue::S(member_stats_sk(user_id)))
@@ -102,8 +106,10 @@ pub(crate) fn editions_answered_bump(
         .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
         .expression_attribute_values(":cycle", AttributeValue::S(cycle_id.to_string()))
         .expression_attribute_values(":one", AttributeValue::N("1".into()))
-        .build()
-        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
 }
 
 /// Builds (does not send) an unconditioned upsert that zeroes a member's

@@ -199,36 +199,42 @@ If `chosen` is empty (no candidate questions submitted): the cycle still transit
 
 ### 5.3 `publish(nl)`
 
-**Auto-publish non-empty drafts first** ([D2](../decisions.md#d2); [`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). This step runs **before** the status-flip transaction below, and is the reason `publish(nl)` is crash-safe/idempotent across re-runs:
+**Auto-publish non-empty drafts and count `editions_answered` first** ([D2](../decisions.md#d2); [`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). This step runs **before** the status-flip transaction below, and is the reason `publish(nl)` is crash-safe/idempotent across re-runs:
 
 ```
+def is_non_empty(answer):
+    return ((answer.kind == "text" and (answer.body.strip() or answer.imageMediaIds)) or
+            (answer.kind == "poll" and answer.pollOptionId is not None))
+
+answerers = {}
 for q in locked_questions(nl):
     for answer in query_answers(nl.groupId, nl.cycleId, q.questionId):   # AP14
-        if answer.status != "draft":
+        if not is_non_empty(answer):
+            continue   # empty drafts stay draft forever (§7; data-model.md §7);
+                       # an emptied published answer stays published but isn't counted
+        if answer.status == "published":
+            answerers.add(answer.userId)
             continue
-        is_non_empty = (
-            (q.kind == "text" and (answer.body.strip() or answer.imageMediaIds)) or
-            (q.kind == "poll" and answer.pollOptionId is not None)
-        )
-        if not is_non_empty:
-            continue   # empty drafts stay draft forever (§7; data-model.md §7)
-        # One TransactWriteItems PER DRAFT, not one big transaction for the
-        # whole cycle: members × questions rows can exceed the 100-item cap.
-        publish_draft = Update(answer,
-            Condition: status="draft",
-            Set: status="published", publishedAt=nl.responseCloseAt)
+        # One write PER DRAFT, not one big transaction for the whole cycle:
+        # members × questions rows can exceed the 100-item cap.
         try:
-            TransactWriteItems([publish_draft,
-                                *editions_answered_bump(answer.userId, nl.cycleId)])  # same guard as data-model.md §4 #4
-        except TransactionCanceled as e:
-            if e.only_failed("editions_answered_bump"):
-                # member already counted this cycle: publish without the bump
-                TransactWriteItems([publish_draft])
-            elif e.failed("publish_draft"):
-                pass   # already published by an earlier pass (crash-recovery re-run): harmless
-            else:
-                raise
+            Update(answer,
+                Condition: status="draft",
+                Set: status="published", publishedAt=nl.responseCloseAt)
+        except ConditionalCheckFailed:
+            pass   # already published by an earlier or concurrent pass: harmless
+        answerers.add(answer.userId)
+
+for user in answerers:
+    try:
+        Update(MemberStats(nl.groupId, user),
+            Set: lastAnsweredCycle=nl.cycleId, Add: editionsAnswered 1,
+            Condition: attribute_not_exists(lastAnsweredCycle) OR lastAnsweredCycle <> nl.cycleId)
+    except ConditionalCheckFailed:
+        pass   # counted by an earlier pass
 ```
+
+A draft whose only content is images that have since been deleted is skipped, neither published nor counted. Any other error publishing a draft or counting a member is logged and counts as a failed sweep, which keeps the cycle `open` for the next tick (both writes are idempotent, so the retry is safe). After `AUTO_PUBLISH_MAX_FAILED_SWEEPS` failed sweeps the cycle publishes anyway, without the writes that kept failing. `scripts/backfill_member_stats.py` repairs a missed count. Nothing bumps `editionsAnswered` while the response window is open, so the leaderboard shows an edition's answers only once it's out ([decision](../decisions.md#editions-answered-counted-at-close)).
 
 **Then settle the leaderboard streaks** ([`data-model.md` §2.17](data-model.md#217-memberstats)). By now the set of authors is final:
 
@@ -392,7 +398,7 @@ General strategy in [`testing-and-ci.md`](../development/testing-and-ci.md). The
 7. Concurrent vote casting + admin candidate deletion produces consistent state: `backend/crates/persistence/tests/lifecycle.rs::concurrent_vote_and_admin_delete_leave_the_store_consistent`.
 8. DST transition: a group in `America/New_York` with `responseOpenAt` on 2026-03-01 lands at the right UTC instant given the spring-forward boundary. `backend/crates/shared/src/cycle_time.rs` (`mod tests`) `::dst_spring_forward_boundary_is_respected`; `backend/crates/persistence/tests/lifecycle.rs::create_next_voting_cycle_lands_on_the_correct_utc_instant_across_the_dst_boundary`.
 9. A 28-day window opening Feb 1 in a non-leap year seeds a March cycle, not April (§5.4): `backend/crates/shared/src/cycle_time.rs` (`mod tests`) `::a_full_length_february_window_does_not_skip_march`.
-10. Auto-publish ([D2](../decisions.md#d2)): at close, a non-empty text draft and a non-empty poll draft both end up `published` with `publishedAt = responseCloseAt` and the `editionsAnswered` bump applied once; an empty draft stays `draft`; a crash between two drafts' auto-publish transactions (simulated by killing the tick mid-sweep) leaves the cycle `open`, and a re-run completes the remaining drafts without double-bumping `editionsAnswered` for the ones already flipped. `backend/crates/lambda-cycle-tick/tests/auto_publish.rs::auto_publish_counts_each_member_s_edition_exactly_once`, `::a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_counting`, `::a_departed_member_s_draft_publishes_and_counts_without_recreating_their_membership`, `::a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped`.
+10. Auto-publish ([D2](../decisions.md#d2)): at close, a non-empty text draft and a non-empty poll draft both end up `published` with `publishedAt = responseCloseAt` and the `editionsAnswered` bump applied once; an empty draft stays `draft`; a published answer emptied before close stays published but isn't counted; a manual `publish: true` save bumps nothing; a crash between two drafts' auto-publish transactions (simulated by killing the tick mid-sweep) leaves the cycle `open`, and a re-run completes the remaining drafts without double-bumping `editionsAnswered` for the ones already flipped. `backend/crates/lambda-cycle-tick/tests/auto_publish.rs::auto_publish_counts_each_member_s_edition_exactly_once`, `::a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_counting`, `::a_departed_member_s_draft_publishes_and_counts_without_recreating_their_membership`, `::a_broken_draft_holds_the_cycle_for_a_few_ticks_then_is_skipped`, `::a_published_answer_emptied_before_close_is_not_counted`; `backend/crates/persistence/tests/responses.rs::save_response_with_publish_sets_published_at_but_does_not_bump_editions_answered`, `::bump_editions_answered_counts_the_same_cycle_once`.
 
 (There is deliberately no "admin curation override" test — that feature does not exist; see §7.)
 

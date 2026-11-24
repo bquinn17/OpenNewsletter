@@ -16,8 +16,8 @@ type Params = {
 
 /**
  * Drives a poll question's answer: every pick saves immediately as a draft
- * (`docs/design/frontend.md` §7.3, D2), and `publish()` sends the same pick
- * with `publish: true`. Mirrors `useResponseEditor`'s save/publish shape for
+ * (`docs/design/frontend.md` §7.3, D2). A non-empty draft auto-publishes
+ * server-side at cycle close. Mirrors `useResponseEditor`'s save shape for
  * the text path, minus autosave debouncing — a poll pick has no typing to
  * wait out.
  */
@@ -33,26 +33,23 @@ export function usePollResponse({ groupId, cycleId, questionId, initialResponse 
   const [saving, setSaving] = useState(false);
   const [response, setResponse] = useState<S["ResponseDto"] | null>(null);
   const [closed, setClosed] = useState(false);
-  const prevStatusRef = useRef<S["ResponseStatus"] | undefined>(initialResponse?.status);
+  // The most recent `save()` call, so `settle()` can await whatever pick is in flight.
+  const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
   const isPublished = (response?.status ?? initialResponse?.status) === "published";
   const isUnpublishedDraft = !isPublished && pollOptionId !== null;
 
-  async function save(publish: boolean, optionId: string) {
+  async function save(optionId: string) {
     setSaving(true);
     try {
       const saved = await api.saveMyResponse(groupId, cycleId, questionId, {
         kind: "poll",
         pollOptionId: optionId,
-        publish,
+        publish: false,
       });
       setResponse(saved);
       savedPollOptionIdRef.current = saved.pollOptionId ?? optionId;
       cacheSavedResponse(queryClient, groupId, cycleId, questionId, saved);
-      if (saved.status === "published" && prevStatusRef.current !== "published") {
-        pushToast("Published — friends can see this when the edition publishes.", "success");
-      }
-      prevStatusRef.current = saved.status;
     } catch (err) {
       // The server still holds the last saved pick, and that's what would
       // auto-publish, so show that rather than the unsaved one.
@@ -76,11 +73,12 @@ export function usePollResponse({ groupId, cycleId, questionId, initialResponse 
     // same as a text autosave (`docs/design/frontend.md` §7.3, D2). An unpublished pick is then
     // auto-published at the deadline; once published, a change stays
     // published (publishing is sticky server-side, `docs/design/api.md` §7.3).
-    void save(false, optionId);
+    savePromiseRef.current = save(optionId);
   }
 
-  async function publish() {
-    if (pollOptionId) await save(true, pollOptionId);
+  /** Resolves once the pick's save (if any is in flight) has settled — for the "Done" CTA. */
+  async function settle(): Promise<void> {
+    await savePromiseRef.current;
   }
 
   return {
@@ -88,9 +86,8 @@ export function usePollResponse({ groupId, cycleId, questionId, initialResponse 
     saving,
     response,
     closed,
-    isPublished,
     isUnpublishedDraft,
     select,
-    publish,
+    settle,
   };
 }

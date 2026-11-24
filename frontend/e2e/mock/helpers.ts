@@ -37,7 +37,7 @@ export async function gotoHome(page: Page): Promise<void> {
 
 /** Home's row for the current group's open edition (`EditionRow.tsx`). */
 export async function openCurrentEdition(page: Page): Promise<void> {
-  await page.getByRole("link", { name: /you've published/ }).click();
+  await page.getByRole("link", { name: /you've answered/ }).click();
 }
 
 /** Home's row for the current group's voting cycle, which links to the candidates page. */

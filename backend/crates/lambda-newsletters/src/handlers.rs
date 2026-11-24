@@ -57,9 +57,11 @@ pub async fn list_newsletters(
                     ApiError::internal("failed to load your responses")
                 })?;
         let count = |status| my_responses.iter().filter(|r| r.status == status).count() as u32;
+        let answered = my_responses.iter().filter(|r| r.is_non_empty()).count() as u32;
         Ok::<_, ApiError>((
             count(ResponseStatus::Draft),
             count(ResponseStatus::Published),
+            answered,
         ))
     }))
     .await?;
@@ -68,7 +70,7 @@ pub async fn list_newsletters(
         .into_iter()
         .zip(counts)
         .map(
-            |(nl, (my_draft_count, my_published_count))| NewsletterSummary {
+            |(nl, (my_draft_count, my_published_count, my_answered_count))| NewsletterSummary {
                 question_count: nl.locked_question_ids.len() as u32,
                 cycle_id: nl.cycle_id,
                 status: nl.status,
@@ -77,6 +79,7 @@ pub async fn list_newsletters(
                 published_at: nl.published_at,
                 my_draft_count,
                 my_published_count,
+                my_answered_count,
             },
         )
         .collect();

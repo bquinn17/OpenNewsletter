@@ -24,7 +24,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 
 **Decision.** When a cycle closes, the tick publishes every non-empty draft before it flips the cycle to `published`. Non-empty means a text answer with a body or images, or a poll pick. Empty drafts stay drafts. A poll pick saves as a draft as soon as it's made. While an answer is still an unpublished draft, the response editor says it will be published at close. Deadline reminders count a non-empty draft as answered.
 
-**Why.** A member who wrote an answer but never pressed Publish shouldn't be left out of the edition. Running the sweep before the condition-guarded status flip also makes the close crash-safe, because a tick that dies midway leaves the cycle `open` and the next tick finishes the job.
+**Why.** A member who wrote an answer shouldn't be left out of the edition for not pressing a button. Running the sweep before the condition-guarded status flip also makes the close crash-safe, because a tick that dies midway leaves the cycle `open` and the next tick finishes the job.
 
 **Where.** [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), [`notifications.md` §7.2](design/notifications.md#72-per-recipient-body-customization), [`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq).
 
@@ -105,16 +105,16 @@ A full read-through of the design after the hardening milestone turned up twelve
 
 **Decision.** Comments stay flat. Web Push and the admin UI stay as built. Threaded comments and comments or reactions on poll questions are not built.
 
-**Why.** A small group's threads are short, and flat lists are simpler to read on a phone. The designs for the deferred features are kept in [`future-ideas.md`](future-ideas.md) so they can be picked up later.
+**Why.** A small group's threads are short, and flat lists are simpler to read on a phone. The designs for the deferred features are kept in [`future-ideas.md`](../plans/future-ideas.md) so they can be picked up later.
 
-**Where.** [`engagement.md` §1](design/engagement.md#1-comments), [`future-ideas.md` §1](future-ideas.md#1-reply-comments)–§2.
+**Where.** [`engagement.md` §1](design/engagement.md#1-comments), [`future-ideas.md` §1](../plans/future-ideas.md#1-reply-comments)–§2.
 
 <a id="d12"></a>
 ### D12 — No per-PR CI stacks
 
 **Decision.** End-to-end tests run against the long-lived `dev` stack. Ephemeral per-PR `ci-pr-*` stacks are not built.
 
-**Why.** Per-PR isolation isn't worth the extra stacks, deploy time and clean-up machinery for a project this size. The design is kept in [`future-ideas.md` §3](future-ideas.md#3-ephemeral-per-pr-ci-stacks).
+**Why.** Per-PR isolation isn't worth the extra stacks, deploy time and clean-up machinery for a project this size. The design is kept in [`future-ideas.md` §3](../plans/future-ideas.md#3-ephemeral-per-pr-ci-stacks).
 
 **Where.** [`environments.md` §11](development/environments.md#11-ephemeral-ci-stacks).
 
@@ -237,16 +237,25 @@ Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-
 
 **Why.** Measuring from the first manual publish rewards gaming it: start a draft the moment the edition opens, publish something thin immediately, then quietly flesh it out right up to the deadline — first-publish time says "early" while the member actually used the whole window. The last edit says what actually happened. It also means auto-published drafts no longer need special-casing out of the card: their `updated_at` already reflects whenever the member last touched them, unlike `published_at`, which for an auto-published draft is always the close time itself.
 
-**Where.** [`future-ideas.md` §11.1](future-ideas.md#111-the-cards) (the card) and §16.4 (the leaderboard-timing question this partially resolves). Not yet built.
+**Where.** [`future-ideas.md` §11.1](../plans/future-ideas.md#111-the-cards) (the card, not yet built). The leaderboard's own timing is settled [below](#editions-answered-counted-at-close).
 
 <a id="editions-answered-counted-at-close"></a>
 ### `editions_answered` is counted at close, not at first publish
 
-**Decision.** `MemberStats.editions_answered` (§2.17) stops bumping in real time when a member first publishes an answer. It's decided once, at close, by `publish(nl)`'s existing content check ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a) widened to cover every response row in the cycle, not just ones still `draft`: a member counts if any of their answers is non-empty at the moment of close, whatever its `status`. **This reverses shipped behavior** — `editions_answered` currently bumps inside `save_response`'s transaction (`backend/crates/persistence/src/responses.rs`) — so it needs an actual code change, not just a doc update.
+**Decision.** `MemberStats.editions_answered` ([`data-model.md` §2.17](design/data-model.md#217-memberstats)) never changes while the response window is open. It's decided once, at close, by `publish(nl)`'s content check ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a), applied to every response row in the cycle, not just ones still `draft`: a member counts if any of their answers is non-empty at the moment of close, whatever its `status`.
 
-**Why.** `PUT …/my-response` accepts an empty `body` even on an already-published response (`validation::body("")` is accepted, and publishing is sticky: `status` never reverts). So today a member can publish early, then clear their answer entirely before close, and still be credited with having answered, because the bump already fired at first publish. Deciding it from the content that's actually there at close removes that gap. It also means the leaderboard no longer updates live during the response window — standing is visible only once the edition is out, which the owner preferred anyway. Poll answers are unaffected: a `pollOptionId`, once set, can't be cleared.
+**Why.** `PUT …/my-response` accepts an empty `body` even on an already-published response (`validation::body("")` is accepted, and publishing is sticky: `status` never reverts). So a count taken at first publish would credit a member who published early and then cleared their answer before close. Deciding it from the content that's actually there at close removes that gap. It also means the leaderboard no longer updates live during the response window — standing is visible only once the edition is out, which the owner preferred anyway. Poll answers are unaffected: a `pollOptionId`, once set, can't be cleared.
 
-**Where.** [`future-ideas.md` §16.4](future-ideas.md#164-decision-editions_answered-counts-only-once-the-edition-closes). Not yet implemented — see that section for the migration-free rollout shape.
+**Where.** [`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4/#4a, [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), `scripts/backfill_member_stats.py`.
+
+<a id="answers-publish-at-close"></a>
+### The app doesn't publish answers by hand; every non-empty answer publishes at close
+
+**Decision.** RespondPage has no **Publish** button. Its **Done** button saves and moves on to the next unanswered question, and every save sends `publish: false`, so every non-empty answer is published by the close-time sweep ([D2](#d2)). The API still accepts `publish: true`, because installed PWAs running an older release send it. An answer published that way keeps its read-only view with an **Edit** toggle.
+
+**Why.** Autosave already stores every answer, so a per-question **Publish** button read as "nothing is saved until I press this", the opposite of what's true. And once `editions_answered` is counted at close ([above](#editions-answered-counted-at-close)), a manual publish changes nothing a member or the group can see before the edition is out: answers are shown only when the edition publishes. Two publish paths would be kept for no benefit.
+
+**Where.** [`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq), [`api.md` §7.3](design/api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response).
 
 <a id="jiff"></a>
 ### Time math uses jiff, and every timestamp is RFC 3339 UTC at millisecond precision

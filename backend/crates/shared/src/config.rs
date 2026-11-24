@@ -132,7 +132,7 @@ pub const VOTE_COUNT_PAD_WIDTH: usize = 6;
 pub const DEFAULT_LIST_LIMIT: u32 = 20;
 /// General upper bound on `?limit=` per `docs/design/api.md` §1.
 pub const MAX_LIST_LIMIT: u32 = 100;
-/// `GET /groups/{groupId}/newsletters` computes `myDraftCount`/`myPublishedCount`
+/// `GET /groups/{groupId}/newsletters` computes `myDraftCount`/`myPublishedCount`/`myAnsweredCount`
 /// with one extra query per cycle returned, so its page size is capped tighter
 /// than the general list limit (`docs/design/api.md` §5.1).
 pub const MAX_NEWSLETTER_LIST_LIMIT: u32 = 24;
