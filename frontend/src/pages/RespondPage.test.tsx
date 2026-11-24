@@ -98,6 +98,7 @@ function pollDraft(optionId: string): S["ResponseDto"] {
     status: "draft",
     pollOptionId: optionId,
     imageMediaIds: [],
+    audioMediaIds: [],
     updatedAt: "2026-06-02T00:00:00Z",
     publishedAt: null,
   };
@@ -156,6 +157,7 @@ describe("RespondPage", () => {
       status: "draft",
       body: "Hello world",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -174,6 +176,7 @@ describe("RespondPage", () => {
       kind: "text",
       body: "Hello world",
       imageMediaIds: [],
+      audioMediaIds: [],
       publish: false,
     });
     expect(await screen.findByText("Edition page")).toBeInTheDocument();
@@ -221,6 +224,7 @@ describe("RespondPage", () => {
             status: "draft",
             body: "Already answered",
             imageMediaIds: [],
+            audioMediaIds: [],
             updatedAt: "2026-06-01T00:00:00Z",
             publishedAt: null,
           },
@@ -255,6 +259,7 @@ describe("RespondPage", () => {
       status: "draft",
       body: "Second answer",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -296,6 +301,7 @@ describe("RespondPage", () => {
             status: "draft",
             body: "Already answered",
             imageMediaIds: [],
+            audioMediaIds: [],
             updatedAt: "2026-06-01T00:00:00Z",
             publishedAt: null,
           },
@@ -321,6 +327,7 @@ describe("RespondPage", () => {
       status: "draft",
       body: "Third answer",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -353,6 +360,7 @@ describe("RespondPage", () => {
             status: "draft",
             body: "Already answered",
             imageMediaIds: [],
+            audioMediaIds: [],
             updatedAt: "2026-06-01T00:00:00Z",
             publishedAt: null,
           },
@@ -378,6 +386,7 @@ describe("RespondPage", () => {
       status: "draft",
       body: "Second answer",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -419,6 +428,7 @@ describe("RespondPage", () => {
       status: "draft",
       body: "Hello",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -453,6 +463,7 @@ describe("RespondPage", () => {
             status: "draft",
             body: "Look ![](image:img1)",
             imageMediaIds: ["img1"],
+            audioMediaIds: [],
             updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: null,
           },
@@ -482,6 +493,7 @@ describe("RespondPage", () => {
           status: "draft",
           body: body.kind === "text" ? body.body : "",
           imageMediaIds: body.kind === "text" ? body.imageMediaIds : [],
+          audioMediaIds: [],
           updatedAt: "2026-06-03T00:00:00Z",
           publishedAt: null,
         }),
@@ -506,6 +518,7 @@ describe("RespondPage", () => {
       kind: "text",
       body: "Look ![](image:img1) again",
       imageMediaIds: ["img1"],
+      audioMediaIds: [],
       publish: false,
     });
   });
@@ -569,6 +582,7 @@ describe("RespondPage", () => {
           status: "draft",
           body: body.kind === "text" ? body.body : "",
           imageMediaIds: ids,
+          audioMediaIds: [],
           updatedAt: "2026-06-03T00:00:00Z",
           publishedAt: null,
         } satisfies S["ResponseDto"];
@@ -622,6 +636,7 @@ describe("RespondPage", () => {
       kind: "text",
       body: "",
       imageMediaIds: [],
+      audioMediaIds: [],
       publish: false,
     });
   });
@@ -634,6 +649,7 @@ describe("RespondPage", () => {
           status: "draft",
           body: "Look ![](image:img1)",
           imageMediaIds: ["img1"],
+          audioMediaIds: [],
           updatedAt: "2026-06-02T00:00:00Z",
           publishedAt: null,
         }),
@@ -763,6 +779,7 @@ describe("RespondPage", () => {
             responseId: "r2",
             status: "published",
             imageMediaIds: [],
+            audioMediaIds: [],
             pollOptionId: "optA",
             updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: "2026-06-02T00:00:00Z",
@@ -780,6 +797,7 @@ describe("RespondPage", () => {
       status: "published",
       pollOptionId: "optB",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-03T00:00:00Z",
       publishedAt: "2026-06-02T00:00:00Z",
     });
@@ -819,6 +837,7 @@ describe("RespondPage", () => {
             responseId: "r2",
             status: "published",
             imageMediaIds: [],
+            audioMediaIds: [],
             pollOptionId: "optA",
             updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: "2026-06-02T00:00:00Z",
@@ -859,6 +878,7 @@ describe("RespondPage", () => {
             responseId: "r2",
             status: "draft",
             imageMediaIds: [],
+            audioMediaIds: [],
             pollOptionId: "optA",
             updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: null,
@@ -887,6 +907,7 @@ describe("RespondPage", () => {
       status: "draft" as const,
       body: "Half-written",
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     };

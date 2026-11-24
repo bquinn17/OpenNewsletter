@@ -10,8 +10,8 @@ use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
 use domain::{
-    CycleId, GroupId, ImageId, MediaStatus, PollOptionId, QuestionId, QuestionKind, Response,
-    ResponseId, Timestamp, UserId,
+    AudioId, CycleId, GroupId, ImageId, MediaStatus, PollOptionId, QuestionId, QuestionKind,
+    Response, ResponseId, Timestamp, UserId,
 };
 use serde_dynamo::from_item;
 use shared::config::{
@@ -270,6 +270,7 @@ pub struct ResponseSave<'a> {
     pub body: Option<&'a str>,
     pub poll_option_id: Option<&'a PollOptionId>,
     pub image_media_ids: &'a [ImageId],
+    pub audio_media_ids: &'a [AudioId],
     pub publish: bool,
 }
 
@@ -339,6 +340,7 @@ async fn save_response_once(
         None => AttributeValue::Null(true),
     };
     let images_av = image_ids_av(save.image_media_ids.iter());
+    let audio_av = audio_ids_av(save.audio_media_ids.iter());
 
     let mut set_clauses = vec![
         "response_id = if_not_exists(response_id, :new_response_id)".to_owned(),
@@ -350,6 +352,7 @@ async fn save_response_once(
         "body = :body".to_owned(),
         "poll_option_id = :poll_option_id".to_owned(),
         "image_media_ids = :image_media_ids".to_owned(),
+        "audio_media_ids = :audio_media_ids".to_owned(),
         "updated_at = :updated_at".to_owned(),
         "gsi1pk = :gsi1pk".to_owned(),
         "gsi1sk = :gsi1sk".to_owned(),
@@ -386,6 +389,7 @@ async fn save_response_once(
         .expression_attribute_values(":body", body_av)
         .expression_attribute_values(":poll_option_id", poll_option_av)
         .expression_attribute_values(":image_media_ids", images_av)
+        .expression_attribute_values(":audio_media_ids", audio_av)
         .expression_attribute_values(":updated_at", AttributeValue::S(now.to_string()))
         .expression_attribute_values(
             ":gsi1pk",
@@ -552,20 +556,63 @@ pub async fn remove_image_from_draft(
     Ok(())
 }
 
+/// `DELETE /audio-uploads/{audioId}` (`docs/design/api.md` §9 — voice clips)
+/// — drop `audio_id` from the caller's draft before the clip itself is
+/// deleted, mirroring [`remove_image_from_draft`].
+pub async fn remove_audio_from_draft(
+    repo: &Repo,
+    draft: &Response,
+    audio_id: &AudioId,
+    now: Timestamp,
+) -> Result<(), RepoError> {
+    let expected = audio_ids_av(draft.audio_media_ids.iter());
+    let remaining = audio_ids_av(draft.audio_media_ids.iter().filter(|i| *i != audio_id));
+    repo.client
+        .update_item()
+        .table_name(&repo.table)
+        .key(
+            attr::PK,
+            AttributeValue::S(response_pk(
+                &draft.group_id,
+                &draft.cycle_id,
+                &draft.question_id,
+            )),
+        )
+        .key(attr::SK, AttributeValue::S(response_sk(&draft.user_id)))
+        .update_expression("SET audio_media_ids = :remaining, updated_at = :now")
+        .condition_expression("#status = :draft AND audio_media_ids = :expected")
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
+        .expression_attribute_values(":expected", expected)
+        .expression_attribute_values(":remaining", remaining)
+        .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
+}
+
 /// `image_media_ids` as stored: a list of image id strings, in order.
 fn image_ids_av<'a>(ids: impl Iterator<Item = &'a ImageId>) -> AttributeValue {
     AttributeValue::L(ids.map(|i| AttributeValue::S(i.to_string())).collect())
 }
 
-/// [`Response::is_non_empty`], checked against the images the response
-/// lists. `is_non_empty` trusts `image_media_ids`, but a draft can still list
-/// a deleted image: `DELETE /uploads` drops the id from the caller's draft
-/// ([`remove_image_from_draft`]), but a save that validated the image just
-/// before the delete can re-list it. So a text response with no body counts only if at least one of
-/// its images still exists and hasn't failed processing. The close-time
-/// auto-publish sweep and the deadline reminder's answered count both use
-/// this, so a draft that won't publish never counts as answered
-/// (`docs/design/lifecycle.md` §5.3, `docs/design/notifications.md` §7.2).
+/// `audio_media_ids` as stored: a list of audio id strings, in order.
+fn audio_ids_av<'a>(ids: impl Iterator<Item = &'a AudioId>) -> AttributeValue {
+    AttributeValue::L(ids.map(|i| AttributeValue::S(i.to_string())).collect())
+}
+
+/// [`Response::is_non_empty`], checked against the images and voice clips the
+/// response lists. `is_non_empty` trusts `image_media_ids`/`audio_media_ids`,
+/// but a draft can still list a deleted image or clip: `DELETE /uploads` and
+/// `DELETE /audio-uploads` drop the id from the caller's draft
+/// ([`remove_image_from_draft`], [`remove_audio_from_draft`]), but a save that
+/// validated the attachment just before the delete can re-list it. So a text
+/// response with no body counts only if at least one of its images or clips
+/// still exists and hasn't failed processing. The close-time auto-publish
+/// sweep and the deadline reminder's answered count both use this, so a draft
+/// that won't publish never counts as answered (`docs/design/lifecycle.md`
+/// §5.3, `docs/design/notifications.md` §7.2).
 pub async fn has_live_content(repo: &Repo, response: &Response) -> Result<bool, RepoError> {
     if !response.is_non_empty() {
         return Ok(false);
@@ -580,5 +627,15 @@ pub async fn has_live_content(repo: &Repo, response: &Response) -> Result<bool, 
         &response.image_media_ids,
     )
     .await?;
-    Ok(images.values().any(|i| i.status != MediaStatus::Failed))
+    if images.values().any(|i| i.status != MediaStatus::Failed) {
+        return Ok(true);
+    }
+    let audio = crate::media::get_audio_batch(
+        repo,
+        &response.group_id,
+        &response.cycle_id,
+        &response.audio_media_ids,
+    )
+    .await?;
+    Ok(audio.values().any(|a| a.status != MediaStatus::Failed))
 }

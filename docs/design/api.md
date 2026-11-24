@@ -44,6 +44,10 @@ Error code catalog (machine-readable codes for the top-level `code`):
 | `IMAGE_TOO_LARGE` | 413 | Original > 15MB |
 | `IMAGE_BAD_TYPE` | 415 | MIME type not allowed |
 | `IMAGE_IN_USE` | 409 | `DELETE /uploads/{imageId}` on an image the caller's published answer still references, or that a live comment has attached |
+| `AUDIO_LIMIT_EXCEEDED` | 409 | More than 3 voice clips attached to a response, or more than 1 to a comment ([`media.md` §12](media.md#12-voice-clips)) |
+| `AUDIO_TOO_LARGE` | 413 | Original > 25MB |
+| `AUDIO_BAD_TYPE` | 415 | MIME type not allowed |
+| `AUDIO_IN_USE` | 409 | `DELETE /audio-uploads/{audioId}` on a clip the caller's published answer still references, or that a live comment has attached |
 | `INVITE_EMAIL_MISMATCH` | 403 | `POST /invites/redeem` on an invite with `boundEmail` set, where the ID token's `email` (lowercased) doesn't match it or `email_verified` is false ([`data-model.md` §2.4](data-model.md#24-invite)) |
 | `RATE_LIMITED` | 429 | Throttled |
 | `INTERNAL` | 500 | Generic server error |
@@ -293,7 +297,7 @@ The only response route is the save (§7.3). The caller reads their own drafts a
 
 **Lambda**: `lambda-responses`. The autosave/save-draft endpoint.
 
-Body: `SaveResponseRequest` in `shared/openapi.yaml` (tagged by `kind`: text carries `body`+`imageMediaIds`, poll carries `pollOptionId`).
+Body: `SaveResponseRequest` in `shared/openapi.yaml` (tagged by `kind`: text carries `body`+`imageMediaIds`+optional `audioMediaIds`, poll carries `pollOptionId`).
 
 Behavior:
 - Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
@@ -302,9 +306,9 @@ Behavior:
 - **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it. There is no unpublish in v1.
 - `responseId` is assigned on the first save and stays the same across later saves.
 - Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`) ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). A save never changes `editionsAnswered`, which is counted at close (#4a). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
-- The kind in the body must match the question's kind (else `VALIDATION_FAILED`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_FAILED` naming the image. The save does not modify `ImageMedia` rows; the image's question is fixed at `POST /uploads` time (§9.1).
+- The kind in the body must match the question's kind (else `VALIDATION_FAILED`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_FAILED` naming the image. The save does not modify `ImageMedia` rows; the image's question is fixed at `POST /uploads` time (§9.1). `audioMediaIds` (≤3, voice clips, [`media.md` §12](media.md#12-voice-clips)) is validated the same way, de-duplicated and capped, failing that check with `AUDIO_LIMIT_EXCEEDED` — except an attached clip may be `pending`/`processing`, not just `ready`; only `failed` is rejected.
 - **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
-- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.
+- Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`. Up to 3 audio IDs, each referenced AudioMedia must (a) belong to caller, (b) not be `failed`, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.
 - For polls: `pollOptionId` must be in question's options. Last-write-wins. Every poll pick saves immediately as a draft (`publish: false`), matching text answers — so an unpublished pick is auto-published too, same as a non-empty text draft (§7.4).
 
 Response 200: `ResponseDto` in `shared/openapi.yaml`.
@@ -313,7 +317,7 @@ Response 200: `ResponseDto` in `shared/openapi.yaml`.
 
 After the cycle has closed (status `published`), responses are immutable. Attempts to `PUT` return 409 `CYCLE_NOT_OPEN`. The frontend hides edit affordances accordingly.
 
-**Auto-publish of non-empty drafts ([`lifecycle.md` §5.3](lifecycle.md#53-publishnl), [`data-model.md` §4](data-model.md#4-transactional-invariants) #4a).** Before flipping the Newsletter to `published`, `lambda-cycle-tick` auto-publishes every non-empty draft answer: text with a non-whitespace `body` or a non-empty `imageMediaIds`, or a poll with `pollOptionId` set. So a caller who never clicked "Publish" can still see their draft show up as a published answer once the cycle closes, as long as it wasn't empty — only an empty draft (or no draft at all) is excluded. There is no race with the save endpoint: saves are already refused once `now >= responseCloseAt` (the "open" clause above), even while the row still reads `status = open` in the up-to-5-minute gap before the tick runs, so the last successful save is exactly what auto-publish sees. The explicit Publish affordance in the UI still exists — it signals "I'm done" (status pill, progress count) — but it no longer determines whether an answer appears in the published edition once the deadline passes.
+**Auto-publish of non-empty drafts ([`lifecycle.md` §5.3](lifecycle.md#53-publishnl), [`data-model.md` §4](data-model.md#4-transactional-invariants) #4a).** Before flipping the Newsletter to `published`, `lambda-cycle-tick` auto-publishes every non-empty draft answer: text with a non-whitespace `body`, a non-empty `imageMediaIds`, or a non-empty `audioMediaIds`, or a poll with `pollOptionId` set. So a caller who never clicked "Publish" can still see their draft show up as a published answer once the cycle closes, as long as it wasn't empty — only an empty draft (or no draft at all) is excluded. There is no race with the save endpoint: saves are already refused once `now >= responseCloseAt` (the "open" clause above), even while the row still reads `status = open` in the up-to-5-minute gap before the tick runs, so the last successful save is exactly what auto-publish sees. The explicit Publish affordance in the UI still exists — it signals "I'm done" (status pill, progress count) — but it no longer determines whether an answer appears in the published edition once the deadline passes.
 
 ---
 
@@ -331,7 +335,7 @@ All require the cycle to be `published`. Pre-publish, this surface is hidden in 
 5. The answer resolves: 404 if not.
 6. Route-specific checks.
 
-**Comment shape.** `CommentResponse` in `shared/openapi.yaml`, used both here and inline in §5.2. `displayName` is the author's account display name. `image` (a `CommentImageResponse`) is populated while the attached image is `ready`, and null otherwise. Soft-deleted comments are **returned** as placeholders, with `deletedAt` set, `body` empty and `image` null, so the UI can render `[deleted]` in place.
+**Comment shape.** `CommentResponse` in `shared/openapi.yaml`, used both here and inline in §5.2. `displayName` is the author's account display name. `image` (a `CommentImageResponse`) is populated while the attached image is `ready`, and null otherwise. `audio` (a `PublishedAudioResponse`, [`media.md` §12](media.md#12-voice-clips)) is populated while the attached clip is `ready`, and null otherwise. Soft-deleted comments are **returned** as placeholders, with `deletedAt` set, `body` empty, `image` null and `audio` null, so the UI can render `[deleted]` in place.
 
 ### 8.1 `GET .../questions/{questionId}/responses/{responseId}/comments`
 
@@ -345,19 +349,21 @@ Body: `CreateCommentRequest` in `shared/openapi.yaml`. `body` 0–2000 chars. `i
 - uploaded for this group, cycle and question with `purpose: "comment"` (§9.1)
 - not attached to another comment
 
-A whitespace-only or missing `body` with no image is a 422. All failures are `VALIDATION_FAILED` with `fieldErrors` on `body` or `imageMediaId`. See [`engagement.md` §1.3](engagement.md#13-validation).
+`audioMediaId` (at most one voice clip, [`media.md` §12](media.md#12-voice-clips)) must reference a clip that is owned by the caller, not `failed` (a `pending`/`processing` clip is accepted, unlike an image), uploaded for this group, cycle and question with `purpose: "comment"` (§9.8), and not attached to another comment.
+
+A whitespace-only or missing `body` with no image and no clip is a 422. All failures are `VALIDATION_FAILED` with `fieldErrors` on `body`, `imageMediaId` or `audioMediaId`. See [`engagement.md` §1.3](engagement.md#13-validation).
 
 Response 201: the created `CommentResponse`.
 
-**Image attachment.** `ImageMedia` gains `attached_comment_id` ([`data-model.md` §2.10](data-model.md#210-imagemedia)). Writing the comment and claiming the image happen in one `TransactWriteItems`, conditioned on the image being unclaimed (or already claimed by this comment). The same applies to changing or removing an image on PATCH and to soft delete, which also releases the old image. §9.4 uses the claim for its in-use check.
+**Image/clip attachment.** `ImageMedia` and `AudioMedia` both carry `attached_comment_id` ([`data-model.md` §2.10](data-model.md#210-imagemedia), [§2.18](data-model.md#218-audiomedia)). Writing the comment and claiming the image and/or clip happen in one `TransactWriteItems`, each claim conditioned on it being unclaimed (or already claimed by this comment). The same applies to changing or removing an attachment on PATCH and to soft delete, which also releases the old attachment(s). §9.4/§9.8 use the claim for their in-use checks.
 
 ### 8.3 `PATCH .../comments/{commentId}`
 
-Body: `PatchCommentRequest` in `shared/openapi.yaml`. Author only: admins can't edit other people's comments, and get 403. An absent field is left unchanged. `"imageMediaId": null` removes the attachment. The result must still have a non-whitespace body or an image. Sets `editedAt`. A missing or soft-deleted comment returns 404. Response 200: the updated `CommentResponse`.
+Body: `PatchCommentRequest` in `shared/openapi.yaml`. Author only: admins can't edit other people's comments, and get 403. An absent field is left unchanged. `"imageMediaId": null`/`"audioMediaId": null` removes that attachment. The result must still have a non-whitespace body, an image, or a clip. Sets `editedAt`. A missing or soft-deleted comment returns 404. Response 200: the updated `CommentResponse`.
 
 ### 8.4 `DELETE .../comments/{commentId}`
 
-Soft delete: sets `deletedAt`, blanks `body` and drops the image attachment, releasing the image's claim. The row remains, so the parent thread's ordering is preserved and moderation history survives. Allowed for the author or a group admin. Idempotent: a `DELETE` of an already-soft-deleted row returns 204, and a `DELETE` of a missing row returns 404.
+Soft delete: sets `deletedAt`, blanks `body` and drops the image and clip attachments, releasing their claims. The row remains, so the parent thread's ordering is preserved and moderation history survives. Allowed for the author or a group admin. Idempotent: a `DELETE` of an already-soft-deleted row returns 204, and a `DELETE` of a missing row returns 404.
 
 ### 8.5 `GET .../questions/{questionId}/responses/{responseId}/reactions`
 
@@ -443,6 +449,19 @@ Avatars use a separate pipeline (see [`media.md` §11](media.md#11-avatars-separ
 - **Avatar replacement and clearing:** when `PATCH /me` (§2.3) sets a new `avatarMediaId` over an existing one, or sets it to `null`, the handler deletes the old avatar's original + processed objects the same way, then deletes the old `AvatarMedia` row, after the `User` row update commits. The frontend confirms both this replace-over-existing case and an explicit `DELETE /avatars/{id}` with a `ConfirmDialog` ("This permanently deletes the image. It can't be recovered.").
 
 Avatar URLs are presigned S3 GET URLs for `avatar/{avatarId}/display.webp` in the processed bucket, signed by `media-urls` the same way as every other image field ([`media.md` §11.3](media.md#113-serving)) — see [`data-model.md` §2.16](data-model.md#216-avatarmedia).
+
+### 9.8 Voice clip routes
+
+Voice clips ([`media.md` §12](media.md#12-voice-clips)) use the same shape as `/uploads` (§9.1-§9.4), on their own routes because the response shapes differ (duration and waveform peaks, no dimensions). Every route takes the same `?groupId=&cycleId=` addressing as `/uploads/{imageId}` (§9.0) — an `AudioMedia` row is keyed by `(groupId, cycleId, audioId)`.
+
+- `POST /audio-uploads` — **Lambda**: `lambda-media`. Body: `CreateAudioUploadRequest` in `shared/openapi.yaml` (`purpose` defaults to `response`). Validation order mirrors §9.1: membership, mime type, byte size, sha256 shape, newsletter existence + cycle status for `purpose`, the question being locked into this cycle, then (for `purpose=response`) the per-answer clip cap (`MAX_AUDIO_CLIPS_PER_RESPONSE`, 3). `mimeType` is normalized — parameters such as `;codecs=opus` are stripped and the value lowercased — before matching the allowlist: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav` (else 415 `AUDIO_BAD_TYPE`). `byteSize` must be 1 to `MAX_AUDIO_BYTES` (25 MB) (else 413 `AUDIO_TOO_LARGE`). Creates an `AudioMedia` row with `status=pending` and an S3 key `audio-uploads/{groupId}/{cycleId}/{questionId}/{userId}/{audioId}.{ext}` in the media-originals bucket (the same bucket `/uploads` uses, under a different prefix, so `lambda-image-process`'s `uploads/`-prefixed trigger never fires for a clip). Response 201: `CreateAudioUploadResponse` (`audioId`, `uploadUrl`, `headers`, `expiresInSeconds`) — the client `PUT`s the bytes the same way as an image upload (§9.1).
+- `GET /audio-uploads/{audioId}` — **Lambda**: `lambda-media`. **Owner only** — unlike `GET /uploads/{imageId}` (any member may read), a clip's caption and waveform aren't meaningful to anyone but its uploader before the clip is attached and published; the published view (§9.8's `PublishedAudioResponse`, below) carries its own hydrated shape for everyone else. Returns `AudioMediaResponse`: the row's fields in camelCase, plus a presigned `url` (`null` until `status=ready`) and `errorMessage` (`AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or `AUDIO_DECODE_FAILED` when `failed`). The frontend polls this after the PUT until `status` leaves `pending`.
+- `PATCH /audio-uploads/{audioId}` — **Lambda**: `lambda-media`. **Role**: caller must own the clip. Body: `PatchAudioUploadRequest` (`caption` ≤140 chars after trimming; `null` or an all-whitespace string clears it). Allowed regardless of processing status. Response 200: `AudioMediaResponse`.
+- `DELETE /audio-uploads/{audioId}` — **Lambda**: `lambda-media`. **Real delete**, mirroring §9.4 exactly: refused with 409 `AUDIO_IN_USE` when the caller's own *published* response for the clip's question still references it, or a `purpose: "comment"` clip that a live comment has claimed (`attachedCommentId` set). If the caller's *draft* still lists it, the id is dropped from the draft first. Then deletes the original S3 object, the processed clip (if any), then the row, via the shared delete helper. Idempotent: a repeat `DELETE` of an already-gone clip returns 204. An S3 delete failure returns 500 and leaves the row.
+
+**Where clips attach.** `Response.audioMediaIds` (≤3, text answers only) is validated the same way as `imageMediaIds` on `PUT .../my-response` (§7.3), with one decided difference: a `pending`/`processing` clip is accepted (only `failed` is rejected), because the client lists a clip's id in the draft as soon as its upload starts, before polling confirms `ready` — unlike an image, which must already be `ready`. `Comment.audioMediaId` (at most one) is validated the same way as `imageMediaId` on the comment routes (§8.2-§8.3), with the same accept-`pending` difference. A comment needs a non-whitespace body, an image, **or** a clip ([`engagement.md` §1.3](engagement.md#13-validation)).
+
+**Published shapes.** `PublishedAudioResponse { audioId, url, durationMs, peaks, caption }` — `peaks` is 48 waveform bucket amplitudes, 0-255. `PublishedAnswerResponse.audio` (array, ready clips only, in `audioMediaIds` order, always present) and `CommentResponse.audio` (single clip or `null`) sit alongside `images`/`image`.
 
 ---
 

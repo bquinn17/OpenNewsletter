@@ -33,6 +33,7 @@ A daily EventBridge rule would invoke `lambda-archive-tick`, which queries GSI2 
      - Comments:                GROUP#g#NL#c#Q#qN#A#uN     (one query per answer)
      - Reactions:               same partition as comments
      - Image media:             GROUP#g#NL#c (IMG# items)
+     - Voice clips:             GROUP#g#NL#c (AUD# items)
    ).
 2. Compose a self-contained JSON blob:
      {
@@ -44,7 +45,7 @@ A daily EventBridge rule would invoke `lambda-archive-tick`, which queries GSI2 
      }
 3. Write to archive bucket: s3://opennewsletter-archive-{env}/g/{groupId}/c/{cycleId}.json
    storage class: STANDARD_IA  (we want quick reads for "thaw" via signed URL)
-4. Move image variants:
+4. Move image variants and voice clips (`aud/...`, treated like the processed image variants):
    - Originals → STANDARD_IA  (or DEEP_ARCHIVE if we never expect to regenerate)
    - Processed → STANDARD_IA  (kept readable so the SPA can fetch them)
 5. Stream-driven check: ensure all rows for the cycle are reflected in the blob. If anything has been written since step 1 (DDB stream tail), restart the archive (rare for 12-month-old cycles).

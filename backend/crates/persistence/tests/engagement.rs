@@ -52,6 +52,7 @@ async fn it_soft_deletes_a_comment() {
         &c.author_user_id,
         utc("2026-06-07T10:00:00Z"),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -93,7 +94,11 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
         &loc,
         Some("edited"),
         None,
+        None,
         edited_at,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -101,7 +106,7 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
     .await
     .unwrap();
 
-    engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, edited_at, None)
+    engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, edited_at, None, None)
         .await
         .unwrap();
     let err = engagement::update_comment(
@@ -109,7 +114,11 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
         &loc,
         Some("revived"),
         None,
+        None,
         edited_at,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -153,10 +162,16 @@ async fn soft_delete_refuses_a_stale_image_and_leaves_the_comment_live() {
     let at = utc("2026-06-07T10:00:00Z");
 
     for stale in [Some(ImageId::new("img-a")), None] {
-        let err =
-            engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, stale.as_ref())
-                .await
-                .unwrap_err();
+        let err = engagement::soft_delete_comment(
+            &repo,
+            &loc,
+            &c.author_user_id,
+            at,
+            stale.as_ref(),
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.is_lost_race(),
             "expected a cancelled transaction, got {err:?}"
@@ -181,6 +196,7 @@ async fn soft_delete_refuses_a_stale_image_and_leaves_the_comment_live() {
         &c.author_user_id,
         at,
         Some(&ImageId::new("img-b")),
+        None,
     )
     .await
     .unwrap();
@@ -208,9 +224,13 @@ async fn update_refuses_a_stale_image() {
         &loc,
         None,
         Some(None),
+        None,
         at,
         Some(&stale),
         Some(&stale),
+        None,
+        None,
+        None,
         None,
     )
     .await
@@ -226,8 +246,12 @@ async fn update_refuses_a_stale_image() {
         &loc,
         Some("still here"),
         None,
+        None,
         at,
         Some(&current),
+        None,
+        None,
+        None,
         None,
         None,
     )
@@ -547,6 +571,7 @@ async fn create_comment_bumps_the_authors_comments_written() {
         author_user_id: &UserId::new("u2"),
         body: "Nice answer!",
         image_media_id: None,
+        audio_media_id: None,
         created_at: utc("2026-06-06T10:00:00Z"),
     };
     engagement::create_comment(&repo, &new).await.unwrap();
@@ -578,7 +603,7 @@ async fn soft_delete_comment_reverses_the_bump_and_is_idempotent() {
         created_at: c.created_at,
     };
     let at = utc("2026-06-07T10:00:00Z");
-    engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, None)
+    engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, None, None)
         .await
         .unwrap();
 
@@ -588,7 +613,7 @@ async fn soft_delete_comment_reverses_the_bump_and_is_idempotent() {
     assert_eq!(stats_for(&stats, "u2").unwrap().comments_written, -1);
 
     // Repeating the delete must not decrement a second time.
-    let err = engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, None)
+    let err = engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, None, None)
         .await
         .unwrap_err();
     assert!(

@@ -59,6 +59,7 @@ async fn it_creates_lists_and_soft_deletes_a_comment_with_an_image() {
         CreateCommentRequest {
             body: Some("Nice answer!".into()),
             image_media_id: Some(image_id.clone()),
+            audio_media_id: None,
         },
     )
     .await
@@ -206,6 +207,7 @@ async fn create_rejects_a_blank_body_with_no_image() {
         CreateCommentRequest {
             body: Some("   ".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -255,6 +257,7 @@ async fn create_rejects_an_image_already_attached_to_another_comment() {
         CreateCommentRequest {
             body: None,
             image_media_id: Some(image_id.clone()),
+            audio_media_id: None,
         },
     )
     .await
@@ -270,6 +273,7 @@ async fn create_rejects_an_image_already_attached_to_another_comment() {
         CreateCommentRequest {
             body: Some("also mine".into()),
             image_media_id: Some(image_id.clone()),
+            audio_media_id: None,
         },
     )
     .await
@@ -314,6 +318,7 @@ async fn create_rejects_an_image_for_the_wrong_question() {
         CreateCommentRequest {
             body: None,
             image_media_id: Some(image_id),
+            audio_media_id: None,
         },
     )
     .await
@@ -354,6 +359,7 @@ async fn only_the_author_can_edit_a_comment() {
         CreateCommentRequest {
             body: Some("mine".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -371,6 +377,7 @@ async fn only_the_author_can_edit_a_comment() {
         PatchCommentRequest {
             body: Some("hijacked".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -388,6 +395,7 @@ async fn only_the_author_can_edit_a_comment() {
         PatchCommentRequest {
             body: Some("mine, edited".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -437,6 +445,7 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
         CreateCommentRequest {
             body: Some("hi".into()),
             image_media_id: Some(image_id.clone()),
+            audio_media_id: None,
         },
     )
     .await
@@ -454,6 +463,7 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
         PatchCommentRequest {
             body: Some("hi, edited".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -476,6 +486,7 @@ async fn patch_distinguishes_absent_from_explicit_null_image() {
         PatchCommentRequest {
             body: None,
             image_media_id: Some(None),
+            audio_media_id: None,
         },
     )
     .await
@@ -525,6 +536,7 @@ async fn patch_requires_the_result_to_still_have_a_body_or_image() {
         CreateCommentRequest {
             body: Some("hi".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -541,6 +553,7 @@ async fn patch_requires_the_result_to_still_have_a_body_or_image() {
         PatchCommentRequest {
             body: Some("   ".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -582,6 +595,7 @@ async fn admin_can_delete_any_comment_but_a_member_cannot() {
         CreateCommentRequest {
             body: Some("u2's comment".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -660,6 +674,7 @@ async fn an_admin_demoted_elsewhere_cannot_delete_others_comments_from_a_warm_ca
         CreateCommentRequest {
             body: Some("u2's comment".into()),
             image_media_id: None,
+            audio_media_id: None,
         },
     )
     .await
@@ -731,6 +746,7 @@ async fn comment_list_orders_oldest_first_across_a_pagination_boundary() {
             CreateCommentRequest {
                 body: Some(format!("comment {i}")),
                 image_media_id: None,
+                audio_media_id: None,
             },
         )
         .await

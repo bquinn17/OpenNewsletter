@@ -34,13 +34,14 @@ class MediaPersistentStack(cdk.Stack):
         )
 
         # The SPA's origins: browser uploads to the originals buckets, and
-        # image reads from the processed bucket (below).
+        # image/audio reads from the processed bucket (below).
         spa_origins = (
             [f"https://{config.domain}", "http://localhost:5173"]
             if is_dev
             else [f"https://{config.domain}"]
         )
-        cors_rules = [
+        # Media uploads (images and audio) have Range headers for Safari audio seeking.
+        media_cors_rules = [
             s3.CorsRule(
                 allowed_methods=[s3.HttpMethods.PUT, s3.HttpMethods.POST],
                 allowed_origins=spa_origins,
@@ -59,7 +60,7 @@ class MediaPersistentStack(cdk.Stack):
             # (`docs/design/infrastructure.md` §5.1).
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            cors=cors_rules,
+            cors=media_cors_rules,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),
@@ -68,20 +69,27 @@ class MediaPersistentStack(cdk.Stack):
                     prefix="uploads/",
                     expiration=cdk.Duration.days(7),
                 ),
+                s3.LifecycleRule(
+                    prefix="audio-uploads/",
+                    expiration=cdk.Duration.days(7),
+                ),
             ],
             auto_delete_objects=is_dev,
             removal_policy=removal_policy,
         )
 
-        # Processed bucket: images under img/* and avatars under avatar/*. The
-        # SPA reads them only through presigned GET URLs the API Lambdas sign
-        # (`docs/design/media.md` §4). GET/HEAD CORS because images load with
-        # `crossorigin="anonymous"`, so the service worker sees real statuses
-        # and can cache them; no credentials, since the signature is in the URL.
+        # Processed bucket: images under img/*, audio under aud/*, and avatars
+        # under avatar/*. The SPA reads them only through presigned GET URLs
+        # the API Lambdas sign (`docs/design/media.md` §4). GET/HEAD CORS
+        # because images and audio load with `crossorigin="anonymous"`, so the
+        # service worker sees real statuses and can cache them; no credentials,
+        # since the signature is in the URL. Range header for Safari audio seeking.
         processed_cors_rules = [
             s3.CorsRule(
                 allowed_methods=[s3.HttpMethods.GET, s3.HttpMethods.HEAD],
                 allowed_origins=spa_origins,
+                allowed_headers=["Range"],
+                exposed_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
             )
         ]
 
@@ -113,7 +121,7 @@ class MediaPersistentStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=False,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            cors=cors_rules,
+            cors=media_cors_rules,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     abort_incomplete_multipart_upload_after=cdk.Duration.days(1),

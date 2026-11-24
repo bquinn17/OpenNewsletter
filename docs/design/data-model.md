@@ -276,6 +276,7 @@ A user's reply to one locked question.
 | `body` | string (markdown-safe; ≤20k chars) — only when `kind=text` |
 | `poll_option_id` | UUIDv7 \| null — only when `kind=poll` (last-write-wins) |
 | `image_media_ids` | array<string> (≤10) — only when `kind=text` |
+| `audio_media_ids` | array<string> (≤3) — only when `kind=text`; voice clips ([`media.md` §12](media.md#12-voice-clips)). Absent on rows written before voice clips shipped, which read as `[]`. |
 | `updated_at` | ISO-8601 |
 | `published_at` | ISO-8601 \| null |
 | `reaction_count` | number \| absent (absent reads as 0). Reactions on this answer from members other than its author, kept by the reaction transaction (§4 #8). Self-reactions aren't counted. Only published text answers can have reactions. |
@@ -333,6 +334,7 @@ Flat reply to a published response.
 | `author_user_id` | UUIDv7 |
 | `body` | string (≤2000 chars; markdown-safe) |
 | `image_media_id` | string \| null (optional single image attached to the comment; references an `ImageMedia` row owned by the comment author) |
+| `audio_media_id` | string \| null (optional single voice clip attached to the comment; references an `AudioMedia` row owned by the comment author — [`media.md` §12](media.md#12-voice-clips)). Absent on rows written before voice clips shipped, which read as `null`. |
 | `created_at` | ISO-8601 |
 | `edited_at` | ISO-8601 \| null |
 | `deleted_at` | ISO-8601 \| null (soft delete; `body` and `image_media_id` cleared when set) |
@@ -458,6 +460,38 @@ Access patterns:
 
 **Backfill.** `scripts/backfill_member_stats.py` recomputes every counter, streak and answer `reaction_count` from history and writes absolute values, so it's safe to run again. History is the published cycles, plus an open cycle's locked questions for `questions_asked`, since the live code counts that at promotion. `editions_answered` counts published cycles only, and only a member's non-empty answers, the same rule as the close-time sweep (§4 #4a). It also sets the `last_answered_cycle` marker. It runs once when the leaderboard ships, right after the deploy: until it runs, every member's `editions_answered` reads 0 on the members list and the leaderboard. It runs again to repair a missed streak settlement.
 
+### 2.18 AudioMedia
+
+Each uploaded voice clip ([`media.md` §12](media.md#12-voice-clips), [`media.md` §12](media.md#12-voice-clips)). Mirrors [`ImageMedia`](#210-imagemedia) field for field, with duration/waveform peaks in place of width/height, and no thumb variant.
+
+| Attr | Value |
+|---|---|
+| `pk` | `GROUP#{group_id}#NL#{cycle_id}` |
+| `sk` | `AUD#{audio_id}` |
+| `gsi1pk` | `USER#{user_id}#AUD` |
+| `gsi1sk` | `{uploaded_at}#{audio_id}` — `uploaded_at` in the canonical key-timestamp format (§1) |
+| `entity` | `AudioMedia` |
+| `audio_id` | UUIDv7 |
+| `user_id` | user_id (uploader) |
+| `group_id` | UUIDv7 |
+| `cycle_id` | string |
+| `question_id` | string \| null (set when attached to a response; null on initial upload) |
+| `purpose` | `response` \| `comment` — same meaning as `ImageMedia.purpose`. The 3-clips-per-answer cap counts `purpose=response` rows only; comment clips are capped at one per comment at comment-create time. |
+| `mime_type` | `audio/webm` \| `audio/ogg` \| `audio/mp4` \| `audio/x-m4a` \| `audio/aac` \| `audio/mpeg` \| `audio/wav` \| `audio/x-wav` — normalized (parameters stripped, lowercased) at `POST /audio-uploads` time |
+| `original_key` | S3 key in the originals bucket, under the `audio-uploads/` prefix |
+| `clip_key` | S3 key in the processed bucket (`aud/.../clip.webm`) — null until processed |
+| `status` | `pending` \| `ready` \| `failed` |
+| `bytes` | number |
+| `duration_ms` | number \| null (from the decode pass; set once processed) |
+| `peaks` | array<number> \| null — 48 waveform bucket amplitudes, 0-255, set once processed |
+| `caption` | string \| null (author-supplied, ≤140 chars) |
+| `uploaded_at` | ISO-8601 |
+| `processed_at` | ISO-8601 \| null |
+| `error_message` | string \| null — why `status=failed`: `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or `AUDIO_DECODE_FAILED`. A deleted clip has no row at all. |
+| `attached_comment_id` | UUIDv7 \| null — the comment this `purpose=comment` clip is attached to. Same contract as `ImageMedia.attached_comment_id`. |
+
+Access patterns mirror `ImageMedia`'s: list a user's uploads via GSI1, and count a caller's live `purpose=response` clips for one `(cycleId, questionId)` via a bounded `Query` of the cycle partition (`begins_with(sk, "AUD#")`), filtered on `user_id`/`question_id`/`purpose`/`status`.
+
 ---
 
 ## 3. Access patterns ⇄ index map
@@ -518,7 +552,7 @@ The following operations MUST use `TransactWriteItems`:
    The SPA no longer sends `publish: true` ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)), so new answers stay `draft` until #4a publishes them. The API still accepts it, for installed PWAs running an older release.
 
 4a. **Auto-publish non-empty drafts and count `editions_answered` at cycle close** ([D2](../decisions.md#d2); [`lifecycle.md` §5.3](lifecycle.md#53-publishnl); [decision](../decisions.md#editions-answered-counted-at-close)). When `lambda-cycle-tick`'s `publish(nl)` runs, it does both **before** flipping the Newsletter to `published`. For each locked question it queries its answers (AP14).
-   - **Publish drafts.** For each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty; poll: `poll_option_id` set), it writes the response row conditioned on `status = draft`, setting `status = published` and `published_at = response_close_at`. One write per draft, not one big transaction: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. Empty drafts are left untouched and stay `draft` forever.
+   - **Publish drafts.** For each `draft` response that's non-empty (text: `body` has non-whitespace OR `image_media_ids` non-empty OR `audio_media_ids` non-empty; poll: `poll_option_id` set), it writes the response row conditioned on `status = draft`, setting `status = published` and `published_at = response_close_at`. One write per draft, not one big transaction: up to members × questions rows could exceed the 100-item `TransactWriteItems` cap. Empty drafts are left untouched and stay `draft` forever.
    - **Count answerers.** A member is an *answerer* for the cycle if any of their answers is non-empty at that moment, whatever its `status`: a draft this pass published (or found already published by a concurrent pass), or an already-`published` row that passes the same content check. A published answer the member has since emptied doesn't count. Each answerer gets one conditional upsert on `MemberStats`: `ADD editions_answered 1` and `SET last_answered_cycle = :cycle`, conditioned on `attribute_not_exists(last_answered_cycle) OR last_answered_cycle <> :cycle`. A failed condition means the cycle is already counted. It's an upsert, so a member who left before close still has the edition counted, and no membership row comes back for them.
 
    This is crash-safe because it all runs before the status flip. A tick that crashes mid-pass leaves the cycle `open`, and the next tick's pass re-queries and redoes the rest: rows it already published fail their `status = draft` condition harmlessly, and members it already counted fail the marker condition. A publish or count that errors counts as a failed sweep, so the cycle stays `open` for the next tick ([`lifecycle.md` §5.3](lifecycle.md#53-publishnl)).
@@ -570,7 +604,7 @@ For admin-only operations: the membership must have `role=admin`, read from Dyna
 
 - Comments use soft-delete (`deleted_at` set, `body` blanked). Hard delete reserved for compliance/admin.
 - Responses are never deleted. **Only empty drafts remain `status=draft` forever** and are excluded from published views; a non-empty draft is auto-published at cycle close instead ([D2](../decisions.md#d2) — §4 #4a).
-- Media is deleted for real: `DELETE /uploads/{imageId}` and avatar delete/replace remove the S3 objects and delete the `ImageMedia`/`AvatarMedia` row — see [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7. Once an object is gone, its outstanding presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). No bucket versioning ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker cache (≤30 days for images, ≤90 for avatars) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no image bytes) for 35 days. Accepted ([D8](../decisions.md#d8), [D9](../decisions.md#d9)).
+- Media is deleted for real: `DELETE /uploads/{imageId}`, `DELETE /audio-uploads/{audioId}` and avatar delete/replace remove the S3 objects and delete the `ImageMedia`/`AudioMedia`/`AvatarMedia` row — see [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7. Once an object is gone, its outstanding presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). No bucket versioning ([`infrastructure.md` §5.1](infrastructure.md#51-s3-buckets-mediapersistentstack)), so this is an actual, not soft, delete. Remaining copies we can't purge: a device's service-worker cache (≤30 days for images and clips, ≤90 for avatars) and browser caches, and DynamoDB PITR (prod) keeping the deleted row's metadata (no media bytes) for 35 days. Accepted ([D8](../decisions.md#d8), [D9](../decisions.md#d9)).
 - When a Newsletter transitions to `archived` (manual or future job), see [`archival.md` §3](archival.md#3-per-cycle-archive-procedure) for the export-and-prune procedure.
 
 ---

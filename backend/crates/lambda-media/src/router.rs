@@ -3,8 +3,10 @@
 
 use crate::handlers;
 use crate::state::AppState;
-use domain::api::{CreateAvatarRequest, CreateUploadRequest};
-use domain::{ApiError, AvatarId, CycleId, GroupId, ImageId, UserId};
+use domain::api::{
+    CreateAudioUploadRequest, CreateAvatarRequest, CreateUploadRequest, PatchAudioUploadRequest,
+};
+use domain::{ApiError, AudioId, AvatarId, CycleId, GroupId, ImageId, UserId};
 use lambda_http::http::Method;
 use lambda_http::{Body, Request, RequestExt, Response};
 use persistence::auth;
@@ -78,6 +80,57 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
             )
             .await?;
             Ok(http::json_response(200, &response, &correlation_id))
+        }
+
+        (&Method::POST, ["audio-uploads"]) => {
+            let user_id = caller(state, req).await?;
+            let body: CreateAudioUploadRequest = http::parse_body(req)?;
+            let response = handlers::create_audio_upload(state, &user_id, body).await?;
+            Ok(http::json_response(201, &response, &correlation_id))
+        }
+
+        (&Method::GET, ["audio-uploads", audio_id]) => {
+            let user_id = caller(state, req).await?;
+            let (group_id, cycle_id) = group_and_cycle_query(req)?;
+            let response = handlers::get_audio_upload(
+                state,
+                &user_id,
+                &group_id,
+                &cycle_id,
+                &AudioId::new(*audio_id),
+            )
+            .await?;
+            Ok(http::json_response(200, &response, &correlation_id))
+        }
+
+        (&Method::PATCH, ["audio-uploads", audio_id]) => {
+            let user_id = caller(state, req).await?;
+            let (group_id, cycle_id) = group_and_cycle_query(req)?;
+            let body: PatchAudioUploadRequest = http::parse_body(req)?;
+            let response = handlers::patch_audio_upload(
+                state,
+                &user_id,
+                &group_id,
+                &cycle_id,
+                &AudioId::new(*audio_id),
+                body,
+            )
+            .await?;
+            Ok(http::json_response(200, &response, &correlation_id))
+        }
+
+        (&Method::DELETE, ["audio-uploads", audio_id]) => {
+            let user_id = caller(state, req).await?;
+            let (group_id, cycle_id) = group_and_cycle_query(req)?;
+            handlers::delete_audio_upload(
+                state,
+                &user_id,
+                &group_id,
+                &cycle_id,
+                &AudioId::new(*audio_id),
+            )
+            .await?;
+            Ok(http::no_content(&correlation_id))
         }
 
         (&Method::POST, ["avatars"]) => {

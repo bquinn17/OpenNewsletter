@@ -1,6 +1,6 @@
 //! Request validation for the engagement routes (`docs/design/api.md` §8).
 
-use domain::{ApiError, ImageId};
+use domain::{ApiError, AudioId, ImageId};
 use shared::config::{DEFAULT_COMMENT_LIST_LIMIT, MAX_COMMENT_BODY_CHARS, MAX_LIST_LIMIT};
 
 /// `body` 0-2000 chars, counted in chars the same way
@@ -16,20 +16,22 @@ pub fn body(raw: &str) -> Result<String, ApiError> {
     Ok(raw.to_owned())
 }
 
-/// A comment needs a non-whitespace body or an attached image
-/// (`docs/design/engagement.md` §1.3). Checked both at create and after a patch is
-/// applied, since a patch can clear either side.
-pub fn require_body_or_image(
+/// A comment needs a non-whitespace body, an attached image, or an attached
+/// voice clip (`docs/design/engagement.md` §1.3, `docs/design/media.md`
+/// §12). Checked both at create and after a patch is applied, since a patch
+/// can clear any side.
+pub fn require_body_or_attachment(
     body: Option<&str>,
     image_media_id: Option<&ImageId>,
+    audio_media_id: Option<&AudioId>,
 ) -> Result<(), ApiError> {
     let has_body = body.is_some_and(|b| !b.trim().is_empty());
-    if has_body || image_media_id.is_some() {
+    if has_body || image_media_id.is_some() || audio_media_id.is_some() {
         Ok(())
     } else {
         Err(ApiError::invalid_field(
             "body",
-            "a comment needs a non-empty body or an attached image",
+            "a comment needs a non-empty body, an attached image, or a voice clip",
         ))
     }
 }
@@ -122,20 +124,27 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_only_body_with_no_image_is_rejected() {
-        let err = require_body_or_image(Some("   "), None).expect_err("blank body, no image");
+    fn whitespace_only_body_with_no_attachment_is_rejected() {
+        let err = require_body_or_attachment(Some("   "), None, None)
+            .expect_err("blank body, no attachment");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
     }
 
     #[test]
     fn missing_body_with_an_image_is_accepted() {
         let image_id = ImageId::new("img-1");
-        require_body_or_image(None, Some(&image_id)).expect("image alone is enough");
+        require_body_or_attachment(None, Some(&image_id), None).expect("image alone is enough");
     }
 
     #[test]
-    fn non_blank_body_with_no_image_is_accepted() {
-        require_body_or_image(Some("hi"), None).expect("body alone is enough");
+    fn missing_body_with_a_voice_clip_is_accepted() {
+        let audio_id = AudioId::new("aud-1");
+        require_body_or_attachment(None, None, Some(&audio_id)).expect("clip alone is enough");
+    }
+
+    #[test]
+    fn non_blank_body_with_no_attachment_is_accepted() {
+        require_body_or_attachment(Some("hi"), None, None).expect("body alone is enough");
     }
 
     #[test]

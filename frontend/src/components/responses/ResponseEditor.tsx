@@ -7,14 +7,21 @@ import type { GiphyGif } from "../../giphy/giphyClient";
 import { GiphyLookupProvider } from "../../giphy/GiphyLookupProvider";
 import { giphyLimitRemainingMs, useGiphyLimit } from "../../state/giphyLimit";
 import { MarkdownBody, referencedGiphyIds } from "../../utils/markdown";
+import { isVoiceRecordingSupported } from "../../utils/voiceClip";
 import { AttachMenu, type AttachMenuHandle, type AttachMenuItem } from "./AttachMenu";
 import { GiphyPicker } from "./GiphyPicker";
 import { ImageUploader, type ImageUploaderHandle, type UploaderImage } from "./ImageUploader";
+import {
+  VoiceClipUploader,
+  type UploaderClip,
+  type VoiceClipUploaderHandle,
+} from "./VoiceClipUploader";
 
 type S = components["schemas"];
 
 const MAX_IMAGES = 10;
 const MAX_GIFS_PER_ANSWER = 5;
+const MAX_AUDIO_CLIPS = 3;
 
 type Props = {
   groupId: string;
@@ -24,8 +31,10 @@ type Props = {
   onBodyChange: (body: string) => void;
   onBlur: () => void;
   onImageMediaIdsChange: (imageMediaIds: string[]) => void;
+  onAudioMediaIdsChange: (audioMediaIds: string[]) => void;
   onUploadingChange?: (uploading: boolean) => void;
   initialImages?: S["ImageMediaResponse"][];
+  initialClips?: S["AudioMediaResponse"][];
   readOnly: boolean;
   /**
    * Drops an image (its ID, and its tokens via `transformBody`) from the
@@ -33,6 +42,8 @@ type Props = {
    * `detachImage`.
    */
   onDetachImage: (imageId: string, transformBody: (body: string) => string) => Promise<void>;
+  /** Drops a voice clip from the draft and resolves once that draft has saved — `detachAudio`. */
+  onDetachAudio: (audioId: string) => Promise<void>;
 };
 
 function escapeForRegExp(value: string): string {
@@ -77,16 +88,21 @@ export function ResponseEditor({
   onBodyChange,
   onBlur,
   onImageMediaIdsChange,
+  onAudioMediaIdsChange,
   onUploadingChange,
   initialImages,
+  initialClips,
   readOnly,
   onDetachImage,
+  onDetachAudio,
 }: Props) {
   const [preview, setPreview] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const [liveClips, setLiveClips] = useState<UploaderClip[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const uploaderRef = useRef<ImageUploaderHandle>(null);
+  const clipUploaderRef = useRef<VoiceClipUploaderHandle>(null);
   const attachMenuRef = useRef<AttachMenuHandle>(null);
   const knownIdsRef = useRef<Set<string>>(new Set((initialImages ?? []).map((i) => i.imageId)));
   const readyIdsRef = useRef<Set<string>>(
@@ -156,6 +172,21 @@ export function ResponseEditor({
     await api.media.deleteUpload(imageId, groupId, cycleId);
   }
 
+  function handleClipUploaderChange(clips: UploaderClip[]) {
+    setLiveClips(clips);
+    onAudioMediaIdsChange(clips.map((c) => c.audioId).slice(0, MAX_AUDIO_CLIPS));
+    onUploadingChange?.(
+      clips.some((c) => c.status === "uploading" || c.status === "processing") ||
+        liveImages.some((i) => i.status === "uploading" || i.status === "processing"),
+    );
+  }
+
+  /** "Remove voice clip", mirroring `handleRemoveImage` (`docs/design/media.md` §12.4). */
+  async function handleRemoveClip(audioId: string): Promise<void> {
+    await onDetachAudio(audioId);
+    await api.media.deleteAudioUpload(audioId, groupId, cycleId);
+  }
+
   function handlePickGif(gif: GiphyGif) {
     setGifPickerOpen(false);
     onBodyChange(
@@ -166,18 +197,22 @@ export function ResponseEditor({
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
-    uploaderRef.current?.acceptFiles(Array.from(e.dataTransfer.files));
+    const files = Array.from(e.dataTransfer.files);
+    uploaderRef.current?.acceptFiles(files.filter((f) => f.type.startsWith("image/")));
+    clipUploaderRef.current?.acceptFiles(files.filter((f) => f.type.startsWith("audio/")));
   }
 
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const files = Array.from(e.clipboardData?.files ?? []).filter((f) =>
-      f.type.startsWith("image/"),
-    );
-    if (files.length > 0) uploaderRef.current?.acceptFiles(files);
+    const files = Array.from(e.clipboardData?.files ?? []);
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    const audio = files.filter((f) => f.type.startsWith("audio/"));
+    if (images.length > 0) uploaderRef.current?.acceptFiles(images);
+    if (audio.length > 0) clipUploaderRef.current?.acceptFiles(audio);
   }
 
   const imagesAtLimit = liveImages.length >= MAX_IMAGES;
   const gifsAtLimit = gifCount >= MAX_GIFS_PER_ANSWER;
+  const clipsAtLimit = liveClips.length >= MAX_AUDIO_CLIPS;
 
   const attachItems: AttachMenuItem[] = [
     {
@@ -191,6 +226,26 @@ export function ResponseEditor({
       onSelect: () => uploaderRef.current?.openPicker(),
     },
   ];
+  if (isVoiceRecordingSupported()) {
+    attachItems.push({
+      key: "record-voice-clip",
+      icon: "🎙️",
+      label: "Record a voice clip",
+      subtitle: clipsAtLimit
+        ? `${liveClips.length}/${MAX_AUDIO_CLIPS} clips`
+        : "Tap to start recording",
+      disabled: clipsAtLimit,
+      onSelect: () => clipUploaderRef.current?.startRecording(),
+    });
+  }
+  attachItems.push({
+    key: "upload-audio",
+    icon: "🎵",
+    label: "Upload audio",
+    subtitle: clipsAtLimit ? `${liveClips.length}/${MAX_AUDIO_CLIPS} clips` : "Pick an audio file",
+    disabled: clipsAtLimit,
+    onSelect: () => clipUploaderRef.current?.openPicker(),
+  });
   if (env.giphyApiKey) {
     attachItems.push({
       key: "gif",
@@ -268,7 +323,7 @@ export function ResponseEditor({
             <AttachMenu
               ref={attachMenuRef}
               items={attachItems}
-              ariaLabel="Add a photo or GIF"
+              ariaLabel="Add a photo, voice clip, or GIF"
               showLabel
             />
           </div>
@@ -284,6 +339,19 @@ export function ResponseEditor({
             confirmRemove
             onRemove={handleRemoveImage}
             inputLabel="Add photos"
+          />
+          <VoiceClipUploader
+            ref={clipUploaderRef}
+            groupId={groupId}
+            cycleId={cycleId}
+            questionId={questionId}
+            purpose="response"
+            maxClips={MAX_AUDIO_CLIPS}
+            initialClips={initialClips}
+            onChange={handleClipUploaderChange}
+            confirmRemove
+            onRemove={handleRemoveClip}
+            inputLabel="Upload audio"
           />
         </div>
       </div>

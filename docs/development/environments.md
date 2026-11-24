@@ -37,6 +37,7 @@ A fresh checkout has nothing preinstalled beyond Homebrew and Apple's system `py
 
    **Spell it `npx aws-cdk@2`, not `npx cdk`.** With a global `cdk` installed (e.g. Homebrew's `aws-cdk` at `/opt/homebrew/bin/cdk`), `npx cdk` resolves to that binary and runs it with `/opt/homebrew/bin` prepended to `PATH`, ahead of the activated venv. Homebrew's `python3` then runs `app.py` and fails with the same `No module named 'aws_cdk'`, even though the venv is fine.
 6. The Apple clang toolchain means the gcc-9/`aws-lc-sys` release-build failure that hits WSL2 (§0.2, blocker B6 in `plans/PROGRESS.md`) does not apply here — nothing to do for it.
+7. `brew install ffmpeg` — `lambda-audio-process`'s tests run the real ffmpeg when it's on `PATH` and skip with a note when it isn't. CI installs it and sets `REQUIRE_FFMPEG=1`, so there they fail rather than skip. The Lambda's own ffmpeg comes from `scripts/fetch_ffmpeg.sh`, not from this.
 
 **Verify your setup**
 ```bash
@@ -68,6 +69,7 @@ This is the machine the repo was originally built on. Docker runs rootless under
    cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r ../scripts/requirements.txt && ln -sf ../../bin/cdk .venv/bin/cdk
    ```
 6. Node: install per `.nvmrc` (Node 24) via `nvm`: `nvm install && nvm alias default 24`.
+7. `sudo apt install ffmpeg`, for `lambda-audio-process`'s tests (see the macOS step 7).
 
 **Verify your setup**
 ```bash
@@ -117,7 +119,7 @@ The stacks in [`infrastructure.md`](../design/infrastructure.md) are grouped her
 | Tier | Stacks | Why |
 |---|---|---|
 | **Persistent** | `AuthStack`, `MediaPersistentStack` (the three S3 buckets, [`infrastructure.md` §5.1](../design/infrastructure.md#51-s3-buckets-mediapersistentstack)), `FrontendStack` (ACM certs only — no domain in dev) | Cognito federated IdP redirect URIs are registered out-of-band on Google/Facebook consoles; recreating the user pool means re-registering. The buckets hold user uploads — destroying them loses data, not just time — so they stay even though recreating them is otherwise fast. ACM/Route53 churn is just noise. |
-| **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `MediaPipelineStack` (`lambda-image-process` and its S3 event subscription) | Pure code/config — fast to recreate, no out-of-band registration. |
+| **Volatile** | `DataStack`, `ApiStack`, `NotificationsStack`, `MonitoringStack`, `MediaPipelineStack` (`lambda-image-process`, `lambda-audio-process` and their S3 event subscriptions) | Pure code/config — fast to recreate, no out-of-band registration. |
 
 Media's resources are split across those two stacks along exactly this line: the buckets, which hold data and are slow or risky to lose, live in `MediaPersistentStack`; the processing Lambda and its event wiring, which are pure code/config, live in `MediaPipelineStack`.
 
@@ -346,7 +348,7 @@ Manual testing fails. When it does, these are the inspection ladders.
 - The frontend generates `x-correlation-id` per request ([`overview.md` §6](../overview.md#6-cross-cutting-conventions)) and surfaces it in the dev-mode error toast — copy it from there into the Insights query.
 
 **Image pipeline**
-- An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-ImageProcess-dev --follow`.
+- An image stuck in `pending` means `lambda-image-process` either didn't fire or threw. Tail its log first: `aws logs tail /aws/lambda/OpenNewsletter-ImageProcess-dev --follow`. A voice clip stuck in `pending` is the same for `OpenNewsletter-AudioProcess-dev`.
 - Confirm the S3 object exists: `aws s3 ls s3://opennewsletter-media-originals-dev-{account}/uploads/{groupId}/{cycleId}/{questionId}/{userId}/`.
 - Confirm the processed variants were written: `aws s3 ls s3://opennewsletter-media-processed-dev-{account}/img/{groupId}/{cycleId}/{questionId}/{userId}/{imageId}/`.
 - Check the ImageMedia DDB row's `status` and `errorMessage` fields.

@@ -41,5 +41,9 @@ test.describe("Content-Security-Policy meta tag", () => {
     expect(directives.get("connect-src")).toContain("https://api.giphy.com");
     expect(directives.get("img-src")).toContain("https://*.giphy.com");
     expect(directives.get("media-src")).toContain("https://*.giphy.com");
+    // Voice clips (`docs/design/frontend.md` §19.3): the processed bucket's `<audio>` src and a
+    // recorded/picked clip's local `blob:` preview.
+    expect(directives.get("media-src")).toContain("https://media.e2e.opennewsletter.test");
+    expect(directives.get("media-src")).toContain("blob:");
   });
 });

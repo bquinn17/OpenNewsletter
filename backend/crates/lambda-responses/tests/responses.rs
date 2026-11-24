@@ -36,9 +36,19 @@ async fn editions_answered(state: &AppState, group_id: &GroupId, user_id: &UserI
 }
 
 fn text_request(body: &str, image_media_ids: Vec<ImageId>, publish: bool) -> SaveResponseRequest {
+    text_request_with_audio(body, image_media_ids, Vec::new(), publish)
+}
+
+fn text_request_with_audio(
+    body: &str,
+    image_media_ids: Vec<ImageId>,
+    audio_media_ids: Vec<domain::AudioId>,
+    publish: bool,
+) -> SaveResponseRequest {
     SaveResponseRequest::Text {
         body: body.to_owned(),
         image_media_ids,
+        audio_media_ids,
         publish,
     }
 }
@@ -646,4 +656,154 @@ async fn valid_ready_response_image_is_accepted() {
     .await
     .expect("a ready response image owned by the caller is valid");
     assert_eq!(saved.image_media_ids, vec![image_id]);
+}
+
+#[tokio::test]
+async fn more_than_three_distinct_audio_clips_is_rejected() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gta", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(&repo, &common::open_newsletter("gta", "202606"))
+        .await
+        .unwrap();
+    common::put_locked_question(&repo, &common::locked_question("gta", "202606", "q1", "u1")).await;
+
+    let state = state(repo);
+    let ids: Vec<domain::AudioId> = (0..shared::config::MAX_AUDIO_CLIPS_PER_RESPONSE + 1)
+        .map(|i| domain::AudioId::new(format!("aud-{i}")))
+        .collect();
+    let err = handlers::save_response(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gta"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        text_request_with_audio("clips", vec![], ids, false),
+    )
+    .await
+    .expect_err("too many voice clips");
+    assert_eq!(err.code, ApiErrorCode::AudioLimitExceeded);
+}
+
+#[tokio::test]
+async fn audio_clip_that_does_not_exist_is_rejected() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gae", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(&repo, &common::open_newsletter("gae", "202606"))
+        .await
+        .unwrap();
+    common::put_locked_question(&repo, &common::locked_question("gae", "202606", "q1", "u1")).await;
+
+    let state = state(repo);
+    let err = handlers::save_response(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gae"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        text_request_with_audio(
+            "clip",
+            vec![],
+            vec![domain::AudioId::new("does-not-exist")],
+            false,
+        ),
+    )
+    .await
+    .expect_err("clip does not exist");
+    assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+}
+
+#[tokio::test]
+async fn a_pending_response_audio_clip_is_accepted() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gpa", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(&repo, &common::open_newsletter("gpa", "202606"))
+        .await
+        .unwrap();
+    common::put_locked_question(&repo, &common::locked_question("gpa", "202606", "q1", "u1")).await;
+    let audio_id = common::seed_audio(
+        &repo,
+        "gpa",
+        "202606",
+        "aud1",
+        "u1",
+        MediaStatus::Pending,
+        ImagePurpose::Response,
+    )
+    .await;
+
+    let state = state(repo);
+    let saved = handlers::save_response(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gpa"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        text_request_with_audio("", vec![], vec![audio_id.clone()], false),
+    )
+    .await
+    .expect("a pending response clip owned by the caller is valid, unlike images");
+    assert_eq!(saved.audio_media_ids, vec![audio_id]);
+}
+
+#[tokio::test]
+async fn a_failed_response_audio_clip_is_rejected() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gfa", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(&repo, &common::open_newsletter("gfa", "202606"))
+        .await
+        .unwrap();
+    common::put_locked_question(&repo, &common::locked_question("gfa", "202606", "q1", "u1")).await;
+    let audio_id = common::seed_audio(
+        &repo,
+        "gfa",
+        "202606",
+        "aud1",
+        "u1",
+        MediaStatus::Failed,
+        ImagePurpose::Response,
+    )
+    .await;
+
+    let state = state(repo);
+    let err = handlers::save_response(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gfa"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        text_request_with_audio("clip", vec![], vec![audio_id], false),
+    )
+    .await
+    .expect_err("a failed clip is rejected");
+    assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+}
+
+#[tokio::test]
+async fn an_answer_that_is_only_a_voice_clip_publishes() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gov", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(&repo, &common::open_newsletter("gov", "202606"))
+        .await
+        .unwrap();
+    common::put_locked_question(&repo, &common::locked_question("gov", "202606", "q1", "u1")).await;
+    let audio_id = common::seed_ready_response_audio(&repo, "gov", "202606", "aud1", "u1").await;
+
+    let state = state(repo);
+    let saved = handlers::save_response(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gov"),
+        &CycleId::new("202606"),
+        &QuestionId::new("q1"),
+        text_request_with_audio("", vec![], vec![audio_id.clone()], true),
+    )
+    .await
+    .expect("a clip-only answer publishes");
+    assert_eq!(saved.status, ResponseStatus::Published);
+    assert_eq!(saved.audio_media_ids, vec![audio_id]);
 }

@@ -387,6 +387,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audio-uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request a presigned S3 PUT URL for a voice clip attached to a response or comment (`docs/design/media.md` §12). Creates a `pending` AudioMedia row. Caller must be a member of `groupId`. `purpose=response` requires the cycle to be `open` and counts toward the 3-clips-per-answer cap; `purpose=comment` requires it to be `published`. The client PUTs the bytes to `uploadUrl` with every header in `headers`. */
+        post: operations["createAudioUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audio-uploads/{audioId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status of one of the caller's voice clips (`docs/design/media.md` §12). Owner only — unlike `GET /uploads/{imageId}`, a clip's caption and waveform aren't meaningful to anyone but its uploader before it's published. */
+        get: operations["getAudioUpload"];
+        put?: never;
+        post?: never;
+        /** Permanently delete a voice clip: its original and processed S3 objects, then its row (`docs/design/media.md` §12). Caller must own the clip. Refused with `AUDIO_IN_USE` when the caller's published answer still references it, or (for a `purpose: "comment"` clip) a live comment has it attached. Idempotent: a clip that is already gone returns 204. If an S3 delete fails, returns 500 and keeps the row so a retry can finish. */
+        delete: operations["deleteAudioUpload"];
+        options?: never;
+        head?: never;
+        /** Set or clear a voice clip's caption (`docs/design/media.md` §12). Caller must own the clip. */
+        patch: operations["patchAudioUpload"];
+        trace?: never;
+    };
     "/avatars": {
         parameters: {
             query?: never;
@@ -861,6 +897,7 @@ export interface components {
             status: components["schemas"]["ResponseStatus"];
             body?: string;
             imageMediaIds: string[];
+            audioMediaIds: string[];
             pollOptionId?: string;
             /** Format: date-time */
             updatedAt: string;
@@ -884,6 +921,15 @@ export interface components {
             width: number;
             height: number;
         };
+        /** @description A voice clip attached to a published answer or comment (`docs/design/media.md` §12). Only ever appears once `status=ready`. */
+        PublishedAudioResponse: {
+            audioId: string;
+            url: string;
+            durationMs: number;
+            /** @description 48 waveform bucket amplitudes, 0-255. */
+            peaks: number[];
+            caption: string | null;
+        };
         CommentImageResponse: {
             imageId: string;
             displayUrl: string;
@@ -891,13 +937,15 @@ export interface components {
             width: number;
             height: number;
         };
-        /** @description One comment (`docs/design/engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body` and a null `image`. */
+        /** @description One comment (`docs/design/engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body`, a null `image`, and a null `audio`. */
         CommentResponse: {
             commentId: string;
             authorUserId: string;
             displayName: string;
             body: string;
             image: components["schemas"]["CommentImageResponse"] | null;
+            /** @description The comment's voice clip (`docs/design/media.md` §12). */
+            audio: components["schemas"]["PublishedAudioResponse"] | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -912,11 +960,14 @@ export interface components {
         CreateCommentRequest: {
             body?: string;
             imageMediaId?: string | null;
+            /** @description At most one voice clip (`docs/design/media.md` §12). */
+            audioMediaId?: string | null;
         };
-        /** @description Absent fields are unchanged; `imageMediaId: null` removes the attachment. */
+        /** @description Absent fields are unchanged; `imageMediaId: null`/`audioMediaId: null` removes the attachment. */
         PatchCommentRequest: {
             body?: string;
             imageMediaId?: string | null;
+            audioMediaId?: string | null;
         };
         ReactionsResponse: {
             reactionGroups: components["schemas"]["ReactionGroupResponse"][];
@@ -933,6 +984,8 @@ export interface components {
             displayName: string;
             body?: string;
             images: components["schemas"]["PublishedImageResponse"][];
+            /** @description Ready voice clips, in `audioMediaIds` order (`docs/design/media.md` §12). */
+            audio: components["schemas"]["PublishedAudioResponse"][];
             /** Format: date-time */
             publishedAt: string;
             comments: components["schemas"]["CommentResponse"][];
@@ -991,6 +1044,8 @@ export interface components {
             body?: string;
             pollOptionId?: string;
             imageMediaIds: string[];
+            /** @description Voice clips attached to a text answer, up to `MAX_AUDIO_CLIPS_PER_RESPONSE` (`docs/design/media.md` §12). */
+            audioMediaIds: string[];
             /** Format: date-time */
             updatedAt: string;
             /** Format: date-time */
@@ -1002,6 +1057,8 @@ export interface components {
             kind: "text";
             body: string;
             imageMediaIds: string[];
+            /** @description Up to `MAX_AUDIO_CLIPS_PER_RESPONSE` voice clips (`docs/design/media.md` §12). Omit for none — an empty list and an absent field are equivalent. */
+            audioMediaIds?: string[];
             publish: boolean;
         } | {
             /** @enum {string} */
@@ -1088,6 +1145,58 @@ export interface components {
             uploadedAt: string;
             /** Format: date-time */
             processedAt: string | null;
+        };
+        /**
+         * @description Normalized (parameters stripped, lowercased) at the API boundary — `audio/webm;codecs=opus` becomes `audio/webm`.
+         * @enum {string}
+         */
+        AudioMimeType: "audio/webm" | "audio/ogg" | "audio/mp4" | "audio/x-m4a" | "audio/aac" | "audio/mpeg" | "audio/wav" | "audio/x-wav";
+        CreateAudioUploadRequest: {
+            groupId: string;
+            cycleId: string;
+            questionId: string;
+            /** @description Defaults to `response` when absent. */
+            purpose?: components["schemas"]["ImagePurpose"];
+            /** @description A bare string, not the `AudioMimeType` enum — an unrecognized value must reach the handler as `AUDIO_BAD_TYPE` (415), not fail schema validation. */
+            mimeType: string;
+            byteSize: number;
+            /** @description Optional standard-base64 SHA-256, as on `CreateUploadRequest`. */
+            sha256?: string;
+        };
+        CreateAudioUploadResponse: {
+            audioId: string;
+            /** Format: uri */
+            uploadUrl: string;
+            headers: {
+                [key: string]: string;
+            };
+            expiresInSeconds: number;
+        };
+        AudioMediaResponse: {
+            audioId: string;
+            userId: string;
+            groupId: string;
+            cycleId: string;
+            questionId: string | null;
+            purpose: components["schemas"]["ImagePurpose"];
+            mimeType: components["schemas"]["AudioMimeType"];
+            status: components["schemas"]["MediaStatus"];
+            bytes: number;
+            durationMs: number | null;
+            peaks: number[] | null;
+            caption: string | null;
+            /** @description Presigned S3 GET URL, valid for up to 1 hour; null until `status=ready`. */
+            url: string | null;
+            /** @description Set when `status=failed`: `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or `AUDIO_DECODE_FAILED`. */
+            errorMessage: string | null;
+            /** Format: date-time */
+            uploadedAt: string;
+            /** Format: date-time */
+            processedAt: string | null;
+        };
+        PatchAudioUploadRequest: {
+            /** @description `null` or an all-whitespace string clears the caption. */
+            caption: string | null;
         };
         PushSubscriptionKeys: {
             /** @description base64url uncompressed P-256 public key (65 bytes decoded). */
@@ -1246,7 +1355,7 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or `CANDIDATE_PROMOTED` (`docs/design/api.md` §1.1). */
+        /** @description State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`, `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`, `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, `AUDIO_LIMIT_EXCEEDED`, `AUDIO_IN_USE`, or `CANDIDATE_PROMOTED` (`docs/design/api.md` §1.1). */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -1291,6 +1400,24 @@ export interface components {
                 "application/json": components["schemas"]["ProblemDetails"];
             };
         };
+        /** @description `AUDIO_TOO_LARGE` — declared `byteSize` is over the cap. */
+        AudioTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description `AUDIO_BAD_TYPE` — `mimeType` is not in the allowed set. */
+        AudioBadType: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProblemDetails"];
+            };
+        };
         /** @description The cycle has transitioned to `archived` (`NEWSLETTER_ARCHIVED`); see `docs/design/archival.md` for the (deferred) archive-link behavior. */
         NewsletterArchived: {
             headers: {
@@ -1317,6 +1444,8 @@ export interface components {
         ImageIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d */
         AvatarIdPath: string;
+        /** @example 018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e */
+        AudioIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
         ResponseIdPath: string;
         /** @example 018f2b6b-6c1b-7c3a-9d4e-9c0d1e2f3a4b */
@@ -2007,6 +2136,7 @@ export interface operations {
                      *               "displayName": "Quinn",
                      *               "body": "Lake 22, hands down.",
                      *               "images": [],
+                     *               "audio": [],
                      *               "publishedAt": "2026-06-03T12:00:00.000Z",
                      *               "comments": [],
                      *               "reactionGroups": [
@@ -2327,6 +2457,7 @@ export interface operations {
                      *       "status": "draft",
                      *       "body": "Lake 22, hands down.",
                      *       "imageMediaIds": [],
+                     *       "audioMediaIds": [],
                      *       "updatedAt": "2026-06-02T10:00:00.000Z",
                      *       "publishedAt": null
                      *     }
@@ -2382,6 +2513,7 @@ export interface operations {
                      *           "displayName": "Alex",
                      *           "body": "Same — the switchbacks are brutal.",
                      *           "image": null,
+                     *           "audio": null,
                      *           "createdAt": "2026-06-05T09:00:00.000Z",
                      *           "editedAt": null,
                      *           "deletedAt": null
@@ -2450,6 +2582,7 @@ export interface operations {
                      *         "width": 1200,
                      *         "height": 800
                      *       },
+                     *       "audio": null,
                      *       "createdAt": "2026-06-05T09:00:00.000Z",
                      *       "editedAt": null,
                      *       "deletedAt": null
@@ -2546,6 +2679,7 @@ export interface operations {
                      *       "displayName": "Alex",
                      *       "body": "Same — the switchbacks are brutal. Worth it though.",
                      *       "image": null,
+                     *       "audio": null,
                      *       "createdAt": "2026-06-05T09:00:00.000Z",
                      *       "editedAt": "2026-06-05T09:10:00.000Z",
                      *       "deletedAt": null
@@ -2912,6 +3046,213 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    createAudioUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                 *       "cycleId": "202606",
+                 *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                 *       "purpose": "response",
+                 *       "mimeType": "audio/webm",
+                 *       "byteSize": 360448
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateAudioUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description The presigned upload. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "audioId": "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e",
+                     *       "uploadUrl": "https://opennewsletter-media-originals-dev-123456789012.s3.us-east-1.amazonaws.com/audio-uploads/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e.webm?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc",
+                     *       "headers": {
+                     *         "content-type": "audio/webm"
+                     *       },
+                     *       "expiresInSeconds": 600
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CreateAudioUploadResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["AudioTooLarge"];
+            415: components["responses"]["AudioBadType"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAudioUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e */
+                audioId: components["parameters"]["AudioIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The voice clip. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "audioId": "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "purpose": "response",
+                     *       "mimeType": "audio/webm",
+                     *       "status": "ready",
+                     *       "bytes": 360448,
+                     *       "durationMs": 64000,
+                     *       "peaks": [
+                     *         4,
+                     *         12,
+                     *         40,
+                     *         90,
+                     *         120,
+                     *         255,
+                     *         200,
+                     *         80,
+                     *         30,
+                     *         10
+                     *       ],
+                     *       "caption": "The time the tent blew into the lake",
+                     *       "url": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/aud/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e/clip.webm?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
+                     *       "errorMessage": null,
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
+                     *       "processedAt": "2026-06-02T10:00:03.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AudioMediaResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAudioUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e */
+                audioId: components["parameters"]["AudioIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted, or already gone. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    patchAudioUpload: {
+        parameters: {
+            query: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
+                groupId: components["parameters"]["GroupIdQuery"];
+                /**
+                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
+                 * @example 202606
+                 */
+                cycleId: components["parameters"]["CycleIdQuery"];
+            };
+            header?: never;
+            path: {
+                /** @example 018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e */
+                audioId: components["parameters"]["AudioIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "caption": "The time the tent blew into the lake"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PatchAudioUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated voice clip. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "audioId": "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e",
+                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
+                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
+                     *       "cycleId": "202606",
+                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
+                     *       "purpose": "response",
+                     *       "mimeType": "audio/webm",
+                     *       "status": "pending",
+                     *       "bytes": 360448,
+                     *       "durationMs": null,
+                     *       "peaks": null,
+                     *       "caption": "The time the tent blew into the lake",
+                     *       "url": null,
+                     *       "errorMessage": null,
+                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
+                     *       "processedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AudioMediaResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     createAvatar: {

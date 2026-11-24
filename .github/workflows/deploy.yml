@@ -107,6 +107,11 @@ jobs:
           export BUILD_AT
           cargo lambda build --release --arm64
 
+      # The audio-process layer's ffmpeg, pinned and checksummed. Not part of
+      # the binary cache: the script skips the download when it's already there.
+      - name: Fetch the ffmpeg layer
+        run: ./scripts/fetch_ffmpeg.sh
+
       # CDK silently falls back to a shell stub for a missing binary
       # (infra/opennewsletter/lambda_assets.py), so check before packaging.
       - name: Check every Lambda binary was built
@@ -123,7 +128,7 @@ jobs:
       # A tarball, because upload-artifact drops the executable bit that
       # Lambda needs on `bootstrap`.
       - name: Package Lambda binaries
-        run: tar -czf lambda-binaries.tgz -C backend/target lambda
+        run: tar -czf lambda-binaries.tgz -C backend/target lambda ffmpeg-layer
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

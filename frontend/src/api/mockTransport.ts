@@ -6,7 +6,9 @@ import { mockLeaderboardRoute } from "./mockLeaderboard";
 import { mockNewsletterRoute } from "./mockNewsletters";
 import { mockPushRoute } from "./mockPush";
 import {
+  audioRows,
   CALLER_ID,
+  deleteMockAudio,
   deleteMockImage,
   fail,
   groups,
@@ -20,7 +22,12 @@ import {
   type Method,
   type MockRequest,
 } from "./mockShared";
-import { mockUploadedFile, mockUploadUrl, releaseMockUpload } from "./mockUploads";
+import {
+  mockUploadedAudioFile,
+  mockUploadedFile,
+  mockUploadUrl,
+  releaseMockUpload,
+} from "./mockUploads";
 
 type S = components["schemas"];
 
@@ -325,6 +332,75 @@ function handleDeleteAvatar(avatarId: string): undefined {
   return undefined;
 }
 
+let nextAudioId = 1;
+const audioPollCounts: Record<string, number> = {};
+
+/** Mirrors `handleCreateUpload` for voice clips (`docs/design/media.md` §12, `docs/design/api.md` §9.8). */
+function handleCreateAudioUpload(body: unknown): S["CreateAudioUploadResponse"] {
+  // Trusted internal shape — the only caller is our own typed `api.media.createAudioUpload`.
+  const request = body as S["CreateAudioUploadRequest"];
+  const audioId = `aud_${nextAudioId++}`;
+  audioRows.set(audioId, {
+    audioId,
+    userId: CALLER_ID,
+    groupId: request.groupId,
+    cycleId: request.cycleId,
+    questionId: request.questionId,
+    purpose: request.purpose ?? "response",
+    mimeType: request.mimeType as S["AudioMimeType"],
+    status: "pending",
+    bytes: request.byteSize,
+    durationMs: null,
+    peaks: null,
+    caption: null,
+    url: null,
+    errorMessage: null,
+    uploadedAt: new Date().toISOString(),
+    processedAt: null,
+  });
+  audioPollCounts[audioId] = 0;
+  return {
+    audioId,
+    uploadUrl: mockUploadUrl(audioId),
+    headers: { "content-type": request.mimeType },
+    expiresInSeconds: 600,
+  };
+}
+
+function handleGetAudioUpload(audioId: string): S["AudioMediaResponse"] {
+  const row = audioRows.get(audioId);
+  if (!row) fail(404, "NOT_FOUND", `voice clip ${audioId} not found`);
+  if (row.userId !== CALLER_ID) fail(404, "NOT_FOUND", `voice clip ${audioId} not found`);
+
+  if (row.status === "pending") {
+    audioPollCounts[audioId] = (audioPollCounts[audioId] ?? 0) + 1;
+    if (audioPollCounts[audioId]! >= 2) {
+      const file = mockUploadedAudioFile(audioId);
+      row.status = "ready";
+      row.durationMs = file?.durationMs ?? 3000;
+      row.peaks = file?.peaks ?? new Array(48).fill(80);
+      row.url = file?.url ?? null;
+      row.processedAt = new Date().toISOString();
+    }
+  }
+  return { ...row };
+}
+
+function handlePatchAudioUpload(audioId: string, body: unknown): S["AudioMediaResponse"] {
+  const row = audioRows.get(audioId);
+  if (!row || row.userId !== CALLER_ID) fail(404, "NOT_FOUND", `voice clip ${audioId} not found`);
+  // Trusted internal shape — the only caller is our own typed `api.media.patchAudioUpload`.
+  const patch = body as S["PatchAudioUploadRequest"];
+  row.caption = patch.caption?.trim() ? patch.caption : null;
+  return { ...row };
+}
+
+/** Real delete (`docs/design/api.md` §9.8, D8): the row is gone; a repeat is still 204. */
+function handleDeleteAudioUpload(audioId: string): undefined {
+  deleteMockAudio(audioId);
+  return undefined;
+}
+
 /**
  * Routes `apiFetch` calls to in-memory fixtures instead of the network (`env.useMocks`). Returns a
  * copy, as the network would. Handlers hand back their live fixtures, and a cache holding one
@@ -387,6 +463,17 @@ function routeMockRequest(method: Method, path: string, body: unknown): unknown 
   }
   if (method === "DELETE" && segments.length === 2 && segments[0] === "avatars") {
     return handleDeleteAvatar(decodeURIComponent(segments[1]));
+  }
+
+  if (method === "POST" && rawPath === "/audio-uploads") return handleCreateAudioUpload(body);
+  if (method === "GET" && segments.length === 2 && segments[0] === "audio-uploads") {
+    return handleGetAudioUpload(decodeURIComponent(segments[1]));
+  }
+  if (method === "PATCH" && segments.length === 2 && segments[0] === "audio-uploads") {
+    return handlePatchAudioUpload(decodeURIComponent(segments[1]), body);
+  }
+  if (method === "DELETE" && segments.length === 2 && segments[0] === "audio-uploads") {
+    return handleDeleteAudioUpload(decodeURIComponent(segments[1]));
   }
 
   const request: MockRequest = { method, rawPath, segments, query, body };

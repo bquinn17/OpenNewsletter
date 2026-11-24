@@ -6,6 +6,9 @@
 # ship stubs silently. The binary list is the Makefile's FUNCTION_* map, the one
 # place every Lambda binary is already named.
 #
+# It also checks the ffmpeg that `scripts/fetch_ffmpeg.sh` puts in the
+# audio-process layer: without it, CDK deploys that function with no layer.
+#
 # Usage: scripts/check_lambda_binaries.sh   (from anywhere in the repo)
 set -euo pipefail
 
@@ -28,5 +31,10 @@ for binary in $binaries; do
         missing=1
     fi
 done
+ffmpeg="$repo_root/backend/target/ffmpeg-layer/bin/ffmpeg"
+if [ ! -x "$ffmpeg" ]; then
+    echo "Missing ffmpeg layer binary: backend/target/ffmpeg-layer/bin/ffmpeg (run scripts/fetch_ffmpeg.sh)" >&2
+    missing=1
+fi
 [ "$missing" -eq 0 ] || exit 1
 echo "All $(echo "$binaries" | wc -w | tr -d ' ') Lambda binaries present."

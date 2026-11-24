@@ -42,6 +42,7 @@ def _text_response(
     status: str = "published",
     body: str | None = "some words",
     image_media_ids: tuple[str, ...] = (),
+    audio_media_ids: tuple[str, ...] = (),
     reactions: tuple[ReactionFact, ...] = (),
     comments: tuple[CommentFact, ...] = (),
     had_reaction_count_attr: bool = False,
@@ -54,6 +55,7 @@ def _text_response(
         kind="text",
         body=body,
         image_media_ids=image_media_ids,
+        audio_media_ids=audio_media_ids,
         reactions=reactions,
         comments=comments,
         had_reaction_count_attr=had_reaction_count_attr,
@@ -232,6 +234,7 @@ def test_editions_answered_counts_each_cycle_once_and_keeps_the_latest_marker() 
 def test_response_is_non_empty_requires_a_pick_or_non_whitespace_content() -> None:
     assert response_is_non_empty(_text_response(body="Lake 22."))
     assert response_is_non_empty(_text_response(body=None, image_media_ids=("img-1",)))
+    assert response_is_non_empty(_text_response(body=None, audio_media_ids=("aud-1",)))
     assert not response_is_non_empty(_text_response(body="   \n\t"))
     assert not response_is_non_empty(_text_response(body=None))
     poll = ResponseFact(

@@ -7,8 +7,8 @@
 //! Layouts mirror `docs/design/data-model.md` §2.
 
 use domain::{
-    AvatarId, CognitoSub, CycleId, GroupId, ImageId, InviteCode, NewsletterStatus, QuestionId,
-    ResponseId, Timestamp, UserId,
+    AudioId, AvatarId, CognitoSub, CycleId, GroupId, ImageId, InviteCode, NewsletterStatus,
+    QuestionId, ResponseId, Timestamp, UserId,
 };
 use shared::config::VOTE_COUNT_PAD_WIDTH;
 
@@ -255,6 +255,24 @@ pub fn image_gsi1pk(user_id: &UserId) -> String {
 
 pub fn image_gsi1sk(uploaded_at: Timestamp, image_id: &ImageId) -> String {
     format!("{}#{image_id}", key_timestamp(uploaded_at))
+}
+
+// ---------- AudioMedia (voice clips, `docs/design/media.md` §12) ----------
+
+pub fn audio_pk(group_id: &GroupId, cycle_id: &CycleId) -> String {
+    format!("GROUP#{}#NL#{}", group_id, cycle_id)
+}
+
+pub fn audio_sk(audio_id: &AudioId) -> String {
+    format!("AUD#{}", audio_id)
+}
+
+pub fn audio_gsi1pk(user_id: &UserId) -> String {
+    format!("USER#{}#AUD", user_id)
+}
+
+pub fn audio_gsi1sk(uploaded_at: Timestamp, audio_id: &AudioId) -> String {
+    format!("{}#{audio_id}", key_timestamp(uploaded_at))
 }
 
 // ---------- Comment / Reaction (§2.11, §2.12) ----------
@@ -510,6 +528,16 @@ mod tests {
         assert_eq!(image_gsi1pk(&uid()), "USER#01HX1#IMG");
         let t = ts("2026-06-01T00:00:00Z");
         assert_eq!(image_gsi1sk(t, &iid()), "2026-06-01T00:00:00Z#01HI4");
+    }
+
+    #[test]
+    fn audio_keys() {
+        let aid = AudioId::new("01HA9");
+        assert_eq!(audio_pk(&gid(), &cid()), "GROUP#01HG2#NL#202606");
+        assert_eq!(audio_sk(&aid), "AUD#01HA9");
+        assert_eq!(audio_gsi1pk(&uid()), "USER#01HX1#AUD");
+        let ts = "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap();
+        assert_eq!(audio_gsi1sk(ts, &aid), "2026-06-01T00:00:00Z#01HA9");
     }
 
     #[test]

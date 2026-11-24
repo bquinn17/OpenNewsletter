@@ -546,6 +546,7 @@ paths:
                         displayName: "Quinn"
                         body: "Lake 22, hands down."
                         images: []
+                        audio: []
                         publishedAt: "2026-06-03T12:00:00.000Z"
                         comments: []
                         reactionGroups:
@@ -779,6 +780,7 @@ paths:
                 status: "draft"
                 body: "Lake 22, hands down."
                 imageMediaIds: []
+                audioMediaIds: []
                 updatedAt: "2026-06-02T10:00:00.000Z"
                 publishedAt: null
         "403":
@@ -824,6 +826,7 @@ paths:
                     displayName: "Alex"
                     body: "Same — the switchbacks are brutal."
                     image: null
+                    audio: null
                     createdAt: "2026-06-05T09:00:00.000Z"
                     editedAt: null
                     deletedAt: null
@@ -880,6 +883,7 @@ paths:
                   thumbUrl: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
                   width: 1200
                   height: 800
+                audio: null
                 createdAt: "2026-06-05T09:00:00.000Z"
                 editedAt: null
                 deletedAt: null
@@ -930,6 +934,7 @@ paths:
                 displayName: "Alex"
                 body: "Same — the switchbacks are brutal. Worth it though."
                 image: null
+                audio: null
                 createdAt: "2026-06-05T09:00:00.000Z"
                 editedAt: "2026-06-05T09:10:00.000Z"
                 deletedAt: null
@@ -1235,6 +1240,167 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /audio-uploads:
+    post:
+      operationId: createAudioUpload
+      tags: [media]
+      summary: >
+        Request a presigned S3 PUT URL for a voice clip attached to a
+        response or comment (`docs/design/media.md` §12). Creates a
+        `pending` AudioMedia row. Caller must be a member of `groupId`.
+        `purpose=response` requires the cycle to be `open` and counts toward
+        the 3-clips-per-answer cap; `purpose=comment` requires it to be
+        `published`. The client PUTs the bytes to `uploadUrl` with every
+        header in `headers`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAudioUploadRequest"
+            example:
+              groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+              cycleId: "202606"
+              questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+              purpose: "response"
+              mimeType: "audio/webm"
+              byteSize: 360448
+      responses:
+        "201":
+          description: The presigned upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAudioUploadResponse"
+              example:
+                audioId: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
+                uploadUrl: "https://opennewsletter-media-originals-dev-123456789012.s3.us-east-1.amazonaws.com/audio-uploads/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e.webm?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc"
+                headers:
+                  content-type: "audio/webm"
+                expiresInSeconds: 600
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/AudioTooLarge"
+        "415":
+          $ref: "#/components/responses/AudioBadType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /audio-uploads/{audioId}:
+    get:
+      operationId: getAudioUpload
+      tags: [media]
+      summary: >
+        Status of one of the caller's voice clips (`docs/design/media.md`
+        §12). Owner only — unlike `GET /uploads/{imageId}`, a clip's caption
+        and waveform aren't meaningful to anyone but its uploader before it's
+        published.
+      parameters:
+        - $ref: "#/components/parameters/AudioIdPath"
+        - $ref: "#/components/parameters/GroupIdQuery"
+        - $ref: "#/components/parameters/CycleIdQuery"
+      responses:
+        "200":
+          description: The voice clip.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioMediaResponse"
+              example:
+                audioId: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                cycleId: "202606"
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                purpose: "response"
+                mimeType: "audio/webm"
+                status: "ready"
+                bytes: 360448
+                durationMs: 64000
+                peaks: [4, 12, 40, 90, 120, 255, 200, 80, 30, 10]
+                caption: "The time the tent blew into the lake"
+                url: "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/aud/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e/clip.webm?X-Amz-Expires=3600&X-Amz-Signature=3b1f…"
+                errorMessage: null
+                uploadedAt: "2026-06-02T10:00:00.000Z"
+                processedAt: "2026-06-02T10:00:03.000Z"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchAudioUpload
+      tags: [media]
+      summary: >
+        Set or clear a voice clip's caption (`docs/design/media.md`
+        §12). Caller must own the clip.
+      parameters:
+        - $ref: "#/components/parameters/AudioIdPath"
+        - $ref: "#/components/parameters/GroupIdQuery"
+        - $ref: "#/components/parameters/CycleIdQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchAudioUploadRequest"
+            example:
+              caption: "The time the tent blew into the lake"
+      responses:
+        "200":
+          description: The updated voice clip.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioMediaResponse"
+              example:
+                audioId: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
+                userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
+                groupId: "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a"
+                cycleId: "202606"
+                questionId: "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b"
+                purpose: "response"
+                mimeType: "audio/webm"
+                status: "pending"
+                bytes: 360448
+                durationMs: null
+                peaks: null
+                caption: "The time the tent blew into the lake"
+                url: null
+                errorMessage: null
+                uploadedAt: "2026-06-02T10:00:00.000Z"
+                processedAt: null
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteAudioUpload
+      tags: [media]
+      summary: >
+        Permanently delete a voice clip: its original and processed S3
+        objects, then its row (`docs/design/media.md` §12). Caller
+        must own the clip. Refused with `AUDIO_IN_USE` when the caller's
+        published answer still references it, or (for a `purpose: "comment"`
+        clip) a live comment has it attached. Idempotent: a clip that is
+        already gone returns 204. If an S3 delete fails, returns 500 and
+        keeps the row so a retry can finish.
+      parameters:
+        - $ref: "#/components/parameters/AudioIdPath"
+        - $ref: "#/components/parameters/GroupIdQuery"
+        - $ref: "#/components/parameters/CycleIdQuery"
+      responses:
+        "204":
+          description: Deleted, or already gone.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /avatars:
     post:
@@ -1711,6 +1877,13 @@ components:
       schema:
         type: string
       example: "018f2b6b-6c1b-7c3a-9d4e-5e6f7a8b9c0d"
+    AudioIdPath:
+      name: audioId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
     ResponseIdPath:
       name: responseId
       in: path
@@ -1830,8 +2003,8 @@ components:
       description: >
         State conflict — one of `INVITE_CONSUMED`, `MEMBER_CAP_REACHED`,
         `LAST_ADMIN`, `VOTE_CAP_REACHED`, `CYCLE_NOT_VOTING`, `CYCLE_NOT_OPEN`,
-        `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`, or
-        `CANDIDATE_PROMOTED`
+        `CYCLE_NOT_PUBLISHED`, `IMAGE_LIMIT_EXCEEDED`, `IMAGE_IN_USE`,
+        `AUDIO_LIMIT_EXCEEDED`, `AUDIO_IN_USE`, or `CANDIDATE_PROMOTED`
         (`docs/design/api.md` §1.1).
       content:
         application/json:
@@ -1857,6 +2030,18 @@ components:
             $ref: "#/components/schemas/ProblemDetails"
     ImageBadType:
       description: "`IMAGE_BAD_TYPE` — `mimeType` is not in the allowed set."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    AudioTooLarge:
+      description: "`AUDIO_TOO_LARGE` — declared `byteSize` is over the cap."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    AudioBadType:
+      description: "`AUDIO_BAD_TYPE` — `mimeType` is not in the allowed set."
       content:
         application/json:
           schema:
@@ -2553,7 +2738,7 @@ components:
 
     MyResponseSummary:
       type: object
-      required: [responseId, status, imageMediaIds, updatedAt, publishedAt]
+      required: [responseId, status, imageMediaIds, audioMediaIds, updatedAt, publishedAt]
       properties:
         responseId:
           type: string
@@ -2562,6 +2747,10 @@ components:
         body:
           type: string
         imageMediaIds:
+          type: array
+          items:
+            type: string
+        audioMediaIds:
           type: array
           items:
             type: string
@@ -2616,6 +2805,28 @@ components:
         height:
           type: integer
 
+    PublishedAudioResponse:
+      type: object
+      description: >
+        A voice clip attached to a published answer or comment
+        (`docs/design/media.md` §12). Only ever appears once
+        `status=ready`.
+      required: [audioId, url, durationMs, peaks, caption]
+      properties:
+        audioId:
+          type: string
+        url:
+          type: string
+        durationMs:
+          type: integer
+        peaks:
+          type: array
+          items:
+            type: integer
+          description: 48 waveform bucket amplitudes, 0-255.
+        caption:
+          type: [string, "null"]
+
     CommentImageResponse:
       type: object
       required: [imageId, displayUrl, thumbUrl, width, height]
@@ -2636,8 +2847,8 @@ components:
       description: >
         One comment (`docs/design/engagement.md` §1.1). Used both on the engagement
         routes and inline in the published newsletter. A soft-deleted comment
-        has `deletedAt` set, an empty `body` and a null `image`.
-      required: [commentId, authorUserId, displayName, body, image, createdAt, editedAt, deletedAt]
+        has `deletedAt` set, an empty `body`, a null `image`, and a null `audio`.
+      required: [commentId, authorUserId, displayName, body, image, audio, createdAt, editedAt, deletedAt]
       properties:
         commentId:
           type: string
@@ -2650,6 +2861,11 @@ components:
         image:
           oneOf:
             - $ref: "#/components/schemas/CommentImageResponse"
+            - type: "null"
+        audio:
+          description: The comment's voice clip (`docs/design/media.md` §12).
+          oneOf:
+            - $ref: "#/components/schemas/PublishedAudioResponse"
             - type: "null"
         createdAt:
           type: string
@@ -2680,16 +2896,22 @@ components:
           maxLength: 2000
         imageMediaId:
           type: [string, "null"]
+        audioMediaId:
+          description: At most one voice clip (`docs/design/media.md` §12).
+          type: [string, "null"]
 
     PatchCommentRequest:
       type: object
       description: >
-        Absent fields are unchanged; `imageMediaId: null` removes the attachment.
+        Absent fields are unchanged; `imageMediaId: null`/`audioMediaId: null`
+        removes the attachment.
       properties:
         body:
           type: string
           maxLength: 2000
         imageMediaId:
+          type: [string, "null"]
+        audioMediaId:
           type: [string, "null"]
 
     ReactionsResponse:
@@ -2718,7 +2940,7 @@ components:
 
     PublishedAnswerResponse:
       type: object
-      required: [responseId, userId, displayName, images, publishedAt, comments, reactionGroups]
+      required: [responseId, userId, displayName, images, audio, publishedAt, comments, reactionGroups]
       properties:
         responseId:
           type: string
@@ -2732,6 +2954,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublishedImageResponse"
+        audio:
+          type: array
+          description: >
+            Ready voice clips, in `audioMediaIds` order
+            (`docs/design/media.md` §12).
+          items:
+            $ref: "#/components/schemas/PublishedAudioResponse"
         publishedAt:
           type: string
           format: date-time
@@ -2849,6 +3078,7 @@ components:
         - kind
         - status
         - imageMediaIds
+        - audioMediaIds
         - updatedAt
         - publishedAt
       properties:
@@ -2874,6 +3104,13 @@ components:
           type: array
           items:
             type: string
+        audioMediaIds:
+          type: array
+          description: >
+            Voice clips attached to a text answer, up to
+            `MAX_AUDIO_CLIPS_PER_RESPONSE` (`docs/design/media.md` §12).
+          items:
+            type: string
         updatedAt:
           type: string
           format: date-time
@@ -2894,6 +3131,14 @@ components:
               type: string
             imageMediaIds:
               type: array
+              items:
+                type: string
+            audioMediaIds:
+              type: array
+              description: >
+                Up to `MAX_AUDIO_CLIPS_PER_RESPONSE` voice clips
+                (`docs/design/media.md` §12). Omit for none — an
+                empty list and an absent field are equivalent.
               items:
                 type: string
             publish:
@@ -3087,6 +3332,136 @@ components:
         processedAt:
           type: [string, "null"]
           format: date-time
+
+    # ---- Voice clips (`docs/design/media.md` §12) ----
+
+    AudioMimeType:
+      type: string
+      description: >
+        Normalized (parameters stripped, lowercased) at the API boundary —
+        `audio/webm;codecs=opus` becomes `audio/webm`.
+      enum:
+        - audio/webm
+        - audio/ogg
+        - audio/mp4
+        - audio/x-m4a
+        - audio/aac
+        - audio/mpeg
+        - audio/wav
+        - audio/x-wav
+
+    CreateAudioUploadRequest:
+      type: object
+      required: [groupId, cycleId, questionId, mimeType, byteSize]
+      properties:
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        questionId:
+          type: string
+        purpose:
+          description: Defaults to `response` when absent.
+          $ref: "#/components/schemas/ImagePurpose"
+        mimeType:
+          type: string
+          description: >
+            A bare string, not the `AudioMimeType` enum — an unrecognized
+            value must reach the handler as `AUDIO_BAD_TYPE` (415), not fail
+            schema validation.
+        byteSize:
+          type: integer
+          minimum: 1
+          maximum: 26214400
+        sha256:
+          type: string
+          description: Optional standard-base64 SHA-256, as on `CreateUploadRequest`.
+
+    CreateAudioUploadResponse:
+      type: object
+      required: [audioId, uploadUrl, headers, expiresInSeconds]
+      properties:
+        audioId:
+          type: string
+        uploadUrl:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresInSeconds:
+          type: integer
+
+    AudioMediaResponse:
+      type: object
+      required:
+        - audioId
+        - userId
+        - groupId
+        - cycleId
+        - questionId
+        - purpose
+        - mimeType
+        - status
+        - bytes
+        - durationMs
+        - peaks
+        - caption
+        - url
+        - errorMessage
+        - uploadedAt
+        - processedAt
+      properties:
+        audioId:
+          type: string
+        userId:
+          type: string
+        groupId:
+          type: string
+        cycleId:
+          type: string
+        questionId:
+          type: [string, "null"]
+        purpose:
+          $ref: "#/components/schemas/ImagePurpose"
+        mimeType:
+          $ref: "#/components/schemas/AudioMimeType"
+        status:
+          $ref: "#/components/schemas/MediaStatus"
+        bytes:
+          type: integer
+        durationMs:
+          type: [integer, "null"]
+        peaks:
+          type: [array, "null"]
+          items:
+            type: integer
+        caption:
+          type: [string, "null"]
+        url:
+          type: [string, "null"]
+          description: Presigned S3 GET URL, valid for up to 1 hour; null until `status=ready`.
+        errorMessage:
+          type: [string, "null"]
+          description: >
+            Set when `status=failed`: `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or
+            `AUDIO_DECODE_FAILED`.
+        uploadedAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: [string, "null"]
+          format: date-time
+
+    PatchAudioUploadRequest:
+      type: object
+      required: [caption]
+      properties:
+        caption:
+          type: [string, "null"]
+          maxLength: 140
+          description: "`null` or an all-whitespace string clears the caption."
 
     # ---- §10 Push ----
 

@@ -21,6 +21,9 @@ export const queryKeys = {
   /** One uploaded image's `GET /uploads/{id}` row (`docs/design/media.md` §3.3, §4.4). */
   upload: (groupId: string, cycleId: string, imageId: string) =>
     ["upload", groupId, cycleId, imageId] as const,
+  /** One voice clip's `GET /audio-uploads/{id}` row (`docs/design/frontend.md` §19.1). */
+  audioUpload: (groupId: string, cycleId: string, audioId: string) =>
+    ["audioUpload", groupId, cycleId, audioId] as const,
   pushSubscriptions: ["pushSubscriptions"] as const,
   pushPreferences: ["pushPreferences"] as const,
   leaderboard: (groupId: string) => ["leaderboard", groupId] as const,
@@ -143,6 +146,41 @@ export function useUploads(
       initialData: initialRows?.get(imageId),
     })),
     combine: loadedRows,
+  });
+}
+
+type AudioUploadRow = S["AudioMediaResponse"];
+
+/**
+ * One voice clip's row, mirroring `uploadQuery` (`docs/design/frontend.md` §19.1): the one place
+ * its presigned `url` lives, so the global `refreshMediaUrls` re-signs it when it expires.
+ */
+export function audioUploadQuery(groupId: string, cycleId: string, audioId: string) {
+  return {
+    queryKey: queryKeys.audioUpload(groupId, cycleId, audioId),
+    queryFn: () => api.media.getAudioUpload(audioId, groupId, cycleId),
+    staleTime: Infinity,
+    meta: MEDIA_URLS_META,
+  };
+}
+
+function loadedAudioRows(results: UseQueryResult<AudioUploadRow>[]): AudioUploadRow[] {
+  return results.flatMap((result) => (result.data ? [result.data] : []));
+}
+
+/** The cached rows for `audioIds`, in order — mirrors `useUploads`. */
+export function useAudioUploads(
+  groupId: string,
+  cycleId: string,
+  audioIds: string[],
+  initialRows?: ReadonlyMap<string, AudioUploadRow>,
+): AudioUploadRow[] {
+  return useQueries({
+    queries: audioIds.map((audioId) => ({
+      ...audioUploadQuery(groupId, cycleId, audioId),
+      initialData: initialRows?.get(audioId),
+    })),
+    combine: loadedAudioRows,
   });
 }
 

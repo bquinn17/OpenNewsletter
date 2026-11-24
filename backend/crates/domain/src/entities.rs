@@ -72,6 +72,29 @@ pub enum ImageMimeType {
     Gif,
 }
 
+/// Normalized (parameters stripped, lowercased) MIME type accepted by
+/// `POST /audio-uploads` (`docs/design/media.md` §12,
+/// `docs/design/media.md` §12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioMimeType {
+    #[serde(rename = "audio/webm")]
+    Webm,
+    #[serde(rename = "audio/ogg")]
+    Ogg,
+    #[serde(rename = "audio/mp4")]
+    Mp4,
+    #[serde(rename = "audio/x-m4a")]
+    XM4a,
+    #[serde(rename = "audio/aac")]
+    Aac,
+    #[serde(rename = "audio/mpeg")]
+    Mpeg,
+    #[serde(rename = "audio/wav")]
+    Wav,
+    #[serde(rename = "audio/x-wav")]
+    XWav,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     pub user_id: UserId,
@@ -244,6 +267,11 @@ pub struct Response {
     pub body: Option<String>,
     pub poll_option_id: Option<PollOptionId>,
     pub image_media_ids: Vec<ImageId>,
+    /// Up to `MAX_AUDIO_CLIPS_PER_RESPONSE` voice clips, text answers only
+    /// (`docs/design/media.md` §12). `#[serde(default)]` so rows
+    /// written before voice clips shipped load as an empty list.
+    #[serde(default)]
+    pub audio_media_ids: Vec<AudioId>,
     pub updated_at: Timestamp,
     pub published_at: Option<Timestamp>,
     /// Reactions on this answer from members other than its author
@@ -256,12 +284,17 @@ pub struct Response {
 
 impl Response {
     /// Whether this answer has content worth publishing: a text answer with a
-    /// non-whitespace body or at least one image, or a poll answer with a pick.
-    /// Non-empty drafts auto-publish at cycle close and count towards reminder
-    /// totals (`docs/design/lifecycle.md` §5.3, `docs/design/notifications.md` §7.2).
+    /// non-whitespace body, at least one image, or at least one voice clip, or
+    /// a poll answer with a pick. Non-empty drafts auto-publish at cycle close
+    /// and count towards reminder totals (`docs/design/lifecycle.md` §5.3,
+    /// `docs/design/notifications.md` §7.2, `docs/design/data-model.md` §4 #4a).
     pub fn is_non_empty(&self) -> bool {
         match self.kind {
-            QuestionKind::Text => self.has_text_body() || !self.image_media_ids.is_empty(),
+            QuestionKind::Text => {
+                self.has_text_body()
+                    || !self.image_media_ids.is_empty()
+                    || !self.audio_media_ids.is_empty()
+            }
             QuestionKind::Poll => self.poll_option_id.is_some(),
         }
     }
@@ -303,6 +336,42 @@ pub struct ImageMedia {
     pub attached_comment_id: Option<CommentId>,
 }
 
+/// One uploaded voice clip (`docs/design/data-model.md` "AudioMedia",
+/// `docs/design/media.md` §12). Mirrors [`ImageMedia`], with
+/// duration/waveform peaks in place of width/height.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioMedia {
+    pub audio_id: AudioId,
+    pub user_id: UserId,
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub question_id: Option<QuestionId>,
+    pub purpose: ImagePurpose,
+    pub mime_type: AudioMimeType,
+    pub original_key: String,
+    /// S3 key in the processed bucket (`aud/.../clip.webm`) — `None` until
+    /// processed.
+    pub clip_key: Option<String>,
+    pub status: MediaStatus,
+    pub bytes: u64,
+    pub duration_ms: Option<u64>,
+    /// `AUDIO_PEAK_COUNT` waveform bucket amplitudes, 0-255, scaled so the
+    /// loudest bucket is 255 (`docs/design/media.md` §12). `None`
+    /// until processed.
+    pub peaks: Option<Vec<u8>>,
+    pub caption: Option<String>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
+    /// Why `status` is `failed`: `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or
+    /// `AUDIO_DECODE_FAILED`.
+    #[serde(default)]
+    pub error_message: Option<String>,
+    /// The comment this `purpose=comment` clip is attached to, if any. Same
+    /// contract as `ImageMedia::attached_comment_id`.
+    #[serde(default)]
+    pub attached_comment_id: Option<CommentId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvatarMedia {
     pub avatar_id: AvatarId,
@@ -329,6 +398,11 @@ pub struct Comment {
     pub author_user_id: UserId,
     pub body: String,
     pub image_media_id: Option<ImageId>,
+    /// At most one voice clip (`docs/design/media.md` §12).
+    /// `#[serde(default)]` so rows written before voice clips shipped load
+    /// as `None`.
+    #[serde(default)]
+    pub audio_media_id: Option<AudioId>,
     pub created_at: Timestamp,
     pub edited_at: Option<Timestamp>,
     pub deleted_at: Option<Timestamp>,
@@ -444,6 +518,16 @@ mod tests {
         images: &[&str],
         pick: Option<&str>,
     ) -> Response {
+        answer_with_audio(kind, body, images, &[], pick)
+    }
+
+    fn answer_with_audio(
+        kind: QuestionKind,
+        body: Option<&str>,
+        images: &[&str],
+        audio: &[&str],
+        pick: Option<&str>,
+    ) -> Response {
         Response {
             response_id: ResponseId::new("r"),
             user_id: UserId::new("u"),
@@ -455,6 +539,7 @@ mod tests {
             body: body.map(str::to_owned),
             poll_option_id: pick.map(PollOptionId::new),
             image_media_ids: images.iter().map(|i| ImageId::new(*i)).collect(),
+            audio_media_ids: audio.iter().map(|i| AudioId::new(*i)).collect(),
             updated_at: crate::Timestamp::now(),
             published_at: None,
             reaction_count: 0,
@@ -468,6 +553,13 @@ mod tests {
         assert!(answer(Text, Some(" "), &["img-1"], None).is_non_empty());
         assert!(!answer(Text, Some(" \n\t"), &[], None).is_non_empty());
         assert!(!answer(Text, None, &[], None).is_non_empty());
+    }
+
+    #[test]
+    fn a_text_answer_with_only_a_voice_clip_is_non_empty() {
+        use QuestionKind::Text;
+        assert!(answer_with_audio(Text, None, &[], &["aud-1"], None).is_non_empty());
+        assert!(!answer_with_audio(Text, Some(" "), &[], &[], None).is_non_empty());
     }
 
     #[test]

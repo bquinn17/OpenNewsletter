@@ -65,9 +65,10 @@ export function buildCspPolicy(vars: CspEnvVars): string {
     ["form-action", ["'self'", hostedOrigin]],
     ["worker-src", ["'self'"]],
     ["manifest-src", ["'self'"]],
-    // `GiphyEmbed` plays the `fixed_width` mp4 rendition (`docs/design/frontend.md` §9); the voice
-    // clips agent will add `blob:` and the clip media origin here.
-    ["media-src", ["'self'", "https://*.giphy.com"]],
+    // `GiphyEmbed` plays the `fixed_width` mp4 rendition (`docs/design/frontend.md` §9).
+    // `blob:` covers a recorded/picked clip's local preview before it's uploaded, and
+    // `mediaOrigin` the processed bucket's served `<audio>` (`docs/design/frontend.md` §19.3).
+    ["media-src", ["'self'", "blob:", mediaOrigin, "https://*.giphy.com"]],
   ];
 
   return directives

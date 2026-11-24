@@ -1867,6 +1867,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "lambda-audio-process"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "domain",
+ "lambda_runtime",
+ "persistence",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "shared",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "lambda-cycle-tick"
 version = "0.1.0"
 dependencies = [

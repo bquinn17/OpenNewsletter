@@ -5,8 +5,9 @@ use crate::state::AppState;
 use crate::validation;
 use domain::api::{ResponseDto, SaveResponseRequest};
 use domain::{
-    ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImageMedia, ImagePurpose, LockedQuestion,
-    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Timestamp, UserId,
+    ApiError, ApiErrorCode, AudioId, AudioMedia, CycleId, GroupId, ImageId, ImageMedia,
+    ImagePurpose, LockedQuestion, MediaStatus, NewsletterStatus, QuestionId, QuestionKind,
+    Timestamp, UserId,
 };
 use persistence::responses::ResponseSave;
 use persistence::{auth, media, newsletters, questions, responses};
@@ -54,6 +55,7 @@ pub async fn save_response(
         body: content.body.as_deref(),
         poll_option_id: content.poll_option_id.as_ref(),
         image_media_ids: &content.image_media_ids,
+        audio_media_ids: &content.audio_media_ids,
         publish: content.publish,
     };
     responses::save_response(&state.repo, &save, Timestamp::now())
@@ -86,6 +88,7 @@ struct ValidatedContent {
     body: Option<String>,
     poll_option_id: Option<domain::PollOptionId>,
     image_media_ids: Vec<ImageId>,
+    audio_media_ids: Vec<AudioId>,
     publish: bool,
 }
 
@@ -101,6 +104,7 @@ async fn validate_content(
         SaveResponseRequest::Text {
             body,
             image_media_ids,
+            audio_media_ids,
             publish,
         } => {
             if question.kind != QuestionKind::Text {
@@ -120,11 +124,22 @@ async fn validate_content(
             for image_id in &image_media_ids {
                 validate_response_image(caller, image_id, images.get(image_id))?;
             }
+            let audio_media_ids = validation::dedupe_audio_ids(audio_media_ids)?;
+            let audio = media::get_audio_batch(&state.repo, group_id, cycle_id, &audio_media_ids)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "audio lookup failed");
+                    ApiError::internal("failed to load voice clips")
+                })?;
+            for audio_id in &audio_media_ids {
+                validate_response_audio(caller, audio_id, audio.get(audio_id))?;
+            }
             Ok(ValidatedContent {
                 kind: QuestionKind::Text,
                 body: Some(body),
                 poll_option_id: None,
                 image_media_ids,
+                audio_media_ids,
                 publish,
             })
         }
@@ -144,6 +159,7 @@ async fn validate_content(
                 body: None,
                 poll_option_id: Some(poll_option_id),
                 image_media_ids: Vec::new(),
+                audio_media_ids: Vec::new(),
                 publish,
             })
         }
@@ -176,6 +192,40 @@ fn validate_response_image(
         Err(ApiError::invalid_field(
             "imageMediaIds",
             format!("image `{image_id}` is not a ready response image owned by you in this cycle"),
+        ))
+    }
+}
+
+/// An attached voice clip must exist, belong to the caller, not be `failed`,
+/// have `purpose=response`, and reference this group/cycle. Unlike
+/// [`validate_response_image`] (which requires `status=ready`), a
+/// `pending`/`processing` clip is accepted here — a decided difference from
+/// images, since the draft lists a clip as soon as its upload starts and the
+/// published view only ever shows the ones that finished `ready`
+/// (`docs/design/media.md` §12).
+fn validate_response_audio(
+    caller: &UserId,
+    audio_id: &AudioId,
+    audio: Option<&AudioMedia>,
+) -> Result<(), ApiError> {
+    let audio = audio.ok_or_else(|| {
+        ApiError::invalid_field(
+            "audioMediaIds",
+            format!("voice clip `{audio_id}` does not exist"),
+        )
+    })?;
+
+    let valid = audio.user_id == *caller
+        && audio.status != MediaStatus::Failed
+        && audio.purpose == ImagePurpose::Response;
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::invalid_field(
+            "audioMediaIds",
+            format!(
+                "voice clip `{audio_id}` is not a live response clip owned by you in this cycle"
+            ),
         ))
     }
 }

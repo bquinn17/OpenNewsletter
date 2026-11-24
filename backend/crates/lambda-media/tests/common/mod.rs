@@ -4,9 +4,10 @@
 #![allow(dead_code, unused_imports)]
 
 use domain::{
-    AvatarId, AvatarMedia, CycleId, Group, GroupId, GroupMembership, ImageId, ImageMedia,
-    ImageMimeType, ImagePurpose, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus,
-    QuestionId, QuestionKind, Response, ResponseId, ResponseStatus, Role, Timestamp, UserId,
+    AudioId, AudioMedia, AudioMimeType, AvatarId, AvatarMedia, CycleId, Group, GroupId,
+    GroupMembership, ImageId, ImageMedia, ImageMimeType, ImagePurpose, LockedQuestion, MediaStatus,
+    Newsletter, NewsletterStatus, QuestionId, QuestionKind, Response, ResponseId, ResponseStatus,
+    Role, Timestamp, UserId,
 };
 use media::state::AppState;
 use media_delete::fakes::RecordingObjectStore;
@@ -332,6 +333,192 @@ pub async fn put_response(
         body: Some("Lake 22, hands down.".into()),
         poll_option_id: None,
         image_media_ids: image_media_ids.iter().map(|i| ImageId::new(*i)).collect(),
+        audio_media_ids: Vec::new(),
+        updated_at: Timestamp::now(),
+        published_at: (status == ResponseStatus::Published).then(Timestamp::now),
+        reaction_count: 0,
+    };
+
+    let mut item: std::collections::HashMap<String, AttributeValue> =
+        serde_dynamo::to_item(&response).expect("response serializes");
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(response_pk(
+            &response.group_id,
+            &response.cycle_id,
+            &response.question_id,
+        )),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(response_sk(&response.user_id)),
+    );
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(response_gsi1pk(&response.user_id, &response.cycle_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(response_gsi1sk(&response.question_id)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("Response".into()));
+
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .expect("response written");
+}
+
+/// Mirrors [`seed_image`] for a voice clip.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    audio_id: &str,
+    user_id: &str,
+    status: MediaStatus,
+    purpose: ImagePurpose,
+) -> AudioId {
+    let audio = AudioMedia {
+        audio_id: AudioId::new(audio_id),
+        user_id: UserId::new(user_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        question_id: Some(QuestionId::new(question_id)),
+        purpose,
+        mime_type: AudioMimeType::Webm,
+        original_key: format!(
+            "audio-uploads/{group_id}/{cycle_id}/{question_id}/{user_id}/{audio_id}.webm"
+        ),
+        clip_key: None,
+        status,
+        bytes: 65_536,
+        duration_ms: None,
+        peaks: None,
+        caption: None,
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: None,
+        error_message: None,
+        attached_comment_id: None,
+    };
+    media_persist::put_audio(repo, &audio)
+        .await
+        .expect("audio written");
+    audio.audio_id
+}
+
+/// A processed (`ready`) voice clip, with its clip key laid out as
+/// `lambda-audio-process` writes it. Mirrors [`seed_ready_image`].
+pub async fn seed_ready_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    audio_id: &str,
+    user_id: &str,
+) -> AudioMedia {
+    let id = seed_audio(
+        repo,
+        group_id,
+        cycle_id,
+        question_id,
+        audio_id,
+        user_id,
+        MediaStatus::Ready,
+        ImagePurpose::Response,
+    )
+    .await;
+    let mut audio =
+        media_persist::get_audio(repo, &GroupId::new(group_id), &CycleId::new(cycle_id), &id)
+            .await
+            .expect("audio lookup")
+            .expect("audio exists");
+    audio.clip_key = Some(format!(
+        "aud/{group_id}/{cycle_id}/{question_id}/{user_id}/{audio_id}/clip.webm"
+    ));
+    audio.duration_ms = Some(4_200);
+    audio.peaks = Some(vec![10; shared::config::AUDIO_PEAK_COUNT]);
+    media_persist::put_audio(repo, &audio)
+        .await
+        .expect("audio re-written with processed keys");
+    audio
+}
+
+/// Mirrors [`attach_image_to_comment`] for a voice clip.
+pub async fn attach_audio_to_comment(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    audio_id: &AudioId,
+    comment_id: &str,
+) {
+    let mut audio = media_persist::get_audio(
+        repo,
+        &GroupId::new(group_id),
+        &CycleId::new(cycle_id),
+        audio_id,
+    )
+    .await
+    .expect("audio lookup")
+    .expect("audio exists");
+    audio.attached_comment_id = Some(domain::CommentId::new(comment_id));
+    media_persist::put_audio(repo, &audio)
+        .await
+        .expect("audio re-written with attached_comment_id");
+}
+
+/// Mirrors [`put_published_response`], listing a voice clip instead of an
+/// image.
+pub async fn put_published_response_with_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    user_id: &str,
+    audio_media_ids: &[&str],
+) {
+    put_response_with_audio(
+        repo,
+        group_id,
+        cycle_id,
+        question_id,
+        user_id,
+        audio_media_ids,
+        ResponseStatus::Published,
+    )
+    .await;
+}
+
+/// Mirrors [`put_response`], listing a voice clip instead of an image.
+pub async fn put_response_with_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    user_id: &str,
+    audio_media_ids: &[&str],
+    status: ResponseStatus,
+) {
+    use aws_sdk_dynamodb::types::AttributeValue;
+    use persistence::keys::{attr, response_gsi1pk, response_gsi1sk, response_pk, response_sk};
+
+    let response = Response {
+        response_id: ResponseId::generate(),
+        user_id: UserId::new(user_id),
+        question_id: QuestionId::new(question_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        kind: QuestionKind::Text,
+        status,
+        body: Some("Lake 22, hands down.".into()),
+        poll_option_id: None,
+        image_media_ids: Vec::new(),
+        audio_media_ids: audio_media_ids.iter().map(|i| AudioId::new(*i)).collect(),
         updated_at: Timestamp::now(),
         published_at: (status == ResponseStatus::Published).then(Timestamp::now),
         reaction_count: 0,

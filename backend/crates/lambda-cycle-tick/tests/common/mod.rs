@@ -127,6 +127,7 @@ pub async fn save(
         body,
         poll_option_id: poll.as_ref(),
         image_media_ids: &images,
+        audio_media_ids: &[],
         publish,
     };
     responses::save_response(repo, &save, Timestamp::now())

@@ -26,7 +26,9 @@ describe("buildCspPolicy", () => {
     expect(policy).toContain("form-action 'self' https://my-pool.auth.us-east-1.amazoncognito.com");
     expect(policy).toContain("worker-src 'self'");
     expect(policy).toContain("manifest-src 'self'");
-    expect(policy).toContain("media-src 'self' https://*.giphy.com");
+    expect(policy).toContain(
+      "media-src 'self' blob: https://media.example.com https://*.giphy.com",
+    );
 
     // No path/query leaked through into the policy — only the origin.
     expect(policy).not.toContain("/some/path");

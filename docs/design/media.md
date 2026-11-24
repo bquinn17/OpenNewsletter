@@ -352,3 +352,60 @@ The same way as images (§4): `avatarUrl` fields carry a presigned GET for `avat
 ### 11.4 Cleanup
 
 `DELETE /avatars/{id}`, avatar replacement (`PATCH /me` with a new `avatarMediaId`) and clearing (`PATCH /me` with `avatarMediaId: null`) delete the old avatar's original and processed objects and the `AvatarMedia` row — the same shared-helper mechanics as §8.0. The UI goes through a `ConfirmDialog` warning the delete is permanent ([`frontend.md` §7.6](frontend.md#76-settingspage)). No bucket versioning on the avatar originals or processed bucket either, so there's no delete-marker fallback; the accepted residual copies are the same two as §8.0 (SW/browser image cache, prod PITR on the row).
+
+---
+
+## 12. Voice clips
+
+A member records (or picks) a short voice clip and attaches it to a text answer or a comment. It's the same pipeline as §3 (presigned PUT, S3 trigger, presigned GET) with an audio-specific processor in place of the image one, and its own routes because the shapes differ (duration and waveform, not dimensions). Constants: `MAX_AUDIO_SECONDS` (120), `MAX_AUDIO_BYTES` (25 MB), `MAX_AUDIO_CLIPS_PER_RESPONSE` (3), `MAX_AUDIO_CLIPS_PER_COMMENT` (1), `AUDIO_PEAK_COUNT` (48), `AUDIO_DURATION_SLACK_MS` (1000), `AUDIO_CACHE_MAX_AGE_SECONDS` (60 days, same as `IMAGE_CACHE_MAX_AGE_SECONDS`), `MAX_AUDIO_CAPTION_CHARS` (140) — all in `backend/crates/shared/src/config.rs`.
+
+### 12.1 Keys
+
+Originals share the media-originals bucket images use, under a separate prefix, so `lambda-image-process`'s `uploads/`-prefixed trigger never fires for a clip, and `lambda-audio-process`'s `audio-uploads/`-prefixed trigger never fires for an image:
+
+```
+audio-uploads/{groupId}/{cycleId}/{questionId}/{userId}/{audioId}.{ext}
+```
+
+The originals bucket's 7-day expiry rule (§8.1) extends to this prefix. Processed clips share the processed bucket images use, under their own prefix:
+
+```
+aud/{groupId}/{cycleId}/{questionId}/{userId}/{audioId}/clip.webm
+```
+
+The signing Lambdas that hold `img/*` today (`lambda-media`, `lambda-newsletters`, `lambda-engagement`) get `s3:GetObject` on `aud/*` too, scoped by prefix exactly as `img/*` is.
+
+### 12.2 Upload flow and routes
+
+Same sequence as §3's diagram, with `lambda-audio-process` standing in for `lambda-image-process`: `POST /audio-uploads` creates a `pending` `AudioMedia` row and returns a presigned PUT; the SPA PUTs the bytes directly to S3; the S3 trigger processes the clip; the SPA polls `GET /audio-uploads/{audioId}` until `status` leaves `pending`. Route details, validation order and the MIME allowlist are [`api.md` §9.8](api.md#98-voice-clip-routes). `PATCH /audio-uploads/{audioId}` sets or clears the clip's caption, its accessible label.
+
+The 3-clips-per-answer cap (`purpose=response` only) is enforced the same way as the 10-image cap (§3.1): a bounded `Query` of the cycle's partition filtered to the caller, question, `purpose=response` and `status != failed` (`begins_with(sk, "AUD#")` in place of `"IMG#"`). Comment clips are exempt from this cap; their limit is one clip per comment, enforced at comment create/patch time, same as comment images.
+
+### 12.3 `lambda-audio-process` (S3 trigger)
+
+Laid out like `lambda-image-process` (§5): `handler.rs` wires the S3 event to the row, `process.rs` holds the pure waveform/duration logic, and a `transcode::AudioTranscoder` trait stands in for `process.rs`'s role in the image pipeline — it's behind a trait rather than a free function because, unlike resizing pixels, decoding and transcoding audio means shelling out to `ffmpeg`, which the handler's own tests substitute with a fake. Environment: `TABLE_NAME`, `MEDIA_ORIGINALS_BUCKET`, `PROCESSED_BUCKET`, `FFMPEG_PATH` (default `/opt/bin/ffmpeg` — the Lambda ships a static `ffmpeg` binary in a layer at that path; no `ffprobe`, since the decode pass below already yields the duration).
+
+Per object:
+1. Parse the key into `groupId`/`cycleId`/`questionId`/`userId`/`audioId`; skip if the row isn't still `pending` (§5.1's duplicate-delivery handling applies identically — an original that's already gone is logged at INFO and the invocation returns `Ok`).
+2. The real object size over `MAX_AUDIO_BYTES` → `failed`/`AUDIO_TOO_LARGE`, original deleted.
+3. **Decode pass** (bounds the work a maliciously long upload can cause, and is the only "probe" step — there is no separate `ffprobe` call): `ffmpeg -nostdin -v error -i in -vn -map 0:a:0 -t {MAX_AUDIO_SECONDS+2} -ac 1 -ar 8000 -f s16le pipe:1`. A non-zero exit or no samples → `AUDIO_DECODE_FAILED`, original deleted. Duration is `samples / 8000`; over `MAX_AUDIO_SECONDS*1000 + AUDIO_DURATION_SLACK_MS` → `AUDIO_TOO_LONG`, original deleted.
+4. **Peaks**: the decoded samples are split into `AUDIO_PEAK_COUNT` equal-size buckets (the last absorbs any remainder); each bucket's maximum absolute amplitude is taken, then the 48 values are scaled so the loudest bucket is 255. An all-silent clip is all zeros, not a division by zero.
+5. **Transcode pass**: `ffmpeg -nostdin -v error -i in -vn -map 0:a:0 -map_metadata -1 -ac 1 -ar 48000 -c:a libopus -b:a 24k -vbr on -application voip -cues_to_front 1 -f webm out.webm`. `-application voip` tunes the encoder for speech; `-map_metadata -1` strips tags and any location; `-cues_to_front 1` puts the seek index at the start so playback can seek before the file fully downloads.
+6. Puts the clip to `aud/.../clip.webm` with `Content-Type: audio/webm` and the same `private, max-age={AUDIO_CACHE_MAX_AGE_SECONDS}, immutable` cache-control shape as images (§5.1), marks the row `ready` (`clip_key`, `duration_ms`, `peaks`) on the `status = pending` condition, mirroring `mark_image_ready`, then deletes the original (best effort, same as §5.1). A lost condition (the clip was deleted mid-processing) deletes the clip object this invocation just wrote, mirroring §5.1's own handling. Transient AWS errors return `Err` for Lambda's retry; `/tmp` scratch files are cleaned up via an RAII guard regardless of outcome.
+
+**Why Opus in WebM, and why transcode at all** are owner decisions recorded in [`decisions.md`](../decisions.md). In short: Opus is the most storage-efficient codec browsers play, WebM is the container Safari plays it in, and transcoding to one format gives a single playback and caching story across browsers that record in different native formats (Chrome/Firefox: WebM/Opus; Safari: MP4/AAC) and picked files of any kind.
+
+### 12.4 Serving and deletion
+
+Served the same way as images (§4): `media-urls` gains `audio_url(key)` (signs `aud/*`) and `ready_audio_url(&AudioMedia)` (mirrors `ready_image_urls`, returning `None` until the row is `ready` with a `clip_key`, `duration_ms` and `peaks`). Every handler that returns a `PublishedAudioResponse` has already checked membership or ownership, exactly as for images (§6).
+
+`DELETE /audio-uploads/{audioId}` ([`api.md` §9.8](api.md#98-voice-clip-routes)) mirrors §8.0 exactly: refused with `AUDIO_IN_USE` the same way `IMAGE_IN_USE` guards a response or comment image; the caller's draft is stripped of the id first; then the original, the processed clip (if any), then the row are deleted in that order via the same `media-delete` crate (`delete_audio_media`), which reuses the image/comment buckets since clips live in them too. Soft-deleting a comment deletes its clip the same way it deletes its image — best effort, logged at ERROR on failure. Archival ([`archival.md`](archival.md)) treats `AUD#` rows the same as `IMG#` rows.
+
+### 12.5 Tests
+
+Mirrors §10's structure, in `backend/crates/lambda-audio-process`:
+1. Peak bucketing, duration maths and key parsing are pure-function unit tests: `src/process.rs`, `src/key_parse.rs`.
+2. MIME normalization (parameters stripped, lowercased) is a `lambda-media` validation unit test: `backend/crates/lambda-media/src/validation.rs`.
+3. The S3-trigger handler, against DynamoDB Local and a fake `AudioTranscoder` (no real `ffmpeg` needed): `tests/handler.rs` — happy path (ready with duration/peaks/clip), oversized, decode failure, over the duration cap, an already-gone original (duplicate delivery), and an already-`ready` row (no-op).
+4. The real `ffmpeg` binary, end to end, against a sine-tone WAV generated in the test itself (no binary fixtures): `tests/ffmpeg_real.rs`. It locates `ffmpeg` via `FFMPEG_PATH` or `PATH`; if neither resolves it skips with a note, unless `REQUIRE_FFMPEG=1` is set (CI sets this after installing `ffmpeg`), in which case it panics.
+5. The upload routes (`POST`/`GET`/`PATCH`/`DELETE /audio-uploads...`), mirroring §10 #1/#8/#9: `backend/crates/lambda-media/tests/audio_uploads.rs`.

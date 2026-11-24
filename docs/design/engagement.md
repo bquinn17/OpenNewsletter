@@ -10,9 +10,9 @@ How members interact with a published edition — comments, emoji reactions, and
 
 Flat (no threading). One author per comment. Stored in DynamoDB per [`data-model.md` §2.11](data-model.md#211-comment). Wire shape: `CommentResponse` in `shared/openapi.yaml` ([`api.md` §8](api.md#8-engagement-routes-comments--reactions)); `displayName` matches the inline newsletter shape, and `body` is sanitized identical to response bodies (§5 below).
 
-Either `body` (non-whitespace) OR `image` must be present; an entirely empty comment is rejected.
+Either `body` (non-whitespace), `image`, or `audio` must be present; an entirely empty comment is rejected ([`media.md` §12](media.md#12-voice-clips) added the voice-clip leg of this rule).
 
-Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty and `image` null. If the comment had an attached image, that image is deleted for real ([`media.md` §8.0](media.md#80-explicit-deletion)) after the soft-delete transaction commits — best effort, failure logged at ERROR — so `image: null` on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image will be permanently removed.
+Comments are **soft deleted** in v1 — `DELETE` sets `deletedAt` and blanks `body`. The row remains so thread ordering is preserved and an admin can audit moderation history. The UI renders soft-deleted comments as a muted `"[deleted]"` placeholder. The API returns them, both from the comments route and inline in the published newsletter, with `deletedAt` set, `body` empty, `image` null and `audio` null. If the comment had an attached image and/or voice clip, each is deleted for real ([`media.md` §8.0](media.md#80-explicit-deletion), [§12.4](media.md#124-serving-and-deletion)) after the soft-delete transaction commits — best effort, failure logged at ERROR — so a null attachment on a deleted comment reflects an actually-gone object, not just a hidden reference. The delete confirmation warns when an attached image or clip will be permanently removed.
 
 ### 1.2 Permissions
 
@@ -28,11 +28,13 @@ Editing reopens the markdown body and sets `editedAt`. The UI marks edited comme
 
 ### 1.3 Validation
 
-`body`: 0–2000 chars, allowed markdown subset (paragraphs, emphasis, code, links to https only — no `![]()` images embedded in the markdown body; instead, comments support a single optional **attached** image via `imageMediaId`).
+`body`: 0–2000 chars, allowed markdown subset (paragraphs, emphasis, code, links to https only — no `![]()` images embedded in the markdown body; instead, comments support a single optional **attached** image via `imageMediaId` and a single optional **attached** voice clip via `audioMediaId`).
 
 `imageMediaId` (optional): references an `ImageMedia` row owned by the caller, in `status=ready`, with `purpose: "comment"`. The image is uploaded through the same pipeline as response images — `POST /uploads` with `purpose: "comment"`, which is valid while the cycle is `published` (matching when comments are writable; see [`api.md` §9.1](api.md#91-post-uploads) and [`media.md` §3.1](media.md#31-post-uploads-validation)) — and rendered beneath the comment text. One image per comment.
 
-A comment with no `body` (or whitespace-only) AND no `imageMediaId` is rejected with `VALIDATION_FAILED`.
+`audioMediaId` (optional, [`media.md` §12](media.md#12-voice-clips)): references an `AudioMedia` row owned by the caller, with `purpose: "comment"`, uploaded via `POST /audio-uploads` the same way a comment image is. Unlike the image, the clip may still be `pending`/`processing` — only a `failed` clip is rejected, since the client lists a clip's id as soon as its upload starts. One clip per comment, and a comment may carry an image and a clip at once; only an entirely empty comment is rejected.
+
+A comment with no `body` (or whitespace-only), no `imageMediaId` AND no `audioMediaId` is rejected with `VALIDATION_FAILED`.
 
 ### 1.4 Endpoints
 
@@ -42,7 +44,7 @@ Detailed in [`api.md` §8.1](api.md#81-get-questionsquestionidresponsesresponsei
 
 Comments embed the author's `displayName` in the response payload (denormalized read; the stored row only carries `authorUserId`). The handler dedupes author IDs within the request and resolves them with one `BatchGetItem` (`backend/crates/persistence/src/batch.rs`), with no cross-request cache — add a TTL cache only if user reads show up as hot. (Per-group nicknames are not a v1 feature; everyone shows up under their account display name.)
 
-Every comment edit and soft delete is also conditioned on the comment still holding the image the handler read. The old image's release is unconditioned, so a write built on a stale read would otherwise release the wrong image and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image it read reports 422 on `imageMediaId` instead, because its new image was claimed elsewhere. ("Release" means permanently deleting the image, not just unclaiming it — §1.1 above.)
+Every comment edit and soft delete is also conditioned on the comment still holding the image and the voice clip the handler read. Each old attachment's release is unconditioned, so a write built on a stale read would otherwise release the wrong one and strand the new one, claimed by a `[deleted]` row. On a cancelled transaction the handler re-reads and retries, up to `COMMENT_WRITE_ATTEMPTS` (3). A PATCH whose comment still holds the image or clip it read reports 422 on `imageMediaId`/`audioMediaId` instead, because the new attachment was claimed elsewhere. ("Release" means permanently deleting the image or clip, not just unclaiming it — §1.1 above.)
 
 ### 1.6 Notifications on comments
 
@@ -128,7 +130,7 @@ This matches user expectation: "what did people vote for?" shows totals, not "Qu
 
 ### 3.6 Auto-publish at close
 
-When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body` or a non-empty `imageMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency)). An empty draft stays `draft` and is excluded. This is the only way the SPA publishes answers: RespondPage has no Publish button ([decision](../decisions.md#answers-publish-at-close)), so every non-empty answer reaches the edition through this sweep. The same sweep counts `editions_answered` ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). See [`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq) for the RespondPage warning copy.
+When the response window closes, `lambda-cycle-tick` publishes every non-empty draft — text (non-whitespace `body`, or a non-empty `imageMediaIds` or `audioMediaIds`) and poll (a `pollOptionId` set) alike — before flipping the cycle to `published` ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency)). An empty draft stays `draft` and is excluded. This is the only way the SPA publishes answers: RespondPage has no Publish button ([decision](../decisions.md#answers-publish-at-close)), so every non-empty answer reaches the edition through this sweep. The same sweep counts `editions_answered` ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). See [`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq) for the RespondPage warning copy.
 
 ---
 

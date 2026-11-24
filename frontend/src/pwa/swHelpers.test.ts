@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   activatePromptly,
   buildNotificationOptions,
+  isCacheableMediaStatus,
+  isMediaPath,
   mediaCacheKey,
   parsePushPayload,
   resolveNotificationUrl,
@@ -156,5 +158,37 @@ describe("mediaCacheKey", () => {
     expect(mediaCacheKey("https://media.example.com/img/x.webp?v=2")).toBe(
       "https://media.example.com/img/x.webp",
     );
+  });
+});
+
+describe("isMediaPath", () => {
+  const origin = "https://media.example.com";
+
+  it("matches a path under the given prefix on the media origin", () => {
+    expect(isMediaPath(new URL(`${origin}/aud/g1/c/q/u/a1/clip.webm`), origin, "/aud/")).toBe(true);
+    expect(isMediaPath(new URL(`${origin}/img/g1/c/q/u/i1/display.webp`), origin, "/img/")).toBe(
+      true,
+    );
+  });
+
+  it("doesn't match a different prefix on the same origin", () => {
+    expect(isMediaPath(new URL(`${origin}/img/x.webp`), origin, "/aud/")).toBe(false);
+  });
+
+  it("doesn't match a different origin even with the right path", () => {
+    expect(isMediaPath(new URL("https://evil.example/aud/x.webm"), origin, "/aud/")).toBe(false);
+  });
+
+  it("matches nothing when the media origin is null (unset/malformed build-time env var)", () => {
+    expect(isMediaPath(new URL(`${origin}/aud/x.webm`), null, "/aud/")).toBe(false);
+  });
+});
+
+describe("isCacheableMediaStatus", () => {
+  it("accepts only a full 200 response, never a 206 partial or an error status", () => {
+    expect(isCacheableMediaStatus(200)).toBe(true);
+    expect(isCacheableMediaStatus(206)).toBe(false);
+    expect(isCacheableMediaStatus(403)).toBe(false);
+    expect(isCacheableMediaStatus(0)).toBe(false);
   });
 });

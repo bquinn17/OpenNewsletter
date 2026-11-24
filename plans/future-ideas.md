@@ -135,94 +135,13 @@ New glossary terms when §5–§7 are built: *Check-in*, *Current city*, *Leader
 
 ## 8. Voice clips on answers and comments
 
-A member records a short voice clip in the app, or picks an audio file, and attaches it to a text answer or a comment. Readers play it inline. It's for the answers that are easier said than typed: a story, a laugh, a song you can't stop humming.
+A member records a short voice clip in the app, or picks an audio file, and attaches it to a text answer or a comment. Readers play it inline.
 
-**Limits** (new constants in `backend/crates/shared/src/config.rs`): up to 3 clips per text answer and 1 per comment. Each clip is at most 2 minutes (`MAX_AUDIO_SECONDS = 120`) and 25 MB as uploaded (`MAX_AUDIO_BYTES`), which is enough for a 2-minute WAV picked from Files. A caption is optional and capped at 140 characters, the same as an image caption.
+Built: up to 3 clips per answer and 1 per comment, each up to 2 minutes, transcoded to Opus in WebM by a static ffmpeg ([decision](../docs/decisions.md#audio-via-ffmpeg)). The backend and pipeline are in [`media.md` §12](../docs/design/media.md#12-voice-clips), the routes in [`api.md` §9.8](../docs/design/api.md#98-voice-clip-routes), the `AudioMedia` row in [`data-model.md` §2.18](../docs/design/data-model.md#218-audiomedia), and the recorder and player in [`frontend.md` §19](../docs/design/frontend.md#19-voice-clips).
 
-### 8.1 Recording UX
-
-- **Entry point.** Two items in the "+" attach menu (§10), in both the response editor and the comment composer. **Record a voice clip** starts the recorder below. **Upload audio** opens an `<input type="file" accept="audio/*">`, so a voice memo exported to Files works on iOS. If `MediaRecorder` or `getUserMedia` is missing, the menu hides **Record a voice clip** and keeps **Upload audio**.
-- **Permission is asked on the first tap only.** If it's denied, an inline note says: "Microphone is blocked. Allow it in your browser settings, or upload a recording instead," with the upload link.
-- **While recording**, a recorder bar replaces the composer's attachment row:
-  - a pulsing red dot and the elapsed time against the cap ("0:42 / 2:00"); the timer turns coral in the last 15 seconds
-  - a live level meter of about 12 bars, drawn from a Web Audio `AnalyserNode`, so the member can see the mic is picking them up
-  - **Stop**, the primary button with a 48 px tap target, and **Cancel**, which discards the clip without a confirm because nothing has been uploaded yet
-
-  Recording stops by itself at the cap, with a toast: "That's the 2-minute limit." Recording is tap to start and tap to stop, not hold to talk, because 2 minutes is too long to hold a button. A Wake Lock is held while recording where the browser supports one, because a phone that locks its screen ends the recording.
-- **After Stop**, a clip card appears with:
-  - play/pause, a waveform drawn from the local blob (`decodeAudioData`) and the duration
-  - **Re-record** and **Remove**
-  - an optional "Describe this clip" field (the caption), which is also the clip's accessible label
-
-  The upload starts the moment recording stops, and the card shows the same uploading → processing → ready/failed states as an image tile ([`media.md` §3.3](../docs/design/media.md#33-frontend-uploader-imageuploadertsx)), with **Retry** on failure. Publishing follows the same rule as images: a clip joins the draft once it's `ready`.
-- **Not losing a clip.** The recorded `Blob` stays in memory until its upload succeeds. Leaving the page with a clip that hasn't uploaded asks first. The draft mirror ([`frontend.md` §8.3](../docs/design/frontend.md#83-offline--failure)) doesn't hold audio, because it's too big for `localStorage`. An IndexedDB stash could come later.
-
-### 8.2 Playback UX
-
-A `VoiceClip` component goes in `AnswerCard`, below the body and above the gallery, and in `CommentList`, below the comment's text.
-
-```
- ( ▶ )  ▂▅▇▅▃▂▆▇▅▃▂▁▃▅▇▆▄▂▁▂▄▆▅▃   0:12 / 1:04   1.5×
-        "The time the tent blew into the lake"
-```
-
-- **Controls.** The round play button uses the author's avatar color. The waveform shows 48 bars, and the part already played is filled in. Tapping or dragging on the waveform seeks. The speed toggle cycles 1× → 1.5× → 2×.
-- **Waveform and duration come from the API**, so the card draws at full size without downloading any audio. `<audio preload="none">` means a page with twenty clips downloads nothing until someone presses play.
-- **One clip plays at a time.** Starting one pauses whichever was playing, through a small shared store.
-- **Accessibility.** The waveform is a `role="slider"` with `aria-valuetext` ("12 seconds of 1 minute 4"). Space toggles play and ←/→ seek 5 seconds. The label is "Voice clip from Alex, 1 minute 4 seconds", followed by the caption when there is one.
-- **An expired URL** fires the `<audio>` `error` event, which goes through `useMediaRetry` exactly as an image's load error does ([`media.md` §4.4](../docs/design/media.md#44-spa-usage)). Offline, a clip that isn't cached shows a disabled play button: "Available when you're back online."
-
-### 8.3 Storage and processing
-
-It's the image pipeline ([`media.md` §3](../docs/design/media.md#3-upload-flow-browser--s3)) with an audio processor in place of the image one: a presigned PUT straight to the originals bucket, an S3 trigger, a processed copy, and presigned GETs inline in API responses. Lambda is never on the bytes' path.
-
-- **Routes** in `lambda-media`: `POST /audio-uploads`, `GET /audio-uploads/{audioId}` and `DELETE /audio-uploads/{audioId}`. They use the same `?groupId=&cycleId=` addressing ([`api.md` §9.0](../docs/design/api.md#90-addressing-an-existing-upload)), the same `purpose` (`response` | `comment`) and the same cycle-status checks as `POST /uploads` ([`api.md` §9.1](../docs/design/api.md#91-post-uploads)). They're separate routes rather than a `kind` on `/uploads`, because the response shapes differ (duration and peaks, no dimensions). The MIME allowlist is a first filter only: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`. Parameters such as `;codecs=opus`, which `MediaRecorder` adds, are stripped before the check.
-- **An `AudioMedia` row** mirrors `ImageMedia` ([`data-model.md` §2.10](../docs/design/data-model.md#210-imagemedia)):
-  - keys: `pk=GROUP#{g}#NL#{c}`, `sk=AUD#{audioId}`, `gsi1pk=USER#{u}#AUD`
-  - fields: `purpose`, `mime_type`, `original_key`, `clip_key`, `status`, `bytes`, `duration_ms`, `peaks` (48 integers 0–255, about 200 bytes), `caption`, `attached_comment_id` and `error_message`, which is `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or `AUDIO_DECODE_FAILED`
-- **Where clips attach.**
-  - `Response.audio_media_ids` holds up to 3 IDs, on text answers only.
-  - `Comment.audio_media_id` holds one.
-  - A comment needs a body, an image or a clip ([`engagement.md` §1.3](../docs/design/engagement.md#13-validation)).
-  - The auto-publish "non-empty" rule ([`data-model.md` §4](../docs/design/data-model.md#4-transactional-invariants) #4a) gains "or `audio_media_ids` non-empty", so an answer that's only a clip publishes at close.
-  - Clips render as attachments, not inline markdown tokens, so the sanitizer and `urlTransform` stay as they are.
-- **S3 keys.** Originals go in the existing media-originals bucket under a separate prefix, `audio-uploads/{g}/{c}/{q}/{u}/{audioId}.{ext}`, so `lambda-image-process`'s `uploads/` trigger never fires for audio. The bucket's 7-day expiry rule ([`media.md` §8.1](../docs/design/media.md#81-orphan-originals)) extends to that prefix. Processed clips go to `aud/{g}/{c}/{q}/{u}/{audioId}/clip.webm` in the processed bucket. The signing Lambdas that hold `img/*` today get `s3:GetObject` on `aud/*` too, scoped by prefix as images are.
-- **`lambda-audio-process`** is a new crate laid out like `lambda-image-process`, triggered on `audio-uploads/`. Per object it:
-  1. checks the object's real size against `MAX_AUDIO_BYTES`
-  2. runs `ffprobe` to confirm there's an audio stream and read its duration. It never trusts the extension or MIME type, and anything over the cap (plus 1 second of slack) fails with `AUDIO_TOO_LONG`
-  3. transcodes to mono Opus at 24 kbps in a WebM container: `ffmpeg -vn -map_metadata -1 -ac 1 -ar 48000 -c:a libopus -b:a 24k -vbr on -application voip -cues_to_front 1 clip.webm`. `-application voip` tunes the encoder for speech, which is what clips mostly are. `-map_metadata -1` strips tags and any location from the recording. `-cues_to_front 1` puts the seek index at the start, so the player can seek before the file has fully downloaded
-  4. decodes to PCM and buckets the peak amplitude into 48 bars for the waveform
-  5. puts the clip with `Cache-Control: private, max-age=5184000, immutable`, marks the row `ready` on the `status = pending` condition, then deletes the original. Failure, retry and duplicate-delivery handling are the same as images ([`media.md` §5.1](../docs/design/media.md#51-trigger-configuration))
-
-  `ffmpeg`/`ffprobe` are static arm64 builds bundled in the Lambda zip, or in a layer. An LGPL build with `libopus` (BSD-licensed) is enough; no GPL or non-free codecs are needed. Memory is 1024 MB and the timeout 60 s; a 2-minute clip transcodes in a second or two.
-- **Why Opus in WebM.** Opus is the most storage-efficient audio codec browsers play. At 24 kbps mono, speech is clear, which is roughly a third of the bitrate AAC needs for the same quality. WebM is the container Safari plays it in; Safari doesn't play Ogg at all.
-  - **Browser support:** Chrome, Edge and Firefox play Opus in WebM, and so does Safari 17+. On iOS it plays from 17.4, and caniuse marks iOS fully supported from 18.4.
-  - **Older devices:** `VoiceClip` checks `audio.canPlayType('audio/webm; codecs="opus"')`. Where that's empty it shows the duration and "Update your browser to play voice clips", not a broken player. If older iPhones turn out to matter, the fallback is a second AAC rendition, at roughly 3× the storage per clip.
-- **Why transcode at all.** Browsers record in different formats: Chrome and Firefox produce WebM/Opus, Safari produces MP4/AAC. Picked files can be anything, including large WAVs. Serving a single format means a single playback and caching story.
-  - The recorder still asks `MediaRecorder` for `audioBitsPerSecond: 32000`, so uploads start small. Its defaults are several times that.
-  - Options weighed:
-    - **Serving originals as-is** needs no processor, but leaves format compatibility to chance, keeps metadata and serves WAVs at full size.
-    - **Pure Rust:** `symphonia` decodes well and libopus has Rust bindings, but WebM muxing, resampling and the long tail of input formats are what ffmpeg already does.
-    - **MediaConvert** charges per minute of output and is far more than this needs.
-
-  Record the choice in [`decisions.md`](../docs/decisions.md).
-- **Serving.** `media-urls` gains `audio_url(key)`. A `PublishedAudioResponse { audioId, url, durationMs, peaks, caption }` is returned as `PublishedAnswerResponse.audio[]` and `CommentResponse.audio`. Both are new fields, so this is an expand-only change.
-- **CSP.** Add `media-src 'self' blob: {mediaBaseUrl}`. Today `<audio>` falls back to `default-src 'self'`, which would block both S3 clips and `blob:` previews ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)). The Playwright CSP test asserts the new directive.
-- **Service worker.** A `media-audio` cache, keyed by path like the image caches ([`frontend.md` §5.2](../docs/design/frontend.md#52-service-worker--caching-strategy)), with a 30-day expiry.
-  - Safari always requests audio with a `Range` header, so the route needs Workbox's `RangeRequestsPlugin`, and it may store only full `200` responses, never a `206`.
-  - Playback streams from the network. After the first play, the client fetches the whole object once to fill the cache.
-  - `<audio crossorigin="anonymous">` makes the responses non-opaque. Bucket CORS adds `Range` to the allowed headers, and `Content-Range`, `Accept-Ranges` and `Content-Length` to the exposed ones.
-- **Deletion and archival.** The `media-delete` helper ([`media.md` §8.0](../docs/design/media.md#80-explicit-deletion)) learns `AudioMedia`, with an `AUDIO_IN_USE` 409 that mirrors `IMAGE_IN_USE`. Soft-deleting a comment deletes its clip, best effort, as it does the comment's image. Archival ([`archival.md`](../docs/design/archival.md)) treats `AUD#` rows the same as `IMG#` rows.
-- **Cost.** At 24 kbps, a clip is about 180 KB a minute, so a 2-minute clip is about 360 KB. A hundred clips a month adds under 40 MB of storage and a few hundred GB-seconds of Lambda, all inside the [D7](../docs/decisions.md#d7) budget.
-- **Mock and demo** ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)). `mockUploads` keeps the recorded `Blob` as a `blob:` URL and computes the peaks locally. The demo seed gains one freely licensed sample clip in `public/demo-media/`, with an entry in `CREDITS.txt`.
-
-**Rollout.** Ship the playback renderer first and the recorder in a later release. An installed PWA on the old release shows an answer that's only a clip as an empty answer until it updates.
-
-**No transcripts.** A member who wants their words as text can use their device's own speech-to-text in the editor. The caption covers the accessible label.
-
-**Open questions.**
-- Should the cap differ between answers (2 minutes) and comments (perhaps 1 minute)?
-- iOS: test the mic permission in an installed (standalone) PWA on a real device. It has re-prompted every session in some iOS versions.
+Still open:
+- iOS: test the mic permission in an installed (standalone) PWA on a real device. Some iOS versions have re-prompted every session.
+- If older iPhones (before iOS 17.4, which can't play Opus in WebM) turn out to matter, add a second AAC rendition, at roughly 3× the storage per clip.
 
 ## 9. GIFs from GIPHY
 
@@ -234,7 +153,7 @@ Built. GIFs are on for every group ([D13](../docs/decisions.md#d13)). The design
 
 The response editor and the comment composer attach everything through a single **+** button and its menu, instead of the old dashed drop box.
 
-Built, with **Photo** and **GIF** as its items. The design is in [`frontend.md` §18.1–§18.2](../docs/design/frontend.md#181-attachmenu). Voice clips (§8) add their **Record a voice clip** and **Upload audio** items to the same menu.
+Built, with **Photo**, **GIF** and the voice-clip items. The design is in [`frontend.md` §18.1–§18.2](../docs/design/frontend.md#181-attachmenu). Voice clips (§8) add **Record a voice clip** and **Upload audio** to it.
 
 ## 11. Year in review
 

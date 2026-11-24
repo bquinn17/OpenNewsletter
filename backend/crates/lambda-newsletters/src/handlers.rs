@@ -5,13 +5,13 @@ use crate::state::AppState;
 use domain::api::{
     AskedBy, CandidateItemResponse, CommentImageResponse, CommentResponse, MyResponseSummary,
     NewsletterDetailResponse, NewsletterListResponse, NewsletterSummary, OpenQuestionResponse,
-    PollOptionResponse, PublishedAnswerResponse, PublishedImageResponse,
+    PollOptionResponse, PublishedAnswerResponse, PublishedAudioResponse, PublishedImageResponse,
     PublishedPollOptionResponse, PublishedQuestionResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, CandidateQuestion, Comment, CycleId, GroupId, GroupMembership, ImageId,
-    ImageMedia, LockedQuestion, Newsletter, NewsletterStatus, PollOptionId, QuestionId,
-    QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
+    ApiError, ApiErrorCode, AudioId, AudioMedia, CandidateQuestion, Comment, CycleId, GroupId,
+    GroupMembership, ImageId, ImageMedia, LockedQuestion, Newsletter, NewsletterStatus,
+    PollOptionId, QuestionId, QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
 };
 use futures::future::try_join_all;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -207,6 +207,7 @@ async fn open_detail(
                 status: r.status,
                 body: r.body,
                 image_media_ids: r.image_media_ids,
+                audio_media_ids: r.audio_media_ids,
                 poll_option_id: r.poll_option_id,
                 updated_at: r.updated_at,
                 published_at: r.published_at,
@@ -256,6 +257,7 @@ async fn published_detail(
     // hydrate: engagement keys, answer authors and answer images.
     let mut user_ids: HashSet<UserId> = locked.iter().map(|l| l.submitted_by.clone()).collect();
     let mut image_ids: HashSet<ImageId> = HashSet::new();
+    let mut audio_ids: HashSet<AudioId> = HashSet::new();
     let mut text_answers: Vec<(QuestionId, UserId)> = Vec::new();
     for (lq, answers) in locked.iter().zip(&answers_per_question) {
         if lq.kind != QuestionKind::Text {
@@ -265,6 +267,7 @@ async fn published_detail(
             text_answers.push((lq.question_id.clone(), r.user_id.clone()));
             user_ids.insert(r.user_id.clone());
             image_ids.extend(r.image_media_ids.iter().cloned());
+            audio_ids.extend(r.audio_media_ids.iter().cloned());
         }
     }
     let engagement = load_engagement(state, group_id, cycle_id, text_answers).await?;
@@ -273,14 +276,17 @@ async fn published_detail(
             user_ids.insert(c.author_user_id.clone());
             if c.deleted_at.is_none() {
                 image_ids.extend(c.image_media_id.iter().cloned());
+                audio_ids.extend(c.audio_media_id.iter().cloned());
             }
         }
     }
     let user_ids: Vec<UserId> = user_ids.into_iter().collect();
     let image_ids: Vec<ImageId> = image_ids.into_iter().collect();
-    let (profiles, images) = futures::try_join!(
+    let audio_ids: Vec<AudioId> = audio_ids.into_iter().collect();
+    let (profiles, images, audio) = futures::try_join!(
         load_profiles(state, &user_ids),
         load_images(state, group_id, cycle_id, &image_ids),
+        load_audio(state, group_id, cycle_id, &audio_ids),
     )?;
 
     let is_admin = membership.role == Role::Admin;
@@ -298,6 +304,7 @@ async fn published_detail(
                     &engagement,
                     &profiles,
                     &images,
+                    &audio,
                 )
                 .await?
             }
@@ -324,6 +331,7 @@ async fn published_text_question(
     engagement: &EngagementByAnswer,
     profiles: &HashMap<UserId, User>,
     images: &HashMap<ImageId, ImageMedia>,
+    audio: &HashMap<AudioId, AudioMedia>,
 ) -> Result<PublishedQuestionResponse, ApiError> {
     let mut answers_out = Vec::with_capacity(answers.len());
     for r in answers {
@@ -337,7 +345,7 @@ async fn published_text_question(
 
         let mut comments_out = Vec::with_capacity(comments.len());
         for c in comments {
-            comments_out.push(comment_response(state, profiles, images, c).await?);
+            comments_out.push(comment_response(state, profiles, images, audio, c).await?);
         }
 
         let mut images_out = Vec::new();
@@ -349,12 +357,22 @@ async fn published_text_question(
             }
         }
 
+        let mut audio_out = Vec::new();
+        for id in &r.audio_media_ids {
+            if let Some(clip) = audio.get(id) {
+                if let Some(published) = published_audio(state, clip).await? {
+                    audio_out.push(published);
+                }
+            }
+        }
+
         answers_out.push(PublishedAnswerResponse {
             response_id: r.response_id,
             user_id: r.user_id,
             display_name: author.display_name.clone(),
             body: r.body,
             images: images_out,
+            audio: audio_out,
             published_at: r.published_at.unwrap_or(r.updated_at),
             comments: comments_out,
             reaction_groups: domain::engagement::group_reactions(reactions, caller),
@@ -527,6 +545,38 @@ async fn published_image(
     }))
 }
 
+async fn load_audio(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    ids: &[AudioId],
+) -> Result<HashMap<AudioId, AudioMedia>, ApiError> {
+    media::get_audio_batch(&state.repo, group_id, cycle_id, ids)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "audio batch lookup failed");
+            ApiError::internal("failed to load voice clips")
+        })
+}
+
+/// Mirrors [`published_image`]: `None` until the clip is `ready`
+/// (`docs/design/media.md` §12).
+async fn published_audio(
+    state: &AppState,
+    clip: &AudioMedia,
+) -> Result<Option<PublishedAudioResponse>, ApiError> {
+    let Some(ready) = state.media_urls.ready_audio_url(clip).await? else {
+        return Ok(None);
+    };
+    Ok(Some(PublishedAudioResponse {
+        audio_id: clip.audio_id.clone(),
+        url: ready.url,
+        duration_ms: ready.duration_ms,
+        peaks: ready.peaks,
+        caption: clip.caption.clone(),
+    }))
+}
+
 /// Builds the wire `CommentResponse` for one comment row, including a
 /// soft-deleted one as a `[deleted]` placeholder (`docs/design/engagement.md` §1.1,
 /// decided M10 — soft-deleted comments are returned here too, not filtered).
@@ -535,6 +585,7 @@ async fn comment_response(
     state: &AppState,
     profiles: &HashMap<UserId, User>,
     images: &HashMap<ImageId, ImageMedia>,
+    audio: &HashMap<AudioId, AudioMedia>,
     comment: &Comment,
 ) -> Result<CommentResponse, ApiError> {
     let author = profiles
@@ -562,6 +613,15 @@ async fn comment_response(
         }
         None => None,
     };
+    let attached_audio = comment
+        .audio_media_id
+        .as_ref()
+        .filter(|_| !is_deleted)
+        .and_then(|id| audio.get(id));
+    let comment_audio = match attached_audio {
+        Some(clip) => published_audio(state, clip).await?,
+        None => None,
+    };
 
     Ok(CommentResponse {
         comment_id: comment.comment_id.clone(),
@@ -573,6 +633,7 @@ async fn comment_response(
             comment.body.clone()
         },
         image,
+        audio: comment_audio,
         created_at: comment.created_at,
         edited_at: comment.edited_at,
         deleted_at: comment.deleted_at,

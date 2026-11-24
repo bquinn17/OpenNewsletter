@@ -6,3 +6,7 @@
  */
 export const PERMANENT_IMAGE_DELETE_MESSAGE =
   "This permanently deletes the image. It can't be recovered.";
+
+/** Same copy, for a voice clip (`docs/design/frontend.md` §19.1, `docs/design/media.md` §12.4). */
+export const PERMANENT_AUDIO_DELETE_MESSAGE =
+  "This permanently deletes the voice clip. It can't be recovered.";

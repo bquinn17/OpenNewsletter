@@ -45,6 +45,7 @@ function publishedWith(
             displayName: "Sam",
             body: "Hello",
             images: [],
+            audio: [],
             publishedAt: "2026-06-05T00:00:01Z",
             comments: [],
             reactionGroups,

@@ -6,15 +6,19 @@ type OpenQuestion = S["OpenQuestionResponse"];
 /**
  * A question counts as "answered" once there's a non-empty draft or answer,
  * regardless of publish status (`docs/design/frontend.md` §7.3): a non-blank
- * body or at least one image for a text question, a picked option for a
- * poll. Used both by the "Done" CTA's next-question search and the edition
+ * body, at least one image or at least one voice clip for a text question, a
+ * picked option for a poll. Used both by the "Done" CTA's next-question search and the edition
  * page's completion celebration.
  */
 export function isQuestionAnswered(question: OpenQuestion): boolean {
   const response = question.myResponse;
   if (!response) return false;
   if (question.kind === "poll") return !!response.pollOptionId;
-  return (response.body?.trim().length ?? 0) > 0 || response.imageMediaIds.length > 0;
+  return (
+    (response.body?.trim().length ?? 0) > 0 ||
+    response.imageMediaIds.length > 0 ||
+    response.audioMediaIds.length > 0
+  );
 }
 
 export function allQuestionsAnswered(questions: OpenQuestion[]): boolean {

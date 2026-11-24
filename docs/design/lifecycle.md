@@ -203,7 +203,8 @@ If `chosen` is empty (no candidate questions submitted): the cycle still transit
 
 ```
 def is_non_empty(answer):
-    return ((answer.kind == "text" and (answer.body.strip() or answer.imageMediaIds)) or
+    return ((answer.kind == "text" and (answer.body.strip() or answer.imageMediaIds
+                                        or answer.audioMediaIds)) or
             (answer.kind == "poll" and answer.pollOptionId is not None))
 
 answerers = {}

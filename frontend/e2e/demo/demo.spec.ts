@@ -122,6 +122,23 @@ test("the sample editions show their photos, served from the site", async ({ pag
   }
 });
 
+test("a published answer's voice clip renders and plays", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+  const answer = page.locator("article", { hasText: "ridge walk" });
+
+  const playButton = answer.getByRole("button", { name: "Play voice clip" });
+  await playButton.scrollIntoViewIfNeeded();
+  await expect(playButton).toBeVisible();
+  await expect(answer.getByText("The last few minutes of light")).toBeVisible();
+
+  await playButton.click();
+  await expect(answer.getByRole("button", { name: "Pause voice clip" })).toBeVisible();
+});
+
 test("an image uploaded to a comment shows the picture that was picked", async ({ page }) => {
   await page.goto("/demo");
   await page

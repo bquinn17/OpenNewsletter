@@ -47,6 +47,7 @@ function draft(overrides: Partial<NonNullable<OpenQuestion["myResponse"]>> = {})
     responseId: "r1",
     status: "draft" as const,
     imageMediaIds: [],
+    audioMediaIds: [],
     updatedAt: "2026-06-01T00:00:00Z",
     publishedAt: null,
     ...overrides,
@@ -69,6 +70,12 @@ describe("isQuestionAnswered", () => {
   it("is true for a text response with an image and no body", () => {
     expect(
       isQuestionAnswered(textQuestion("q1", 0, draft({ body: "", imageMediaIds: ["img1"] }))),
+    ).toBe(true);
+  });
+
+  it("is true for a text response with a voice clip and no body", () => {
+    expect(
+      isQuestionAnswered(textQuestion("q1", 0, draft({ body: "", audioMediaIds: ["aud1"] }))),
     ).toBe(true);
   });
 

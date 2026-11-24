@@ -14,8 +14,8 @@ use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem, Update};
 use domain::{
-    Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId, Timestamp,
-    UserId,
+    AudioId, Comment, CommentId, CycleId, GroupId, ImageId, QuestionId, Reaction, ResponseId,
+    Timestamp, UserId,
 };
 use serde_dynamo::{from_item, to_item};
 use shared::config::COMMENT_WRITE_ATTEMPTS;
@@ -196,17 +196,21 @@ pub struct NewComment<'a> {
     pub author_user_id: &'a UserId,
     pub body: &'a str,
     pub image_media_id: Option<&'a ImageId>,
+    /// At most one voice clip (`docs/design/media.md` §12).
+    pub audio_media_id: Option<&'a AudioId>,
     pub created_at: Timestamp,
 }
 
 /// `POST .../comments` (§8.2) — puts the comment row, bumps the author's
-/// `comments_written` (§2.17, §4 #9) and, if an image is attached, claims it,
-/// all in the same `TransactWriteItems` (the image claim decided M10). Only the
-/// image claim carries a condition, so `RepoError::TransactionCancelled` means
-/// the image lost a race to another comment — the caller maps that to 422 on
-/// `imageMediaId`. A `TransactionConflict` with a concurrent writer (most
-/// likely another write to the author's `MemberStats` row) applied nothing,
-/// so it is retried here, up to `COMMENT_WRITE_ATTEMPTS` attempts in all.
+/// `comments_written` (§2.17, §4 #9) and, if an image and/or voice clip are
+/// attached, claims each, all in the same `TransactWriteItems` (the image
+/// claim decided M10; the clip claim mirrors it). Only the attachment claims
+/// carry a condition, so `RepoError::TransactionCancelled` means one of them
+/// lost a race to another comment — the caller maps that to 422 on
+/// `imageMediaId`/`audioMediaId`. A `TransactionConflict` with a concurrent
+/// writer (most likely another write to the author's `MemberStats` row)
+/// applied nothing, so it is retried here, up to `COMMENT_WRITE_ATTEMPTS`
+/// attempts in all.
 pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment, RepoError> {
     let comment = Comment {
         comment_id: new.comment_id.clone(),
@@ -217,6 +221,7 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
         author_user_id: new.author_user_id.clone(),
         body: new.body.to_owned(),
         image_media_id: new.image_media_id.cloned(),
+        audio_media_id: new.audio_media_id.cloned(),
         created_at: new.created_at,
         edited_at: None,
         deleted_at: None,
@@ -265,6 +270,21 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
         )?;
         items.push(TransactWriteItem::builder().update(attach).build());
     }
+    if let Some(audio_id) = new.audio_media_id {
+        let attach = media::attach_audio_to_comment_update(
+            repo,
+            new.group_id,
+            new.cycle_id,
+            audio_id,
+            new.comment_id,
+        )?;
+        items.push(TransactWriteItem::builder().update(attach).build());
+    }
+    // Items: the comment put and the stats bump (no conditions, positions 0-1),
+    // then the image claim and/or the audio claim, whichever are present, in
+    // that order.
+    let has_image = new.image_media_id.is_some();
+    let has_audio = new.audio_media_id.is_some();
 
     for attempt in 1..=COMMENT_WRITE_ATTEMPTS {
         let sent = repo
@@ -276,18 +296,45 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
         let Err(err) = sent else {
             return Ok(comment);
         };
-        // Items: the comment put and the stats bump (no conditions), then the
-        // image claim when there is one.
-        let outcome = error::classify_transact_write_error(
-            err,
-            [
-                CommentTxError::Unexpected,
-                CommentTxError::Unexpected,
-                CommentTxError::ImageLost,
-            ],
-            CommentTxError::Conflict,
-            CommentTxError::Repo,
-        );
+        let outcome = match (has_image, has_audio) {
+            (false, false) => error::classify_transact_write_error(
+                err,
+                [CommentTxError::Unexpected, CommentTxError::Unexpected],
+                CommentTxError::Conflict,
+                CommentTxError::Repo,
+            ),
+            (true, false) => error::classify_transact_write_error(
+                err,
+                [
+                    CommentTxError::Unexpected,
+                    CommentTxError::Unexpected,
+                    CommentTxError::ImageLost,
+                ],
+                CommentTxError::Conflict,
+                CommentTxError::Repo,
+            ),
+            (false, true) => error::classify_transact_write_error(
+                err,
+                [
+                    CommentTxError::Unexpected,
+                    CommentTxError::Unexpected,
+                    CommentTxError::AudioLost,
+                ],
+                CommentTxError::Conflict,
+                CommentTxError::Repo,
+            ),
+            (true, true) => error::classify_transact_write_error(
+                err,
+                [
+                    CommentTxError::Unexpected,
+                    CommentTxError::Unexpected,
+                    CommentTxError::ImageLost,
+                    CommentTxError::AudioLost,
+                ],
+                CommentTxError::Conflict,
+                CommentTxError::Repo,
+            ),
+        };
         match outcome {
             CommentTxError::Conflict if attempt < COMMENT_WRITE_ATTEMPTS => {}
             CommentTxError::Conflict => {
@@ -297,6 +344,9 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
             }
             CommentTxError::ImageLost => {
                 return Err(RepoError::TransactionCancelled("image claim lost".into()))
+            }
+            CommentTxError::AudioLost => {
+                return Err(RepoError::TransactionCancelled("audio claim lost".into()))
             }
             CommentTxError::Unexpected => {
                 return Err(RepoError::Dynamo(
@@ -312,6 +362,7 @@ pub async fn create_comment(repo: &Repo, new: &NewComment<'_>) -> Result<Comment
 /// [`create_comment`]'s reading of its transaction's cancellation reasons.
 enum CommentTxError {
     ImageLost,
+    AudioLost,
     Conflict,
     /// A condition failed on an item that has none; can't happen.
     Unexpected,
@@ -367,6 +418,20 @@ fn image_unchanged_condition(expected: Option<&ImageId>) -> (&'static str, Attri
     }
 }
 
+/// Mirrors [`image_unchanged_condition`] for `audio_media_id`.
+fn audio_unchanged_condition(expected: Option<&AudioId>) -> (&'static str, AttributeValue) {
+    match expected {
+        Some(id) => (
+            "audio_media_id = :expected_audio",
+            AttributeValue::S(id.to_string()),
+        ),
+        None => (
+            "(attribute_not_exists(audio_media_id) OR audio_media_id = :expected_audio)",
+            AttributeValue::Null(true),
+        ),
+    }
+}
+
 /// `PATCH .../comments/{commentId}` (§8.3). `body` absent leaves it
 /// unchanged. `current_image_id` is the image the handler read on the
 /// comment; the write only applies if that's still the case.
@@ -383,10 +448,14 @@ pub async fn update_comment(
     loc: &CommentLocation<'_>,
     body: Option<&str>,
     set_image_media_id: Option<Option<&ImageId>>,
+    set_audio_media_id: Option<Option<&AudioId>>,
     edited_at: Timestamp,
     current_image_id: Option<&ImageId>,
     detach_image_id: Option<&ImageId>,
     attach_image_id: Option<&ImageId>,
+    current_audio_id: Option<&AudioId>,
+    detach_audio_id: Option<&AudioId>,
+    attach_audio_id: Option<&AudioId>,
 ) -> Result<(), RepoError> {
     let mut set_clauses = vec!["edited_at = :edited_at".to_owned()];
     let mut remove_clauses: Vec<String> = Vec::new();
@@ -408,6 +477,17 @@ pub async fn update_comment(
         Some(None) => remove_clauses.push("image_media_id".to_owned()),
         None => {}
     }
+    match set_audio_media_id {
+        Some(Some(audio_id)) => {
+            set_clauses.push("audio_media_id = :audio_media_id".to_owned());
+            builder = builder.expression_attribute_values(
+                ":audio_media_id",
+                AttributeValue::S(audio_id.to_string()),
+            );
+        }
+        Some(None) => remove_clauses.push("audio_media_id".to_owned()),
+        None => {}
+    }
 
     let mut expression = format!("SET {}", set_clauses.join(", "));
     if !remove_clauses.is_empty() {
@@ -417,15 +497,17 @@ pub async fn update_comment(
     // after it would write a body back into the `[deleted]` row. `deleted_at`
     // is stored as an explicit NULL by `to_item`, hence both forms.
     let (image_condition, expected_image) = image_unchanged_condition(current_image_id);
+    let (audio_condition, expected_audio) = audio_unchanged_condition(current_audio_id);
     let comment_update = builder
         .update_expression(expression)
         .condition_expression(format!(
             "attribute_exists(#pk) AND (attribute_not_exists(deleted_at) OR deleted_at = :null) \
-             AND {image_condition}"
+             AND {image_condition} AND {audio_condition}"
         ))
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":null", AttributeValue::Null(true))
         .expression_attribute_values(":expected_image", expected_image)
+        .expression_attribute_values(":expected_audio", expected_audio)
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
@@ -441,6 +523,21 @@ pub async fn update_comment(
             loc.group_id,
             loc.cycle_id,
             image_id,
+            loc.comment_id,
+        )?;
+        items.push(TransactWriteItem::builder().update(attach).build());
+    }
+    if let Some(audio_id) = detach_audio_id {
+        let detach =
+            media::detach_audio_from_comment_update(repo, loc.group_id, loc.cycle_id, audio_id)?;
+        items.push(TransactWriteItem::builder().update(detach).build());
+    }
+    if let Some(audio_id) = attach_audio_id {
+        let attach = media::attach_audio_to_comment_update(
+            repo,
+            loc.group_id,
+            loc.cycle_id,
+            audio_id,
             loc.comment_id,
         )?;
         items.push(TransactWriteItem::builder().update(attach).build());
@@ -465,19 +562,24 @@ pub async fn soft_delete_comment(
     author_user_id: &UserId,
     deleted_at: Timestamp,
     image_id: Option<&ImageId>,
+    audio_id: Option<&AudioId>,
 ) -> Result<(), RepoError> {
     let (image_condition, expected_image) = image_unchanged_condition(image_id);
+    let (audio_condition, expected_audio) = audio_unchanged_condition(audio_id);
     let comment_update = comment_update_builder(repo, loc)
-        .update_expression("SET deleted_at = :t, body = :empty REMOVE image_media_id")
+        .update_expression(
+            "SET deleted_at = :t, body = :empty REMOVE image_media_id, audio_media_id",
+        )
         .condition_expression(format!(
             "attribute_exists(#pk) AND (attribute_not_exists(deleted_at) OR deleted_at = :null) \
-             AND {image_condition}"
+             AND {image_condition} AND {audio_condition}"
         ))
         .expression_attribute_names("#pk", attr::PK)
         .expression_attribute_values(":t", AttributeValue::S(deleted_at.to_string()))
         .expression_attribute_values(":empty", AttributeValue::S("".into()))
         .expression_attribute_values(":null", AttributeValue::Null(true))
         .expression_attribute_values(":expected_image", expected_image)
+        .expression_attribute_values(":expected_audio", expected_audio)
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
     let bump =
@@ -490,6 +592,11 @@ pub async fn soft_delete_comment(
     if let Some(image_id) = image_id {
         let detach =
             media::detach_image_from_comment_update(repo, loc.group_id, loc.cycle_id, image_id)?;
+        items.push(TransactWriteItem::builder().update(detach).build());
+    }
+    if let Some(audio_id) = audio_id {
+        let detach =
+            media::detach_audio_from_comment_update(repo, loc.group_id, loc.cycle_id, audio_id)?;
         items.push(TransactWriteItem::builder().update(detach).build());
     }
 

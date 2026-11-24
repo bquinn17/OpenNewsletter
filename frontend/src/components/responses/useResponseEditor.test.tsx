@@ -33,6 +33,7 @@ function baseResponse() {
     status: "draft" as const,
     body: "abc",
     imageMediaIds: [],
+    audioMediaIds: [],
     updatedAt: "2026-06-01T00:00:00Z",
     publishedAt: null,
   };
@@ -88,6 +89,7 @@ describe("useResponseEditor", () => {
       kind: "text",
       body: "abc",
       imageMediaIds: [],
+      audioMediaIds: [],
       publish: false,
     });
   });
@@ -237,6 +239,7 @@ describe("useResponseEditor", () => {
       status: "draft" as const,
       body: "Look ![](image:img1)\n",
       imageMediaIds: ["img1"],
+      audioMediaIds: [],
       updatedAt: "2026-06-01T00:00:00Z",
       publishedAt: null,
     };
@@ -280,6 +283,7 @@ describe("useResponseEditor", () => {
         kind: "text",
         body: "Look ",
         imageMediaIds: [],
+        audioMediaIds: [],
         publish: false,
       });
       expect(result.current.imageMediaIds).toEqual([]);
@@ -423,6 +427,7 @@ describe("useResponseEditor", () => {
             status: "draft",
             body: "server body",
             imageMediaIds: [],
+            audioMediaIds: [],
             updatedAt: "2026-06-01T00:00:00Z",
             publishedAt: null,
           },

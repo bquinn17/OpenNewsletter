@@ -151,6 +151,7 @@ class ResponseFact:
     body: str | None = None
     poll_option_id: str | None = None
     image_media_ids: tuple[str, ...] = field(default_factory=tuple)
+    audio_media_ids: tuple[str, ...] = field(default_factory=tuple)
     reactions: tuple[ReactionFact, ...] = field(default_factory=tuple)
     comments: tuple[CommentFact, ...] = field(default_factory=tuple)
     # Whether the Response row, as currently stored, already has a
@@ -206,11 +207,13 @@ def published_text_responses(responses: Iterable[ResponseFact]) -> list[Response
 
 def response_is_non_empty(response: ResponseFact) -> bool:
     """Mirrors `domain::Response::is_non_empty` (`backend/crates/domain/src/entities.rs`):
-    a text answer with a non-whitespace body or at least one image, or a poll
-    answer with a pick."""
+    a text answer with a non-whitespace body, at least one image or at least
+    one voice clip, or a poll answer with a pick."""
     if response.kind == "text":
-        return bool(response.body and response.body.strip()) or bool(
-            response.image_media_ids
+        return (
+            bool(response.body and response.body.strip())
+            or bool(response.image_media_ids)
+            or bool(response.audio_media_ids)
         )
     return response.poll_option_id is not None
 
@@ -605,6 +608,7 @@ def fetch_group_cycles(
                         body=raw.get("body"),
                         poll_option_id=raw.get("poll_option_id"),
                         image_media_ids=tuple(raw.get("image_media_ids") or ()),
+                        audio_media_ids=tuple(raw.get("audio_media_ids") or ()),
                         reactions=tuple(reactions),
                         comments=tuple(comments),
                         had_reaction_count_attr="reaction_count" in raw,

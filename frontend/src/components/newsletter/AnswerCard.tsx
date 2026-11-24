@@ -7,6 +7,7 @@ import { Avatar } from "../ui/Avatar";
 import { CommentList } from "./CommentList";
 import { ImageGallery } from "./ImageGallery";
 import { ReactionBar } from "./ReactionBar";
+import { VoiceClip } from "./VoiceClip";
 
 type Props = {
   answer: components["schemas"]["PublishedAnswerResponse"];
@@ -46,6 +47,19 @@ export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: P
           giphyVariant="answer"
         />
       )}
+
+      {answer.audio.map((clip) => (
+        <VoiceClip
+          key={clip.audioId}
+          audioId={clip.audioId}
+          url={clip.url}
+          durationMs={clip.durationMs}
+          peaks={clip.peaks}
+          caption={clip.caption}
+          authorName={answer.displayName}
+          colorClassName={member ? avatarColorClass(member.avatarColor) : undefined}
+        />
+      ))}
 
       <ImageGallery images={answer.images} body={answer.body ?? ""} />
 

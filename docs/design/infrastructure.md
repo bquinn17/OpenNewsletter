@@ -13,7 +13,7 @@ Region: **us-east-1**. Account: single personal AWS account for both `dev` and `
 | `DataStack` | DynamoDB table + GSIs | — |
 | `AuthStack` | Cognito user pool, IdPs, hosted UI domain | — |
 | `MediaPersistentStack` | S3 buckets (originals + processed), read by presigned URL (§5.2) | `DataStack` |
-| `MediaPipelineStack` | `lambda-image-process` and its S3 event subscription | `DataStack`, `MediaPersistentStack` |
+| `MediaPipelineStack` | `lambda-image-process`, `lambda-audio-process` (with its ffmpeg layer) and their S3 event subscriptions | `DataStack`, `MediaPersistentStack` |
 | `ApiStack` | HTTP API, request Lambdas, routes, JWT authorizer | `DataStack`, `AuthStack`, `MediaPersistentStack`, `NotificationsStack` |
 | `NotificationsStack` | EventBridge schedules, tick Lambdas, VAPID secret | `DataStack` |
 | `FrontendStack` | ACM cert (`us-east-1`) + Route53 records (if Route53) | — |
@@ -153,7 +153,7 @@ Two app clients on the same user pool:
 The media resources are split across two stacks so that `dev` can recreate the image-processing pipeline freely without touching the buckets that hold data. See [`environments.md` §3](../development/environments.md#3-stack-lifetime-tiers) for the rationale.
 
 - **`MediaPersistentStack`** — §5.1, §5.2: the three S3 buckets. Long-lived in dev because the buckets hold user uploads.
-- **`MediaPipelineStack`** — §5.3: `lambda-image-process` and its S3 event subscription. Volatile; recreated freely.
+- **`MediaPipelineStack`** — §5.3, §5.5: `lambda-image-process`, `lambda-audio-process` and their S3 event subscriptions. Volatile; recreated freely.
 
 In `prod` the split is structural-only; both stacks deploy together and behave identically to a combined stack.
 
@@ -166,17 +166,18 @@ Three buckets, all private (Block Public Access fully on):
   - Lifecycle:
     - Abort incomplete multipart uploads after 1 day
     - Expire objects under prefix `uploads/` after 7 days — a safety net for an original `lambda-image-process` should already have deleted on success, on decode failure, or on oversize (§5.3; [`media.md` §5.1](media.md#51-trigger-configuration)). No Intelligent-Tiering transition: originals don't live long enough to tier.
+    - Expire objects under prefix `audio-uploads/` after 7 days, the same safety net for voice-clip originals (§5.5).
   - CORS: allow `PUT` and `POST` from `https://{config.domain}` and `http://localhost:5173` in dev. Allowed headers: `*`, because the presign decides which headers are signed (e.g. `x-amz-checksum-sha256`, [`media.md` §3.2](media.md#32-presign)). Expose: `ETag`.
-  - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes `lambda-image-process`.
+  - Notifications: `s3:ObjectCreated:*` for prefix `uploads/` → invokes `lambda-image-process`; for prefix `audio-uploads/` → invokes `lambda-audio-process` (§5.5). Both are on one `BucketNotifications` custom resource, because each such resource writes the bucket's whole notification configuration, so two would race.
   - Encryption: SSE-S3.
 
 - **`opennewsletter-avatars-originals-{env}-{accountId}`** — avatars cross group boundaries, so they don't share the media bucket's group-scoped key layout ([`media.md` §11](media.md#11-avatars-separate-pipeline)).
   - Same CORS, lifecycle (including the 7-day `uploads/` expiry), and encryption settings as media originals; no versioning.
   - Notification: `s3:ObjectCreated:*` for prefix `uploads/` → invokes the same `lambda-image-process` (wired in `MediaPipelineStack`).
 
-- **`opennewsletter-media-processed-{env}-{accountId}`** — one bucket for both pipelines: response images under `img/...` and avatars under `avatar/{avatarId}/display.webp`. (One bucket rather than one per pipeline: their processed objects need the same lifecycle and CORS rules, and the frontend gets a single media origin.)
+- **`opennewsletter-media-processed-{env}-{accountId}`** — one bucket for every pipeline: response images under `img/...`, avatars under `avatar/{avatarId}/display.webp` and voice clips under `aud/.../clip.webm`. (One bucket rather than one per pipeline: their processed objects need the same lifecycle and CORS rules, and the frontend gets a single media origin.)
   - No versioning. Lifecycle: abort incomplete multipart uploads after 1 day only. No Intelligent-Tiering transition: the WebP display/thumb variants are mostly under the 128 KB floor below which Intelligent-Tiering never moves an object to a cheaper tier, so each per-object transition fee would buy nothing.
-  - Private; nothing reads it anonymously (§5.2). CORS: allow `GET, HEAD` from `https://{config.domain}` and `http://localhost:5173` in dev, so the browser can load a presigned URL as an `<img crossorigin="anonymous">` ([`frontend.md`](frontend.md)).
+  - Private; nothing reads it anonymously (§5.2). CORS: allow `GET, HEAD` from `https://{config.domain}` and `http://localhost:5173` in dev, so the browser can load a presigned URL as an `<img crossorigin="anonymous">` or `<audio crossorigin="anonymous">` ([`frontend.md`](frontend.md)). Allowed headers: `Range`, because Safari always range-requests audio. Exposed: `Content-Range`, `Accept-Ranges`, `Content-Length`, so the player and the service worker can read partial responses.
   - Read access is per-Lambda IAM, not a bucket policy: each handler that signs a GET URL ([`media.md` §4.3](media.md#43-the-media-urls-crate)) gets `s3:GetObject` scoped to the one prefix it serves — §6.2 below.
 
 ### 5.2 Image serving
@@ -211,6 +212,18 @@ See [`decisions.md`](../decisions.md#presigned-s3-media) for the owner decision 
 
 Nothing media-related lives in the app secret (§7.1, §12): presigned URLs are signed with each handler's own Lambda execution-role credentials ([`media.md` §4.3](media.md#43-the-media-urls-crate)), not a stored key.
 
+### 5.5 `lambda-audio-process` (Rust, `MediaPipelineStack`)
+
+- **Trigger**: S3 ObjectCreated, prefix `audio-uploads/`, on the media originals bucket only. Image originals are under `uploads/`, so neither Lambda sees the other's objects.
+- **Memory** 1024 MB, **timeout** 60 s, arm64, `provided.al2023`.
+- **ffmpeg layer**: a `LayerVersion` built from `backend/target/ffmpeg-layer`, which holds only `bin/ffmpeg`, so the binary lands at `/opt/bin/ffmpeg`. `scripts/fetch_ffmpeg.sh` downloads John Van Sickle's static arm64 build, pinned by version and SHA-256, and caches the download in `backend/target/ffmpeg-cache`, outside the layer ([decision](../decisions.md#audio-via-ffmpeg)). `make build-lambdas` and the deploy workflows run it. About 50 MB unzipped. Without the binary, synth still works (the function gets no layer, as a missing Lambda binary gets a stub), and `scripts/check_lambda_binaries.sh` refuses to deploy.
+- **Environment**: `TABLE_NAME`, `MEDIA_ORIGINALS_BUCKET`, `PROCESSED_BUCKET`, `FFMPEG_PATH=/opt/bin/ffmpeg`.
+- **IAM**:
+  - `s3:GetObject` + `s3:DeleteObject` on the media originals bucket, prefix `audio-uploads/*`
+  - `s3:PutObject` + `s3:DeleteObject` on the processed bucket, prefix `aud/*` (the delete removes a clip written for a row deleted mid-processing)
+  - `dynamodb:GetItem` + `dynamodb:UpdateItem` on the table
+- Logic detailed in [`media.md`](media.md) (voice clips).
+
 ---
 
 ## 6. `ApiStack`
@@ -240,16 +253,16 @@ The route column below is a **summary only** — [`api.md` §13](api.md#13-per-r
 |---|---|---|---|---|
 | `lambda-invites` | invite create / list / revoke / redeem; also compiles the `PreSignUp` trigger binary | RW | — | — |
 | `lambda-groups` | `GET /config`, `GET /healthz`, `GET/PATCH /me`, group get/list/patch, member kick + role change | RW | `s3:DeleteObject` on avatar originals + processed (old-avatar cleanup on `PATCH /me`, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefix `avatar/*` (signs `avatarUrl` on `UserResponse`/`MemberResponse` — [`media.md` §4.3](media.md#43-the-media-urls-crate)) | — |
-| `lambda-newsletters` | newsletter list + detail | R | `s3:GetObject` on processed bucket, prefixes `img/*` and `avatar/*` (signs `PublishedImageResponse` and `askedBy.avatarUrl`) | — |
+| `lambda-newsletters` | newsletter list + detail | R | `s3:GetObject` on processed bucket, prefixes `img/*`, `aud/*` and `avatar/*` (signs `PublishedImageResponse`, `PublishedAudioResponse` and `askedBy.avatarUrl`) | — |
 | `lambda-questions` | candidate list/create + votes, `DELETE /admin/groups/{g}/candidate-questions/{q}` (admin moderation only) | RW | `s3:GetObject` on processed bucket, prefix `avatar/*` (signs `askedBy.avatarUrl`) | — |
 | `lambda-responses` | my-response put (drafts, publish, poll votes) | RW | — | — |
-| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | `s3:DeleteObject` on media originals + processed (comment-image release on soft-delete/replace, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefix `img/*` (signs `CommentImageResponse`) | — |
-| `lambda-media` | uploads presign/status/delete, avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /avatars`, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefixes `img/*` and `avatar/*` (signs `ImageMediaResponse`/`AvatarMediaResponse`) | — |
+| `lambda-engagement` | comments (CRUD) + reactions (put/delete/get) | RW | `s3:DeleteObject` on media originals (`uploads/*`, `audio-uploads/*`) + processed (`img/*`, `aud/*`) (comment image and clip release on soft-delete/replace, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefixes `img/*` and `aud/*` (signs `CommentImageResponse` and the comment's `PublishedAudioResponse`) | — |
+| `lambda-media` | uploads presign/status/delete, audio uploads presign/status/caption/delete (`/audio-uploads*`), avatar presign/status/delete (`/avatars*`) | RW | PUT presign on media + avatar originals; `s3:DeleteObject` on media + avatar originals and processed (`DELETE /uploads`, `DELETE /audio-uploads`, `DELETE /avatars`, [D8](../decisions.md#d8)); `s3:GetObject` on processed bucket, prefixes `img/*`, `aud/*` and `avatar/*` (signs `ImageMediaResponse`/`AudioMediaResponse`/`AvatarMediaResponse`) | — |
 | `lambda-push` | subscribe / unsubscribe / list / test / `PUT /push/preferences/{g}`; internal fan-out handlers direct-invoked by the tick Lambdas ([`notifications.md` §6](notifications.md#6-cycle-open-fan-out)) | RW | — | Secrets:GetSecretValue on the app secret (VAPID keys) — the only Lambda that reads the app secret |
 
 **Real media deletion** ([D8](../decisions.md#d8); [`api.md` §9.4](api.md#94-delete-uploadsimageid)/§9.7). A shared helper — the `media-delete` library crate (`backend/crates/media-delete`; not `shared`, which can't depend on `persistence` and so can't delete the row) — deletes an image's S3 objects (original, then both processed variants), then deletes the `ImageMedia`/`AvatarMedia` row. Once an object is gone, its presigned URLs 403 immediately ([`media.md` §8.0](media.md#80-explicit-deletion)). The IAM grants above (`lambda-media`, `lambda-engagement`, `lambda-groups`) are scoped to the bucket prefixes each Lambda actually deletes from.
 
-**Media-URL signing** ([`media.md` §4.3](media.md#43-the-media-urls-crate)). A second shared library crate, `backend/crates/media-urls`, wraps the presigning call every handler listed above uses to turn a stored S3 key into a GET URL, after that handler's usual membership check. Each Lambda's `s3:GetObject` grant is scoped to the one or two prefixes (`img/*`, `avatar/*`) its routes actually return URLs for — no Lambda gets a blanket grant across the whole processed bucket.
+**Media-URL signing** ([`media.md` §4.3](media.md#43-the-media-urls-crate)). A second shared library crate, `backend/crates/media-urls`, wraps the presigning call every handler listed above uses to turn a stored S3 key into a GET URL, after that handler's usual membership check. Each Lambda's `s3:GetObject` grant is scoped to the prefixes (`img/*`, `aud/*`, `avatar/*`) its routes actually return URLs for — no Lambda gets a blanket grant across the whole processed bucket.
 
 The dev-only fast-forward routes (`POST /admin/dev/tick/{cycle|notify}`, [`api.md` §11a](api.md#11a-dev-only-endpoints)) integrate the tick Lambdas from `NotificationsStack` into this API when `env == dev`.
 
@@ -400,7 +413,7 @@ DynamoDB IAM patterns:
 - Write Lambdas: add `PutItem`, `UpdateItem`, `DeleteItem`, `TransactWriteItems`.
 - Tick Lambdas need `Query` on GSI2 ([`data-model.md` §9](data-model.md#9-why-gsi2-status--time)). No `Scan` anywhere.
 
-S3 IAM patterns (§5.2): each media-signing Lambda gets `s3:GetObject` on the processed bucket scoped to exactly the prefix(es) its routes return URLs for (`img/*`, `avatar/*`, or both — §6.2's table); each delete-capable Lambda additionally gets `s3:DeleteObject` on the specific originals/processed prefixes it deletes from. No Lambda gets a bucket-wide or account-wide S3 grant.
+S3 IAM patterns (§5.2): each media-signing Lambda gets `s3:GetObject` on the processed bucket scoped to exactly the prefixes its routes return URLs for (`img/*`, `aud/*`, `avatar/*` — §6.2's table); each delete-capable Lambda additionally gets `s3:DeleteObject` on the specific originals/processed prefixes it deletes from. No Lambda gets a bucket-wide or account-wide S3 grant.
 
 ---
 

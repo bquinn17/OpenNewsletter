@@ -1,4 +1,4 @@
-import { keepMockUpload } from "../api/mockUploads";
+import { keepMockAudioUpload, keepMockUpload } from "../api/mockUploads";
 import { isMockMode } from "../demo";
 
 export type UploadResult = { status: number };
@@ -19,7 +19,9 @@ async function mockUpload(
   file: File,
   onProgress?: (progress: number) => void,
 ): Promise<UploadResult> {
-  const kept = keepMockUpload(url, file);
+  const kept = file.type.startsWith("audio/")
+    ? keepMockAudioUpload(url, file)
+    : keepMockUpload(url, file);
   const durationMs = Math.min(
     Math.max((file.size / MOCK_UPLOAD_BYTES_PER_SECOND) * 1000, MOCK_UPLOAD_MIN_MS),
     MOCK_UPLOAD_MAX_MS,

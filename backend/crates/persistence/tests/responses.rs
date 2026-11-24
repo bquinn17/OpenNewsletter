@@ -45,6 +45,7 @@ fn text_save<'a>(
         body: Some(body),
         poll_option_id: None,
         image_media_ids: images,
+        audio_media_ids: &[],
         publish,
     }
 }
@@ -446,6 +447,7 @@ async fn save_response_stores_a_poll_vote() {
         body: None,
         poll_option_id: Some(&option_id),
         image_media_ids: &[],
+        audio_media_ids: &[],
         publish: true,
     };
     responses::save_response(&repo, &save, now).await.unwrap();

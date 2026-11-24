@@ -13,9 +13,12 @@ import { registerRoute } from "workbox-routing";
 import { CacheFirst } from "workbox-strategies";
 import { CacheableResponsePlugin } from "workbox-cacheable-response";
 import { ExpirationPlugin } from "workbox-expiration";
+import { RangeRequestsPlugin } from "workbox-range-requests";
 import {
   activatePromptly,
   buildNotificationOptions,
+  isCacheableMediaStatus,
+  isMediaPath,
   mediaCacheKey,
   parsePushPayload,
   resolveNotificationUrl,
@@ -46,38 +49,50 @@ const MEDIA_ORIGIN: string | null = (() => {
 })();
 
 const DAY_SECONDS = 24 * 60 * 60;
+// Derived from `isCacheableMediaStatus` (the unit-tested rule) rather than the literal `[200]`
+// `CacheableResponsePlugin` wants, so the two never drift (`docs/design/frontend.md` §19.3).
+const CACHEABLE_MEDIA_STATUSES = [200, 206].filter(isCacheableMediaStatus);
 
-// Processed media only (`/img/*`, `/avatar/*`) — a presigned S3 GET URL has the same path
+// Processed media only (`/img/*`, `/avatar/*`, `/aud/*`) — a presigned S3 GET URL has the same path
 // regardless of its re-signed query string, so caching by path is effective (`docs/design/media.md`
-// §4.4). `MediaImage` and `Avatar` load these in CORS mode (`crossorigin="anonymous"`), so
-// responses aren't opaque and `CacheableResponsePlugin` stores only status 200s: an expired
-// presigned URL's 403 is never pinned. Keys drop the whole query string, or a fresh signature for
-// the same object would never hit.
-function mediaCacheFirst(cacheName: string, maxAgeSeconds: number): CacheFirst {
+// §4.4). `MediaImage`/`Avatar`/`VoiceClip` load these in CORS mode (`crossorigin="anonymous"`), so
+// responses aren't opaque and `CacheableResponsePlugin` stores only status 200s (`isCacheableMediaStatus`):
+// an expired presigned URL's 403, or a `206` partial, is never pinned. Keys drop the whole query
+// string, or a fresh signature for the same object would never hit.
+function mediaCacheFirst(
+  cacheName: string,
+  maxAgeSeconds: number,
+  rangeRequests = false,
+): CacheFirst {
   return new CacheFirst({
     cacheName,
     plugins: [
       { cacheKeyWillBeUsed: async ({ request }) => mediaCacheKey(request.url) },
-      new CacheableResponsePlugin({ statuses: [200] }),
+      new CacheableResponsePlugin({ statuses: CACHEABLE_MEDIA_STATUSES }),
       new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds }),
+      // `RangeRequestsPlugin` serves a `Range` request (Safari always sends one for `<audio>`)
+      // from the one full `200` this cache ever stores (`docs/design/frontend.md` §19.3).
+      ...(rangeRequests ? [new RangeRequestsPlugin()] : []),
     ],
   });
 }
 
-function isMediaPath(url: URL, prefix: "/img/" | "/avatar/"): boolean {
-  return MEDIA_ORIGIN !== null && url.origin === MEDIA_ORIGIN && url.pathname.startsWith(prefix);
-}
-
 registerRoute(
-  ({ url }) => isMediaPath(url, "/img/"),
+  ({ url }) => isMediaPath(url, MEDIA_ORIGIN, "/img/"),
   mediaCacheFirst("media-images", 30 * DAY_SECONDS),
 );
 // Longer for avatars (`docs/design/media.md` §11.3): a new avatar gets a new `avatarId`, so a new
 // path, and a cached path's bytes never change. Mirrors `AVATAR_CACHE_MAX_AGE_SECONDS` in
 // `backend/crates/shared/src/config.rs`.
 registerRoute(
-  ({ url }) => isMediaPath(url, "/avatar/"),
+  ({ url }) => isMediaPath(url, MEDIA_ORIGIN, "/avatar/"),
   mediaCacheFirst("media-avatars", 90 * DAY_SECONDS),
+);
+// Voice clips (`docs/design/frontend.md` §19.3, `docs/design/media.md` §12.4): 30-day expiry, same
+// as images — a `clip.webm`'s own id (not its content) is stable, same as `imageId`.
+registerRoute(
+  ({ url }) => isMediaPath(url, MEDIA_ORIGIN, "/aud/"),
+  mediaCacheFirst("media-audio", 30 * DAY_SECONDS, true),
 );
 
 self.addEventListener("push", (event: PushEvent) => {

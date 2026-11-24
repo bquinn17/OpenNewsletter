@@ -59,7 +59,7 @@ Every test binary shares the one DynamoDB Local, so tests run at default paralle
 ## 3. CDK tests
 
 `infra/tests/` uses `aws_cdk.assertions`; run with `pytest infra/tests/`. Assert:
-- Each handler by `FunctionName` rather than total Lambda counts (CDK adds its own helper functions). `PreSignUp` lives in `AuthStack`, the tick Lambdas in `NotificationsStack`, `lambda-image-process` in `MediaPipelineStack`.
+- Each handler by `FunctionName` rather than total Lambda counts (CDK adds its own helper functions). `PreSignUp` lives in `AuthStack`, the tick Lambdas in `NotificationsStack`, `lambda-image-process` and `lambda-audio-process` in `MediaPipelineStack`.
 - Cognito has two app clients in `dev` (`frontend` + `admin-bootstrap`) and one in `prod`.
 - Each Lambda role's IAM policy matches the documented least-privilege scope ([`infrastructure.md` §10](../design/infrastructure.md#10-iam-least-privilege-summary)).
 - Every API route has the JWT authorizer: there are zero public routes.
@@ -200,7 +200,7 @@ Not enforced in CI, and only partly measured. `frontend-ci.yml` runs `npm run te
 
 ## 10. Fixtures
 
-`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code. Media-URL signing (`media-urls`) needs no fixture key — it presigns with whatever AWS credentials the test/DynamoDB-Local harness already has, the same as any other S3 call. Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
+`lambda-image-process` tests build their sample images (JPEG, PNG, WebP, animated GIF, oversized, corrupt) in code, and `lambda-audio-process` tests write their WAV input in code. The audio tests that run the real ffmpeg skip without it, except under `REQUIRE_FFMPEG=1`, which CI sets after installing ffmpeg. Media-URL signing (`media-urls`) needs no fixture key — it presigns with whatever AWS credentials the test/DynamoDB-Local harness already has, the same as any other S3 call. Frontend sample data lives in the `api/mock*.ts` routes and in each test file.
 
 ---
 

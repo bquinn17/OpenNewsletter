@@ -7,12 +7,12 @@
 //! invocation already finished.
 
 use crate::error::{self, RepoError};
-use crate::keys::{attr, avatar_sk, image_pk, image_sk, user_pk};
+use crate::keys::{attr, audio_pk, audio_sk, avatar_sk, image_pk, image_sk, user_pk};
 use crate::repo::Repo;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput};
 use aws_sdk_dynamodb::types::AttributeValue;
-use domain::{AvatarId, CycleId, GroupId, ImageId, Timestamp, UserId};
+use domain::{AudioId, AvatarId, CycleId, GroupId, ImageId, Timestamp, UserId};
 
 /// Outcome of a conditional status-transition update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +106,93 @@ pub async fn mark_image_failed(
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
+        .update_expression(
+            "SET #s = :failed, error_message = :error_message, processed_at = :processed_at",
+        )
+        .condition_expression("#s = :pending")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
+        .expression_attribute_values(":failed", AttributeValue::S("failed".into()))
+        .expression_attribute_values(":error_message", AttributeValue::S(error_message.into()))
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
+        .send()
+        .await;
+    outcome_from_update(result)
+}
+
+/// Fields for [`mark_audio_ready`] (mirrors [`ImageReady`]).
+#[derive(Debug, Clone)]
+pub struct AudioReady<'a> {
+    pub group_id: &'a GroupId,
+    pub cycle_id: &'a CycleId,
+    pub audio_id: &'a AudioId,
+    pub duration_ms: u64,
+    pub peaks: &'a [u8],
+    pub clip_key: &'a str,
+    pub processed_at: Timestamp,
+}
+
+/// `pending -> ready` for an `AudioMedia` row: records the clip's duration,
+/// waveform peaks and processed-bucket key.
+pub async fn mark_audio_ready(
+    repo: &Repo,
+    ready: &AudioReady<'_>,
+) -> Result<UpdateOutcome, RepoError> {
+    let AudioReady {
+        group_id,
+        cycle_id,
+        audio_id,
+        duration_ms,
+        peaks,
+        clip_key,
+        processed_at,
+    } = ready.clone();
+    let result = repo
+        .client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
+        .update_expression(
+            "SET #s = :ready, duration_ms = :duration_ms, peaks = :peaks, \
+             clip_key = :clip_key, processed_at = :processed_at",
+        )
+        .condition_expression("#s = :pending")
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":pending", AttributeValue::S("pending".into()))
+        .expression_attribute_values(":ready", AttributeValue::S("ready".into()))
+        .expression_attribute_values(":duration_ms", AttributeValue::N(duration_ms.to_string()))
+        .expression_attribute_values(
+            ":peaks",
+            AttributeValue::L(
+                peaks
+                    .iter()
+                    .map(|p| AttributeValue::N(p.to_string()))
+                    .collect(),
+            ),
+        )
+        .expression_attribute_values(":clip_key", AttributeValue::S(clip_key.into()))
+        .expression_attribute_values(":processed_at", AttributeValue::S(processed_at.to_string()))
+        .send()
+        .await;
+    outcome_from_update(result)
+}
+
+/// `pending -> failed` for an `AudioMedia` row.
+pub async fn mark_audio_failed(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+    error_message: &str,
+    processed_at: Timestamp,
+) -> Result<UpdateOutcome, RepoError> {
+    let result = repo
+        .client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
         .update_expression(
             "SET #s = :failed, error_message = :error_message, processed_at = :processed_at",
         )
