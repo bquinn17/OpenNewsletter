@@ -12,7 +12,15 @@ type S = components["schemas"];
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, api: { getConfig: vi.fn(), listNewsletters: vi.fn() } };
+  return {
+    ...actual,
+    api: {
+      getConfig: vi.fn(),
+      listNewsletters: vi.fn(),
+      getGroup: vi.fn(),
+      getLeaderboard: vi.fn(),
+    },
+  };
 });
 
 const signedIn: AuthValue = {
@@ -34,6 +42,34 @@ function config(memberships: S["MembershipSummary"][]): S["ConfigResponse"] {
   };
 }
 
+function member(overrides: Partial<S["MemberResponse"]>): S["MemberResponse"] {
+  return {
+    userId: "u_sam",
+    displayName: "Sam",
+    role: "member",
+    avatarColor: "teal",
+    avatarUrl: null,
+    joinedAt: "2026-01-01T00:00:00Z",
+    editionsAnswered: 0,
+    ...overrides,
+  };
+}
+
+function group(members: S["MemberResponse"][]): S["GroupResponse"] {
+  return {
+    groupId: "g_trail",
+    name: "Trail Crew",
+    timezone: "UTC",
+    gradient: "grape-sky",
+    cycleSettings: { questionsPerCycle: 2, votesPerUserPerCycle: 3, responseWindowDays: 4 },
+    notificationSettings: { offsetsHoursBeforeClose: [48, 24], onCycleOpen: true },
+    memberCount: members.length,
+    memberSoftCap: 50,
+    createdAt: "2026-01-01T00:00:00Z",
+    members,
+  };
+}
+
 const MEMBER: S["MembershipSummary"] = {
   groupId: "g_trail",
   role: "member",
@@ -42,12 +78,12 @@ const MEMBER: S["MembershipSummary"] = {
   gradient: "grape-sky",
 };
 
-function renderHome(auth: AuthValue = signedIn) {
+function renderHome(auth: AuthValue = signedIn, path = "/") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={auth}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <HomePage />
         </MemoryRouter>
       </AuthContext.Provider>
@@ -107,5 +143,53 @@ describe("HomePage", () => {
     expect(
       screen.getByText(/You haven't joined a group yet\. Groups are invite-only/),
     ).toBeInTheDocument();
+  });
+
+  describe("group tabs", () => {
+    it("opens on Editions, and the Members tab lists the group with no admin actions", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.getConfig).mockResolvedValue(config([MEMBER]));
+      vi.mocked(api.listNewsletters).mockResolvedValue({ items: [], nextCursor: null });
+      vi.mocked(api.getGroup).mockResolvedValue(
+        group([
+          member({ userId: "u_sam", displayName: "Sam", editionsAnswered: 3 }),
+          member({ userId: "u_ava", displayName: "Ava", role: "admin" }),
+        ]),
+      );
+
+      renderHome();
+
+      expect(await screen.findByText("No editions yet.")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Editions" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      await user.click(screen.getByRole("tab", { name: "Members" }));
+
+      expect(await screen.findByText("2 members")).toBeInTheDocument();
+      expect(screen.getByText("(you)")).toBeInTheDocument();
+      expect(screen.getByText("3 editions answered")).toBeInTheDocument();
+      expect(screen.getByText("admin")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Options for/ })).not.toBeInTheDocument();
+      expect(screen.queryByText("No editions yet.")).not.toBeInTheDocument();
+    });
+
+    it("opens on the tab named in ?tab=", async () => {
+      vi.mocked(api.getConfig).mockResolvedValue(config([MEMBER]));
+      vi.mocked(api.listNewsletters).mockResolvedValue({ items: [], nextCursor: null });
+      vi.mocked(api.getGroup).mockResolvedValue(group([member({})]));
+      vi.mocked(api.getLeaderboard).mockResolvedValue({ members: [], topAnswers: [] });
+
+      renderHome(signedIn, "/?tab=leaderboard");
+
+      expect(
+        await screen.findByText("Superlatives show up once your group's first edition is out."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Leaderboard" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
   });
 });

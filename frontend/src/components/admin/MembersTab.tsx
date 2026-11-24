@@ -3,12 +3,9 @@ import { useConfig } from "../../api/queries";
 import { useKickMember, usePatchMember } from "../../api/mutations";
 import { ApiError } from "../../api/client";
 import { useToasts } from "../../state/toast";
-import { Avatar } from "../ui/Avatar";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { Pill } from "../ui/Pill";
 import { useDismissableMenu } from "../ui/useDismissableMenu";
-import { avatarColorClass } from "../../utils/avatarColor";
-import { formatRelative } from "../../utils/dates";
+import { MemberSummary } from "../members/MemberSummary";
 import type { components } from "../../types/api";
 
 type S = components["schemas"];
@@ -128,27 +125,7 @@ function MemberRow({
 
   return (
     <div className="flex items-center gap-3 p-4">
-      <Avatar
-        name={member.displayName}
-        url={member.avatarUrl}
-        colorClassName={avatarColorClass(member.avatarColor)}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          {member.displayName}
-          {isMe && <span className="text-[10px] font-normal text-inkmuted">(you)</span>}
-          {member.role === "admin" && (
-            <Pill tone="coral" className="!px-1.5 !py-0.5 !text-[10px]">
-              admin
-            </Pill>
-          )}
-        </div>
-        <div className="text-xs text-inkmuted">
-          {member.editionsAnswered > 0
-            ? `${member.editionsAnswered} edition${member.editionsAnswered === 1 ? "" : "s"} answered`
-            : `joined ${formatRelative(member.joinedAt)} · pending first answer`}
-        </div>
-      </div>
+      <MemberSummary member={member} isMe={isMe} />
 
       {/* The caller's own row has no menu — leaving a group lives in Settings
           → Your groups, and self-demotion is out of scope (`docs/design/frontend.md` §7.7). */}

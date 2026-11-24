@@ -181,6 +181,9 @@ Use C (signed in) for each, pasting into Settings → Your groups → **Join wit
 - [ ] `/g/<GROUP_ID>` alone redirects the same way.
 - [ ] `/g/<GROUP_ID>/n/209901` shows "This edition doesn't exist."
 - [ ] Every page header's ← button goes to that page's parent (Home, the edition, Upcoming or Settings).
+- [ ] Home shows **Editions**, **Leaderboard** and **Members** tabs, with Editions selected. Each tab sets `?tab=` in the URL (Editions clears it), a reload keeps the tab, and Back leaves Home rather than stepping through tabs.
+- [ ] **Members** lists everyone under "{N} members": your row says "(you)", admins have an **admin** pill, and there's no ⋯ menu on any row.
+- [ ] `/g/<GROUP_ID>/leaderboard` redirects to `/?tab=leaderboard`.
 
 ## 4. Profile
 
@@ -353,6 +356,7 @@ At this point B has answered all five questions (a non-empty draft counts, becau
 - [ ] If a text question got no answers, it reads "Nobody answered this one. Maybe next month." To see this, leave a text question unanswered in a later cycle.
 - [ ] The footer reads "That's a wrap on {Month} 🎈" and its **Suggest a question** link goes to Upcoming.
 - [ ] As A: Admin → Members. B's line reads "1 edition answered".
+- [ ] The edition's **Group leaderboard** link opens Home's Leaderboard tab, now with boards. Home → **Members** also shows B's "1 edition answered".
 - [ ] Media serving: in DevTools → Network, pick an image request. It's a presigned S3 URL that returns 200 with `Access-Control-Allow-Origin: http://localhost:5173`. Open the same URL without its query string in a new tab: 403. The full media checks are in [`smoke-test.md`](smoke-test.md) §6.
 
 ## 13. Reactions

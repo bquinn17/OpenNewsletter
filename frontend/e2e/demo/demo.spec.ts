@@ -142,7 +142,7 @@ test("an image uploaded to a comment shows the picture that was picked", async (
   expect(await renderedWidth(posted)).toBe(3);
 });
 
-test("the published edition links to a populated group leaderboard", async ({ page }) => {
+test("the published edition links to Home's populated Leaderboard tab", async ({ page }) => {
   await page.goto("/demo");
   await page
     .getByRole("link", { name: /questions · published/ })
@@ -151,8 +151,28 @@ test("the published edition links to a populated group leaderboard", async ({ pa
 
   await page.getByRole("link", { name: "Group leaderboard" }).click();
 
-  await expect(page).toHaveURL(/\/leaderboard$/);
+  await expect(page).toHaveURL(/\/demo\?tab=leaderboard$/);
+  await expect(page.getByRole("tab", { name: "Leaderboard" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByText("Most-reacted answer")).toBeVisible();
+});
+
+test("the old leaderboard URL opens the Leaderboard tab for that group", async ({ page }) => {
+  await page.goto("/demo/g/g_trail/leaderboard");
+
+  await expect(page).toHaveURL(/\/demo\?tab=leaderboard$/);
+  await expect(page.getByText("Most-reacted answer")).toBeVisible();
+});
+
+test("the Members tab lists the group", async ({ page }) => {
+  await page.goto("/demo");
+  await page.getByRole("tab", { name: "Members" }).click();
+
+  await expect(page).toHaveURL(/\?tab=members$/);
+  await expect(page.getByText(/^\d+ members$/)).toBeVisible();
+  await expect(page.getByText("(you)")).toBeVisible();
 });
 
 test("exiting the demo returns to the real, signed-out home", async ({ page }) => {

@@ -260,7 +260,7 @@ describe("NewsletterPage", () => {
     expect(screen.getByText("Your vote")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Group leaderboard/ })).toHaveAttribute(
       "href",
-      "/g/g1/leaderboard",
+      "/?tab=leaderboard",
     );
   });
 

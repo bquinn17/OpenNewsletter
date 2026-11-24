@@ -1325,7 +1325,7 @@ CI's `cargo deny` started failing on a new advisory, RUSTSEC-2026-0441 (`pin-uti
 
 ## Group leaderboard — what landed (2026-11-07)
 
-`/g/:groupId/leaderboard`: a page of light-hearted superlatives, built from per-member counters kept at write time ([`future-ideas.md` §5](../future-ideas.md#5-group-leaderboard) had the sketch). Design in [`data-model.md` §2.17](../../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8, #9, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl), [`api.md` §4.4](../../docs/design/api.md#44-get-groupsgroupidleaderboard) and [`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
+`/g/:groupId/leaderboard`: a page of light-hearted superlatives, built from per-member counters kept at write time ([`future-ideas.md` §5](../future-ideas.md#5-group-leaderboard) had the sketch). Design in [`data-model.md` §2.17](../../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8, #9, [`lifecycle.md` §5.3](../../docs/design/lifecycle.md#53-publishnl), [`api.md` §4.4](../../docs/design/api.md#44-get-groupsgroupidleaderboard) and [`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboard-tab-tableaderboard).
 
 **What landed.**
 - `MemberStats` row per member per group (`GROUP#{g}#STATS` / `MEMBER#{u}`), upserted with `UpdateItem` by every writer (`persistence::member_stats`).
@@ -1392,7 +1392,7 @@ CI's `cargo deny` started failing: RustSec marked `chrono`, `chrono-tz` and `chr
 
 ## Owner UX review fixes — what landed (2026-11-22)
 
-Three of the four owner UX review notes. The fourth, the group page tabs, stays in [`future-ideas.md` §16](../future-ideas.md#16-group-page-editions-leaderboard-and-members-as-tabs) until the members page (§7) is built. The others now live in the design docs and [`decisions.md`](../../docs/decisions.md).
+Three of the four owner UX review notes. The fourth, the group page tabs, landed separately (below). The others now live in the design docs and [`decisions.md`](../../docs/decisions.md).
 
 - **Home.** The signed-out landing leads with **See a demo** and **Sign in**. **Sign up** sits under the invite-only notice, after "Received an invite?" ([`frontend.md` §7.1](../../docs/design/frontend.md#71-homepage-)).
 - **RespondPage.** The Publish button is gone. **Done** flushes the save and opens the next unanswered question, wrapping around, or the edition page when none is left. The SPA never sends `publish: true`; the API still accepts it for installed PWAs on an older release. A completion dialog shows once per edition per device, when every question has a non-empty answer ([`frontend.md` §7.2–§7.3](../../docs/design/frontend.md#73-respondpage-ggncrespondq)).
@@ -1403,4 +1403,13 @@ Three of the four owner UX review notes. The fourth, the group page tabs, stays 
 **Decisions.**
 - [The app doesn't publish answers by hand](../../docs/decisions.md#answers-publish-at-close).
 - Streaks are unchanged: they still credit any published answer, including one emptied before close. Only `editions_answered` moved to the content check.
+
+## Group page tabs and the members list — what landed (2026-11-23)
+
+[`future-ideas.md` §16](../future-ideas.md#16-group-page-editions-leaderboard-and-members-as-tabs). The members list was split out of §7, so it no longer waits on the map and profile fields, which stay there.
+
+- **Home is the group page.** **Editions** (the default), **Leaderboard** and **Members** are `?tab=` tabs under the greeting. Switching replaces the history entry and doesn't remount the page ([`frontend.md` §7.1](../../docs/design/frontend.md#71-homepage-)).
+- **Leaderboard** moved from its own page into the tab ([`frontend.md` §7.9](../../docs/design/frontend.md#79-leaderboard-tab-tableaderboard)). The edition's **Group leaderboard** link opens the tab, and `/g/:g/leaderboard` redirects to it, so old links still work.
+- **Members** is a read-only list from `GET /groups/{g}`, in the same rows as the admin Members tab (shared `MemberSummary`). No API change.
+- The admin page and Home share a `TabBar`.
 
