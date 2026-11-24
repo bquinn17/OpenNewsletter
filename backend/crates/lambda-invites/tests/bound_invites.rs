@@ -5,9 +5,11 @@
 //! caches, and tests run concurrently.
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{Duration, Utc};
 use domain::api::{CreateInviteRequest, RedeemRequest};
-use domain::{ApiErrorCode, CognitoSub, GroupId, Invite, InviteCode, InviteStatus, Role, UserId};
+use domain::{
+    ApiErrorCode, CognitoSub, GroupId, Invite, InviteCode, InviteStatus, Role, SignedDuration,
+    Timestamp, UserId,
+};
 use invites::handlers;
 use invites::state::AppState;
 use persistence::keys::{attr, membership_gsi1pk, membership_gsi1sk, membership_sk, user_pk};
@@ -21,22 +23,26 @@ async fn seed(repo: &Repo, group_id: &str, code: &str, bound_email: Option<&str>
         .await
         .unwrap();
     put_membership(repo, "a1", group_id).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let invite = Invite {
         code: InviteCode::new(code),
         group_id: GroupId::new(group_id),
         created_by: UserId::new("a1"),
         created_at: now,
-        expires_at: now + Duration::days(7),
+        expires_at: now + SignedDuration::from_hours(7 * 24),
         status: InviteStatus::Pending,
         consumed_by: None,
         consumed_at: None,
         role_on_redeem: Role::Admin,
         bound_email: bound_email.map(str::to_owned),
     };
-    invite_repo::put_invite(repo, &invite, (now + Duration::days(37)).timestamp())
-        .await
-        .unwrap();
+    invite_repo::put_invite(
+        repo,
+        &invite,
+        (now + SignedDuration::from_hours(37 * 24)).as_unix_seconds(),
+    )
+    .await
+    .unwrap();
 }
 
 async fn put_membership(repo: &Repo, user_id: &str, group_id: &str) {

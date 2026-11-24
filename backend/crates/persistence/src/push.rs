@@ -9,8 +9,7 @@ use crate::keys::{
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
-use chrono::{DateTime, Utc};
-use domain::{CycleId, GroupId, NotificationPref, PushSubscription, UserId};
+use domain::{CycleId, GroupId, NotificationPref, PushSubscription, Timestamp, UserId};
 use serde_dynamo::{from_item, to_item};
 use shared::config::{MAX_PUSH_FAILURES, MAX_PUSH_SUBSCRIPTIONS_PER_USER};
 
@@ -56,7 +55,7 @@ pub async fn upsert_subscription(
     p256dh: &str,
     auth: &str,
     user_agent: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), RepoError> {
     let existing = list_subs_for_user(repo, user_id).await?;
     let is_new_endpoint = !existing.iter().any(|s| s.endpoint_hash == endpoint_hash);
@@ -93,7 +92,7 @@ pub async fn upsert_subscription(
         .expression_attribute_values(":hash", AttributeValue::S(endpoint_hash.to_owned()))
         .expression_attribute_values(":entity", AttributeValue::S("PushSubscription".into()))
         .expression_attribute_values(":zero", AttributeValue::N("0".into()))
-        .expression_attribute_values(":now", AttributeValue::S(now.to_rfc3339()))
+        .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
         .send()
         .await?;
     Ok(())
@@ -105,9 +104,9 @@ pub async fn upsert_subscription(
 fn eviction_rank(sub: &PushSubscription) -> (i64, i64) {
     let success_rank = sub
         .last_success_at
-        .map(|t| t.timestamp_millis())
+        .map(|t| t.as_unix_millis())
         .unwrap_or(i64::MIN);
-    (success_rank, sub.created_at.timestamp_millis())
+    (success_rank, sub.created_at.as_unix_millis())
 }
 
 pub async fn delete_subscription(
@@ -134,7 +133,7 @@ pub async fn mark_delivered(
     repo: &Repo,
     user_id: &UserId,
     endpoint_hash: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), RepoError> {
     let result = repo
         .client
@@ -148,7 +147,7 @@ pub async fn mark_delivered(
         .expression_attribute_names("#fc", "failure_count")
         .expression_attribute_names("#lsa", "last_success_at")
         .expression_attribute_values(":zero", AttributeValue::N("0".into()))
-        .expression_attribute_values(":now", AttributeValue::S(now.to_rfc3339()))
+        .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
         .send()
         .await;
     match result {
@@ -277,7 +276,7 @@ pub async fn claim_open_notified_marker(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<bool, RepoError> {
     claim_marker(
         repo,
@@ -293,7 +292,7 @@ pub async fn claim_publish_notified_marker(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<bool, RepoError> {
     claim_marker(
         repo,
@@ -311,7 +310,7 @@ pub async fn claim_close_notified_marker(
     group_id: &GroupId,
     cycle_id: &CycleId,
     offset_hours: u32,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<bool, RepoError> {
     claim_marker(
         repo,
@@ -322,12 +321,7 @@ pub async fn claim_close_notified_marker(
     .await
 }
 
-async fn claim_marker(
-    repo: &Repo,
-    pk: &str,
-    sk: &str,
-    now: DateTime<Utc>,
-) -> Result<bool, RepoError> {
+async fn claim_marker(repo: &Repo, pk: &str, sk: &str, now: Timestamp) -> Result<bool, RepoError> {
     let result = repo
         .client
         .put_item()
@@ -335,7 +329,7 @@ async fn claim_marker(
         .item(attr::PK, AttributeValue::S(pk.to_owned()))
         .item(attr::SK, AttributeValue::S(sk.to_owned()))
         .item(attr::ENTITY, AttributeValue::S("NotifiedMarker".into()))
-        .item("created_at", AttributeValue::S(now.to_rfc3339()))
+        .item("created_at", AttributeValue::S(now.to_string()))
         .condition_expression("attribute_not_exists(#pk)")
         .expression_attribute_names("#pk", attr::PK)
         .send()
@@ -355,17 +349,14 @@ async fn claim_marker(
 
 /// Upserts `pk=TICK sk=NOTIFY` with `last_ran_at`, mirroring
 /// `persistence::newsletters::upsert_tick_sentinel`.
-pub async fn upsert_notify_tick_sentinel(
-    repo: &Repo,
-    ran_at: DateTime<Utc>,
-) -> Result<(), RepoError> {
+pub async fn upsert_notify_tick_sentinel(repo: &Repo, ran_at: Timestamp) -> Result<(), RepoError> {
     repo.client
         .put_item()
         .table_name(&repo.table)
         .item(attr::PK, AttributeValue::S(TICK_PK.into()))
         .item(attr::SK, AttributeValue::S(TICK_NOTIFY_SK.into()))
         .item(attr::ENTITY, AttributeValue::S("TickSentinel".into()))
-        .item("last_ran_at", AttributeValue::S(ran_at.to_rfc3339()))
+        .item("last_ran_at", AttributeValue::S(ran_at.to_string()))
         .send()
         .await?;
     Ok(())

@@ -3,11 +3,10 @@
 
 use crate::state::AppState;
 use crate::validation;
-use chrono::Utc;
 use domain::api::{ResponseDto, SaveResponseRequest};
 use domain::{
     ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImageMedia, ImagePurpose, LockedQuestion,
-    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, UserId,
+    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, Timestamp, UserId,
 };
 use persistence::responses::ResponseSave;
 use persistence::{auth, media, newsletters, questions, responses};
@@ -71,7 +70,7 @@ pub async fn save_response(
         image_media_ids: &content.image_media_ids,
         publish: content.publish,
     };
-    responses::save_response(&state.repo, &save, Utc::now(), bump_editions_answered)
+    responses::save_response(&state.repo, &save, Timestamp::now(), bump_editions_answered)
         .await
         .map_err(|e| {
             if e.is_lost_race() {

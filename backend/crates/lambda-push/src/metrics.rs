@@ -66,7 +66,7 @@ impl FanoutMetrics {
         let env = std::env::var("ENV").unwrap_or_default();
         let line = json!({
             "_aws": {
-                "Timestamp": chrono::Utc::now().timestamp_millis(),
+                "Timestamp": domain::Timestamp::now().as_unix_millis(),
                 "CloudWatchMetrics": [{
                     "Namespace": format!("OpenNewsletter/{env}"),
                     "Dimensions": [["kind"], []],

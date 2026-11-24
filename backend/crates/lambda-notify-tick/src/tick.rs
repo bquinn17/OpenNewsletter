@@ -3,11 +3,12 @@
 //! whether triggered by the EventBridge schedule or the dev
 //! `POST /admin/dev/tick/notify` route — both call [`run_notify_tick`].
 
-use chrono::{DateTime, Duration, Utc};
-use chrono_tz::Tz;
 use domain::api::{DeadlineFanout, DeadlineFanoutKind, DevTickNotifyResponse};
-use domain::{Group, Newsletter, PushSubscription, ResponseStatus, UserId};
+use domain::{
+    Group, Newsletter, PushSubscription, ResponseStatus, SignedDuration, Timestamp, UserId,
+};
 use futures::{stream, StreamExt};
+use jiff::tz::TimeZone;
 use persistence::{groups, newsletters, push as push_repo, responses};
 use push::metrics::FanoutMetrics;
 use push::payload::PushPayload;
@@ -28,7 +29,7 @@ use std::time::Instant;
 /// tick picks them up), and no send starts after
 /// `NOTIFY_TICK_SEND_CUTOFF_SECS`.
 pub async fn run_notify_tick(state: &AppState) -> DevTickNotifyResponse {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let started = Instant::now();
     let cycle_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_CYCLE_CUTOFF_SECS);
     let send_cutoff = started + std::time::Duration::from_secs(NOTIFY_TICK_SEND_CUTOFF_SECS);
@@ -37,7 +38,7 @@ pub async fn run_notify_tick(state: &AppState) -> DevTickNotifyResponse {
     let candidates = match newsletters::list_open_cycles_closing_within(
         &state.repo,
         now,
-        Duration::hours(MAX_REMINDER_OFFSET_HOURS as i64),
+        SignedDuration::from_hours(MAX_REMINDER_OFFSET_HOURS as i64),
     )
     .await
     {
@@ -77,7 +78,7 @@ pub async fn run_notify_tick(state: &AppState) -> DevTickNotifyResponse {
 async fn process_cycle(
     state: &AppState,
     nl: &Newsletter,
-    now: DateTime<Utc>,
+    now: Timestamp,
     send_cutoff: Instant,
 ) -> Option<DeadlineFanout> {
     let group = match groups::get_group(&state.repo, &nl.group_id).await {
@@ -97,7 +98,7 @@ async fn process_cycle(
 
     let mut newly_due_offsets: Vec<u32> = Vec::new();
     for &offset in offsets {
-        let target = nl.response_close_at - Duration::hours(offset as i64);
+        let target = nl.response_close_at - SignedDuration::from_hours(offset as i64);
         let is_moot = target <= nl.response_open_at;
 
         if is_moot {
@@ -139,9 +140,9 @@ async fn process_cycle(
 
     let offset_to_send = *newly_due_offsets.iter().min()?;
 
-    let tz: Tz = match group.timezone.parse() {
-        Ok(tz) => tz,
-        Err(_) => {
+    let tz = match shared::cycle_time::time_zone(&group.timezone) {
+        Some(tz) => tz,
+        None => {
             tracing::error!(group_id = %nl.group_id, timezone = %group.timezone, "notify tick: invalid group timezone");
             return None;
         }
@@ -153,7 +154,7 @@ async fn process_cycle(
         nl,
         offset_to_send,
         smallest_offset_overall,
-        tz,
+        &tz,
         send_cutoff,
     )
     .await;
@@ -174,7 +175,7 @@ async fn fan_out_deadline_reminder(
     nl: &Newsletter,
     offset_hours: u32,
     smallest_offset_overall: u32,
-    tz: Tz,
+    tz: &TimeZone,
     send_cutoff: Instant,
 ) -> FanoutMetrics {
     let mut fanout_metrics = FanoutMetrics::new("deadline_reminder");

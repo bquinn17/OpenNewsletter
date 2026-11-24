@@ -8,8 +8,7 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::types::AttributeValue;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chrono::{DateTime, Utc};
-use domain::{GroupId, PushSubscription, UserId};
+use domain::{GroupId, PushSubscription, Timestamp, UserId};
 use p256::elliptic_curve::sec1::ToSec1Point;
 use p256::elliptic_curve::Generate;
 use persistence::keys::attr;
@@ -191,8 +190,8 @@ pub async fn put_newsletter(repo: &Repo, nl: &domain::Newsletter) {
 pub fn open_newsletter(
     group_id: &str,
     cycle_id: &str,
-    response_open_at: DateTime<Utc>,
-    response_close_at: DateTime<Utc>,
+    response_open_at: Timestamp,
+    response_close_at: Timestamp,
     locked_question_ids: Vec<domain::QuestionId>,
 ) -> domain::Newsletter {
     let mut nl = voting_newsletter(group_id, cycle_id);
@@ -214,7 +213,7 @@ pub async fn put_subscription(
     p256dh: &str,
     auth: &str,
     user_agent: &str,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) {
     let sub = PushSubscription {
         user_id: UserId::new(user_id),
@@ -280,7 +279,6 @@ pub async fn put_text_draft(
 
 /// `ids` is `[group, cycle, question, user, response]`.
 async fn put_text_answer(repo: &Repo, ids: [&str; 5], status: domain::ResponseStatus, body: &str) {
-    use chrono::TimeZone;
     let [group_id, cycle_id, question_id, user_id, response_id] = ids;
     let is_published = status == domain::ResponseStatus::Published;
     use persistence::keys::{response_gsi1pk, response_gsi1sk, response_pk, response_sk};
@@ -296,8 +294,8 @@ async fn put_text_answer(repo: &Repo, ids: [&str; 5], status: domain::ResponseSt
         body: Some(body.to_owned()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
-        updated_at: Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap(),
-        published_at: is_published.then(|| Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()),
+        updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+        published_at: is_published.then(|| "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count: 0,
     };
     let mut item: HashMap<String, AttributeValue> =

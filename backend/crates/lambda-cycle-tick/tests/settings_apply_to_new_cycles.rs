@@ -4,9 +4,8 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
 use cycle_tick::tick::run_tick;
-use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId};
+use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId, SignedDuration, Timestamp};
 use persistence::{groups, newsletters, questions};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
@@ -18,19 +17,19 @@ async fn a_settings_change_after_an_open_cycle_exists_only_applies_to_its_succes
     group.cycle_settings.response_window_days = 7;
     groups::put_group(&repo, &group).await.unwrap();
 
-    let now = Utc::now();
-    let old_tz: chrono_tz::Tz = group.timezone.parse().unwrap();
-    let cycle_id = shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, old_tz);
+    let now = Timestamp::now();
+    let old_tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
+    let cycle_id = shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, &old_tz);
     let open = Newsletter {
         group_id: group.group_id.clone(),
         cycle_id: cycle_id.clone(),
         status: NewsletterStatus::Open,
-        vote_window_open_at: now - Duration::days(30),
-        vote_window_close_at: now - Duration::days(1),
-        response_open_at: now - Duration::days(1),
-        response_close_at: now + Duration::days(5),
+        vote_window_open_at: now - SignedDuration::from_hours(30 * 24),
+        vote_window_close_at: now - SignedDuration::from_hours(24),
+        response_open_at: now - SignedDuration::from_hours(24),
+        response_close_at: now + SignedDuration::from_hours(5 * 24),
         published_at: None,
-        next_transition_at: Some(now + Duration::days(5)),
+        next_transition_at: Some(now + SignedDuration::from_hours(5 * 24)),
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
@@ -59,12 +58,12 @@ async fn a_settings_change_after_an_open_cycle_exists_only_applies_to_its_succes
 
     // Its successor, created by the repair pass, is scheduled with the new
     // timezone and window.
-    let new_tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let new_tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
     let expected = shared::cycle_time::successor_schedule(
         CycleCadence::Monthly,
         &open.cycle_id,
         open.response_close_at,
-        new_tz,
+        &new_tz,
         group.cycle_settings.response_window_days,
     )
     .unwrap();
@@ -87,18 +86,18 @@ async fn promotion_locks_the_cycles_own_question_count_not_the_groups_current_on
     group.cycle_settings.questions_per_cycle = 5;
     groups::put_group(&repo, &group).await.unwrap();
 
-    let now = Utc::now();
-    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let now = Timestamp::now();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
     let voting = Newsletter {
         group_id: GroupId::new("g-settings-promote"),
-        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, &tz),
         status: NewsletterStatus::Voting,
-        vote_window_open_at: now - Duration::days(30),
-        vote_window_close_at: now - Duration::minutes(1),
-        response_open_at: now - Duration::minutes(1),
-        response_close_at: now + Duration::days(7),
+        vote_window_open_at: now - SignedDuration::from_hours(30 * 24),
+        vote_window_close_at: now - SignedDuration::from_mins(1),
+        response_open_at: now - SignedDuration::from_mins(1),
+        response_close_at: now + SignedDuration::from_hours(7 * 24),
         published_at: None,
-        next_transition_at: Some(now - Duration::minutes(1)),
+        next_transition_at: Some(now - SignedDuration::from_mins(1)),
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,

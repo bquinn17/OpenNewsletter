@@ -22,13 +22,10 @@ aws-sdk-s3.workspace = true
 lambda_runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
-# `s3` only — this crate is a pure S3-trigger Lambda, no API Gateway shapes.
-aws_lambda_events = { version = "0.15", default-features = false, features = ["s3"] }
 # `image`'s own WebP encoder is lossless-only; `webp` wraps libwebp (via
 # libwebp-sys, which vendors libwebp's C source) for quality-controlled lossy
 # encoding (`docs/design/media.md` §5.3, decided semantics: lossy WebP).

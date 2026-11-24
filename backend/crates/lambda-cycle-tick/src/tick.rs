@@ -3,12 +3,10 @@
 //! Runs identically whether triggered by the EventBridge schedule or the dev
 //! `POST /admin/dev/tick/cycle` route — both call [`run_tick`].
 
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
 use domain::api::{CycleTransition, DevTickCycleResponse};
 use domain::{
     CandidateQuestion, CycleId, GroupId, LockedQuestion, MemberStats, Newsletter, NewsletterStatus,
-    Response, ResponseStatus, UserId,
+    Response, ResponseStatus, Timestamp, UserId,
 };
 use futures::StreamExt;
 use persistence::responses::AutoPublishOutcome;
@@ -34,7 +32,7 @@ pub async fn run_tick_with(
     notifier: &dyn Notifier,
     cadence: CycleCadence,
 ) -> DevTickCycleResponse {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut transitions = Vec::new();
 
     transitions.extend(create_first_cycles(repo, cadence).await);
@@ -157,17 +155,17 @@ async fn create_first_cycle(
         return None;
     }
 
-    let tz: Tz = match group.timezone.parse() {
-        Ok(tz) => tz,
-        Err(_) => {
+    let tz = match shared::cycle_time::time_zone(&group.timezone) {
+        Some(tz) => tz,
+        None => {
             tracing::error!(group_id = %group_id, timezone = %group.timezone, "group has an invalid timezone; cannot create its first voting cycle");
             return None;
         }
     };
     let schedule = shared::cycle_time::next_cycle_schedule(
         cadence,
-        Utc::now(),
-        tz,
+        Timestamp::now(),
+        &tz,
         group.cycle_settings.response_window_days,
     );
 
@@ -211,7 +209,7 @@ async fn promote_and_open(
     repo: &Repo,
     notifier: &dyn Notifier,
     nl: &Newsletter,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cadence: CycleCadence,
 ) -> Vec<CycleTransition> {
     let group = match groups::get_group(repo, &nl.group_id).await {
@@ -367,11 +365,11 @@ async fn create_next_voting_cycle(
     group: &domain::Group,
     cadence: CycleCadence,
     current: &CycleId,
-    current_close: DateTime<Utc>,
+    current_close: Timestamp,
 ) -> Option<CycleId> {
-    let tz: Tz = match group.timezone.parse() {
-        Ok(tz) => tz,
-        Err(_) => {
+    let tz = match shared::cycle_time::time_zone(&group.timezone) {
+        Some(tz) => tz,
+        None => {
             tracing::error!(group_id = %group_id, timezone = %group.timezone, "group has an invalid timezone; cannot create its next voting cycle");
             return None;
         }
@@ -380,7 +378,7 @@ async fn create_next_voting_cycle(
         cadence,
         current,
         current_close,
-        tz,
+        &tz,
         group.cycle_settings.response_window_days,
     ) else {
         tracing::error!(group_id = %group_id, cycle_id = %current, "cycle id is not valid under this deployment's cadence; cannot create its next voting cycle");
@@ -414,7 +412,7 @@ async fn publish(
     repo: &Repo,
     notifier: &dyn Notifier,
     nl: &Newsletter,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Option<CycleTransition> {
     let sweep = auto_publish_drafts(repo, nl).await;
     if sweep.failed > 0 {
@@ -650,7 +648,7 @@ fn emit_auto_publish_abandoned(count: u32) {
     let env = std::env::var("ENV").unwrap_or_default();
     let line = serde_json::json!({
         "_aws": {
-            "Timestamp": Utc::now().timestamp_millis(),
+            "Timestamp": Timestamp::now().as_unix_millis(),
             "CloudWatchMetrics": [{
                 "Namespace": format!("OpenNewsletter/{env}"),
                 "Dimensions": [[]],

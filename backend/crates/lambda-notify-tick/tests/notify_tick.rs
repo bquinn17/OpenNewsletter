@@ -4,8 +4,7 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
-use domain::{CycleId, GroupId, QuestionId, Role};
+use domain::{CycleId, GroupId, QuestionId, Role, SignedDuration, Timestamp};
 use notify_tick::{dispatch, tick};
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -26,9 +25,9 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
     // Close in 20h, opened long ago: offsets 96/48/24 are all simultaneously
     // "due" (mimics a late tick / rewound deadline). Only 24 (the smallest)
     // should be sent.
-    let now = Utc::now();
-    let open_at = now - Duration::days(10);
-    let close_at = now + Duration::hours(20);
+    let now = Timestamp::now();
+    let open_at = now - SignedDuration::from_hours(10 * 24);
+    let close_at = now + SignedDuration::from_hours(20);
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
@@ -50,7 +49,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await;
 
@@ -74,7 +73,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
             &group_id,
             &cycle_id,
             96,
-            Utc::now()
+            Timestamp::now()
         )
         .await
         .unwrap(),
@@ -86,7 +85,7 @@ async fn only_the_smallest_due_offset_is_sent_but_every_due_offset_is_marked() {
             &group_id,
             &cycle_id,
             48,
-            Utc::now()
+            Timestamp::now()
         )
         .await
         .unwrap(),
@@ -119,9 +118,9 @@ async fn moot_offsets_are_marked_but_never_sent() {
 
     // A 10h response window: every configured offset (96/48/24) would land
     // at or before the cycle even opened, so all three are moot.
-    let now = Utc::now();
+    let now = Timestamp::now();
     let open_at = now;
-    let close_at = now + Duration::hours(10);
+    let close_at = now + SignedDuration::from_hours(10);
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
@@ -142,7 +141,7 @@ async fn moot_offsets_are_marked_but_never_sent() {
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await;
 
@@ -162,7 +161,7 @@ async fn moot_offsets_are_marked_but_never_sent() {
             &group_id,
             &cycle_id,
             24,
-            Utc::now()
+            Timestamp::now()
         )
         .await
         .unwrap(),
@@ -183,14 +182,14 @@ async fn a_done_member_is_skipped_when_the_sent_offset_is_the_smallest() {
     common::put_user(&state.repo, "u1").await;
     common::put_user(&state.repo, "u2").await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
             "gnt3",
             "202610",
-            now - Duration::days(1),
-            now + Duration::hours(10),
+            now - SignedDuration::from_hours(24),
+            now + SignedDuration::from_hours(10),
             vec![QuestionId::new("q1")],
         ),
     )
@@ -208,7 +207,7 @@ async fn a_done_member_is_skipped_when_the_sent_offset_is_the_smallest() {
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await;
     let (p2, a2) = common::make_subscriber_keys();
@@ -220,7 +219,7 @@ async fn a_done_member_is_skipped_when_the_sent_offset_is_the_smallest() {
         &p2,
         &a2,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await;
 
@@ -250,14 +249,14 @@ async fn a_non_empty_draft_counts_as_answered_but_an_empty_one_does_not() {
     common::put_user(&state.repo, "u1").await;
     common::put_user(&state.repo, "u2").await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     common::put_newsletter(
         &state.repo,
         &common::open_newsletter(
             "gnt-drafts",
             "202610",
-            now - Duration::days(1),
-            now + Duration::hours(10),
+            now - SignedDuration::from_hours(24),
+            now + SignedDuration::from_hours(10),
             vec![QuestionId::new("q1")],
         ),
     )
@@ -287,7 +286,7 @@ async fn a_non_empty_draft_counts_as_answered_but_an_empty_one_does_not() {
             &p256dh,
             &auth,
             "UA",
-            Utc::now(),
+            Timestamp::now(),
         )
         .await;
     }
@@ -316,7 +315,7 @@ async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smalle
     common::seed_group_and_membership(&state.repo, &group, "u1", Role::Member).await;
     common::put_user(&state.repo, "u1").await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     // Close in 40h: 48h is due (target = close-48h is in the past), 24h is
     // not yet due (target = close-24h is still in the future). So the sent
     // offset (48) is NOT the smallest configured offset (24).
@@ -325,8 +324,8 @@ async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smalle
         &common::open_newsletter(
             "gnt4",
             "202610",
-            now - Duration::days(10),
-            now + Duration::hours(40),
+            now - SignedDuration::from_hours(10 * 24),
+            now + SignedDuration::from_hours(40),
             vec![QuestionId::new("q1")],
         ),
     )
@@ -341,7 +340,7 @@ async fn a_done_member_still_gets_the_reminder_when_the_offset_is_not_the_smalle
         &p1,
         &a1,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await;
 

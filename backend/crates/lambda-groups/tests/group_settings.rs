@@ -11,11 +11,13 @@
 mod common;
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::{Duration, NaiveTime, Utc, Weekday};
 use common::{seed, state, state_with_cadence};
 use domain::api::{CycleSettingsPatch, PatchGroupRequest};
-use domain::{ApiErrorCode, GroupId, Newsletter, NewsletterStatus, Role, UserId};
+use domain::{
+    ApiErrorCode, GroupId, Newsletter, NewsletterStatus, Role, SignedDuration, Timestamp, UserId,
+};
 use groups::group_routes;
+use jiff::civil::{Time, Weekday};
 use persistence::keys::{attr, group_pk, newsletter_sk};
 use persistence::{groups as group_repo, newsletters, test_factories, Repo};
 use pretty_assertions::assert_eq;
@@ -53,18 +55,18 @@ fn questions_per_cycle_patch(n: u32) -> PatchGroupRequest {
 
 /// An `open` cycle that opened three days ago on the default 7-day window.
 async fn seed_open_cycle(repo: &Repo, group_id: &str) -> Newsletter {
-    let now = Utc::now();
-    let open_at = now - Duration::days(3);
+    let now = Timestamp::now();
+    let open_at = now - SignedDuration::from_hours(3 * 24);
     let nl = Newsletter {
         group_id: GroupId::new(group_id),
         cycle_id: domain::CycleId::new("202610"),
         status: NewsletterStatus::Open,
-        vote_window_open_at: open_at - Duration::days(30),
+        vote_window_open_at: open_at - SignedDuration::from_hours(30 * 24),
         vote_window_close_at: open_at,
         response_open_at: open_at,
-        response_close_at: open_at + Duration::days(7),
+        response_close_at: open_at + SignedDuration::from_hours(7 * 24),
         published_at: None,
-        next_transition_at: Some(open_at + Duration::days(7)),
+        next_transition_at: Some(open_at + SignedDuration::from_hours(7 * 24)),
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
@@ -110,8 +112,8 @@ async fn reload(repo: &Repo, nl: &Newsletter) -> Newsletter {
 
 fn weekly_cadence() -> CycleCadence {
     CycleCadence::Weekly {
-        weekday: Weekday::Sun,
-        at: NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        weekday: Weekday::Sunday,
+        at: Time::new(21, 0, 0, 0).unwrap(),
     }
 }
 

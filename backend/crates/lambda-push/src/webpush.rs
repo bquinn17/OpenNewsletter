@@ -7,7 +7,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::Aes128Gcm;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chrono::{DateTime, Duration, Utc};
+use domain::{SignedDuration, Timestamp};
 use hkdf::Hkdf;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
@@ -96,13 +96,13 @@ fn decode_fixed<const N: usize>(b64: &str) -> Result<[u8; N], WebPushError> {
 pub fn vapid_authorization_header(
     keys: &VapidKeys,
     endpoint: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<String, WebPushError> {
     let aud = endpoint_origin(endpoint)?;
     let header = URL_SAFE_NO_PAD.encode(r#"{"typ":"JWT","alg":"ES256"}"#);
     let claims = serde_json::json!({
         "aud": aud,
-        "exp": (now + Duration::hours(12)).timestamp(),
+        "exp": (now + SignedDuration::from_hours(12)).as_unix_seconds(),
         "sub": keys.subject,
     })
     .to_string();
@@ -321,7 +321,7 @@ mod tests {
         )
         .expect("valid keypair");
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let header =
             vapid_authorization_header(&keys, "https://fcm.googleapis.com/fcm/send/abc", now)
                 .expect("builds header");
@@ -351,7 +351,7 @@ mod tests {
             claims_json["sub"],
             "mailto:admin@opennewsletter.example.com"
         );
-        assert!(claims_json["exp"].as_i64().unwrap() > now.timestamp());
+        assert!(claims_json["exp"].as_i64().unwrap() > now.as_unix_seconds());
 
         let signature_bytes = URL_SAFE_NO_PAD.decode(sig_b64).unwrap();
         let signature = Signature::from_slice(&signature_bytes).expect("64-byte r||s signature");

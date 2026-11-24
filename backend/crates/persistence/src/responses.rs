@@ -3,17 +3,16 @@
 
 use crate::error::{self, RepoError};
 use crate::keys::{
-    attr, group_pk, index, key_timestamp, newsletter_sk, reacted_gsi2pk, response_gsi1pk,
-    response_gsi1sk, response_pk, response_sk,
+    attr, group_pk, index, newsletter_sk, reacted_gsi2pk, response_gsi1pk, response_gsi1sk,
+    response_pk, response_sk,
 };
 use crate::member_stats;
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, TransactWriteItem, Update};
-use chrono::{DateTime, Utc};
 use domain::{
     CycleId, GroupId, ImageId, MediaStatus, PollOptionId, QuestionId, QuestionKind, Response,
-    ResponseId, UserId,
+    ResponseId, Timestamp, UserId,
 };
 use serde_dynamo::from_item;
 use shared::config::{
@@ -307,7 +306,7 @@ pub struct ResponseSave<'a> {
 pub async fn save_response(
     repo: &Repo,
     save: &ResponseSave<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     bump_editions_answered: bool,
 ) -> Result<(), RepoError> {
     let mut bump = bump_editions_answered;
@@ -341,7 +340,7 @@ enum SaveFailure {
 async fn save_response_once(
     repo: &Repo,
     save: &ResponseSave<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     bump_editions_answered: bool,
 ) -> Result<(), SaveFailure> {
     let kind_str = match save.kind {
@@ -404,7 +403,7 @@ async fn save_response_once(
         .expression_attribute_values(":body", body_av)
         .expression_attribute_values(":poll_option_id", poll_option_av)
         .expression_attribute_values(":image_media_ids", images_av)
-        .expression_attribute_values(":updated_at", AttributeValue::S(now.to_rfc3339()))
+        .expression_attribute_values(":updated_at", AttributeValue::S(now.to_string()))
         .expression_attribute_values(
             ":gsi1pk",
             AttributeValue::S(response_gsi1pk(save.user_id, save.cycle_id)),
@@ -433,7 +432,10 @@ async fn save_response_once(
         .condition_expression("#s = :open AND response_close_at > :now")
         .expression_attribute_names("#s", "status")
         .expression_attribute_values(":open", AttributeValue::S("open".into()))
-        .expression_attribute_values(":now", AttributeValue::S(key_timestamp(now)))
+        // `response_close_at` is a plain data attribute (not a key), so this
+        // compares against its fixed-width millisecond `Timestamp` form, not
+        // `key_timestamp`'s whole-second key form.
+        .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
@@ -513,7 +515,7 @@ pub enum AutoPublishOutcome {
 pub async fn auto_publish_draft(
     repo: &Repo,
     draft: &Response,
-    published_at: DateTime<Utc>,
+    published_at: Timestamp,
 ) -> Result<AutoPublishOutcome, RepoError> {
     let mut bump = true;
     let mut attempt = 1;
@@ -551,7 +553,7 @@ impl From<RepoError> for AutoPublishFailure {
 async fn auto_publish_once(
     repo: &Repo,
     draft: &Response,
-    published_at: DateTime<Utc>,
+    published_at: Timestamp,
     bump_editions_answered: bool,
 ) -> Result<(), AutoPublishFailure> {
     let publish = Update::builder()
@@ -570,10 +572,7 @@ async fn auto_publish_once(
         .expression_attribute_names("#status", "status")
         .expression_attribute_values(":published", AttributeValue::S("published".into()))
         .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
-        .expression_attribute_values(
-            ":published_at",
-            AttributeValue::S(published_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":published_at", AttributeValue::S(published_at.to_string()))
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))?;
 
@@ -626,7 +625,7 @@ pub async fn remove_image_from_draft(
     repo: &Repo,
     draft: &Response,
     image_id: &ImageId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), RepoError> {
     let expected = image_ids_av(draft.image_media_ids.iter());
     let remaining = image_ids_av(draft.image_media_ids.iter().filter(|i| *i != image_id));
@@ -648,7 +647,7 @@ pub async fn remove_image_from_draft(
         .expression_attribute_values(":draft", AttributeValue::S("draft".into()))
         .expression_attribute_values(":expected", expected)
         .expression_attribute_values(":remaining", remaining)
-        .expression_attribute_values(":now", AttributeValue::S(now.to_rfc3339()))
+        .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
         .send()
         .await
         .map_err(error::from_update_item_error)?;

@@ -4,9 +4,9 @@
 //! Mirrors `scripts/seed_dev_data.py`'s `parse_duration` so both dev tools
 //! accept exactly the same syntax.
 
-use chrono::Duration;
+use jiff::SignedDuration;
 
-pub fn parse_duration(raw: &str) -> Result<Duration, String> {
+pub fn parse_duration(raw: &str) -> Result<SignedDuration, String> {
     let raw = raw.trim();
     let invalid = || {
         format!(
@@ -24,19 +24,23 @@ pub fn parse_duration(raw: &str) -> Result<Duration, String> {
         .parse()
         .map_err(|_| format!("invalid duration `{raw}`: the numeric part must be an integer"))?;
 
-    // The `try_` constructors reject amounts chrono can't represent instead of
-    // panicking, and the cap keeps the caller's `DateTime - duration` far from
-    // chrono's range limits (that subtraction panics on overflow too). A dev
+    // The `try_` constructors reject amounts jiff can't represent instead of
+    // panicking, and the cap keeps the caller's `Timestamp - duration` far from
+    // jiff's range limits (that subtraction panics on overflow too). A dev
     // fast-forward of a cycle never needs more than a year, under either
-    // cadence (`docs/design/lifecycle.md` §13).
+    // cadence (`docs/design/lifecycle.md` §13). `'d'` converts to hours via a
+    // checked multiply first, so a huge day count can't overflow `i64` before
+    // `try_from_hours` gets a chance to reject it.
     let duration = match unit {
-        'm' => Duration::try_minutes(n),
-        'h' => Duration::try_hours(n),
-        'd' => Duration::try_days(n),
+        'm' => SignedDuration::try_from_mins(n),
+        'h' => SignedDuration::try_from_hours(n),
+        'd' => n.checked_mul(24).and_then(SignedDuration::try_from_hours),
         _ => return Err(invalid()),
     };
     duration
-        .filter(|d| *d >= Duration::zero() && *d <= Duration::days(MAX_ADVANCE_DAYS))
+        .filter(|d| {
+            *d >= SignedDuration::ZERO && *d <= SignedDuration::from_hours(MAX_ADVANCE_DAYS * 24)
+        })
         .ok_or_else(|| {
             format!("invalid duration `{raw}`: must be between 0 and {MAX_ADVANCE_DAYS} days")
         })
@@ -51,14 +55,20 @@ mod tests {
 
     #[test]
     fn parses_minutes_hours_and_days() {
-        assert_eq!(parse_duration("5m").unwrap(), Duration::minutes(5));
-        assert_eq!(parse_duration("1h").unwrap(), Duration::hours(1));
-        assert_eq!(parse_duration("4d").unwrap(), Duration::days(4));
+        assert_eq!(parse_duration("5m").unwrap(), SignedDuration::from_mins(5));
+        assert_eq!(parse_duration("1h").unwrap(), SignedDuration::from_hours(1));
+        assert_eq!(
+            parse_duration("4d").unwrap(),
+            SignedDuration::from_hours(4 * 24)
+        );
     }
 
     #[test]
     fn trims_surrounding_whitespace() {
-        assert_eq!(parse_duration(" 5m ").unwrap(), Duration::minutes(5));
+        assert_eq!(
+            parse_duration(" 5m ").unwrap(),
+            SignedDuration::from_mins(5)
+        );
     }
 
     #[test]
@@ -94,6 +104,9 @@ mod tests {
         assert!(parse_duration("9223372036854775807m").is_err());
         assert!(parse_duration("367d").is_err());
         assert!(parse_duration("-5d").is_err());
-        assert_eq!(parse_duration("366d").unwrap(), Duration::days(366));
+        assert_eq!(
+            parse_duration("366d").unwrap(),
+            SignedDuration::from_hours(366 * 24)
+        );
     }
 }

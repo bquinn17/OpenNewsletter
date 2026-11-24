@@ -8,9 +8,7 @@
 //! re-delivers the event; reprocessing is safe because every status update
 //! is conditioned on `status = pending`.
 
-use aws_lambda_events::event::s3::S3Event;
-use chrono::Utc;
-use domain::MediaStatus;
+use domain::{MediaStatus, Timestamp};
 use persistence::media;
 use persistence::media_status::{self, ImageReady, UpdateOutcome};
 use tracing::{info, warn};
@@ -20,6 +18,7 @@ use crate::key_parse::{
     decode_s3_key, parse_avatar_key, parse_image_key, ParsedAvatarKey, ParsedImageKey,
 };
 use crate::process::{process_avatar, process_image, ProcessError};
+use crate::s3_event::S3Event;
 use crate::state::AppState;
 
 const IMAGE_TOO_LARGE: &str = "IMAGE_TOO_LARGE";
@@ -170,7 +169,7 @@ async fn handle_image_record(
             height: variants.height,
             display_key: &display_key,
             thumb_key: &thumb_key,
-            processed_at: Utc::now(),
+            processed_at: Timestamp::now(),
         },
     )
     .await?;
@@ -236,7 +235,7 @@ async fn fail_image(
         &parsed.cycle_id,
         &parsed.image_id,
         reason,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await?;
     delete_original_best_effort(state, bucket, key).await;
@@ -309,7 +308,7 @@ async fn handle_avatar_record(
         &parsed.user_id,
         &parsed.avatar_id,
         &display_key,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await?;
     match outcome {
@@ -345,7 +344,7 @@ async fn fail_avatar(
         &parsed.user_id,
         &parsed.avatar_id,
         reason,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await?;
     delete_original_best_effort(state, bucket, key).await;

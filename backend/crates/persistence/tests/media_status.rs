@@ -1,7 +1,6 @@
 mod common;
 
-use chrono::{TimeZone, Utc};
-use domain::{AvatarId, CycleId, GroupId, ImageId, MediaStatus, UserId};
+use domain::{AvatarId, CycleId, GroupId, ImageId, MediaStatus, Timestamp, UserId};
 use persistence::media::{self, get_avatar, get_image};
 use persistence::media_status::{
     mark_avatar_failed, mark_avatar_ready, mark_image_failed, mark_image_ready, ImageReady,
@@ -9,8 +8,8 @@ use persistence::media_status::{
 };
 use pretty_assertions::assert_eq;
 
-fn processed_at() -> chrono::DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap()
+fn processed_at() -> Timestamp {
+    "2026-06-03T00:00:00Z".parse().unwrap()
 }
 
 #[tokio::test]

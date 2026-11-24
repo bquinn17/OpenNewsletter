@@ -3,7 +3,6 @@
 
 use crate::state::AppState;
 use crate::validation;
-use chrono::Utc;
 use domain::api::{
     CommentImageResponse, CommentListResponse, CommentResponse, CreateCommentRequest,
     PatchCommentRequest, ReactionsResponse,
@@ -11,7 +10,7 @@ use domain::api::{
 use domain::{
     ApiError, ApiErrorCode, Comment, CommentId, CycleId, GroupId, ImageId, ImagePurpose,
     MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, Response, ResponseId,
-    ResponseStatus, User, UserId,
+    ResponseStatus, Timestamp, User, UserId,
 };
 use persistence::engagement::{self, CommentLocation, NewComment, ReactionTxError};
 use persistence::{auth, keys, media, newsletters, responses, users};
@@ -111,7 +110,7 @@ pub async fn create_comment(
     }
 
     let comment_id = CommentId::generate();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let new = NewComment {
         group_id,
         cycle_id,
@@ -231,7 +230,7 @@ pub async fn patch_comment(
             &loc,
             new_body.as_deref(),
             request.image_media_id.as_ref().map(Option::as_ref),
-            Utc::now(),
+            Timestamp::now(),
             existing.image_media_id.as_ref(),
             detach_image_id.as_ref(),
             attach_image_id.as_ref(),
@@ -359,7 +358,7 @@ pub async fn delete_comment(
             &state.repo,
             &loc,
             &existing.author_user_id,
-            Utc::now(),
+            Timestamp::now(),
             existing.image_media_id.as_ref(),
         )
         .await
@@ -469,7 +468,7 @@ pub async fn put_reaction(
         answer_user_id: answer.user_id.clone(),
         reactor_user_id: caller.clone(),
         emoji,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
     };
 
     if *caller == answer.user_id {
@@ -574,7 +573,7 @@ pub async fn delete_reaction(
             answer_user_id: answer.user_id.clone(),
             reactor_user_id: caller.clone(),
             emoji,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         };
         counted_reaction_with_retry(state, &answer, "failed to remove reaction", |count| {
             engagement::delete_reaction_counted(&state.repo, &reaction, &answer.response_id, count)

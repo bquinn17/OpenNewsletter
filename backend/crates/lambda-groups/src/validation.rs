@@ -57,7 +57,7 @@ fn gradient(raw: &str) -> Result<(), ApiError> {
 }
 
 fn timezone(raw: &str) -> Result<(), ApiError> {
-    if raw.parse::<chrono_tz::Tz>().is_ok() {
+    if shared::cycle_time::time_zone(raw).is_some() {
         return Ok(());
     }
     Err(ApiError::invalid_field(
@@ -255,6 +255,14 @@ mod tests {
         assert!(timezone("America/New_York").is_ok());
     }
 
+    /// `shared::cycle_time::time_zone` is an exact, case-sensitive match —
+    /// unlike `jiff::tz::TimeZone::get`, which is case-insensitive — so a
+    /// lowercase spelling of a real zone is still rejected.
+    #[test]
+    fn lowercase_spelling_of_a_real_timezone_is_rejected() {
+        assert!(timezone("america/new_york").is_err());
+    }
+
     #[test]
     fn vote_cap_above_the_patched_question_count_is_rejected() {
         let patch = CycleSettingsPatch {
@@ -280,8 +288,8 @@ mod tests {
     #[test]
     fn response_window_beyond_the_weekly_cap_is_rejected_but_seven_days_is_accepted() {
         let weekly = CycleCadence::Weekly {
-            weekday: chrono::Weekday::Sun,
-            at: chrono::NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+            weekday: jiff::civil::Weekday::Sunday,
+            at: jiff::civil::Time::new(21, 0, 0, 0).unwrap(),
         };
         let too_long = CycleSettingsPatch {
             questions_per_cycle: None,

@@ -74,11 +74,11 @@ async fn a_tick_creates_a_groups_first_monthly_voting_cycle_and_clears_the_marke
 
     run_tick(&repo, CycleCadence::Monthly).await;
 
-    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
     let expected = shared::cycle_time::next_cycle_schedule(
         CycleCadence::Monthly,
-        chrono::Utc::now(),
-        tz,
+        domain::Timestamp::now(),
+        &tz,
         group.cycle_settings.response_window_days,
     );
     let voting = newsletters::find_voting_cycle(&repo, &group.group_id)
@@ -105,8 +105,8 @@ async fn a_tick_creates_a_groups_first_weekly_voting_cycle() {
     let (_c, repo) = common::make_test_repo().await;
     let group = seed_marked_group(&repo, "g-first-weekly").await;
     let cadence = CycleCadence::Weekly {
-        weekday: chrono::Weekday::Sun,
-        at: chrono::NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        weekday: jiff::civil::Weekday::Sunday,
+        at: jiff::civil::Time::new(21, 0, 0, 0).unwrap(),
     };
 
     run_tick(&repo, cadence).await;
@@ -146,11 +146,11 @@ async fn a_marked_group_that_already_has_a_voting_cycle_just_clears_the_marker()
     let (_c, repo) = common::make_test_repo().await;
     let group = seed_marked_group(&repo, "g-first-already-voting").await;
     let existing = common::group("g-first-already-voting", "u1");
-    let tz: chrono_tz::Tz = existing.timezone.parse().unwrap();
+    let tz = shared::cycle_time::time_zone(&existing.timezone).unwrap();
     let schedule = shared::cycle_time::next_cycle_schedule(
         CycleCadence::Monthly,
-        chrono::Utc::now(),
-        tz,
+        domain::Timestamp::now(),
+        &tz,
         existing.cycle_settings.response_window_days,
     );
     let pre_existing = newsletters::create_next_voting_cycle(

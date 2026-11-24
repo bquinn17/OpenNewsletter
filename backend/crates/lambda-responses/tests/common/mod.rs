@@ -3,12 +3,12 @@
 //! the `test-utils` feature rather than duplicating them.
 #![allow(dead_code, unused_imports)]
 
-use chrono::{Duration, TimeZone, Utc};
 use domain::{
     CycleId, Group, GroupId, GroupMembership, ImageId, ImageMedia, ImageMimeType, ImagePurpose,
     LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, PollOption, PollOptionId,
     QuestionId, QuestionKind, Role, UserId,
 };
+use domain::{SignedDuration, Timestamp};
 use persistence::{groups, media, test_factories, Repo};
 
 pub use test_factories::{
@@ -68,15 +68,15 @@ async fn put_membership(repo: &Repo, m: &GroupMembership) {
 
 /// An `open` newsletter with a response window comfortably in the future,
 /// relative to the real wall clock — `handlers::save_response` calls
-/// `Utc::now()` directly (like every other handler's timestamps in this
+/// `Timestamp::now()` directly (like every other handler's timestamps in this
 /// codebase), so fixed calendar dates would go stale the day this test suite
 /// outlives them.
 pub fn open_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut nl = voting_newsletter(group_id, cycle_id);
     nl.status = NewsletterStatus::Open;
-    nl.response_open_at = now - Duration::days(1);
-    nl.response_close_at = now + Duration::days(4);
+    nl.response_open_at = now - SignedDuration::from_hours(24);
+    nl.response_close_at = now + SignedDuration::from_hours(4 * 24);
     nl.next_transition_at = Some(nl.response_close_at);
     nl
 }
@@ -85,11 +85,11 @@ pub fn open_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
 /// ≤5-minute window before `lambda-cycle-tick` next runs and flips it to
 /// `published` (`docs/design/api.md` §7.3).
 pub fn open_newsletter_past_deadline(group_id: &str, cycle_id: &str) -> Newsletter {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut nl = voting_newsletter(group_id, cycle_id);
     nl.status = NewsletterStatus::Open;
-    nl.response_open_at = now - Duration::days(5);
-    nl.response_close_at = now - Duration::hours(1);
+    nl.response_open_at = now - SignedDuration::from_hours(5 * 24);
+    nl.response_close_at = now - SignedDuration::from_hours(1);
     nl.next_transition_at = Some(nl.response_close_at);
     nl
 }
@@ -98,7 +98,7 @@ pub fn open_newsletter_past_deadline(group_id: &str, cycle_id: &str) -> Newslett
 pub fn published_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
     let mut nl = open_newsletter(group_id, cycle_id);
     nl.status = NewsletterStatus::Published;
-    nl.published_at = Some(Utc::now());
+    nl.published_at = Some(Timestamp::now());
     nl
 }
 
@@ -134,7 +134,7 @@ pub fn poll_locked_question(
         display_order: 0,
         submitted_by: UserId::new(submitter),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     }
 }
 
@@ -197,8 +197,8 @@ pub async fn seed_image(
         width: Some(1200),
         height: Some(800),
         caption: None,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
-        processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 2, 0, 1, 0).unwrap()),
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: Some("2026-06-02T00:01:00Z".parse::<Timestamp>().unwrap()),
         error_message: None,
         attached_comment_id: None,
     };

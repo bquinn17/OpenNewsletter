@@ -55,7 +55,7 @@ pub fn is_valid_emoji(normalized: &str) -> bool {
 pub fn group_reactions(reactions: &[Reaction], caller: &UserId) -> Vec<ReactionGroupResponse> {
     struct Group {
         count: u32,
-        earliest: chrono::DateTime<chrono::Utc>,
+        earliest: crate::Timestamp,
         reacted_by_me: bool,
     }
 
@@ -96,7 +96,6 @@ pub fn group_reactions(reactions: &[Reaction], caller: &UserId) -> Vec<ReactionG
 mod tests {
     use super::*;
     use crate::{CycleId, GroupId, QuestionId};
-    use chrono::{TimeZone, Utc};
 
     #[test]
     fn single_codepoint_emoji_is_valid() {
@@ -172,7 +171,7 @@ mod tests {
         assert_eq!(nfc.chars().count(), 1);
     }
 
-    fn reaction(emoji: &str, reactor: &str, created_at: chrono::DateTime<chrono::Utc>) -> Reaction {
+    fn reaction(emoji: &str, reactor: &str, created_at: crate::Timestamp) -> Reaction {
         Reaction {
             group_id: GroupId::new("g1"),
             cycle_id: CycleId::new("202606"),
@@ -186,7 +185,7 @@ mod tests {
 
     #[test]
     fn groups_order_by_count_descending() {
-        let t = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        let t = "2026-06-01T00:00:00Z".parse::<crate::Timestamp>().unwrap();
         let reactions = vec![
             reaction("🔥", "u1", t),
             reaction("🔥", "u2", t),
@@ -203,8 +202,8 @@ mod tests {
 
     #[test]
     fn ties_break_by_earliest_reaction_then_emoji() {
-        let earlier = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
-        let later = Utc.with_ymd_and_hms(2026, 6, 1, 1, 0, 0).unwrap();
+        let earlier = "2026-06-01T00:00:00Z".parse::<crate::Timestamp>().unwrap();
+        let later = "2026-06-01T01:00:00Z".parse::<crate::Timestamp>().unwrap();
         // Both emoji end up with count 1; 🤣 was reacted first.
         let reactions = vec![reaction("🔥", "u1", later), reaction("🤣", "u2", earlier)];
         let groups = group_reactions(&reactions, &UserId::new("nobody"));
@@ -216,7 +215,7 @@ mod tests {
 
     #[test]
     fn full_tie_breaks_by_emoji_string() {
-        let t = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        let t = "2026-06-01T00:00:00Z".parse::<crate::Timestamp>().unwrap();
         let reactions = vec![reaction("🤣", "u1", t), reaction("🔥", "u2", t)];
         let groups = group_reactions(&reactions, &UserId::new("nobody"));
         assert_eq!(

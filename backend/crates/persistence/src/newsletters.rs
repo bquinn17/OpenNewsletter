@@ -11,8 +11,9 @@ use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, ReturnValue, TransactWriteItem, Update};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chrono::{DateTime, Duration, Utc};
-use domain::{CycleId, CycleSettings, GroupId, Newsletter, NewsletterStatus};
+use domain::{
+    CycleId, CycleSettings, GroupId, Newsletter, NewsletterStatus, SignedDuration, Timestamp,
+};
 use serde_dynamo::{from_item, to_item};
 use shared::cycle_time::CycleSchedule;
 use std::collections::{HashMap, HashSet};
@@ -65,7 +66,7 @@ pub async fn get_newsletter(
 pub async fn list_cycles_due(
     repo: &Repo,
     status: NewsletterStatus,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<Newsletter>, RepoError> {
     let upper = format!("{}#~~~", key_timestamp(now));
     let request = repo
@@ -93,8 +94,8 @@ pub async fn list_cycles_due(
 /// a cycle closing at exactly the boundary second still matches.
 pub async fn list_open_cycles_closing_within(
     repo: &Repo,
-    now: DateTime<Utc>,
-    max_offset: Duration,
+    now: Timestamp,
+    max_offset: SignedDuration,
 ) -> Result<Vec<Newsletter>, RepoError> {
     let lower = key_timestamp(now);
     let upper = format!("{}#~~~", key_timestamp(now + max_offset));
@@ -400,7 +401,7 @@ fn new_voting_cycle(
         group_id: group_id.clone(),
         cycle_id: schedule.cycle_id,
         status: NewsletterStatus::Voting,
-        vote_window_open_at: Utc::now(),
+        vote_window_open_at: Timestamp::now(),
         vote_window_close_at: schedule.response_open_at,
         response_open_at: schedule.response_open_at,
         response_close_at: schedule.response_close_at,
@@ -498,7 +499,7 @@ pub async fn publish_cycle(
     repo: &Repo,
     group_id: &GroupId,
     cycle_id: &CycleId,
-    published_at: DateTime<Utc>,
+    published_at: Timestamp,
 ) -> Result<(), RepoError> {
     repo.client
         .update_item()
@@ -515,10 +516,7 @@ pub async fn publish_cycle(
         .expression_attribute_names("#g2sk", attr::GSI2SK)
         .expression_attribute_values(":open", AttributeValue::S("open".into()))
         .expression_attribute_values(":published", AttributeValue::S("published".into()))
-        .expression_attribute_values(
-            ":published_at",
-            AttributeValue::S(published_at.to_rfc3339()),
-        )
+        .expression_attribute_values(":published_at", AttributeValue::S(published_at.to_string()))
         .expression_attribute_values(
             ":g2pk",
             AttributeValue::S(newsletter_gsi2pk(NewsletterStatus::Published)),
@@ -535,14 +533,14 @@ pub async fn publish_cycle(
 
 /// §5.1 step 4 — upsert the `pk=TICK sk=CYCLE` sentinel row so operators can
 /// see when `lambda-cycle-tick` last ran.
-pub async fn upsert_tick_sentinel(repo: &Repo, ran_at: DateTime<Utc>) -> Result<(), RepoError> {
+pub async fn upsert_tick_sentinel(repo: &Repo, ran_at: Timestamp) -> Result<(), RepoError> {
     repo.client
         .put_item()
         .table_name(&repo.table)
         .item(attr::PK, AttributeValue::S(TICK_PK.into()))
         .item(attr::SK, AttributeValue::S(TICK_CYCLE_SK.into()))
         .item(attr::ENTITY, AttributeValue::S("TickSentinel".into()))
-        .item("last_ran_at", AttributeValue::S(ran_at.to_rfc3339()))
+        .item("last_ran_at", AttributeValue::S(ran_at.to_string()))
         .send()
         .await?;
     Ok(())
@@ -558,7 +556,7 @@ pub async fn upsert_tick_sentinel(repo: &Repo, ran_at: DateTime<Utc>) -> Result<
 pub async fn rewind_active_cycle_deadline(
     repo: &Repo,
     group_id: &GroupId,
-    by: Duration,
+    by: SignedDuration,
 ) -> Result<Option<Newsletter>, RepoError> {
     let active = match find_open_cycle(repo, group_id).await? {
         Some(nl) => Some(nl),

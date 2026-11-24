@@ -2,9 +2,9 @@
 //! ready-image, failure and avatar paths are covered through the
 //! `lambda-media` handlers; these cover what they don't reach.
 
-use chrono::Utc;
 use domain::{
-    CycleId, GroupId, ImageId, ImageMedia, ImageMimeType, ImagePurpose, MediaStatus, UserId,
+    CycleId, GroupId, ImageId, ImageMedia, ImageMimeType, ImagePurpose, MediaStatus, Timestamp,
+    UserId,
 };
 use media_delete::fakes::fake_deleter;
 use persistence::{media, test_factories};
@@ -27,7 +27,7 @@ fn pending_image() -> ImageMedia {
         width: None,
         height: None,
         caption: None,
-        uploaded_at: Utc::now(),
+        uploaded_at: Timestamp::now(),
         processed_at: None,
         error_message: None,
         attached_comment_id: None,

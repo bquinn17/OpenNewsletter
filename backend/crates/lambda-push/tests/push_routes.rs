@@ -7,11 +7,10 @@
 
 mod common;
 
-use chrono::{TimeZone, Utc};
 use domain::api::{
     PushSubscribeRequest, PushSubscriptionKeys, PushUnsubscribeRequest, PutPushPreferenceRequest,
 };
-use domain::{ApiErrorCode, GroupId, Role, UserId};
+use domain::{ApiErrorCode, GroupId, Role, SignedDuration, Timestamp, UserId};
 use pretty_assertions::assert_eq;
 use push::handlers;
 use push::sender::SendResult;
@@ -116,7 +115,7 @@ async fn resubscribing_resets_failures_but_keeps_created_at_and_last_success_at(
     let endpoint_hash = first.subscription_id.0.clone();
 
     // Simulate a successful delivery, then a couple of failures.
-    persistence::push::mark_delivered(&state.repo, &user_id, &endpoint_hash, Utc::now())
+    persistence::push::mark_delivered(&state.repo, &user_id, &endpoint_hash, Timestamp::now())
         .await
         .unwrap();
     persistence::push::record_failure(&state.repo, &user_id, &endpoint_hash)
@@ -164,7 +163,7 @@ async fn subscribing_an_eleventh_endpoint_evicts_the_least_recently_successful()
     let (_c, repo) = common::make_repo().await;
     let state = common::test_state(repo, Arc::new(common::FakePushSender::new()));
     let user_id = UserId::new("u1");
-    let base = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let base = "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
 
     // 10 existing subscriptions. #0 has never succeeded (null lastSuccessAt
     // — the eviction target); the rest have increasing lastSuccessAt.
@@ -173,7 +172,7 @@ async fn subscribing_an_eleventh_endpoint_evicts_the_least_recently_successful()
         let last_success_at = if i == 0 {
             None
         } else {
-            Some(base + chrono::Duration::hours(i as i64))
+            Some(base + SignedDuration::from_hours(i as i64))
         };
         common::put_subscription(
             &state.repo,
@@ -277,8 +276,8 @@ async fn list_subscriptions_never_returns_encryption_keys_and_orders_newest_firs
     let (_c, repo) = common::make_repo().await;
     let state = common::test_state(repo, Arc::new(common::FakePushSender::new()));
     let (p256dh, auth) = common::make_subscriber_keys();
-    let older = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let newer = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    let older = "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
+    let newer = "2026-02-01T00:00:00Z".parse::<Timestamp>().unwrap();
     common::put_subscription(
         &state.repo,
         "u1",
@@ -336,7 +335,7 @@ async fn test_push_delivered_resets_failures_and_sets_last_success_at() {
         &p256dh,
         &auth,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         3,
     )
@@ -375,7 +374,7 @@ async fn test_push_expired_deletes_the_subscription() {
         &p256dh,
         &auth,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -412,7 +411,7 @@ async fn test_push_failure_increments_without_deleting_before_the_cap() {
         &p256dh,
         &auth,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         0,
     )
@@ -450,7 +449,7 @@ async fn test_push_failure_deletes_the_subscription_at_the_cap() {
         &p256dh,
         &auth,
         "UA",
-        Utc::now(),
+        Timestamp::now(),
         None,
         4,
     )

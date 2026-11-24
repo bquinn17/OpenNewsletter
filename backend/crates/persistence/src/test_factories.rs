@@ -1,7 +1,12 @@
 //! Test factories. Available to downstream crates via the `test-utils` feature.
 
-use chrono::{TimeZone, Utc};
 use domain::*;
+
+/// Parses a fixed test instant. Panics on a bad literal, which is a
+/// programmer error in this file, not a runtime condition.
+fn utc(s: &str) -> Timestamp {
+    s.parse().expect("valid test timestamp")
+}
 
 /// Where the integration tests find DynamoDB Local when
 /// `DYNAMODB_LOCAL_ENDPOINT` is unset: the shared container `make
@@ -196,8 +201,8 @@ pub fn user(user_id: &str) -> User {
         display_name: format!("User {user_id}"),
         avatar_color: "grape".into(),
         avatar_media_id: None,
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        last_login_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        created_at: utc("2026-01-01T00:00:00Z"),
+        last_login_at: utc("2026-01-01T00:00:00Z"),
     }
 }
 
@@ -219,7 +224,7 @@ pub fn group(group_id: &str, created_by: &str) -> Group {
         member_count: 1,
         member_soft_cap: shared::config::DEFAULT_MEMBER_SOFT_CAP,
         gradient: "grape-sky".into(),
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        created_at: utc("2026-01-01T00:00:00Z"),
         created_by: UserId::new(created_by),
     }
 }
@@ -229,18 +234,18 @@ pub fn membership(user_id: &str, group_id: &str, role: Role) -> GroupMembership 
         user_id: UserId::new(user_id),
         group_id: GroupId::new(group_id),
         role,
-        joined_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        joined_at: utc("2026-01-01T00:00:00Z"),
     }
 }
 
 pub fn voting_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
-    let open = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
-    let close = Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap();
+    let open = utc("2026-06-01T00:00:00Z");
+    let close = utc("2026-06-05T00:00:00Z");
     Newsletter {
         group_id: GroupId::new(group_id),
         cycle_id: CycleId::new(cycle_id),
         status: NewsletterStatus::Voting,
-        vote_window_open_at: Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap(),
+        vote_window_open_at: utc("2026-05-01T00:00:00Z"),
         vote_window_close_at: open,
         response_open_at: open,
         response_close_at: close,
@@ -271,7 +276,7 @@ pub fn candidate(
         vote_count: votes,
         submitted_by: UserId::new(submitter),
         is_anonymous: false,
-        submitted_at: Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(),
+        submitted_at: utc("2026-05-15T00:00:00Z"),
     }
 }
 
@@ -281,7 +286,7 @@ pub fn vote(user_id: &str, group_id: &str, cycle_id: &str, question_id: &str) ->
         group_id: GroupId::new(group_id),
         cycle_id: CycleId::new(cycle_id),
         question_id: QuestionId::new(question_id),
-        voted_at: Utc.with_ymd_and_hms(2026, 5, 15, 12, 0, 0).unwrap(),
+        voted_at: utc("2026-05-15T12:00:00Z"),
     }
 }
 
@@ -301,6 +306,6 @@ pub fn locked_question(
         display_order: 0,
         submitted_by: UserId::new(submitter),
         is_anonymous: false,
-        locked_at: Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        locked_at: utc("2026-06-01T00:00:00Z"),
     }
 }

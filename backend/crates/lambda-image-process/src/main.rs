@@ -2,8 +2,8 @@
 //! `image_process::state::AppState`, then hands every invocation to
 //! `image_process::handler::handle_event`.
 
-use aws_lambda_events::event::s3::S3Event;
 use image_process::handler;
+use image_process::s3_event::S3Event;
 use image_process::state::{AppState, Buckets};
 use image_process::storage::S3Store;
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};

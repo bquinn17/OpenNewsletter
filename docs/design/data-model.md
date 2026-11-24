@@ -20,7 +20,11 @@ Two GSIs:
 
 All keys are strings. All ID values are UUIDv7 unless noted.
 
-**Key-timestamp format.** Any timestamp embedded in a key attribute (`pk`/`sk`/`gsi1*`/`gsi2*`) — or compared against one in a key-condition expression, such as the tick's `gsi2sk <= {nowISO}#~~~` bound — MUST use the fixed-width form `YYYY-MM-DDTHH:MM:SSZ` (whole seconds, `Z` suffix, no fractional part), produced by `persistence::keys::key_timestamp` (Rust: `DateTime::to_rfc3339_opts(SecondsFormat::Secs, true)`; Python: `dt.strftime("%Y-%m-%dT%H:%M:%SZ")`). Plain `DateTime::to_rfc3339()` is unsafe here: it emits `+00:00` instead of `Z` and a variable-width fractional part whenever the instant has non-zero nanoseconds, so two timestamps in the same second can sort inconsistently against each other. Elsewhere in this document, "ISO-8601" for a non-key application attribute (serialized via `serde_dynamo`) is unaffected by this rule and may keep the default `to_rfc3339()` form.
+**Timestamp format.** Every instant is RFC 3339, the internet profile of ISO 8601, in UTC with a `Z` suffix. `domain::Timestamp` (`backend/crates/domain/src/time.rs`) is the only type that writes one, in one of two widths:
+- **Data attributes** (the `ISO-8601` columns below) and API fields: `YYYY-MM-DDTHH:MM:SS.sssZ`, with exactly three fractional digits, as JavaScript's `Date.prototype.toISOString()` writes them. The width is fixed, so string order is time order. A condition that compares a stored timestamp, such as `response_close_at > :now`, relies on that, so its `:now` uses the same form.
+- **Key attributes** (`pk`/`sk`/`gsi1*`/`gsi2*`), and any bound compared against one, such as the tick's `gsi2sk <= {nowISO}#~~~`: `YYYY-MM-DDTHH:MM:SSZ`, at whole seconds. It MUST come from `persistence::keys::key_timestamp` (Python: `dt.strftime("%Y-%m-%dT%H:%M:%SZ")`). Keys stay at whole seconds because some are rebuilt from a stored attribute, such as a comment's `sk` from its `created_at`, and every existing key was written that way.
+
+A `Timestamp` holds whole milliseconds: `Timestamp::now()` and every parse truncate to them, so a value read back equals the one written. Parsing accepts any RFC 3339 instant (a `+00:00` offset, any number of fractional digits), which covers rows written before the format was fixed.
 
 ---
 

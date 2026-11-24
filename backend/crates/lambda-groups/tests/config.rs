@@ -3,12 +3,11 @@
 
 mod common;
 
-use chrono::NaiveTime;
-use chrono::Weekday;
 use common::{state, state_with_cadence};
 use domain::api::{CycleCadence as CycleCadenceDto, CycleFrequency};
 use domain::CognitoSub;
 use groups::me;
+use jiff::civil::{Time, Weekday};
 use persistence::test_factories;
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
@@ -43,8 +42,8 @@ async fn config_defaults_to_monthly_cadence() {
 async fn config_carries_a_weekly_cadence_when_the_deployment_is_weekly() {
     let (_c, repo) = test_factories::make_test_repo().await;
     let weekly = CycleCadence::Weekly {
-        weekday: Weekday::Sun,
-        at: NaiveTime::from_hms_opt(21, 0, 0).unwrap(),
+        weekday: Weekday::Sunday,
+        at: Time::new(21, 0, 0, 0).unwrap(),
     };
     let state = state_with_cadence(repo, weekly);
 

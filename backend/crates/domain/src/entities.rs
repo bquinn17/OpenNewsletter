@@ -1,7 +1,7 @@
 //! Entity structs mirroring `docs/design/data-model.md`. Pure data — no I/O.
 
 use crate::ids::*;
-use chrono::{DateTime, Utc};
+use crate::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
@@ -80,8 +80,8 @@ pub struct User {
     pub display_name: String,
     pub avatar_color: String,
     pub avatar_media_id: Option<AvatarId>,
-    pub created_at: DateTime<Utc>,
-    pub last_login_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub last_login_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +89,7 @@ pub struct GroupMembership {
     pub user_id: UserId,
     pub group_id: GroupId,
     pub role: Role,
-    pub joined_at: DateTime<Utc>,
+    pub joined_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,7 +116,7 @@ pub struct Group {
     pub member_count: u32,
     pub member_soft_cap: u32,
     pub gradient: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub created_by: UserId,
 }
 
@@ -125,11 +125,11 @@ pub struct Invite {
     pub code: InviteCode,
     pub group_id: GroupId,
     pub created_by: UserId,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub expires_at: Timestamp,
     pub status: InviteStatus,
     pub consumed_by: Option<UserId>,
-    pub consumed_at: Option<DateTime<Utc>>,
+    pub consumed_at: Option<Timestamp>,
     pub role_on_redeem: Role,
     /// When set (stored lowercased), only a caller whose verified ID-token
     /// `email` matches may redeem (`docs/design/data-model.md` §2.4).
@@ -143,12 +143,12 @@ pub struct Newsletter {
     pub group_id: GroupId,
     pub cycle_id: CycleId,
     pub status: NewsletterStatus,
-    pub vote_window_open_at: DateTime<Utc>,
-    pub vote_window_close_at: DateTime<Utc>,
-    pub response_open_at: DateTime<Utc>,
-    pub response_close_at: DateTime<Utc>,
-    pub published_at: Option<DateTime<Utc>>,
-    pub next_transition_at: Option<DateTime<Utc>>,
+    pub vote_window_open_at: Timestamp,
+    pub vote_window_close_at: Timestamp,
+    pub response_open_at: Timestamp,
+    pub response_close_at: Timestamp,
+    pub published_at: Option<Timestamp>,
+    pub next_transition_at: Option<Timestamp>,
     pub locked_question_ids: Vec<QuestionId>,
     pub notified_offsets_hours: Vec<u32>,
     pub notified_on_open: bool,
@@ -194,7 +194,7 @@ pub struct CandidateQuestion {
     pub vote_count: u32,
     pub submitted_by: UserId,
     pub is_anonymous: bool,
-    pub submitted_at: DateTime<Utc>,
+    pub submitted_at: Timestamp,
 }
 
 impl CandidateQuestion {
@@ -215,7 +215,7 @@ pub struct CandidateVote {
     pub group_id: GroupId,
     pub cycle_id: CycleId,
     pub question_id: QuestionId,
-    pub voted_at: DateTime<Utc>,
+    pub voted_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,7 +229,7 @@ pub struct LockedQuestion {
     pub display_order: u32,
     pub submitted_by: UserId,
     pub is_anonymous: bool,
-    pub locked_at: DateTime<Utc>,
+    pub locked_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,8 +244,8 @@ pub struct Response {
     pub body: Option<String>,
     pub poll_option_id: Option<PollOptionId>,
     pub image_media_ids: Vec<ImageId>,
-    pub updated_at: DateTime<Utc>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub updated_at: Timestamp,
+    pub published_at: Option<Timestamp>,
     /// Reactions on this answer from members other than its author
     /// (`docs/design/data-model.md` §2.9). Absent reads as 0; kept by the
     /// reaction transaction (§4 #8). `#[serde(default)]` so rows written
@@ -289,8 +289,8 @@ pub struct ImageMedia {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub caption: Option<String>,
-    pub uploaded_at: DateTime<Utc>,
-    pub processed_at: Option<DateTime<Utc>>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
     /// Why `status` is `failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED`
     /// (`docs/design/media.md` §3.2). A deleted image has no row at all.
     #[serde(default)]
@@ -313,8 +313,8 @@ pub struct AvatarMedia {
     pub display_key: Option<String>,
     pub status: MediaStatus,
     pub bytes: u64,
-    pub uploaded_at: DateTime<Utc>,
-    pub processed_at: Option<DateTime<Utc>>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
     /// Why `status` is `failed`; same values as `ImageMedia::error_message`.
     #[serde(default)]
     pub error_message: Option<String>,
@@ -330,9 +330,9 @@ pub struct Comment {
     pub author_user_id: UserId,
     pub body: String,
     pub image_media_id: Option<ImageId>,
-    pub created_at: DateTime<Utc>,
-    pub edited_at: Option<DateTime<Utc>>,
-    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub edited_at: Option<Timestamp>,
+    pub deleted_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,7 +343,7 @@ pub struct Reaction {
     pub answer_user_id: UserId,
     pub reactor_user_id: UserId,
     pub emoji: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,8 +353,8 @@ pub struct PushSubscription {
     pub endpoint: String,
     pub p256dh: String,
     pub auth: String,
-    pub created_at: DateTime<Utc>,
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub last_success_at: Option<Timestamp>,
     pub failure_count: u32,
     pub user_agent: String,
 }
@@ -410,7 +410,6 @@ pub struct MemberStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     fn candidate(id: &str, votes: u32, day: u32) -> CandidateQuestion {
         CandidateQuestion {
@@ -423,7 +422,7 @@ mod tests {
             vote_count: votes,
             submitted_by: UserId::new("u1"),
             is_anonymous: false,
-            submitted_at: Utc.with_ymd_and_hms(2026, 5, day, 0, 0, 0).unwrap(),
+            submitted_at: format!("2026-05-{day:02}T00:00:00Z").parse().unwrap(),
         }
     }
 
@@ -457,7 +456,7 @@ mod tests {
             body: body.map(str::to_owned),
             poll_option_id: pick.map(PollOptionId::new),
             image_media_ids: images.iter().map(|i| ImageId::new(*i)).collect(),
-            updated_at: Utc::now(),
+            updated_at: crate::Timestamp::now(),
             published_at: None,
             reaction_count: 0,
         }

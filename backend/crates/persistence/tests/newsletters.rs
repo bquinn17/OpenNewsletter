@@ -1,6 +1,6 @@
 mod common;
 
-use chrono::{TimeZone, Utc};
+use common::utc;
 use domain::{CycleId, GroupId, NewsletterStatus};
 use persistence::newsletters;
 use pretty_assertions::assert_eq;
@@ -55,25 +55,22 @@ async fn it_finds_voting_cycles_due_via_gsi2() {
 
     // nl_due has next_transition_at in the past.
     let mut nl_due = common::voting_newsletter("g1", "202605");
-    nl_due.next_transition_at = Some(Utc.with_ymd_and_hms(2026, 5, 31, 23, 59, 0).unwrap());
+    nl_due.next_transition_at = Some(utc("2026-05-31T23:59:00Z"));
     newsletters::write_status_transition(&repo, &nl_due)
         .await
         .unwrap();
 
     // nl_future has next_transition_at in the future.
     let mut nl_future = common::voting_newsletter("g1", "202606");
-    nl_future.next_transition_at = Some(Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap());
+    nl_future.next_transition_at = Some(utc("2026-12-01T00:00:00Z"));
     newsletters::write_status_transition(&repo, &nl_future)
         .await
         .unwrap();
 
-    let due = newsletters::list_cycles_due(
-        &repo,
-        NewsletterStatus::Voting,
-        Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
-    )
-    .await
-    .unwrap();
+    let due =
+        newsletters::list_cycles_due(&repo, NewsletterStatus::Voting, utc("2026-06-01T00:00:00Z"))
+            .await
+            .unwrap();
 
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].cycle_id, nl_due.cycle_id);
@@ -90,13 +87,13 @@ async fn write_status_transition_updates_gsi2_keys_on_status_change() {
     // Transition to Open status.
     let mut nl_open = nl.clone();
     nl_open.status = NewsletterStatus::Open;
-    nl_open.next_transition_at = Some(Utc.with_ymd_and_hms(2026, 6, 5, 0, 0, 0).unwrap());
+    nl_open.next_transition_at = Some(utc("2026-06-05T00:00:00Z"));
     newsletters::write_status_transition(&repo, &nl_open)
         .await
         .unwrap();
 
     // Old status (Voting) must return empty.
-    let far_future = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
+    let far_future = utc("2026-12-31T00:00:00Z");
     let still_voting = newsletters::list_cycles_due(&repo, NewsletterStatus::Voting, far_future)
         .await
         .unwrap();

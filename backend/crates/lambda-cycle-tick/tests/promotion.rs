@@ -3,9 +3,8 @@
 
 mod common;
 
-use chrono::{Duration, TimeZone, Utc};
 use cycle_tick::tick::run_tick;
-use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId};
+use domain::{GroupId, Newsletter, NewsletterStatus, QuestionId, SignedDuration, Timestamp};
 use persistence::{groups, newsletters, questions};
 use pretty_assertions::assert_eq;
 use shared::cycle_time::CycleCadence;
@@ -19,18 +18,18 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
 
     // A voting cycle that's due now. Its close stays in the future, so the same
     // tick doesn't go on to publish it.
-    let now = Utc::now();
-    let tz: chrono_tz::Tz = group.timezone.parse().unwrap();
+    let now = Timestamp::now();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
     let voting = Newsletter {
         group_id: GroupId::new("g-ties"),
-        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, tz),
+        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, &tz),
         status: NewsletterStatus::Voting,
-        vote_window_open_at: now - Duration::days(30),
-        vote_window_close_at: now - Duration::minutes(1),
-        response_open_at: now - Duration::minutes(1),
-        response_close_at: now + Duration::days(7),
+        vote_window_open_at: now - SignedDuration::from_hours(30 * 24),
+        vote_window_close_at: now - SignedDuration::from_mins(1),
+        response_open_at: now - SignedDuration::from_mins(1),
+        response_close_at: now + SignedDuration::from_hours(7 * 24),
         published_at: None,
-        next_transition_at: Some(now - Duration::minutes(1)),
+        next_transition_at: Some(now - SignedDuration::from_mins(1)),
         locked_question_ids: Vec::new(),
         notified_offsets_hours: Vec::new(),
         notified_on_open: false,
@@ -43,7 +42,11 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
 
     // Ids sort the opposite way to submission time, so only `submitted_at`
     // can explain the expected order. GSI1 would put "q-z" before "q-a".
-    let day = |d| Utc.with_ymd_and_hms(2026, 5, d, 0, 0, 0).unwrap();
+    let day = |d: u32| {
+        format!("2026-05-{d:02}T00:00:00Z")
+            .parse::<Timestamp>()
+            .unwrap()
+    };
     let cycle = voting.cycle_id.as_str();
     for (id, votes, submitted) in [
         ("q-a", 2, day(20)), // tied, newer

@@ -317,21 +317,13 @@ The next cycle is anchored on the current cycle's **`cycleId`**, not on one of i
 
 ### 5.5 Time math (Rust)
 
-Use `chrono` + `chrono-tz` in the persistence/shared crates:
+All wall-clock math lives in `shared::cycle_time` and covers both cadences. It uses `jiff`: civil dates and times for the local calendar, and `jiff::tz::TimeZone` for the group's `timezone`, with the IANA database compiled into the binary ([`decisions.md`](../decisions.md#jiff)). `shared::cycle_time::time_zone` is the one lookup, and it matches IANA names exactly, case included.
 
-```rust
-use chrono::{DateTime, Utc, TimeZone, Datelike};
-use chrono_tz::Tz;
+The contract: `responseOpenAt` is exactly midnight local on the 1st (weekly: the configured local weekday and time, §13.1), and the UTC offset adjusts naturally across DST. Turning a local date and time into an instant follows two rules:
+- **Ambiguous** (a DST fall-back repeats the hour): the earliest instant.
+- **Nonexistent** (a spring-forward skips it): step forward in whole hours from the requested time to the first local time that exists, carrying into the next day if the gap runs past midnight.
 
-pub fn first_day_of_next_month_local(after_utc: DateTime<Utc>, tz: Tz) -> DateTime<Utc> {
-    let local = after_utc.with_timezone(&tz);
-    let (y, m) = if local.month() == 12 { (local.year() + 1, 1) } else { (local.year(), local.month() + 1) };
-    let next_local = tz.with_ymd_and_hms(y, m, 1, 0, 0, 0).unwrap();
-    next_local.with_timezone(&Utc)
-}
-```
-
-DST transitions in the group's timezone are handled by `chrono-tz`. The contract: `responseOpenAt` is exactly midnight local on the 1st (weekly: the configured local weekday and time, §13.1); the UTC offset adjusts naturally. The real implementation lives in `shared::cycle_time` and covers both cadences.
+Neither case can panic.
 
 ---
 

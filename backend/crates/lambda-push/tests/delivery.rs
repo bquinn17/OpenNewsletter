@@ -5,8 +5,7 @@
 mod common;
 
 use async_trait::async_trait;
-use chrono::Utc;
-use domain::{PushSubscription, UserId};
+use domain::{PushSubscription, Timestamp, UserId};
 use pretty_assertions::assert_eq;
 use push::delivery::{self, Delivery, DeliveryOutcome};
 use push::payload;
@@ -49,7 +48,7 @@ async fn seed_subs(repo: &persistence::Repo, user_id: &str, n: usize) -> Vec<Pus
             &p256dh,
             &auth,
             "UA",
-            Utc::now(),
+            Timestamp::now(),
             None,
             0,
         )
@@ -60,7 +59,7 @@ async fn seed_subs(repo: &persistence::Repo, user_id: &str, n: usize) -> Vec<Pus
             endpoint,
             p256dh,
             auth,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             last_success_at: None,
             failure_count: 0,
             user_agent: "UA".to_owned(),

@@ -248,6 +248,15 @@ Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-
 
 **Where.** [`future-ideas.md` §16.4](future-ideas.md#164-decision-editions_answered-counts-only-once-the-edition-closes). Not yet implemented — see that section for the migration-free rollout shape.
 
+<a id="jiff"></a>
+### Time math uses jiff, and every timestamp is RFC 3339 UTC at millisecond precision
+
+**Decision.** The backend uses `jiff` instead of `chrono` and `chrono-tz`, with the IANA time-zone database compiled in (`tzdb-bundle-always`). One type, `domain::Timestamp`, writes every instant as RFC 3339 in UTC with a `Z` suffix: `YYYY-MM-DDTHH:MM:SS.sssZ` in data attributes and API fields, and `YYYY-MM-DDTHH:MM:SSZ` in key attributes. The operator scripts write the same forms.
+
+**Why.** RustSec marks `chrono`, `chrono-tz` and `chrono-tz-build` unmaintained, with no fixed release, and advisories are fixed at the source rather than ignored. One fixed-width format matters because conditions such as `response_close_at > :now` compare stored strings, and string order matches time order only when the widths match. The millisecond form is the one JavaScript's `Date.prototype.toISOString()` writes, so the API and the frontend use the same format. Keys keep whole seconds because some are rebuilt from stored attributes, and every existing key was written that way. The time-zone database is compiled in because the Lambda runtime image isn't guaranteed to ship `/usr/share/zoneinfo`.
+
+**Where.** [`data-model.md` §1](design/data-model.md#1-table-shape-recap), [`lifecycle.md` §5.5](design/lifecycle.md#55-time-math-rust), [`api.md` §1](design/api.md#1-general-conventions).
+
 ---
 
 ## Design review: performance and cost

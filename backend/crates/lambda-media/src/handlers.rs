@@ -3,14 +3,13 @@
 use crate::presign;
 use crate::state::AppState;
 use crate::validation;
-use chrono::Utc;
 use domain::api::{
     AvatarMediaResponse, CreateAvatarRequest, CreateAvatarResponse, CreateUploadRequest,
     CreateUploadResponse, ImageMediaResponse, PatchUploadRequest,
 };
 use domain::{
     ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
-    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, ResponseStatus, UserId,
+    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, ResponseStatus, Timestamp, UserId,
 };
 use persistence::{auth, media, newsletters, questions, responses, users, RepoError};
 use shared::config::{MAX_AVATAR_BYTES, MAX_IMAGES_PER_RESPONSE, MAX_IMAGE_BYTES};
@@ -107,7 +106,7 @@ pub async fn create_upload(
         "uploads/{}/{}/{}/{}/{}.{}",
         request.group_id, request.cycle_id, request.question_id, caller, image_id, ext
     );
-    let now = Utc::now();
+    let now = Timestamp::now();
     let image = ImageMedia {
         image_id: image_id.clone(),
         user_id: caller.clone(),
@@ -283,7 +282,8 @@ async fn release_from_my_response(
                 "image is attached to your published response",
             ));
         }
-        match responses::remove_image_from_draft(&state.repo, &response, image_id, Utc::now()).await
+        match responses::remove_image_from_draft(&state.repo, &response, image_id, Timestamp::now())
+            .await
         {
             Ok(()) => return Ok(()),
             Err(RepoError::ConditionalCheckFailed) => continue,
@@ -321,7 +321,7 @@ pub async fn create_avatar(
         display_key: None,
         status: MediaStatus::Pending,
         bytes: request.byte_size,
-        uploaded_at: Utc::now(),
+        uploaded_at: Timestamp::now(),
         processed_at: None,
         error_message: None,
     };

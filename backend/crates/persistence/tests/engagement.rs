@@ -1,6 +1,6 @@
 mod common;
 
-use chrono::{TimeZone, Utc};
+use common::utc;
 use domain::{CycleId, GroupId, ImageId, QuestionId, UserId};
 use persistence::engagement::{self, CommentLocation};
 use pretty_assertions::assert_eq;
@@ -50,7 +50,7 @@ async fn it_soft_deletes_a_comment() {
         &repo,
         &loc,
         &c.author_user_id,
-        Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap(),
+        utc("2026-06-07T10:00:00Z"),
         None,
     )
     .await
@@ -85,7 +85,7 @@ async fn it_refuses_to_edit_a_soft_deleted_comment() {
         comment_id: &c.comment_id,
         created_at: c.created_at,
     };
-    let edited_at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+    let edited_at = utc("2026-06-07T10:00:00Z");
 
     // A live comment edits fine.
     engagement::update_comment(
@@ -150,7 +150,7 @@ async fn soft_delete_refuses_a_stale_image_and_leaves_the_comment_live() {
         comment_id: &c.comment_id,
         created_at: c.created_at,
     };
-    let at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+    let at = utc("2026-06-07T10:00:00Z");
 
     for stale in [Some(ImageId::new("img-a")), None] {
         let err =
@@ -200,7 +200,7 @@ async fn update_refuses_a_stale_image() {
         comment_id: &c.comment_id,
         created_at: c.created_at,
     };
-    let at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+    let at = utc("2026-06-07T10:00:00Z");
     let stale = ImageId::new("img-a");
 
     let err = engagement::update_comment(
@@ -324,7 +324,7 @@ fn published_answer(
 ) -> domain::Response {
     let mut r = common::draft_response(group_id, cycle_id, question_id, user_id);
     r.status = domain::ResponseStatus::Published;
-    r.published_at = Some(Utc.with_ymd_and_hms(2026, 6, 3, 0, 0, 0).unwrap());
+    r.published_at = Some(utc("2026-06-03T00:00:00Z"));
     r
 }
 
@@ -547,7 +547,7 @@ async fn create_comment_bumps_the_authors_comments_written() {
         author_user_id: &UserId::new("u2"),
         body: "Nice answer!",
         image_media_id: None,
-        created_at: Utc.with_ymd_and_hms(2026, 6, 6, 10, 0, 0).unwrap(),
+        created_at: utc("2026-06-06T10:00:00Z"),
     };
     engagement::create_comment(&repo, &new).await.unwrap();
 
@@ -577,7 +577,7 @@ async fn soft_delete_comment_reverses_the_bump_and_is_idempotent() {
         comment_id: &c.comment_id,
         created_at: c.created_at,
     };
-    let at = Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
+    let at = utc("2026-06-07T10:00:00Z");
     engagement::soft_delete_comment(&repo, &loc, &c.author_user_id, at, None)
         .await
         .unwrap();

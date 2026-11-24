@@ -12,7 +12,7 @@ This is the full list of every HTTP endpoint OpenNewsletter exposes: handler Lam
 - Path tenancy: Routes that operate inside a group are prefixed `/groups/{groupId}/...`. The handler verifies caller membership before doing anything (per [`data-model.md` §6](data-model.md#6-tenant-isolation-rule)).
 - Correlation: Clients SHOULD send `x-correlation-id: {ulid}`. If absent the API generates one. It is echoed in responses and logged.
 - Pagination: List endpoints accept `?cursor={opaque}&limit={1..100}`. Responses include `nextCursor` (null when exhausted). Cursor is base64url(JSON) encoding DynamoDB's `LastEvaluatedKey`. A cursor that decodes but doesn't address a row in the listing's own partition and key range (e.g. one taken from another answer's comment list) is a 422 on `cursor`, the same as a malformed one (`persistence::cursor::decode_scoped`).
-- Timestamps: All ISO-8601 UTC.
+- Timestamps: RFC 3339 (ISO 8601) in UTC, always `YYYY-MM-DDTHH:MM:SS.sssZ`, the form JavaScript's `Date.prototype.toISOString()` writes ([`data-model.md` §1](data-model.md#1-table-shape-recap)).
 - IDs: All UUIDv7 strings except `cycleId` (`yyyymm`, or `yyyymmdd` on a weekly deployment; opaque to clients, [`lifecycle.md` §13](lifecycle.md#13-cycle-cadence)) and `inviteCode` (16-char Crockford base32).
 
 ### 1.1 Error format

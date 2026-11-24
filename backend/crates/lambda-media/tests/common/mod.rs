@@ -3,11 +3,10 @@
 //! feature rather than duplicating it.
 #![allow(dead_code, unused_imports)]
 
-use chrono::{TimeZone, Utc};
 use domain::{
     AvatarId, AvatarMedia, CycleId, Group, GroupId, GroupMembership, ImageId, ImageMedia,
     ImageMimeType, ImagePurpose, LockedQuestion, MediaStatus, Newsletter, NewsletterStatus,
-    QuestionId, QuestionKind, Response, ResponseId, ResponseStatus, Role, UserId,
+    QuestionId, QuestionKind, Response, ResponseId, ResponseStatus, Role, Timestamp, UserId,
 };
 use media::state::AppState;
 use media_delete::fakes::RecordingObjectStore;
@@ -137,7 +136,7 @@ pub fn open_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
 pub fn published_newsletter(group_id: &str, cycle_id: &str) -> Newsletter {
     let mut nl = open_newsletter(group_id, cycle_id);
     nl.status = NewsletterStatus::Published;
-    nl.published_at = Some(Utc::now());
+    nl.published_at = Some(Timestamp::now());
     nl
 }
 
@@ -214,7 +213,7 @@ pub async fn seed_image(
         width: None,
         height: None,
         caption: None,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: None,
         error_message: None,
         attached_comment_id: None,
@@ -334,8 +333,8 @@ pub async fn put_response(
         body: Some("Lake 22, hands down.".into()),
         poll_option_id: None,
         image_media_ids: image_media_ids.iter().map(|i| ImageId::new(*i)).collect(),
-        updated_at: Utc::now(),
-        published_at: (status == ResponseStatus::Published).then(Utc::now),
+        updated_at: Timestamp::now(),
+        published_at: (status == ResponseStatus::Published).then(Timestamp::now),
         reaction_count: 0,
     };
 
@@ -386,8 +385,8 @@ pub async fn seed_avatar(
         display_key: Some(format!("avatar/{avatar_id}/display.webp")),
         status,
         bytes: 65_536,
-        uploaded_at: Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap(),
-        processed_at: Some(Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 1).unwrap()),
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: Some("2026-06-02T00:00:01Z".parse::<Timestamp>().unwrap()),
         error_message: None,
     };
     media_persist::put_avatar(repo, &avatar)

@@ -5,8 +5,7 @@
 use crate::payload::PushPayload;
 use crate::sender::{PushSender, SendResult};
 use crate::webpush::{self, VapidKeys};
-use chrono::Utc;
-use domain::{PushSubscription, UserId};
+use domain::{PushSubscription, Timestamp, UserId};
 use futures::{future, stream, StreamExt};
 use persistence::{push as push_repo, Repo};
 use shared::config::{PUSH_SEND_CONCURRENCY, PUSH_TTL_SECONDS};
@@ -58,14 +57,15 @@ pub async fn send_one(
         }
     };
 
-    let auth_header = match webpush::vapid_authorization_header(vapid, &sub.endpoint, Utc::now()) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(error = ?e, user_id = %user_id, "vapid header build failed");
-            record_failure(repo, user_id, &sub.endpoint_hash).await;
-            return failed_locally(started);
-        }
-    };
+    let auth_header =
+        match webpush::vapid_authorization_header(vapid, &sub.endpoint, Timestamp::now()) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(error = ?e, user_id = %user_id, "vapid header build failed");
+                record_failure(repo, user_id, &sub.endpoint_hash).await;
+                return failed_locally(started);
+            }
+        };
 
     let headers = [
         ("Authorization".to_owned(), auth_header),
@@ -84,7 +84,7 @@ pub async fn send_one(
     let (outcome, status_code) = match result {
         SendResult::Status(code) if (200..300).contains(&code) => {
             if let Err(e) =
-                push_repo::mark_delivered(repo, user_id, &sub.endpoint_hash, Utc::now()).await
+                push_repo::mark_delivered(repo, user_id, &sub.endpoint_hash, Timestamp::now()).await
             {
                 tracing::error!(error = ?e, user_id = %user_id, "failed to record push delivery");
             }

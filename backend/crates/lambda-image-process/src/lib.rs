@@ -8,5 +8,6 @@ pub mod error;
 pub mod handler;
 pub mod key_parse;
 pub mod process;
+pub mod s3_event;
 pub mod state;
 pub mod storage;
