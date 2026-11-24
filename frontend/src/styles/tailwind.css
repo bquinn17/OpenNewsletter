@@ -260,26 +260,4 @@
     font-size: 1.05em;
     color: rgb(var(--ink));
   }
-
-  /* Reading progress bar (`docs/design/frontend.md` §7.2): pure CSS, driven by document
-     scroll. Browsers without `animation-timeline: scroll()` just keep the base `scaleX(0)` —
-     no bar, no JS fallback. */
-  .reading-progress {
-    transform: scaleX(0);
-    transform-origin: left;
-  }
-  @supports (animation-timeline: scroll()) {
-    .reading-progress {
-      animation: reading-progress linear both;
-      animation-timeline: scroll(root);
-    }
-  }
-  @keyframes reading-progress {
-    from {
-      transform: scaleX(0);
-    }
-    to {
-      transform: scaleX(1);
-    }
-  }
 }

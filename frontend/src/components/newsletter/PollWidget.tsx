@@ -21,7 +21,7 @@ export function PollWidget({ question }: Props) {
 
   // Bars grow from zero once the poll scrolls into view (`docs/design/frontend.md` §18), skipped
   // under reduced motion and when `IntersectionObserver` isn't available (progressive
-  // enhancement — same guard as `QuestionChips`).
+  // enhancement — same guard as `QuestionProgress`).
   useEffect(() => {
     const el = containerRef.current;
     const skipAnimation =

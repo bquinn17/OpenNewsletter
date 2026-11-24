@@ -12,12 +12,10 @@ interface Props {
   className?: string;
   /** Tints the bar with an edition's phase color; pages outside an edition stay lavender. */
   phase?: EditionPhase;
-  /** A 3px scroll-driven progress bar along the header's bottom edge (`docs/design/frontend.md` §7.2). */
-  showReadingProgress?: boolean;
 }
 
 export const PageHeader = forwardRef<HTMLDivElement, Props>(function PageHeader(
-  { eyebrow, title, rightSlot, back, className, phase, showReadingProgress },
+  { eyebrow, title, rightSlot, back, className, phase },
   ref,
 ) {
   const navigate = useNavigate();
@@ -46,9 +44,6 @@ export const PageHeader = forwardRef<HTMLDivElement, Props>(function PageHeader(
         </div>
         {rightSlot}
       </div>
-      {showReadingProgress && (
-        <div aria-hidden className="reading-progress h-[3px] w-full bg-coral" />
-      )}
     </div>
   );
 });

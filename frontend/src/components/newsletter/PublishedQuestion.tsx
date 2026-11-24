@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-react";
 import type { components } from "../../types/api";
 import { AnswerCard } from "./AnswerCard";
 import { PollWidget } from "./PollWidget";
-import { questionSectionId } from "./QuestionChips";
+import { questionSectionId } from "./QuestionProgress";
 import { QuestionPrompt } from "./QuestionPrompt";
 
 type S = components["schemas"];

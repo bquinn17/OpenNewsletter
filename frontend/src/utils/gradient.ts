@@ -18,15 +18,15 @@ export const GRADIENT_SLUGS = [
 // keeps this exhaustive if the enum changes. Full class strings, not
 // interpolated, so Tailwind's scanner sees them.
 //
-// Each pair of stops is darkened just enough that its text color clears 4.5:1 at BOTH ends
-// (`docs/design/frontend.md` §4.2) while staying recognizably the same hue.
+// Bright stops with ink text: ink clears 4.5:1 along every gradient, even at 90% opacity
+// (`docs/design/frontend.md` §4.2). White text would need stops dark enough to look muddy.
 const GRADIENT_CLASSES: Record<GradientSlug, string> = {
-  "grape-sky": "bg-gradient-to-br from-violet-600 to-sky-700 text-white",
-  "ember-rose": "bg-gradient-to-br from-orange-700 to-rose-700 text-white",
-  "forest-mint": "bg-gradient-to-br from-green-700 to-emerald-700 text-white",
-  "ocean-dusk": "bg-gradient-to-br from-blue-700 to-indigo-700 text-white",
+  "grape-sky": "bg-gradient-to-br from-violet-400 to-sky-400 text-ink",
+  "ember-rose": "bg-gradient-to-br from-orange-400 to-rose-400 text-ink",
+  "forest-mint": "bg-gradient-to-br from-green-400 to-teal-300 text-ink",
+  "ocean-dusk": "bg-gradient-to-br from-blue-400 to-indigo-300 text-ink",
   "citrus-blush": "bg-gradient-to-br from-amber-300 to-pink-400 text-ink",
-  "slate-lilac": "bg-gradient-to-br from-slate-600 to-purple-700 text-white",
+  "slate-lilac": "bg-gradient-to-br from-slate-400 to-purple-300 text-ink",
   "lavender-blush": "bg-gradient-to-br from-lavender to-blush text-ink",
 };
 

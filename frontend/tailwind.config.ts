@@ -117,10 +117,6 @@ const config: Config = {
           "0%": { strokeDashoffset: "1" },
           "100%": { strokeDashoffset: "0" },
         },
-        "gradient-drift": {
-          "0%, 100%": { backgroundPosition: "0% 50%" },
-          "50%": { backgroundPosition: "100% 50%" },
-        },
       },
       animation: {
         pop: "pop .25s ease-out both",
@@ -133,7 +129,6 @@ const config: Config = {
         "float-up": "float-up .8s cubic-bezier(.2,.8,.2,1) both",
         "pulse-soft": "pulse-soft 2s cubic-bezier(.2,.8,.2,1) infinite",
         draw: "draw .5s cubic-bezier(.2,.8,.2,1) forwards",
-        "gradient-drift": "gradient-drift 12s ease-in-out infinite",
       },
     },
   },

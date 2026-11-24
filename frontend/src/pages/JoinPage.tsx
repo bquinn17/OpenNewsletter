@@ -165,14 +165,14 @@ function InviteTicket({ code }: { code: string }) {
     <div className="px-5 pb-16 pt-8">
       <SignUpSteps current={2} />
       <div className="mt-8 animate-pop overflow-hidden rounded-4xl bg-white shadow-card">
-        <div className="hero-april px-6 pb-6 pt-7 text-white">
-          <p className="text-xs font-bold uppercase tracking-widest text-white/80">
+        <div className="hero-april px-6 pb-6 pt-7 text-ink">
+          <p className="text-xs font-bold uppercase tracking-widest text-ink/90">
             You&apos;re invited
           </p>
           <h1 className="mt-1 font-display text-3xl font-bold leading-tight">
             We saved you a seat <span aria-hidden="true">🎉</span>
           </h1>
-          <p className="mt-2 text-sm text-white/90">
+          <p className="mt-2 text-sm text-ink/90">
             Sign in to join the group. New here? Signing in creates your account.
           </p>
         </div>

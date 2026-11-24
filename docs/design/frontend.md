@@ -71,7 +71,7 @@ frontend/
 │   │   ├── auth/                     # ProviderButtons, ProviderLogos, SignUpSteps
 │   │   ├── home/                     # GroupEditions, EditionRow, OpenEditionHero, Landing
 │   │   ├── join/JoinForm.tsx
-│   │   ├── newsletter/               # EditionMasthead, QuestionChips, PublishedQuestion, OpenQuestionRow,
+│   │   ├── newsletter/               # QuestionProgress, PublishedQuestion, OpenQuestionRow,
 │   │   │                             # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
 │   │   │                             # CommentList (+ CommentRow, CommentComposer), ReactionBar,
 │   │   │                             # EmojiPickerPopover
@@ -105,7 +105,7 @@ frontend/
 │   ├── styles/tailwind.css           # Tailwind directives, color variables (§4.2), the prose ruleset
 │   ├── utils/                        # dates, markdown, media, uploadToS3, emoji, gradient, avatar,
 │   │                                 # avatarColor, inviteUrl, correlation (ULID), retry, platform,
-│   │                                 # userAgent, navigation, permanentDelete, readingTime, motion
+│   │                                 # userAgent, navigation, permanentDelete, motion
 │   ├── test/                         # setup.ts (Vitest setup), virtualPwaRegisterMock.ts (stand-in for
 │   │                                 # vite-plugin-pwa's virtual:pwa-register module in tests);
 │   │                                 # unit tests sit next to their source files
@@ -197,7 +197,7 @@ Components use the token classes directly, alongside Tailwind's built-in `white`
 | sun | draft, warning |
 | danger | destructive actions (delete, remove, revoke, leave) and errors |
 
-**Vivid accents are fills; text uses the `-ink` shade.** Coral, grape, mint, sky and sun fail WCAG AA as text on white or on their own tint, so text in an accent color uses its `-ink` shade, which passes on both. The primary `Button` is ink text on a coral fill, and the `danger` variant is white on `danger`. Avatar colors (`utils/avatarColor.ts`) and group gradients (`utils/gradient.ts`) pick white or ink text per color, so the text passes at both ends of every gradient.
+**Vivid accents are fills; text uses the `-ink` shade.** Coral, grape, mint, sky and sun fail WCAG AA as text on white or on their own tint, so text in an accent color uses its `-ink` shade, which passes on both. The primary `Button` is ink text on a coral fill, and the `danger` variant is white on `danger`. Avatar colors (`utils/avatarColor.ts`), group gradients (`utils/gradient.ts`) and the hero gradients keep bright, saturated fills (mostly the -300 to -500 steps) and put ink text on them. Ink passes 4.5:1 at every point along each gradient, even at 90% opacity. White text would need fills dark enough to look muddy.
 
 The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../future-ideas.md#13-dark-mode); because the colors are variables, it is mostly a matter of redefining them.
 
@@ -334,15 +334,13 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - Notes:
   - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
   - The published payload carries no `responseOpenAt`, so the month/year label comes from the cycle's `NewsletterSummary` (`useNewsletters`), falling back to `publishedAt`.
-  - Published questions are expanded by default. Each has a chevron toggle that shows "N answers" while collapsed, and the question chips row ends in a **Collapse all** / **Expand all** toggle.
+  - Published questions are expanded by default. Each has a chevron toggle that shows "N answers" while collapsed, and the question progress bar ends in a **Collapse all** / **Expand all** toggle.
   - Comments and reactions render in `AnswerCard` via `CommentList`/`ReactionBar`.
   - Open-edition rows carry one meta line ("Poll · asked anonymously"); the status shows in the row's icon tile.
 - The published layout is built for reading a long edition:
   - **Page header:** the edition label, "<group> · published <date>" as its eyebrow (monthly; weekly labels are already the publish date), and a trophy button linking to the leaderboard (§7.9).
-  - **Masthead:** one slim band in the group's gradient (§14a) with a stack of contributor avatars and "N answers · M min read · K reactions" (reading time, §14a). It doesn't repeat the header's label or date, so the first answer starts above the fold on a phone.
-  - **Question chips:** a sticky, horizontally scrolling row with one chip per question under the page header. The chip for the question on screen is highlighted (a scroll listener), and tapping a chip jumps to its question.
-  - **Sticky prompts:** each question's prompt stays pinned under the chips while its answers scroll by.
-  - **Reading progress:** a 3px bar in the page header, pure CSS with `animation-timeline: scroll()`; browsers without scroll-driven animations show no bar.
+  - **Question progress bar:** sticky under the page header, notched into one segment per question. Each segment fills as the reader scrolls through its question (a scroll listener), and all fill at the page's bottom. Tapping a segment jumps to its question. Nothing sits between the header and this bar (no masthead, no answer or reaction counts), so the first answer starts above the fold on a phone.
+  - **Sticky prompts:** each question's prompt stays pinned under the progress bar while its answers scroll by.
   - **Answers:** each question's answers share one surface, separated by dividers.
   - **Under each answer:** the reactions already used plus one add button (§9). Comments collapse to a summary row ("💬 3" and small commenter avatars) that expands into the full thread. The composer is a one-line **Add a comment…** button; tapping it expands a textarea and a photo button, and the image dropzone appears only after tapping the photo button.
   - An `archived` cycle (410) shows a friendly "archived" state rather than an error.
@@ -667,13 +665,11 @@ Several pieces of display state live entirely in the frontend rather than on the
 - **Edition labels** depend on the deployment's cadence, `GET /config`'s `cycleCadence.frequency` (`api/queries.ts#useCycleCadence`; [`lifecycle.md` §13.4](lifecycle.md#134-labels)). Helper: `utils/dates.ts#editionLabel(edition, timezone, frequency)`. `useCycleCadence` returns `undefined` until `/config` has loaded, and nothing cadence-dependent renders until then: no edition label, no "next month"/"next week" copy, and the settings form keeps its `responseWindowDays` field and Save button disabled, with no maximum applied. There is no client-side default cadence, so a weekly deployment never flashes monthly wording or a 28-day limit. Never accept a server-supplied label. Both forms use the group's `timezone`, which every `/config` membership carries ([`api.md` §2.1](api.md#21-get-config)).
   - **Monthly**: month and year (`"June 2026"`; the date tile reads `JUN` / `2026`), derived from `responseOpenAt` (`utils/dates.ts#cycleLabels`). Copy says "this month's edition" and "next month".
   - **Weekly**: the publication date (`"Nov 15, 2026"`; the tile reads `NOV` / `15`), from `publishedAt` once published and from the scheduled `responseCloseAt` before that. Copy says "this week's edition" and "next week". The Home row drops its "· published …" suffix, which would repeat the title.
-- **Reading time** in the published edition's masthead (§7.2): `utils/readingTime.ts`, the word count of every published text answer at 200 words a minute, rounded up, at least 1 minute.
 - **Avatar fallback color**: an `Avatar` with no avatar color gets one of the eight avatar color classes, picked by a stable hash of the member's name (`utils/avatarColor.ts`), so a member's initial always sits on the same circle.
 - **Word count** on the respond page footer: derived from the local `body` string. Trivial — no helper needed beyond `body.trim().split(/\s+/).length` (zero when empty).
-- **Reaction total** on the published-edition header: sum of `reactionGroups[].count` across all answers. Inline in `NewsletterPage.tsx`.
 - **"Hype check" banner** — not built; tracked in [`PROGRESS.md`](../../plans/PROGRESS.md). Would be computed from per-user draft counts in the open-newsletter payload. Sketch: a `utils/hype.ts#hypeFor(myPublishedCount, totalQuestions, daysLeft)` helper would return either a string or `null` (suppress when there's nothing motivating to say).
 - **`helperText` under recurring questions** (Photo Wall / On Your Mind / Check It Out) — not built; tracked in [`PROGRESS.md`](../../plans/PROGRESS.md). Would be a hard-coded map keyed by prompt slug in `utils/recurring.ts`. The API knows nothing about recurring questions — they're just regular questions that the frontend would recognize by prompt and decorate accordingly.
-- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-violet-500 to-sky-400`): derived from `Group.gradient` / `MembershipSummary.gradient` (a slug like `grape-sky`) via the frontend palette table in `utils/gradient.ts`. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` ([`api.md` §4.3](api.md#43-patch-groupsgroupid)) — the frontend table must cover exactly that set.
+- **Gradient class** (Tailwind class string, e.g. `bg-gradient-to-br from-violet-400 to-sky-400 text-ink`): derived from `Group.gradient` / `MembershipSummary.gradient` (a slug like `grape-sky`) via the frontend palette table in `utils/gradient.ts`. The slug is the API contract; the class string is a presentation detail. The allowed slug set is the enum in `shared/openapi.yaml` ([`api.md` §4.3](api.md#43-patch-groupsgroupid)) — the frontend table must cover exactly that set.
 - **Edition phase color**: derived from `NewsletterSummary.status` / `NewsletterDetailResponse.status` via `utils/phase.ts#phaseStyle`. Voting is grape, open is coral, published is mint. It tints the date tile and phase label on each Home edition row, and the `PageHeader` background on pages inside an edition (upcoming/suggest for voting; the edition and respond pages for open; the edition page for published). Pages outside an edition keep the default lavender header.
 - **`avatarColor` → CSS class**: similar — the slug from `User.avatarColor` maps to a Tailwind class in a small frontend table, covering exactly the eight slugs enumerated in [`api.md` §2.3](api.md#23-patch-me).
 
@@ -748,8 +744,8 @@ Buttons, edition rows, candidate cards and interactive pills press down slightly
 | Publish the last unanswered question | A full-screen "You're all in for {edition} 🎉", with a bigger burst |
 | Upvote | The vote tile springs and coral sparks burst. On the Top sort, the list reorders smoothly in a view transition. |
 | Reaction | The emoji pops, a copy floats up and fades, and the count bumps |
-| Home → edition | The edition row's date tile morphs into the edition masthead (a view transition through `<Link viewTransition>` and a shared `view-transition-name`) |
-| Published edition loads | The masthead gradient drifts slowly, and the first 8 answers rise in one after another |
+| Home → edition | The edition row's date tile morphs into the page header's edition title (a view transition through `<Link viewTransition>` and a shared `view-transition-name`) |
+| Published edition loads | The first 8 answers rise in one after another |
 | Poll results scroll into view | The bars grow from zero, and the winning option gets ✨ |
 | Saving a draft | The save dot pulses, then a check draws in |
 | Under 24 hours left | The countdown pill pulses gently |

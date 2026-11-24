@@ -19,7 +19,7 @@ export function SignUpSteps({ current }: { current: 1 | 2 }) {
             <span
               className={clsx(
                 "grid h-6 w-6 shrink-0 place-items-center rounded-full",
-                done && "bg-mint text-white",
+                done && "bg-mint text-ink",
                 active && "bg-ink text-cream",
                 !done && !active && "bg-white/70 text-inkmuted",
               )}

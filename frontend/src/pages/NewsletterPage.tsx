@@ -2,29 +2,20 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { ChevronsDownUp, ChevronsUpDown, Trophy } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiError } from "../api/client";
-import {
-  useCycleCadence,
-  useGroup,
-  useMembership,
-  useNewsletter,
-  useNewsletters,
-} from "../api/queries";
+import { useCycleCadence, useMembership, useNewsletter, useNewsletters } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
-import { EditionMasthead } from "../components/newsletter/EditionMasthead";
 import { OpenQuestionRow } from "../components/newsletter/OpenQuestionRow";
 import { PublishedQuestion } from "../components/newsletter/PublishedQuestion";
-import { QuestionChips } from "../components/newsletter/QuestionChips";
+import { QuestionProgress } from "../components/newsletter/QuestionProgress";
 import { useElementHeight } from "../components/newsletter/useElementHeight";
-import { avatarColorClass } from "../utils/avatarColor";
 import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
-import { readingTimeMinutes } from "../utils/readingTime";
 import type { components } from "../types/api";
 
 /**
- * How far below the pinned prompts a question's section must reach before its chip lights up, so
- * the chip switches as a question fills the screen rather than only once its prompt pins.
+ * How far below the pinned prompts the reading line sits, so a question's progress segment starts
+ * filling as the question fills the screen rather than only once its prompt pins.
  */
 const READING_LINE_OFFSET_PX = 120;
 
@@ -210,8 +201,6 @@ function PublishedLayout({
   frequency: S["CycleCadence"]["frequency"];
 }) {
   const { data: newsletters } = useNewsletters(groupId);
-  const { data: group } = useGroup(groupId);
-  const membership = useMembership(groupId);
   const summary = newsletters?.items.find((n) => n.cycleId === data.cycleId);
   // The published payload carries no `responseOpenAt` (`docs/design/frontend.md`
   // §7.2), so the monthly label falls back to the cycle's `NewsletterSummary`,
@@ -231,44 +220,20 @@ function PublishedLayout({
     [data.questions],
   );
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // The chips stick under the header and the question prompts under both, at their measured
-  // heights, so nothing overlaps or leaves a gap whatever the header's content.
+  // The progress bar sticks under the header and the question prompts under both, at their
+  // measured heights, so nothing overlaps or leaves a gap whatever the header's content.
   const [headerRef, headerHeight] = useElementHeight<HTMLDivElement>();
-  const [chipsRef, chipsHeight] = useElementHeight<HTMLElement>();
-  const promptTop = headerHeight + chipsHeight;
+  const [progressRef, progressHeight] = useElementHeight<HTMLElement>();
+  const promptTop = headerHeight + progressHeight;
 
-  const textAnswers = useMemo(
-    () => sorted.flatMap((q) => (q.kind === "text" ? (q.answers ?? []) : [])),
-    [sorted],
-  );
-  // Client-derived display data (`docs/design/frontend.md` §14a) — the
-  // server never sends a total, so sum every answer's reaction groups here.
-  const reactionTotal = textAnswers.reduce(
-    (sum, a) => sum + a.reactionGroups.reduce((aSum, g) => aSum + g.count, 0),
-    0,
-  );
-  const readingMinutes = readingTimeMinutes(textAnswers.map((a) => a.body ?? ""));
   const riseIndexByResponseId = useMemo(() => {
     const map = new Map<string, number>();
-    textAnswers.slice(0, RISE_CAP).forEach((a, i) => map.set(a.responseId, i));
+    sorted
+      .flatMap((q) => (q.kind === "text" ? (q.answers ?? []) : []))
+      .slice(0, RISE_CAP)
+      .forEach((a, i) => map.set(a.responseId, i));
     return map;
-  }, [textAnswers]);
-  const contributors = useMemo(() => {
-    const seen = new Map<string, { userId: string; displayName: string }>();
-    for (const answer of textAnswers) {
-      if (!seen.has(answer.userId)) {
-        seen.set(answer.userId, { userId: answer.userId, displayName: answer.displayName });
-      }
-    }
-    return [...seen.values()].map((c) => {
-      const member = group?.members.find((m) => m.userId === c.userId);
-      return {
-        ...c,
-        avatarUrl: member?.avatarUrl,
-        colorClassName: member ? avatarColorClass(member.avatarColor) : undefined,
-      };
-    });
-  }, [textAnswers, group]);
+  }, [sorted]);
 
   const allCollapsed = sorted.length > 0 && sorted.every((q) => collapsed[q.questionId]);
 
@@ -279,8 +244,8 @@ function PublishedLayout({
 
   return (
     <div className="pb-12">
-      {/* The header carries the label, the publish date and the leaderboard link; the masthead
-          below adds only what the header doesn't say (`docs/design/frontend.md` §7.2). */}
+      {/* The header carries the label, the publish date and the leaderboard link, and the
+          question progress bar sticks under it (`docs/design/frontend.md` §7.2). */}
       <PageHeader
         ref={headerRef}
         eyebrow={
@@ -288,7 +253,13 @@ function PublishedLayout({
             ? `${groupName} · published`
             : `${groupName} · published ${formatInZone(data.publishedAt, timezone, { month: "short", day: "numeric" })}`
         }
-        title={title}
+        title={
+          // Shares a `view-transition-name` with the Home row's date tile it morphed from
+          // (`docs/design/frontend.md` §18), keyed by cycle like `EditionRow`.
+          <h1 style={{ viewTransitionName: `edition-${data.cycleId}` }} className="truncate">
+            {title}
+          </h1>
+        }
         back="/"
         rightSlot={
           <Link
@@ -301,22 +272,11 @@ function PublishedLayout({
           </Link>
         }
         phase="published"
-        showReadingProgress
       />
 
-      <EditionMasthead
-        cycleId={data.cycleId}
-        title={title}
-        gradient={membership?.gradient ?? "lavender-blush"}
-        contributors={contributors}
-        answerCount={textAnswers.length}
-        readingMinutes={readingMinutes}
-        reactionCount={reactionTotal}
-      />
-
-      <QuestionChips
+      <QuestionProgress
         questions={sorted.map((q) => ({ questionId: q.questionId, prompt: q.prompt }))}
-        navRef={chipsRef}
+        navRef={progressRef}
         stickyTopPx={headerHeight}
         readingLinePx={promptTop + READING_LINE_OFFSET_PX}
         trailing={

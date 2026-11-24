@@ -37,7 +37,7 @@ function EditionStack() {
       </div>
       <div className="absolute inset-x-0 top-0 h-36 animate-float rounded-3xl bg-white shadow-card motion-reduce:animate-none">
         <div className="hero-april flex h-14 items-end rounded-t-3xl px-4 pb-2">
-          <span className="font-display text-sm font-bold text-white">The Latest Edition</span>
+          <span className="font-display text-sm font-bold text-ink">The Latest Edition</span>
         </div>
         <div className="space-y-2 px-4 py-3">
           <p className="text-[11px] font-semibold leading-snug text-ink">

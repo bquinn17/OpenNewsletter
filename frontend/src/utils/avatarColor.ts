@@ -17,9 +17,8 @@ export const AVATAR_COLOR_SLUGS = [
 // Tailwind classes for the eight `AvatarColorSlug` values. `Record` over the
 // literal union forces this to stay exhaustive if the enum ever changes
 // (docs/design/frontend.md §14a).
-// Ink text on the lighter fills, white on the one (violet) dark enough to need it — each
-// combination passes 4.5:1 (`docs/design/frontend.md` §4.2). `violet-600` instead of
-// `-500` is still recognizably violet.
+// Bright fills with ink text, each passing 4.5:1 (`docs/design/frontend.md` §4.2).
+// Violet is `-400` because ink on `violet-500` falls just short.
 const AVATAR_COLOR_CLASSES: Record<AvatarColorSlug, string> = {
   red: "bg-red-500 text-ink",
   orange: "bg-orange-500 text-ink",
@@ -27,7 +26,7 @@ const AVATAR_COLOR_CLASSES: Record<AvatarColorSlug, string> = {
   green: "bg-green-500 text-ink",
   teal: "bg-teal-500 text-ink",
   blue: "bg-blue-500 text-ink",
-  violet: "bg-violet-600 text-white",
+  violet: "bg-violet-400 text-ink",
   pink: "bg-pink-500 text-ink",
 };
 

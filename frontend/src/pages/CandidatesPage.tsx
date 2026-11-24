@@ -129,7 +129,7 @@ export function CandidatesPage() {
 
       <div className="space-y-3 px-5 pt-5">
         {votingCycle && (
-          <div className="rounded-3xl bg-gradient-to-br from-grape-ink to-sky-ink p-5 text-white">
+          <div className="rounded-3xl bg-gradient-to-br from-violet-400 to-sky-400 p-5 text-ink">
             <div className="text-xs font-bold uppercase tracking-widest">Vote on the questions</div>
             <h1 className="mt-1 font-display text-xl font-bold leading-tight">
               {opensLabel(votingCycle, timezone, frequency)}

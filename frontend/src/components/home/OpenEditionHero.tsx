@@ -71,10 +71,10 @@ export function OpenEditionHero({ groupId, timezone, frequency, gradient, newsle
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="Your progress on this edition"
-          className="mt-1.5 h-2 rounded-full bg-white/25"
+          className="mt-1.5 h-2 rounded-full bg-white/40"
         >
           <div
-            className="h-2 rounded-full bg-white duration-slow ease-smooth motion-safe:transition-[width]"
+            className="h-2 rounded-full bg-ink duration-slow ease-smooth motion-safe:transition-[width]"
             style={{ width: `${pct}%` }}
           />
         </div>
