@@ -25,7 +25,7 @@ export function EditionRow({ groupId, timezone, frequency, newsletter }: Props) 
       : `/g/${groupId}/n/${newsletter.cycleId}`;
   const description =
     newsletter.status === "open"
-      ? `${shortCountdown(newsletter.responseCloseAt)} left · you've published ${newsletter.myPublishedCount} of ${newsletter.questionCount}`
+      ? `${shortCountdown(newsletter.responseCloseAt)} left · you've answered ${newsletter.myAnsweredCount} of ${newsletter.questionCount}`
       : newsletter.status === "voting"
         ? `Suggest and vote on questions for next ${cadenceNoun(frequency)}`
         : `${newsletter.questionCount} question${newsletter.questionCount === 1 ? "" : "s"}${

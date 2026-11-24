@@ -6,7 +6,7 @@ use crate::validation;
 use domain::api::{ResponseDto, SaveResponseRequest};
 use domain::{
     ApiError, ApiErrorCode, CycleId, GroupId, ImageId, ImageMedia, ImagePurpose, LockedQuestion,
-    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, ResponseStatus, Timestamp, UserId,
+    MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Timestamp, UserId,
 };
 use persistence::responses::ResponseSave;
 use persistence::{auth, media, newsletters, questions, responses};
@@ -28,13 +28,12 @@ pub async fn save_response(
 ) -> Result<ResponseDto, ApiError> {
     auth::require_membership(&state.repo, caller, group_id, false).await?;
 
-    // The three pre-reads are independent, so they run together; their results
+    // The two pre-reads are independent, so they run together; their results
     // are checked in the order above so the error a caller sees doesn't depend
     // on which read finished first.
-    let (not_archived, question, my_responses) = futures::join!(
+    let (not_archived, question) = futures::join!(
         require_newsletter_not_archived(state, group_id, cycle_id),
         questions::get_locked_question(&state.repo, group_id, cycle_id, question_id),
-        responses::list_my_responses_in_cycle(&state.repo, caller, group_id, cycle_id),
     );
     not_archived?;
     let question = question
@@ -45,19 +44,6 @@ pub async fn save_response(
         .ok_or_else(|| ApiError::not_found("question not found in this cycle"))?;
 
     let content = validate_content(state, caller, group_id, cycle_id, &question, request).await?;
-
-    let my_responses = my_responses.map_err(|e| {
-        tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "my-response listing failed");
-        ApiError::internal("failed to list your responses")
-    })?;
-    let already_published_in_cycle = my_responses
-        .iter()
-        .any(|r| r.status == ResponseStatus::Published);
-    let this_question_already_published = my_responses
-        .iter()
-        .any(|r| r.question_id == *question_id && r.status == ResponseStatus::Published);
-    let will_be_published = content.publish || this_question_already_published;
-    let bump_editions_answered = will_be_published && !already_published_in_cycle;
 
     let save = ResponseSave {
         group_id,
@@ -70,7 +56,7 @@ pub async fn save_response(
         image_media_ids: &content.image_media_ids,
         publish: content.publish,
     };
-    responses::save_response(&state.repo, &save, Timestamp::now(), bump_editions_answered)
+    responses::save_response(&state.repo, &save, Timestamp::now())
         .await
         .map_err(|e| {
             if e.is_lost_race() {

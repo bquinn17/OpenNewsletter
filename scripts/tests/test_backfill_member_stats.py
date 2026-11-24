@@ -27,6 +27,7 @@ from backfill_member_stats import (
     compute_response_updates,
     compute_streaks,
     reacted_gsi2sk,
+    response_is_non_empty,
     response_reaction_count,
 )
 
@@ -39,6 +40,8 @@ def _text_response(
     response_id: str = "r1",
     author: str = U1,
     status: str = "published",
+    body: str | None = "some words",
+    image_media_ids: tuple[str, ...] = (),
     reactions: tuple[ReactionFact, ...] = (),
     comments: tuple[CommentFact, ...] = (),
     had_reaction_count_attr: bool = False,
@@ -49,6 +52,8 @@ def _text_response(
         author_user_id=author,
         status=status,
         kind="text",
+        body=body,
+        image_media_ids=image_media_ids,
         reactions=reactions,
         comments=comments,
         had_reaction_count_attr=had_reaction_count_attr,
@@ -150,10 +155,12 @@ def test_accumulate_question_counters_excludes_anonymous_and_missing_submitter()
     assert accumulate_question_counters(cycles) == {U1: 1, U2: 1}
 
 
-def test_an_open_cycle_counts_toward_questions_and_editions_only() -> None:
-    # The live code counts promoted questions and an answer's first publish
-    # before the cycle publishes, so a backfill run while a cycle is open
-    # must count them too, or it drops them for good.
+def test_an_open_cycle_counts_toward_questions_but_not_editions() -> None:
+    # The live code counts promoted questions before the cycle publishes, so
+    # a backfill run while a cycle is open must count them too, or it drops
+    # them for good. `editions_answered` is decided only at cycle close
+    # (`docs/design/lifecycle.md` §5.3), so the open cycle must not count there,
+    # even for a published answer.
     published = [
         CycleFacts(
             cycle_id="202601",
@@ -184,8 +191,8 @@ def test_an_open_cycle_counts_toward_questions_and_editions_only() -> None:
     }
     assert results[U1].questions_asked == 2
     assert results[U2].questions_asked == 0
-    assert results[U1].editions_answered == 2
-    assert results[U1].last_answered_cycle == "202602"
+    assert results[U1].editions_answered == 1
+    assert results[U1].last_answered_cycle == "202601"
     assert results[U2].editions_answered == 0, "a draft is not an answer"
     assert results[U2].last_answered_cycle is None
     # The open cycle settles no streak: U1's streak is the published one alone.
@@ -212,6 +219,7 @@ def test_editions_answered_counts_each_cycle_once_and_keeps_the_latest_marker() 
                     author_user_id=U1,
                     status="published",
                     kind="poll",
+                    poll_option_id="opt-1",
                 ),
             ),
         ),
@@ -219,6 +227,46 @@ def test_editions_answered_counts_each_cycle_once_and_keeps_the_latest_marker() 
     results = {r.user_id: r for r in compute_member_stats(cycles, [U1], [U1])}
     assert results[U1].editions_answered == 2
     assert results[U1].last_answered_cycle == "202603"
+
+
+def test_response_is_non_empty_requires_a_pick_or_non_whitespace_content() -> None:
+    assert response_is_non_empty(_text_response(body="Lake 22."))
+    assert response_is_non_empty(_text_response(body=None, image_media_ids=("img-1",)))
+    assert not response_is_non_empty(_text_response(body="   \n\t"))
+    assert not response_is_non_empty(_text_response(body=None))
+    poll = ResponseFact(
+        question_id="q1",
+        response_id="r1",
+        author_user_id=U1,
+        status="published",
+        kind="poll",
+        poll_option_id="opt-1",
+    )
+    assert response_is_non_empty(poll)
+    assert not response_is_non_empty(
+        ResponseFact(
+            question_id="q1",
+            response_id="r1",
+            author_user_id=U1,
+            status="published",
+            kind="poll",
+        )
+    )
+
+
+def test_editions_answered_excludes_a_published_row_with_empty_content() -> None:
+    # A published answer whose content was later emptied (e.g. via autosave
+    # after publishing) must not count — `is_non_empty` is checked on the
+    # row as currently stored, not at the moment it was published.
+    cycles = [
+        CycleFacts(
+            cycle_id="202601",
+            responses=(_text_response(author=U1, body=None),),
+        )
+    ]
+    results = {r.user_id: r for r in compute_member_stats(cycles, [U1], [U1])}
+    assert results[U1].editions_answered == 0
+    assert results[U1].last_answered_cycle is None
 
 
 # ---------------------------------------------------------------------------

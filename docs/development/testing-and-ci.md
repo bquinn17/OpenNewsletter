@@ -169,7 +169,7 @@ Backend and frontend always deploy together from one SHA, backend first. That ma
 
 ### 6.5 `e2e.yml`
 
-Nightly at 07:00 UTC and on manual dispatch: install Chromium, `npm run e2e`, upload traces on failure. Runs the `mock` and `demo` projects, and also the `dev` project when `vars.E2E_BASE_URL` is set. Per-PR stacks are a future idea ([`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks)).
+Nightly at 07:00 UTC and on manual dispatch: install Chromium, `npm run e2e`, upload traces on failure. Runs the `mock` and `demo` projects, and also the `dev` project when `vars.E2E_BASE_URL` is set. Per-PR stacks are a future idea ([`future-ideas.md` §3](../../plans/future-ideas.md#3-ephemeral-per-pr-ci-stacks)).
 
 ---
 

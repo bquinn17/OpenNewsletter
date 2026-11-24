@@ -475,6 +475,9 @@ pub struct NewsletterSummary {
     pub question_count: u32,
     pub my_draft_count: u32,
     pub my_published_count: u32,
+    /// The caller's non-empty answers in this cycle, whatever their status
+    /// (`Response::is_non_empty`). Every one of them publishes at close.
+    pub my_answered_count: u32,
 }
 
 /// `GET /groups/{groupId}/newsletters` response (§5.1).

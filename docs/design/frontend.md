@@ -180,7 +180,7 @@ Tailwind container choice: stick with `max-w-2xl` on large screens. The "middle 
 
 The palette is a set of fixed hex colors in `theme.extend.colors` in `tailwind.config.ts`: the neutrals (`cream`, `mist`, `surface`, `line`, `ink`, `inkmuted`), the pastels (`lavender`, `blush`, and the `phase.*` edition tints from `utils/phase.ts`) and the accents (`coral`, `peach`, `grape`, `sky`, `mint`, `sun`). Components use these token classes directly, alongside Tailwind's built-in `white`, such as `bg-white` for cards and the page background set on `body` in `styles/tailwind.css`. There are no CSS variables.
 
-The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../future-ideas.md#13-dark-mode).
+The app has a light theme only. Nothing responds to `prefers-color-scheme`, and there are no `dark:` styles. A dark mode with a user toggle is in [`future-ideas.md` §13](../../plans/future-ideas.md#13-dark-mode).
 
 ### 4.3 Typography
 
@@ -297,7 +297,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 ### 7.1 HomePage `/`
 
-- Signed out, Home is a landing page (`components/home/Landing.tsx`): a decorative stack of editions, the headline "Your group's newsletter, together.", a primary **Sign up** (`/join`) and a secondary **Sign in** (`/signin`), the invite-only notice, **See a demo** (§17), and a three-step "How it works" (suggest & vote, everyone answers, read it together). Its copy names no cadence, because a signed-out visitor has no `/config` to read it from. The header's **Sign in** links to `/signin`, and is hidden on that page.
+- Signed out, Home is a landing page (`components/home/Landing.tsx`): a decorative stack of editions, the headline "Your group's newsletter, together.", a primary **See a demo** (§17) and a secondary **Sign in** (`/signin`), the invite-only notice ending in "**Received an invite?**" with a small **Sign up** button (`/join`), and a three-step "How it works" (suggest & vote, everyone answers, read it together). The demo and sign-in lead because the app is invite-only: most first-time visitors have nothing to sign up for yet, and the **Sign up** button sits under the one condition that makes it useful, having an invite. Its copy names no cadence, because a signed-out visitor has no `/config` to read it from. The header's **Sign in** links to `/signin`, and is hidden on that page.
 - Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
 - Renders editions newest first, in labeled sections (empty ones are hidden): **Taking suggestions** (the voting cycle), **Awaiting responses** (the open cycle), **This month's edition** (published, and its month is the current month in the group's timezone, via `utils/dates.ts#isCurrentCycleMonth`), **Past editions** (up to the 3 most recent published editions from earlier months). On a weekly deployment the third section is **This week's edition**: a published edition whose `publishedAt` is within the last 7 days (`utils/dates.ts#isCurrentEdition` covers both cadences; §14a). Open and voting cycles exist at once during the response window ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)).
 - Empty state when no memberships: "You haven't joined a group yet. Groups are invite-only: ask an admin of the group for an invite code, then paste it below." with a `<JoinForm/>`. This is where someone lands who signed in without an invite: Cognito still creates their identity ([`auth.md` §3.2](auth.md#32-why-this-is-fine)), but the app has nothing for them until they redeem one. It shows only once `/config` has loaded. Until then Home shows a spinner, and if `/config` fails, or is paused offline, it shows "Couldn't load your groups." with **Try again**, so a member never sees the join form.
@@ -307,7 +307,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 - `useNewsletter` fetches `GET /groups/{g}/newsletters/{c}`.
 - Renders one of three layouts:
   - `voting` → redirect to `/g/:g/upcoming` (the candidate UI is the right surface for that state)
-  - `open` → list of questions; each row shows: prompt, "your draft" preview if any, status pill (`Not started` / `Draft` / `Published`), CTA → respond
+  - `open` → list of questions; each row shows: prompt, "your draft" preview if any, status pill (`Not started` / `Draft` / `Published`), CTA → respond. Once the caller has a non-empty draft or answer on every question (`utils/responseProgress.ts#allQuestionsAnswered`), `CompletionCelebration` shows a one-time modal over a confetti burst (`ConfettiBurst`, static under `prefers-reduced-motion`): "You completed the newsletter!", a line that any answer stays editable until the deadline, and **Nice!** to dismiss (Escape too). It shows once per edition per device: the flag `celebrated:{groupId}/{cycleId}` is set in `appStorage` when it opens, and a storage error just means it may show again.
   - `published` → questions list; each question expandable, showing all answers (with images, comments, reactions). Polls show stacked-bar tally with caller's vote highlighted.
 - Notes:
   - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
@@ -318,21 +318,21 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 ### 7.3 RespondPage `/g/:g/n/:c/respond/:q`
 
-- For text questions: a markdown editor (textarea with live preview toggle), drag-and-drop image uploader, autosave indicator, Publish button.
+- For text questions: a markdown editor (textarea with live preview toggle), drag-and-drop image uploader, autosave indicator, **Done** button.
   - `useResponseEditor` hook manages in-memory `body` and a **debounced PUT** that fires once the user has stopped typing for `autosaveDebounceMs` (default 1500 ms). It also flushes on `blur` and on `visibilitychange → hidden`.
   - Image upload flow detailed in [`media.md` §3](media.md#3-upload-flow-browser--s3).
-- For poll questions: option list with single-select, Publish button.
+- For poll questions: option list with single-select, **Done** button.
 - Banner showing time-until-deadline (group TZ).
-- After publish, page becomes read-only with an "Edit" toggle that reopens editor (until cycle close).
+- **No manual publish** ([decision](../decisions.md#answers-publish-at-close)). Every save sends `publish: false`, and every non-empty answer is published at close ([`engagement.md` §3.6](engagement.md#36-auto-publish-at-close)). **Done** flushes any pending save (a poll waits for its in-flight pick), then goes to the next unanswered question in `displayOrder` after this one, wrapping around (`utils/responseProgress.ts#nextUnansweredQuestionId`), or back to the edition page when none is left. "Answered" means a non-empty draft or answer. Done works on a blank question too; it's disabled while an upload is in flight or a save has stopped on a 4xx (text), or while a pick is saving (poll). **Save & exit** goes straight back to the edition page.
+- An answer that is already `published` (saved by an older release that still published by hand) opens read-only with an "Edit" toggle that reopens the editor (until cycle close).
 - Notes:
   - Image tokens are inserted as `![alt](image:{imageId})` when an upload turns `ready`. Removing an image strips its tokens and drops its ID, then calls `DELETE /uploads/{id}` behind a permanent-delete `ConfirmDialog` ("This permanently deletes the image. It can't be recovered." — [`media.md` §8.0](media.md#80-explicit-deletion)/§9/§11.4), after the draft without it saves.
-  - Publish is disabled while the body is blank with no images, or while an upload is in flight.
   - Editing a published answer autosaves with `publish: false` (publishing is sticky server-side), and the editor says so.
   - A poll selection change on a published poll answer saves immediately.
   - Saves are serialized (one in flight, later edits coalesce). A 409 `CYCLE_NOT_OPEN` stops saving and makes the page read-only. Other 4xx errors stop retrying; only network errors and 5xx retry with backoff.
   - Blur, tab-hide and unmount flush only when `local` differs from the server, so opening a question and leaving does not create an empty draft.
   - The editor doesn't mount until the draft's `imageMediaIds` have been fetched (`GET /uploads/{id}`), because `ImageUploader` reads `initialImages` once. Mounting it empty would autosave the images away. An image that can't be fetched is dropped.
-  - A poll pick saves immediately as a draft (`publish:false`), the same as a text autosave. Publish sends `{kind:"poll", pollOptionId, publish:true}`.
+  - A poll pick saves immediately as a draft (`publish:false`), the same as a text autosave.
 - While the caller's answer is a non-empty, unpublished draft, the page shows a persistent note: "Drafts are published automatically when responses close on {date in group tz}. Clear your answer if you don't want it included." ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency), [`engagement.md` §3.6](engagement.md#36-auto-publish-at-close)). `DraftStatusBadge` copy becomes "Draft — publishes automatically at the deadline". The note hides once the cycle has closed; for a poll it shows only the first sentence, because a pick can't be cleared (`SaveResponseRequest.pollOptionId` is required; whether polls need a "clear" action is left open). The badge copy applies only to a settled save of a non-empty unpublished draft; saving, retrying and offline states keep their own copy.
 - **Concurrency: last-write-wins.** The server doesn't enforce optimistic-concurrency tokens (see [`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)) and the SPA does not implement a conflict-resolution UI. The debounced autosave makes interleaving rare — if a real conflict ever lands, the most recent save wins. We accept this trade for the v1 simplicity it buys; revisit if telemetry shows actual clobbering.
 
@@ -391,7 +391,7 @@ Notes:
 
 ### 7.8 JoinPage `/join?code=...`
 
-`/join` is the sign-up flow. Groups are invite-only ([`auth.md`](auth.md)), so signing up means redeeming an invite. Home, `/signin` and `/join` all show the same notice (`components/auth/InviteOnlyNote.tsx`): "Invite only. You can't create an account without an invite code from a group." The backend doesn't enforce this at sign-up: anyone can still sign in with Google or Facebook and get an empty account ([`auth.md` §3.2](auth.md#32-why-this-is-fine)). Enforcing it is [`future-ideas.md` §15](../future-ideas.md#15-invite-only-accounts-enforced-at-sign-up). A three-step indicator (`components/auth/SignUpSteps.tsx`: Invite code → Sign in → You're in!) shows where a signed-out visitor is.
+`/join` is the sign-up flow. Groups are invite-only ([`auth.md`](auth.md)), so signing up means redeeming an invite. Home, `/signin` and `/join` all show the same notice (`components/auth/InviteOnlyNote.tsx`): "Invite only. You can't create an account without an invite code from a group." The backend doesn't enforce this at sign-up: anyone can still sign in with Google or Facebook and get an empty account ([`auth.md` §3.2](auth.md#32-why-this-is-fine)). Enforcing it is [`future-ideas.md` §15](../../plans/future-ideas.md#15-invite-only-accounts-enforced-at-sign-up). A three-step indicator (`components/auth/SignUpSteps.tsx`: Invite code → Sign in → You're in!) shows where a signed-out visitor is.
 
 If unauthenticated with no code: step 1, "Join your group", with the `<JoinForm/>`, the invite-only notice telling them to ask an admin of the group for an invite link, and a **Sign in** link for existing members. Submitting the form navigates to `/join?code=…`.
 
@@ -414,7 +414,7 @@ If the user leaves the page before the redeem resolves, it still completes, and 
   5. **Most questions asked**: `questionsAsked`.
   6. **Most comments written**: `commentsWritten`.
 - Each board ranks densely over the top 3 distinct values above 0: members who tie share a rank, and every member with one of those values is shown, so a board can list more than 3 members, and in a small group everyone with a value above 0. A board where nobody is above 0 is hidden. If every board is hidden, the page shows one empty state: "Superlatives show up once your group's first edition is out."
-- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../future-ideas.md#7-members-page-profile-fields-and-the-city-map) will link to it too, once it's built.
+- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../../plans/future-ideas.md#7-members-page-profile-fields-and-the-city-map) will link to it too, once it's built.
 
 ### 7.10 SignInPage `/signin?returnTo=...`
 
@@ -444,7 +444,7 @@ The app's own sign-in screen, in its theme: "Welcome back" under a greeting for 
 3. PUT the current local state.
 4. On success → `server = response`.
 5. **No conflict handling**. The server uses last-write-wins ([`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)), so a successful save just becomes the new canonical state. There is no "Use server / Overwrite" UI.
-6. **Auto-publish at close.** `lambda-cycle-tick` publishes every non-empty draft when the response window closes ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency), [`engagement.md` §3.6](engagement.md#36-auto-publish-at-close)) — the explicit Publish button still exists ("I'm done"), but an unpublished non-empty draft is no longer lost at the deadline. §7.3 above has the RespondPage warning copy.
+6. **Auto-publish at close.** `lambda-cycle-tick` publishes every non-empty draft when the response window closes ([`lifecycle.md` §8](lifecycle.md#8-race-conditions-and-idempotency), [`engagement.md` §3.6](engagement.md#36-auto-publish-at-close)) — this is how every answer gets published, since RespondPage has no Publish button. §7.3 above has the RespondPage warning copy.
 
 ### 8.3 Offline / failure
 
@@ -621,7 +621,7 @@ The public key flows from `GET /config` at runtime (no `.env` needed for the SPA
 
 - Background sync for offline draft saves (Workbox `BackgroundSyncPlugin`). Not built; the current debounced-autosave + localStorage mirror covers tab-crash recovery.
 - Periodic background sync for prefetching open cycles. Not built — browser support is Chrome-only and not worth the complexity.
-- `share_target` manifest entry to receive shared images from other apps. Not built; see [`future-ideas.md`](../future-ideas.md).
+- `share_target` manifest entry to receive shared images from other apps. Not built; see [`future-ideas.md`](../../plans/future-ideas.md).
 
 ---
 
@@ -649,7 +649,7 @@ These fields MUST NOT appear in `frontend/src/types/api.ts` (which mirrors the O
 - Rich text editing beyond markdown.
 - @-mention notifications.
 - Search.
-- Reply comments — design sketch in [`future-ideas.md` §1](../future-ideas.md#1-reply-comments).
+- Reply comments — design sketch in [`future-ideas.md` §1](../../plans/future-ideas.md#1-reply-comments).
 - Email digests.
 - Per-user theme override.
 - Multi-account switcher.

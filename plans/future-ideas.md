@@ -1,12 +1,12 @@
 # Future ideas
 
-Features the owner wants kept but that aren't built. Nothing here is scheduled. Each entry says what the feature is, why it's deferred and what it would touch, so it can be picked up later without re-deriving the design. Deferring the first three was decided in [D11](decisions.md#d11) and [D12](decisions.md#d12).
+Features the owner wants kept but that aren't built. Nothing here is scheduled. Each entry says what the feature is, why it's deferred and what it would touch, so it can be picked up later without re-deriving the design. Deferring the first three was decided in [D11](../docs/decisions.md#d11) and [D12](../docs/decisions.md#d12).
 
 ---
 
 ## 1. Reply comments
 
-The original spec asked for "nested comments". Comments are flat ([`engagement.md` §1](design/engagement.md#1-comments)) because a small group's threads are short and flat lists are simpler to render on mobile.
+The original spec asked for "nested comments". Comments are flat ([`engagement.md` §1](../docs/design/engagement.md#1-comments)) because a small group's threads are short and flat lists are simpler to render on mobile.
 
 If added:
 - `Comment` gains `parent_comment_id` (null = top level). Keep one level of nesting (replies to a top-level comment), not arbitrary depth.
@@ -16,16 +16,16 @@ If added:
 
 ## 2. Comments and reactions on poll questions
 
-Poll questions show only tallies, and engagement attaches to text answers only ([`engagement.md` §3](design/engagement.md#3-polls), [`api.md` §8](design/api.md#8-engagement-routes-comments--reactions)).
+Poll questions show only tallies, and engagement attaches to text answers only ([`engagement.md` §3](../docs/design/engagement.md#3-polls), [`api.md` §8](../docs/design/api.md#8-engagement-routes-comments--reactions)).
 
 If added:
 - **Poll-level discussion.** A poll has no per-user answer worth commenting on, so comments and reactions would attach to the *question*. A new partition `GROUP#{g}#NL#{c}#Q#{q}#POLL` would mirror the per-answer comment/reaction rows.
-- **Routes** nested as `…/questions/{questionId}/comments` and `…/questions/{questionId}/reactions/{emoji}`, with the same check order as [`api.md` §8](design/api.md#8-engagement-routes-comments--reactions) (published, not archived, the question is a poll).
-- **Optional "show who voted"**, per poll and opted into by the suggester at suggestion time. It's off by default, because [`engagement.md` §3.5](design/engagement.md#35-anonymity) promises aggregate-only tallies.
+- **Routes** nested as `…/questions/{questionId}/comments` and `…/questions/{questionId}/reactions/{emoji}`, with the same check order as [`api.md` §8](../docs/design/api.md#8-engagement-routes-comments--reactions) (published, not archived, the question is a poll).
+- **Optional "show who voted"**, per poll and opted into by the suggester at suggestion time. It's off by default, because [`engagement.md` §3.5](../docs/design/engagement.md#35-anonymity) promises aggregate-only tallies.
 
 ## 3. Ephemeral per-PR CI stacks
 
-Today `e2e.yml` runs against the long-lived `dev` stack ([`environments.md` §11](development/environments.md#11-ephemeral-ci-stacks)), and `config.py` knows only `dev` and `prod`.
+Today `e2e.yml` runs against the long-lived `dev` stack ([`environments.md` §11](../docs/development/environments.md#11-ephemeral-ci-stacks)), and `config.py` knows only `dev` and `prod`.
 
 The design, if per-PR isolation becomes worth the cost:
 1. A PR opens (or `e2e` is run manually), and the workflow assumes the deploy role via OIDC.
@@ -35,32 +35,32 @@ The design, if per-PR isolation becomes worth the cost:
 
 Safety nets:
 - **Sweeper Lambda**: runs daily and destroys any `ci-pr-*` stack older than 24h.
-- **Budget**: the account-wide AWS Budget ([`infrastructure.md` §9](design/infrastructure.md#9-monitoringstack)) catches stranded resources.
+- **Budget**: the account-wide AWS Budget ([`infrastructure.md` §9](../docs/design/infrastructure.md#9-monitoringstack)) catches stranded resources.
 
 Prerequisites: `config.py` must accept `ci-pr-*` envs, and `ApiStack` and the media stacks must be able to point at an existing user pool. Each stack costs about $0.50 and stands up and tears down in minutes.
 
 ## 4. Other deferred items (pointers)
 
 Already designed elsewhere, listed here so this file is the one place to look:
-- **Archival** of old editions: [`archival.md`](design/archival.md).
-- **Inactive Cognito account cleanup**: [`archival.md` §6](design/archival.md#6-inactive-account-cleanup-separate-but-related).
-- **Comment notifications** to the answer's author: [`engagement.md` §1.6](design/engagement.md#16-notifications-on-comments).
-- **Unread tracking** on the newsletter list: [`notifications.md` §14](design/notifications.md#14-failure-modes--ux).
-- **Offline draft background sync**, periodic prefetch and `share_target`: [`frontend.md` §14.9](design/frontend.md#149-not-built).
-- **Self-hosted fonts**, for offline use and to drop the Google Fonts CSP origins: [`frontend.md` §12.1](design/frontend.md#121-content-security-policy).
-- **"Hype check" banner** and **recurring-question helper text**: [`frontend.md` §14a](design/frontend.md#14a-client-derived-display-data-not-api-fields).
-- **Markdown formatting toolbar** in the response editor. The editor has Write and Preview tabs only; the gap is tracked in [`PROGRESS.md`](../plans/PROGRESS.md) under Known gaps.
+- **Archival** of old editions: [`archival.md`](../docs/design/archival.md).
+- **Inactive Cognito account cleanup**: [`archival.md` §6](../docs/design/archival.md#6-inactive-account-cleanup-separate-but-related).
+- **Comment notifications** to the answer's author: [`engagement.md` §1.6](../docs/design/engagement.md#16-notifications-on-comments).
+- **Unread tracking** on the newsletter list: [`notifications.md` §14](../docs/design/notifications.md#14-failure-modes--ux).
+- **Offline draft background sync**, periodic prefetch and `share_target`: [`frontend.md` §14.9](../docs/design/frontend.md#149-not-built).
+- **Self-hosted fonts**, for offline use and to drop the Google Fonts CSP origins: [`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy).
+- **"Hype check" banner** and **recurring-question helper text**: [`frontend.md` §14a](../docs/design/frontend.md#14a-client-derived-display-data-not-api-fields).
+- **Markdown formatting toolbar** in the response editor. The editor has Write and Preview tabs only; the gap is tracked in [`PROGRESS.md`](PROGRESS.md) under Known gaps.
 
 ## 5. Group leaderboard
 
 A page of light-hearted superlatives for each group: the most-reacted answer, the most editions answered, the longest answering streak, and so on. It's for fun in a small group, so each board shows only the top few values, and members who tie share a place. Only the group's members can see it.
 
-Built. The design now lives in the owning pages: the `MemberStats` row and the counter transactions in [`data-model.md` §2.17](design/data-model.md#217-memberstats) and §4 #3, #6, #8 and #9, streak settlement in [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), the route in [`api.md` §4.4](design/api.md#44-get-groupsgroupidleaderboard) and the page in [`frontend.md` §7.9](design/frontend.md#79-leaderboardpage-ggleaderboard).
+Built. The design now lives in the owning pages: the `MemberStats` row and the counter transactions in [`data-model.md` §2.17](../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8 and #9, streak settlement in [`lifecycle.md` §5.3](../docs/design/lifecycle.md#53-publishnl), the route in [`api.md` §4.4](../docs/design/api.md#44-get-groupsgroupidleaderboard) and the page in [`frontend.md` §7.9](../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
 
 Still open:
 - **A "most places checked into" board**, once check-ins (§6) exist. It needs a `places_checked_in` counter on `MemberStats`, kept by the answer-publish transaction.
 - **Can an admin switch the leaderboard off for their group?** That would be a `Group.leaderboard_enabled` flag.
-- **Archived editions.** Archival ([`archival.md` §5](design/archival.md#5-forward-compatibility)) prunes old Response rows, and their GSI2 entries go with them. The most-reacted board would then cover only unarchived editions, unless archival snapshots the top answers first.
+- **Archived editions.** Archival ([`archival.md` §5](../docs/design/archival.md#5-forward-compatibility)) prunes old Response rows, and their GSI2 entries go with them. The most-reacted board would then cover only unarchived editions, unless archival snapshots the top answers first.
 
 ## 6. Check-ins (places on answers)
 
@@ -70,7 +70,7 @@ A member can attach a place to any text answer ("📍 Lucali, Brooklyn"). A ques
 - `Response.place` holds `{ name, lat, lng, address, provider_place_id }`. It's optional and only on text answers. It's stored exactly as the member picked it, so a published answer never changes when the provider's data does.
 - `checkin: bool` goes on `CandidateQuestion`. At promotion it's copied to `LockedQuestion`, as `is_anonymous` is.
 - **A check-in question stays `kind=text`.** It isn't a new `kind`, because installed PWAs run the previous release until their service worker updates. That frontend branches on `kind` in several places, some of them as `=== "text"`. Given a check-in question, it renders the answers as ordinary text answers; a new enum value would be one it doesn't know.
-- **The server never requires a place**, even on a check-in question. The new editor does, by keeping Publish disabled until a place is picked. That way old clients can still publish. It also keeps the auto-publish "non-empty" rule simple: a draft with a `place` counts as non-empty ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a).
+- **The server never requires a place**, even on a check-in question. The new editor does, by keeping Publish disabled until a place is picked. That way old clients can still publish. It also keeps the auto-publish "non-empty" rule simple: a draft with a `place` counts as non-empty ([`data-model.md` §4](../docs/design/data-model.md#4-transactional-invariants) #4a).
 
 **API.**
 - `PUT …/my-response` accepts an optional `place`, and `null` clears it. Validation: `name` is 1–120 characters, and `lat`/`lng` are in range.
@@ -90,13 +90,13 @@ A member can attach a place to any text answer ("📍 Lucali, Brooklyn"). A ques
 
 **Map rendering** (shared with §7) is the main open decision:
 - **Tile source.** The browser fetches tiles itself, so tile traffic never reaches Lambda and the idle-backend principle holds. Options are Amazon Location Maps, with an API key limited to the app's origin and created in CDK, or a hosted tile provider. Either way:
-  - The provider's origin is added to the CSP's `img-src`/`connect-src` ([`frontend.md` §12.1](design/frontend.md#121-content-security-policy)).
+  - The provider's origin is added to the CSP's `img-src`/`connect-src` ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)).
   - The map carries the provider's attribution.
-  - The provider has no fixed monthly charge, and small-group usage stays inside the [D7](decisions.md#d7) budget of about $1–2 a month.
-- **Renderer.** The app ships as one bundle with no lazy chunks ([`frontend.md` §14.2](design/frontend.md#142-service-worker)), so every page load carries the map library. Leaflet with raster tiles is about 40 KB gzipped. MapLibre GL, which draws vector tiles, is several times larger, and it needs its CSP build so that `worker-src` can stay `'self'`. Prefer Leaflet if the chosen tile source serves raster tiles.
-- Record the choice in [`decisions.md`](decisions.md).
+  - The provider has no fixed monthly charge, and small-group usage stays inside the [D7](../docs/decisions.md#d7) budget of about $1–2 a month.
+- **Renderer.** The app ships as one bundle with no lazy chunks ([`frontend.md` §14.2](../docs/design/frontend.md#142-service-worker)), so every page load carries the map library. Leaflet with raster tiles is about 40 KB gzipped. MapLibre GL, which draws vector tiles, is several times larger, and it needs its CSP build so that `worker-src` can stay `'self'`. Prefer Leaflet if the chosen tile source serves raster tiles.
+- Record the choice in [`decisions.md`](../docs/decisions.md).
 
-**Privacy.** Only the group can see a place, the same as the answer it's attached to. Uploaded photos already lose their GPS metadata during processing ([`media.md` §5.1](design/media.md#51-trigger-configuration)), so the only places an answer can carry are ones the member chose.
+**Privacy.** Only the group can see a place, the same as the answer it's attached to. Uploaded photos already lose their GPS metadata during processing ([`media.md` §5.1](../docs/design/media.md#51-trigger-configuration)), so the only places an answer can carry are ones the member chose.
 
 ## 7. Members page, profile fields and the city map
 
@@ -105,7 +105,7 @@ A page that any member can open from an edition. It lists who's in the group, an
 **List.**
 - `/g/:groupId/members`, opened from an avatar stack ("12 members") in the edition page's header. It links to the leaderboard (§5).
 - Each row shows the member's avatar, display name, role, the month they joined and the editions they've answered.
-- **No new route is needed.** `GET /groups/{groupId}` already returns `members`, with `avatarUrl`, `avatarColor`, `joinedAt` and `editionsAnswered`, to any member ([`api.md` §4.2](design/api.md#42-get-groupsgroupid)). Today only the admin page's Members tab displays it.
+- **No new route is needed.** `GET /groups/{groupId}` already returns `members`, with `avatarUrl`, `avatarColor`, `joinedAt` and `editionsAnswered`, to any member ([`api.md` §4.2](../docs/design/api.md#42-get-groupsgroupid)). Today only the admin page's Members tab displays it.
 
 **Current city** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns. It's "where I live now", not a birthplace — Facebook separately offers a birthplace permission (`user_hometown`) that this feature doesn't use, to avoid the glossary collision.
 - `User.current_city` holds `{ name, lat, lng, provider_place_id }`, or is absent.
@@ -122,19 +122,19 @@ A page that any member can open from an edition. It lists who's in the group, an
 - Markers are the members' avatars: the presigned `avatarUrl`, or the colored initial when there isn't one.
 - Members from the same town share one marker, which spreads out into their faces when tapped. A group has at most about 50 members, so it doesn't need a clustering library.
 - The map zooms to fit all the markers. Members without a current city are listed below it.
-- Avatar URLs are presigned and expire. Markers should go through `useMediaRetry`, the retry policy `MediaImage` and `Avatar` use, rather than plain `<img>` tags ([`media.md` §4.4](design/media.md#44-spa-usage)).
+- Avatar URLs are presigned and expire. Markers should go through `useMediaRetry`, the retry policy `MediaImage` and `Avatar` use, rather than plain `<img>` tags ([`media.md` §4.4](../docs/design/media.md#44-spa-usage)).
 
 ### 7.1 Importing current city, birthday and profile picture from Facebook
 
-Today Facebook sign-in maps only `email` and `name` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py), `scopes=["public_profile", "email"]`). Filling in current city and birthday from Facebook, where the person has them set and shares them, saves a step; either field can still be entered or changed by hand regardless of where it came from, same as the existing avatar.
+Today Facebook sign-in maps only `email` and `name` ([`auth_stack.py`](../infra/opennewsletter/auth_stack.py), `scopes=["public_profile", "email"]`). Filling in current city and birthday from Facebook, where the person has them set and shares them, saves a step; either field can still be entered or changed by hand regardless of where it came from, same as the existing avatar.
 
-- **New Facebook permissions.** `user_location` (current city) and `user_birthday`. Both need adding under the app's Authentication use case in the Meta Dashboard, the same place the just-fixed `email` permission lives — and unlike `email`/`public_profile`, Meta may require Advanced Access (business verification) before they work for people who aren't a tester/developer/admin on the app. That's a setup step to do once, out-of-band, like the rest of [`operator-setup.md`](operations/operator-setup.md); it isn't a reason not to build this, but it means the feature can land in code before it actually fills in anything in prod.
-- **Attribute mapping.** `facebook_idp`'s `attribute_mapping.custom` gains entries for Facebook's own field names, the same pattern already used for Google's `email_verified` ([`auth_stack.py`](../../infra/opennewsletter/auth_stack.py) lines ~122–124): `current_city: ProviderAttribute.other("location")`, `birthday: ProviderAttribute.other("birthday")`. Verify against a live Graph API call during the build, since Cognito's Facebook IdP only forwards fields the Graph API `/me` call actually returns for the scopes granted.
-- **Profile picture reuses the existing avatar pipeline, not a new field.** Facebook's `picture` field needs no extra permission beyond `public_profile`. On first Facebook sign-in, if the new user has no avatar yet, the SPA fetches the larger Facebook picture (`picture.width(400)`), downloads the bytes client-side, and runs them through the ordinary `POST /avatars` upload flow ([`media.md` §11](design/media.md#11-avatars-separate-pipeline)) — exactly as if the person had picked that file themselves. No new backend route, bucket or Lambda: the existing avatar pipeline already does the work, and `lambda-image-process` doesn't know or care that the bytes came from Facebook instead of a file picker. The person can replace or remove it afterward like any avatar.
+- **New Facebook permissions.** `user_location` (current city) and `user_birthday`. Both need adding under the app's Authentication use case in the Meta Dashboard, the same place the just-fixed `email` permission lives — and unlike `email`/`public_profile`, Meta may require Advanced Access (business verification) before they work for people who aren't a tester/developer/admin on the app. That's a setup step to do once, out-of-band, like the rest of [`operator-setup.md`](../docs/operations/operator-setup.md); it isn't a reason not to build this, but it means the feature can land in code before it actually fills in anything in prod.
+- **Attribute mapping.** `facebook_idp`'s `attribute_mapping.custom` gains entries for Facebook's own field names, the same pattern already used for Google's `email_verified` ([`auth_stack.py`](../infra/opennewsletter/auth_stack.py) lines ~122–124): `current_city: ProviderAttribute.other("location")`, `birthday: ProviderAttribute.other("birthday")`. Verify against a live Graph API call during the build, since Cognito's Facebook IdP only forwards fields the Graph API `/me` call actually returns for the scopes granted.
+- **Profile picture reuses the existing avatar pipeline, not a new field.** Facebook's `picture` field needs no extra permission beyond `public_profile`. On first Facebook sign-in, if the new user has no avatar yet, the SPA fetches the larger Facebook picture (`picture.width(400)`), downloads the bytes client-side, and runs them through the ordinary `POST /avatars` upload flow ([`media.md` §11](../docs/design/media.md#11-avatars-separate-pipeline)) — exactly as if the person had picked that file themselves. No new backend route, bucket or Lambda: the existing avatar pipeline already does the work, and `lambda-image-process` doesn't know or care that the bytes came from Facebook instead of a file picker. The person can replace or remove it afterward like any avatar.
 - **When it runs.** Once, right after a Facebook sign-up creates the `User` row, gated on each field being empty — it never overwrites a value the person already set (by hand or from an earlier import), and it never re-runs on a later Facebook sign-in. A Google-only member, or someone who declined these permissions in the Facebook consent screen, just sees empty fields to fill in by hand, same as today.
 - **Failure is silent.** A missing permission, a Graph API miss, or a failed picture download all just leave the field empty — sign-up never fails or stalls because an optional profile field couldn't be imported.
 
-New glossary terms when §5–§7 are built: *Check-in*, *Current city*, *Leaderboard* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
+New glossary terms when §5–§7 are built: *Check-in*, *Current city*, *Leaderboard* ([`overview.md` §5](../docs/overview.md#5-glossary-use-these-terms-exactly)).
 
 ## 8. Voice clips on answers and comments
 
@@ -157,8 +157,8 @@ A member records a short voice clip in the app, or picks an audio file, and atta
   - **Re-record** and **Remove**
   - an optional "Describe this clip" field (the caption), which is also the clip's accessible label
 
-  The upload starts the moment recording stops, and the card shows the same uploading → processing → ready/failed states as an image tile ([`media.md` §3.3](design/media.md#33-frontend-uploader-imageuploadertsx)), with **Retry** on failure. Publishing follows the same rule as images: a clip joins the draft once it's `ready`.
-- **Not losing a clip.** The recorded `Blob` stays in memory until its upload succeeds. Leaving the page with a clip that hasn't uploaded asks first. The draft mirror ([`frontend.md` §8.3](design/frontend.md#83-offline--failure)) doesn't hold audio, because it's too big for `localStorage`. An IndexedDB stash could come later.
+  The upload starts the moment recording stops, and the card shows the same uploading → processing → ready/failed states as an image tile ([`media.md` §3.3](../docs/design/media.md#33-frontend-uploader-imageuploadertsx)), with **Retry** on failure. Publishing follows the same rule as images: a clip joins the draft once it's `ready`.
+- **Not losing a clip.** The recorded `Blob` stays in memory until its upload succeeds. Leaving the page with a clip that hasn't uploaded asks first. The draft mirror ([`frontend.md` §8.3](../docs/design/frontend.md#83-offline--failure)) doesn't hold audio, because it's too big for `localStorage`. An IndexedDB stash could come later.
 
 ### 8.2 Playback UX
 
@@ -173,29 +173,29 @@ A `VoiceClip` component goes in `AnswerCard`, below the body and above the galle
 - **Waveform and duration come from the API**, so the card draws at full size without downloading any audio. `<audio preload="none">` means a page with twenty clips downloads nothing until someone presses play.
 - **One clip plays at a time.** Starting one pauses whichever was playing, through a small shared store.
 - **Accessibility.** The waveform is a `role="slider"` with `aria-valuetext` ("12 seconds of 1 minute 4"). Space toggles play and ←/→ seek 5 seconds. The label is "Voice clip from Alex, 1 minute 4 seconds", followed by the caption when there is one.
-- **An expired URL** fires the `<audio>` `error` event, which goes through `useMediaRetry` exactly as an image's load error does ([`media.md` §4.4](design/media.md#44-spa-usage)). Offline, a clip that isn't cached shows a disabled play button: "Available when you're back online."
+- **An expired URL** fires the `<audio>` `error` event, which goes through `useMediaRetry` exactly as an image's load error does ([`media.md` §4.4](../docs/design/media.md#44-spa-usage)). Offline, a clip that isn't cached shows a disabled play button: "Available when you're back online."
 
 ### 8.3 Storage and processing
 
-It's the image pipeline ([`media.md` §3](design/media.md#3-upload-flow-browser--s3)) with an audio processor in place of the image one: a presigned PUT straight to the originals bucket, an S3 trigger, a processed copy, and presigned GETs inline in API responses. Lambda is never on the bytes' path.
+It's the image pipeline ([`media.md` §3](../docs/design/media.md#3-upload-flow-browser--s3)) with an audio processor in place of the image one: a presigned PUT straight to the originals bucket, an S3 trigger, a processed copy, and presigned GETs inline in API responses. Lambda is never on the bytes' path.
 
-- **Routes** in `lambda-media`: `POST /audio-uploads`, `GET /audio-uploads/{audioId}` and `DELETE /audio-uploads/{audioId}`. They use the same `?groupId=&cycleId=` addressing ([`api.md` §9.0](design/api.md#90-addressing-an-existing-upload)), the same `purpose` (`response` | `comment`) and the same cycle-status checks as `POST /uploads` ([`api.md` §9.1](design/api.md#91-post-uploads)). They're separate routes rather than a `kind` on `/uploads`, because the response shapes differ (duration and peaks, no dimensions). The MIME allowlist is a first filter only: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`. Parameters such as `;codecs=opus`, which `MediaRecorder` adds, are stripped before the check.
-- **An `AudioMedia` row** mirrors `ImageMedia` ([`data-model.md` §2.10](design/data-model.md#210-imagemedia)):
+- **Routes** in `lambda-media`: `POST /audio-uploads`, `GET /audio-uploads/{audioId}` and `DELETE /audio-uploads/{audioId}`. They use the same `?groupId=&cycleId=` addressing ([`api.md` §9.0](../docs/design/api.md#90-addressing-an-existing-upload)), the same `purpose` (`response` | `comment`) and the same cycle-status checks as `POST /uploads` ([`api.md` §9.1](../docs/design/api.md#91-post-uploads)). They're separate routes rather than a `kind` on `/uploads`, because the response shapes differ (duration and peaks, no dimensions). The MIME allowlist is a first filter only: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`. Parameters such as `;codecs=opus`, which `MediaRecorder` adds, are stripped before the check.
+- **An `AudioMedia` row** mirrors `ImageMedia` ([`data-model.md` §2.10](../docs/design/data-model.md#210-imagemedia)):
   - keys: `pk=GROUP#{g}#NL#{c}`, `sk=AUD#{audioId}`, `gsi1pk=USER#{u}#AUD`
   - fields: `purpose`, `mime_type`, `original_key`, `clip_key`, `status`, `bytes`, `duration_ms`, `peaks` (48 integers 0–255, about 200 bytes), `caption`, `attached_comment_id` and `error_message`, which is `AUDIO_TOO_LARGE`, `AUDIO_TOO_LONG` or `AUDIO_DECODE_FAILED`
 - **Where clips attach.**
   - `Response.audio_media_ids` holds up to 3 IDs, on text answers only.
   - `Comment.audio_media_id` holds one.
-  - A comment needs a body, an image or a clip ([`engagement.md` §1.3](design/engagement.md#13-validation)).
-  - The auto-publish "non-empty" rule ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a) gains "or `audio_media_ids` non-empty", so an answer that's only a clip publishes at close.
+  - A comment needs a body, an image or a clip ([`engagement.md` §1.3](../docs/design/engagement.md#13-validation)).
+  - The auto-publish "non-empty" rule ([`data-model.md` §4](../docs/design/data-model.md#4-transactional-invariants) #4a) gains "or `audio_media_ids` non-empty", so an answer that's only a clip publishes at close.
   - Clips render as attachments, not inline markdown tokens, so the sanitizer and `urlTransform` stay as they are.
-- **S3 keys.** Originals go in the existing media-originals bucket under a separate prefix, `audio-uploads/{g}/{c}/{q}/{u}/{audioId}.{ext}`, so `lambda-image-process`'s `uploads/` trigger never fires for audio. The bucket's 7-day expiry rule ([`media.md` §8.1](design/media.md#81-orphan-originals)) extends to that prefix. Processed clips go to `aud/{g}/{c}/{q}/{u}/{audioId}/clip.webm` in the processed bucket. The signing Lambdas that hold `img/*` today get `s3:GetObject` on `aud/*` too, scoped by prefix as images are.
+- **S3 keys.** Originals go in the existing media-originals bucket under a separate prefix, `audio-uploads/{g}/{c}/{q}/{u}/{audioId}.{ext}`, so `lambda-image-process`'s `uploads/` trigger never fires for audio. The bucket's 7-day expiry rule ([`media.md` §8.1](../docs/design/media.md#81-orphan-originals)) extends to that prefix. Processed clips go to `aud/{g}/{c}/{q}/{u}/{audioId}/clip.webm` in the processed bucket. The signing Lambdas that hold `img/*` today get `s3:GetObject` on `aud/*` too, scoped by prefix as images are.
 - **`lambda-audio-process`** is a new crate laid out like `lambda-image-process`, triggered on `audio-uploads/`. Per object it:
   1. checks the object's real size against `MAX_AUDIO_BYTES`
   2. runs `ffprobe` to confirm there's an audio stream and read its duration. It never trusts the extension or MIME type, and anything over the cap (plus 1 second of slack) fails with `AUDIO_TOO_LONG`
   3. transcodes to mono Opus at 24 kbps in a WebM container: `ffmpeg -vn -map_metadata -1 -ac 1 -ar 48000 -c:a libopus -b:a 24k -vbr on -application voip -cues_to_front 1 clip.webm`. `-application voip` tunes the encoder for speech, which is what clips mostly are. `-map_metadata -1` strips tags and any location from the recording. `-cues_to_front 1` puts the seek index at the start, so the player can seek before the file has fully downloaded
   4. decodes to PCM and buckets the peak amplitude into 48 bars for the waveform
-  5. puts the clip with `Cache-Control: private, max-age=5184000, immutable`, marks the row `ready` on the `status = pending` condition, then deletes the original. Failure, retry and duplicate-delivery handling are the same as images ([`media.md` §5.1](design/media.md#51-trigger-configuration))
+  5. puts the clip with `Cache-Control: private, max-age=5184000, immutable`, marks the row `ready` on the `status = pending` condition, then deletes the original. Failure, retry and duplicate-delivery handling are the same as images ([`media.md` §5.1](../docs/design/media.md#51-trigger-configuration))
 
   `ffmpeg`/`ffprobe` are static arm64 builds bundled in the Lambda zip, or in a layer. An LGPL build with `libopus` (BSD-licensed) is enough; no GPL or non-free codecs are needed. Memory is 1024 MB and the timeout 60 s; a 2-minute clip transcodes in a second or two.
 - **Why Opus in WebM.** Opus is the most storage-efficient audio codec browsers play. At 24 kbps mono, speech is clear, which is roughly a third of the bitrate AAC needs for the same quality. WebM is the container Safari plays it in; Safari doesn't play Ogg at all.
@@ -208,16 +208,16 @@ It's the image pipeline ([`media.md` §3](design/media.md#3-upload-flow-browser-
     - **Pure Rust:** `symphonia` decodes well and libopus has Rust bindings, but WebM muxing, resampling and the long tail of input formats are what ffmpeg already does.
     - **MediaConvert** charges per minute of output and is far more than this needs.
 
-  Record the choice in [`decisions.md`](decisions.md).
+  Record the choice in [`decisions.md`](../docs/decisions.md).
 - **Serving.** `media-urls` gains `audio_url(key)`. A `PublishedAudioResponse { audioId, url, durationMs, peaks, caption }` is returned as `PublishedAnswerResponse.audio[]` and `CommentResponse.audio`. Both are new fields, so this is an expand-only change.
-- **CSP.** Add `media-src 'self' blob: {mediaBaseUrl}`. Today `<audio>` falls back to `default-src 'self'`, which would block both S3 clips and `blob:` previews ([`frontend.md` §12.1](design/frontend.md#121-content-security-policy)). The Playwright CSP test asserts the new directive.
-- **Service worker.** A `media-audio` cache, keyed by path like the image caches ([`frontend.md` §5.2](design/frontend.md#52-service-worker--caching-strategy)), with a 30-day expiry.
+- **CSP.** Add `media-src 'self' blob: {mediaBaseUrl}`. Today `<audio>` falls back to `default-src 'self'`, which would block both S3 clips and `blob:` previews ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)). The Playwright CSP test asserts the new directive.
+- **Service worker.** A `media-audio` cache, keyed by path like the image caches ([`frontend.md` §5.2](../docs/design/frontend.md#52-service-worker--caching-strategy)), with a 30-day expiry.
   - Safari always requests audio with a `Range` header, so the route needs Workbox's `RangeRequestsPlugin`, and it may store only full `200` responses, never a `206`.
   - Playback streams from the network. After the first play, the client fetches the whole object once to fill the cache.
   - `<audio crossorigin="anonymous">` makes the responses non-opaque. Bucket CORS adds `Range` to the allowed headers, and `Content-Range`, `Accept-Ranges` and `Content-Length` to the exposed ones.
-- **Deletion and archival.** The `media-delete` helper ([`media.md` §8.0](design/media.md#80-explicit-deletion)) learns `AudioMedia`, with an `AUDIO_IN_USE` 409 that mirrors `IMAGE_IN_USE`. Soft-deleting a comment deletes its clip, best effort, as it does the comment's image. Archival ([`archival.md`](design/archival.md)) treats `AUD#` rows the same as `IMG#` rows.
-- **Cost.** At 24 kbps, a clip is about 180 KB a minute, so a 2-minute clip is about 360 KB. A hundred clips a month adds under 40 MB of storage and a few hundred GB-seconds of Lambda, all inside the [D7](decisions.md#d7) budget.
-- **Mock and demo** ([`frontend.md` §17](design/frontend.md#17-demo-mode)). `mockUploads` keeps the recorded `Blob` as a `blob:` URL and computes the peaks locally. The demo seed gains one freely licensed sample clip in `public/demo-media/`, with an entry in `CREDITS.txt`.
+- **Deletion and archival.** The `media-delete` helper ([`media.md` §8.0](../docs/design/media.md#80-explicit-deletion)) learns `AudioMedia`, with an `AUDIO_IN_USE` 409 that mirrors `IMAGE_IN_USE`. Soft-deleting a comment deletes its clip, best effort, as it does the comment's image. Archival ([`archival.md`](../docs/design/archival.md)) treats `AUD#` rows the same as `IMG#` rows.
+- **Cost.** At 24 kbps, a clip is about 180 KB a minute, so a 2-minute clip is about 360 KB. A hundred clips a month adds under 40 MB of storage and a few hundred GB-seconds of Lambda, all inside the [D7](../docs/decisions.md#d7) budget.
+- **Mock and demo** ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)). `mockUploads` keeps the recorded `Blob` as a `blob:` URL and computes the peaks locally. The demo seed gains one freely licensed sample clip in `public/demo-media/`, with an entry in `CREDITS.txt`.
 
 **Rollout.** Ship the playback renderer first and the recorder in a later release. An installed PWA on the old release shows an answer that's only a clip as an empty answer until it updates.
 
@@ -274,13 +274,13 @@ A **GIF** item in the "+" attach menu (§10) of the response editor and the comm
 
 ### 9.2 Storage: a markdown token, no backend change
 
-- **The token.** A pick is stored in the body as `![title](giphy:{gifId})`, mirroring `image:{id}` ([`media.md` §7](design/media.md#7-image-references-in-markdown)). Answers allow up to 5 GIFs and comments 1. The editor enforces the cap, and the renderer draws no more than it.
+- **The token.** A pick is stored in the body as `![title](giphy:{gifId})`, mirroring `image:{id}` ([`media.md` §7](../docs/design/media.md#7-image-references-in-markdown)). Answers allow up to 5 GIFs and comments 1. The editor enforces the cap, and the renderer draws no more than it.
 - **No backend change.** The token is ordinary body text, so no route or row changes:
   - The comment "body or image" rule is met, because the token is non-whitespace text.
   - So is the auto-publish "non-empty" rule.
   - The ~40-character token counts toward the body limits.
 - **Renderer.**
-  - `urlTransform` and the `rehype-sanitize` schema allow the `giphy:` scheme ([`frontend.md` §9](design/frontend.md#9-renderers), [`engagement.md` §5](design/engagement.md#5-sanitization)).
+  - `urlTransform` and the `rehype-sanitize` schema allow the `giphy:` scheme ([`frontend.md` §9](../docs/design/frontend.md#9-renderers), [`engagement.md` §5](../docs/design/engagement.md#5-sanitization)).
   - Comments keep `allowImages={false}` for everything except `giphy:`.
   - A `gifId` must match `^[A-Za-z0-9]+$` before it's looked up. Anything else renders nothing.
 - **Resolving at render.** The page collects every GIF ID it shows, in answers and comments, and makes one batched `GET https://api.giphy.com/v1/gifs?ids=…` (GIPHY's Get GIFs by ID). The returned media URLs are used unmodified.
@@ -316,10 +316,10 @@ So this can't follow the place-search pattern (§6, a Lambda proxy) or the image
 - **Privacy is the real trade-off.** Every reader's browser contacts GIPHY when a GIF renders, and searches go to GIPHY too. It needs an owner decision before it's built (§9.5).
 - **No analytics pings.** GIPHY's responses carry `onload`/`onclick`/`onsent` URLs, but its [Action Register docs](https://developers.giphy.com/docs/api/endpoint/action-register/) present them as optional, there to "improve your users' search results". The client doesn't fire them and doesn't fetch a `random_id`, because they'd link a member's device to every device that views the GIF they posted (§9.5). Revisit only if a production-key application ever requires them.
 - **Offline**, GIFs don't render, because the service worker isn't allowed to cache them. They show their title in a placeholder.
-- **CSP** ([`frontend.md` §12.1](design/frontend.md#121-content-security-policy)):
+- **CSP** ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)):
   - `connect-src` gains `https://api.giphy.com` and GIPHY's analytics host.
   - `img-src` and `media-src` gain `https://*.giphy.com`, because media comes from several `mediaN.giphy.com` hosts. The wildcard is scoped to GIPHY's domain.
-- **Mock and demo.** A mock GIPHY client returns a few local GIFs from `public/demo-media/`. The demo must make no GIPHY calls, and the Playwright `demo` project's off-site-request check already enforces that ([`frontend.md` §17](design/frontend.md#17-demo-mode)).
+- **Mock and demo.** A mock GIPHY client returns a few local GIFs from `public/demo-media/`. The demo must make no GIPHY calls, and the Playwright `demo` project's off-site-request check already enforces that ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)).
 
 ### 9.4 When the rate limit is hit
 
@@ -350,7 +350,7 @@ A `429` from GIPHY means the app's shared hourly allowance is used up. Members s
 
 ### 9.5 Privacy
 
-GIFs would be the first feature where something a member posts makes other members' browsers contact a third party. Today the only third party is Google Fonts, which learns that someone opened the app but nothing about what they read ([`frontend.md` §12.1](design/frontend.md#121-content-security-policy)). [`frontend.md` §8.4](design/frontend.md#84-image-uploads-in-editor) renders a remote `![](https://…)` as a link precisely so that an answer can't make readers' browsers call a host the author chose. A GIF does exactly that, through one fixed host. That's why GIFs need an owner decision, recorded in [`decisions.md`](decisions.md), before they're built.
+GIFs would be the first feature where something a member posts makes other members' browsers contact a third party. Today the only third party is Google Fonts, which learns that someone opened the app but nothing about what they read ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)). [`frontend.md` §8.4](../docs/design/frontend.md#84-image-uploads-in-editor) renders a remote `![](https://…)` as a link precisely so that an answer can't make readers' browsers call a host the author chose. A GIF does exactly that, through one fixed host. That's why GIFs need an owner decision, recorded in [`decisions.md`](../docs/decisions.md), before they're built.
 
 **What GIPHY receives.**
 - **From a member searching:** the search text, their IP address, user agent and the time, and the app's API key and origin. Every API call is a CORS request, so the browser always sends `Origin: https://betterloop.site`.
@@ -375,7 +375,7 @@ GIFs would be the first feature where something a member posts makes other membe
 **The options.**
 1. **On for every group.** The simplest. Every reader in every group contacts GIPHY once anyone posts a GIF.
 2. **A per-group setting, on by default.** `Group.gifs_enabled`, with a missing value read as on. Admins who care can switch it off; most never look.
-3. **A per-group setting, off by default.** A missing value reads as off, so existing groups need no backfill. An admin turns it on in the group settings form, which already sends changed fields on `PATCH /groups/{groupId}` ([`frontend.md` §7.7](design/frontend.md#77-groupadminpage)). The field is new, so the change is expand-only. The toggle carries one sentence of disclosure: "Members can add GIFs from GIPHY. Everyone who reads a GIF loads it from GIPHY, which sees their IP address."
+3. **A per-group setting, off by default.** A missing value reads as off, so existing groups need no backfill. An admin turns it on in the group settings form, which already sends changed fields on `PATCH /groups/{groupId}` ([`frontend.md` §7.7](../docs/design/frontend.md#77-groupadminpage)). The field is new, so the change is expand-only. The toggle carries one sentence of disclosure: "Members can add GIFs from GIPHY. Everyone who reads a GIF loads it from GIPHY, which sees their IP address."
 4. **Tap to load, for readers, on top of 2 or 3.** A per-device "Load GIFs automatically" switch, kept in `localStorage` like a mail client's remote-images setting. When it's off, a GIF shows as the §9.4 placeholder card (its title and a **Load GIF** button), and nothing goes to GIPHY until the reader taps. It also saves display lookups against the hourly limit. The cost is friction, and the switch has to be found on each device.
 
 With 2 or 3, the flag rides on the group's memberships in `/config`, which the settings form already invalidates on save. When it's off:
@@ -385,10 +385,10 @@ With 2 or 3, the flag rides on the group's memberships in `/config`, which the s
 **Recommendation: option 3**, with the mitigations above. It matches how the app already treats remote content (§8.4). It puts the choice with the person who already makes the group's other settings, and every group's GIPHY traffic becomes a deliberate choice with the disclosure in front of whoever makes it. Option 4 is frontend-only, so it can be added later if a member asks.
 
 **Open questions.**
-- The privacy decision (§9.5): which option, recorded in [`decisions.md`](decisions.md).
+- The privacy decision (§9.5): which option, recorded in [`decisions.md`](../docs/decisions.md).
 - Is `pg-13` the right rating, or should it be a group setting?
 
-New glossary terms when §8–§9 are built: *Voice clip*, *GIF* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
+New glossary terms when §8–§9 are built: *Voice clip*, *GIF* ([`overview.md` §5](../docs/overview.md#5-glossary-use-these-terms-exactly)).
 
 ## 10. The "+" attach menu
 
@@ -434,7 +434,7 @@ Dropping files onto the box goes away with the box, so the drop target becomes t
 
 ### 10.4 Where attachments show
 
-Everything attached shows in one tray under the toolbar, in the order it was added: image tiles (`ImageUploaderTile`, as today), clip cards (§8.1) and the GIF chip in a comment (§9.1). GIFs in an answer are inline tokens in the body, so they show in the Preview tab, not in the tray. Removing anything works as it does today, including the permanent-delete confirm for uploaded media ([`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq)).
+Everything attached shows in one tray under the toolbar, in the order it was added: image tiles (`ImageUploaderTile`, as today), clip cards (§8.1) and the GIF chip in a comment (§9.1). GIFs in an answer are inline tokens in the body, so they show in the Preview tab, not in the tray. Removing anything works as it does today, including the permanent-delete confirm for uploaded media ([`frontend.md` §7.3](../docs/design/frontend.md#73-respondpage-ggncrespondq)).
 
 ### 10.5 Components and rollout
 
@@ -458,8 +458,8 @@ The rule from the leaderboard (§5) holds here too: cards celebrate the top few 
 - **The thread of the year:** the answer with the most comments (counting non-deleted ones), and how many members joined in.
 - **Question of the year:** the locked question whose answers drew the most reactions and comments in total, crediting whoever suggested it unless it was anonymous.
 - **The year's leaders:** year-scoped versions of the §5 boards: most reactions received, most editions answered and longest streak within the year.
-- **Early bird:** the member with the largest median *slack* — `response_close_at` minus the last time they touched any answer in that cycle (`Response.updated_at`, the latest value across their answers, read once the cycle is closed) — among the editions they answered ([owner decision](decisions.md#early-bird-uses-last-edit-not-first-publish), resolving §16.4's open question for this card). It deliberately uses the *last* edit, not the first draft save or first manual publish: a member who starts a draft the moment the edition opens and then comes back to flesh it out right before the deadline has almost no slack and isn't an early bird, even though something existed in their draft from the first minute. Only the edit that was actually left in place when responses closed counts. It uses the median across the member's editions this year, so one late month doesn't sink anyone, and only counts members who answered at least half the year's editions. Auto-published drafts are included, not excluded as an earlier draft of this idea assumed: `updated_at` is whenever the member actually last saved it, which can be well before `response_close_at`, unlike `published_at`, which for an auto-published draft is always `response_close_at` itself and says nothing about the member.
-- **Question machine:** the member who suggested the most candidate questions, counting only ones that weren't anonymous, so the card can't unmask anyone. Unpromoted candidates still count, because promotion copies the winners into locked questions and leaves every candidate row where it was ([`lifecycle.md` §5.2](design/lifecycle.md#52-promote_and_opennl)). A second line names whose questions were promoted most often.
+- **Early bird:** the member with the largest median *slack* — `response_close_at` minus the last time they touched any answer in that cycle (`Response.updated_at`, the latest value across their answers, read once the cycle is closed) — among the editions they answered ([owner decision](../docs/decisions.md#early-bird-uses-last-edit-not-first-publish), resolving §16.4's open question for this card). It deliberately uses the *last* edit, not the first draft save or first manual publish: a member who starts a draft the moment the edition opens and then comes back to flesh it out right before the deadline has almost no slack and isn't an early bird, even though something existed in their draft from the first minute. Only the edit that was actually left in place when responses closed counts. It uses the median across the member's editions this year, so one late month doesn't sink anyone, and only counts members who answered at least half the year's editions. Auto-published drafts are included, not excluded as an earlier draft of this idea assumed: `updated_at` is whenever the member actually last saved it, which can be well before `response_close_at`, unlike `published_at`, which for an auto-published draft is always `response_close_at` itself and says nothing about the member.
+- **Question machine:** the member who suggested the most candidate questions, counting only ones that weren't anonymous, so the card can't unmask anyone. Unpromoted candidates still count, because promotion copies the winners into locked questions and leaves every candidate row where it was ([`lifecycle.md` §5.2](../docs/design/lifecycle.md#52-promote_and_opennl)). A second line names whose questions were promoted most often.
 - **Lighter awards**, each shown only if someone qualifies:
   - *Perfect attendance:* everyone who answered every edition.
   - *The novelist:* the most words written.
@@ -468,7 +468,7 @@ The rule from the leaderboard (§5) holds here too: cards celebrate the top few 
   - *Chatterbox:* the most comments written.
   - *Best buds:* the pair who comment on each other's answers most.
   - *The group's emoji:* the emoji used most in reactions.
-  - *Closest poll:* the poll with the narrowest margin. Polls are anonymous ([`engagement.md` §3.5](design/engagement.md#35-anonymity)), so it uses tallies only and names no one.
+  - *Closest poll:* the poll with the narrowest margin. Polls are anonymous ([`engagement.md` §3.5](../docs/design/engagement.md#35-anonymity)), so it uses tallies only and names no one.
   - Once §6 is built, *Places of the year:* a map of the year's check-ins.
 
 **Personal cards**, only the member themselves sees them: how many editions they answered, their most-reacted answer, the emoji they got most, who reacted to them most, and any award they won. Personal cards don't compare the member to anyone else. "You answered 11 of 12 editions" is fine; "You were 9th" isn't.
@@ -479,22 +479,22 @@ The rule from the leaderboard (§5) holds here too: cards celebrate the top few 
 
 The recap is computed once by a batch job and stored, not counted at write time as §5 does. It runs once a year over at most 12 editions, so reading every edition's partitions in one pass costs little, and it needs no new counters or transactions. It doesn't depend on §5 being built.
 
-- **When.** A group's year is the cycles whose `cycle_id` starts with that year. The December edition publishes about a week into December ([`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group)), so `publish(nl)` for a `{yyyy}12` cycle asynchronously invokes `lambda-recap` after the status flip ([`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl)). That way a slow recap never holds up the tick. The recap is skipped for a group with fewer than `RECAP_MIN_EDITIONS` published editions in the year (new constant in `config.rs`, perhaps 3), so a group that started in October waits until next year.
-- **The job** reads, for each of the year's editions, its locked questions, answers, comments and reactions (the same partitions `GET …/newsletters/{cycleId}` reads, [`api.md` §5.2](design/api.md#52-get-groupsgroupidnewsletterscycleid)), plus the year's candidate pools, then computes every card in memory.
+- **When.** A group's year is the cycles whose `cycle_id` starts with that year. The December edition publishes about a week into December ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group)), so `publish(nl)` for a `{yyyy}12` cycle asynchronously invokes `lambda-recap` after the status flip ([`lifecycle.md` §5.3](../docs/design/lifecycle.md#53-publishnl)). That way a slow recap never holds up the tick. The recap is skipped for a group with fewer than `RECAP_MIN_EDITIONS` published editions in the year (new constant in `config.rs`, perhaps 3), so a group that started in October waits until next year.
+- **The job** reads, for each of the year's editions, its locked questions, answers, comments and reactions (the same partitions `GET …/newsletters/{cycleId}` reads, [`api.md` §5.2](../docs/design/api.md#52-get-groupsgroupidnewsletterscycleid)), plus the year's candidate pools, then computes every card in memory.
 - **A `YearRecap` row:** `pk=GROUP#{g}`, `sk=RECAP#{yyyy}`, holding `cards` (the group cards), `personal` (a map from `user_id` to that member's cards), `generated_at` and `edition_count`. A 50-member group's recap is a few tens of KB, well under DynamoDB's 400 KB item limit. The Put is conditioned on `attribute_not_exists(sk)`, so a retried invocation does nothing. An admin-only script can regenerate it.
-- **It's frozen.** Reactions added in January don't change the recap. Featured answers store their IDs and a short excerpt (about 200 characters) at generation time, so a card still reads correctly after archival ([`archival.md`](design/archival.md)) prunes the answer itself. The excerpt is taken from text the whole group could already read.
+- **It's frozen.** Reactions added in January don't change the recap. Featured answers store their IDs and a short excerpt (about 200 characters) at generation time, so a card still reads correctly after archival ([`archival.md`](../docs/design/archival.md)) prunes the answer itself. The excerpt is taken from text the whole group could already read.
 
 ### 11.3 API, notification and frontend
 
 - **API.** `GET /groups/{groupId}/recaps/{year}` in `lambda-groups`, open to any member. It returns the group cards plus the caller's own personal cards, never anyone else's. `GET /groups/{groupId}/recaps` lists the years available. Excerpts come back with presigned URLs for any featured images and avatars, as published answers do. New routes, so the change is expand-only.
-- **Notification.** A new push kind, `recap_ready` ("Your group's 2026 in review is here 🎉"), with its own `NotificationPref` toggle ([`notifications.md` §4](design/notifications.md#4-notification-preferences)).
+- **Notification.** A new push kind, `recap_ready` ("Your group's 2026 in review is here 🎉"), with its own `NotificationPref` toggle ([`notifications.md` §4](../docs/design/notifications.md#4-notification-preferences)).
 - **Frontend.** `/g/:groupId/recap/:year`, a full-screen story view:
   - Tap or swipe to move between cards, with a progress bar of segments along the top. Personal cards come last.
   - Each card is a big number or a featured answer on a bold colored background, with a short animated entrance. Under `prefers-reduced-motion` the cards just change.
   - Featured answers link to their edition.
   - A banner on the group's newsletter list links to it for the rest of December and January, and it stays reachable after that from the group menu.
 - **Sharing stays inside the group.** Each card has a **Share** button that copies a link to that card (`/g/:groupId/recap/:year#card-{n}`). Like every group page, the link opens only for a signed-in member of the group, and anyone else gets the usual not-a-member screen. There's no save-as-image, no public link and no OS share sheet carrying card content, so a card never leaves the app. A shared link to a personal card opens the viewer's own personal cards, never the sharer's.
-- **Mock and demo.** The demo seed gains a `YearRecap` fixture, so the story view works in `/demo` ([`frontend.md` §17](design/frontend.md#17-demo-mode)).
+- **Mock and demo.** The demo seed gains a `YearRecap` fixture, so the story view works in `/demo` ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)).
 
 **Open questions.**
 - Should an admin be able to switch the recap off for the group?
@@ -530,7 +530,7 @@ A language model has to write the questions, because they come from free-text an
 
 - **Text answers** published in the chosen period, plus image captions.
 - **Comments** on those answers, leaving out soft-deleted ones. A comment's author is the subject of any question made from it. Comments are sent with the answer they reply to, so the model can tell a fact ("I ran my first marathon last week!") from a joke that only makes sense in the thread.
-- **Not poll votes.** Polls promise aggregate-only tallies ([`engagement.md` §3.5](design/engagement.md#35-anonymity)), so a question can never say how one member voted. Questions about a poll's group-wide result ("What did most of the group pick for best pizza?") are allowed.
+- **Not poll votes.** Polls promise aggregate-only tallies ([`engagement.md` §3.5](../docs/design/engagement.md#35-anonymity)), so a question can never say how one member voted. Questions about a poll's group-wide result ("What did most of the group pick for best pizza?") are allowed.
 - **Every current member's posts are used.** There's no opt-out (§12.5).
 - **Question styles**, mixed:
   - *About a member:* "Where did Sam go for their birthday?", with four places as options.
@@ -540,7 +540,7 @@ A language model has to write the questions, because they come from free-text an
 
 ### 12.3 Generation
 
-- **Amazon Bedrock, running Claude.** It's AWS-native, so `lambda-quiz-gen` calls it with IAM credentials and there's no API key to manage. Group content stays inside the AWS account that already stores it, and Bedrock doesn't use prompts or outputs for training. CDK grants `bedrock:InvokeModel` on the one model or inference profile chosen, and the model's access has to be enabled in the account first. Record the provider and model in [`decisions.md`](decisions.md).
+- **Amazon Bedrock, running Claude.** It's AWS-native, so `lambda-quiz-gen` calls it with IAM credentials and there's no API key to manage. Group content stays inside the AWS account that already stores it, and Bedrock doesn't use prompts or outputs for training. CDK grants `bedrock:InvokeModel` on the one model or inference profile chosen, and the model's access has to be enabled in the account first. Record the provider and model in [`decisions.md`](../docs/decisions.md).
 - **`lambda-quiz-gen`** is invoked asynchronously by the generate route. It:
   1. reads the period's locked questions, published text answers and their comments
   2. labels each member with a short alias (`M1`, `M2`…) in place of their name, and keeps the mapping in memory. For each answer the model sees the question prompt, the author's alias, the answer text and captions, and its comments with their authors' aliases, and nothing else: no email addresses, no user IDs
@@ -556,7 +556,7 @@ A language model has to write the questions, because they come from free-text an
   - for a "who" question, every option is a current member
 
   If fewer questions than `QUIZ_MIN_QUESTIONS` survive, the job retries once, then marks the quiz `failed` with a reason the admin can see.
-- **Cost.** One call of about 100–150k input tokens and a few thousand output tokens per quiz, once a year. Check Bedrock's on-demand pricing for the chosen model when it's picked; it should be well inside the [D7](decisions.md#d7) budget at one quiz per group per year, but confirm that before allowing quarterly quizzes.
+- **Cost.** One call of about 100–150k input tokens and a few thousand output tokens per quiz, once a year. Check Bedrock's on-demand pricing for the chosen model when it's picked; it should be well inside the [D7](../docs/decisions.md#d7) budget at one quiz per group per year, but confirm that before allowing quarterly quizzes.
 
 ### 12.4 Data, API and frontend
 
@@ -566,7 +566,7 @@ A language model has to write the questions, because they come from free-text an
   - the period's first and last `cycle_id`, `question_count`, `open_days`, `open_at` (set when the admin schedules it), `opened_at` and `close_at`
   - `created_by`, `opened_by`, `model_id` and `failure_reason`
 
-  A scheduled quiz gets `gsi2pk=QUIZ_STATUS#ready` and `gsi2sk={open_at}#{g}#{quiz_id}`. An open one gets `gsi2pk=QUIZ_STATUS#open` and `gsi2sk={close_at}#{g}#{quiz_id}`. That way `lambda-cycle-tick` finds quizzes due to open or close the way it finds cycles ([`lifecycle.md` §5.1](design/lifecycle.md#51-algorithm)). Opening sets `close_at = opened_at + open_days`, conditioned on `status = ready`, so **Open now** and a scheduled opening can't both happen. The tick's existing queries use `gsi2pk=NL_STATUS#…`, so these rows don't show up in them.
+  A scheduled quiz gets `gsi2pk=QUIZ_STATUS#ready` and `gsi2sk={open_at}#{g}#{quiz_id}`. An open one gets `gsi2pk=QUIZ_STATUS#open` and `gsi2sk={close_at}#{g}#{quiz_id}`. That way `lambda-cycle-tick` finds quizzes due to open or close the way it finds cycles ([`lifecycle.md` §5.1](../docs/design/lifecycle.md#51-algorithm)). Opening sets `close_at = opened_at + open_days`, conditioned on `status = ready`, so **Open now** and a scheduled opening can't both happen. The tick's existing queries use `gsi2pk=NL_STATUS#…`, so these rows don't show up in them.
 - **`QuizQuestion`:** `pk=GROUP#{g}#QUIZ#{quiz_id}`, `sk=QQ#{question_id}`. It holds `display_order`, `style`, `prompt`, `options`, `correct_option`, `subject_user_id`, `source` (cycle, question and answer IDs, plus the comment ID when the question came from a comment) and `source_quote`.
 - **`QuizAttempt`:** same partition, `sk=ATT#{user_id}`. It holds `choices`, `submitted_at`, and after close `correct` and `place`. The Put is conditioned on `attribute_not_exists(sk)`, so a member gets one attempt, and on the Quiz row's `status = open` and `close_at > now` through a ConditionCheck.
 - **Closing** follows the same pattern as `publish(nl)`: grade each attempt with its own update, then flip the Quiz to `closed` conditioned on `status = open`. A crash partway through leaves it `open`, and the next tick redoes the grading. Places are computed after the flip, from the graded attempts.
@@ -592,13 +592,13 @@ Until now, members' answers and comments have only ever been read by the group, 
 - **Consent is up to the admin.** There's no group setting and no member opt-out. It's the admin's job to make sure the group is happy for their posts to be used before they generate a quiz. To make that easy, the generate form says what will be sent: "Questions are written by an AI model (Claude, on Amazon Bedrock) from everyone's published answers and comments in this period. Nothing is used to train the model." It also links to a short explanation the admin can pass on to the group.
 - **Minimum data.** The model sees aliases, prompts, answer text, captions and comment text only. No images, names or emails are sent. Calls aren't logged with their payloads: CloudWatch logs record token counts and timing only.
 
-Record the provider choice and the no-opt-out rule in [`decisions.md`](decisions.md).
+Record the provider choice and the no-opt-out rule in [`decisions.md`](../docs/decisions.md).
 
 **Open questions.**
 - Should images be used later ("Whose photo is this?")? That would send images to the model.
 - Should quarterly or half-yearly quizzes be allowed, or is once a year special enough?
 
-New glossary terms when §11–§12 are built: *Year in review*, *Quiz* ([`overview.md` §5](overview.md#5-glossary-use-these-terms-exactly)).
+New glossary terms when §11–§12 are built: *Year in review*, *Quiz* ([`overview.md` §5](../docs/overview.md#5-glossary-use-these-terms-exactly)).
 
 ## 13. Dark mode
 
@@ -615,18 +615,18 @@ A dark theme, switched from the account menu and saved on the member's profile, 
 ### 13.2 Storage and API
 
 - **`User.theme`**: `light` | `dark` | `system`. A missing value reads as `system`, so existing users need no backfill.
-- **API.** `PATCH /me` accepts `theme`, validated against a new `ThemePreference` enum in `shared/openapi.yaml`, and `UserResponse` gains it ([`api.md` §2.3](design/api.md#23-patch-me)). Both are new fields, so this is an expand-only change.
+- **API.** `PATCH /me` accepts `theme`, validated against a new `ThemePreference` enum in `shared/openapi.yaml`, and `UserResponse` gains it ([`api.md` §2.3](../docs/design/api.md#23-patch-me)). Both are new fields, so this is an expand-only change.
 - **Rollout order: backend first.** `PatchMeRequest` has `additionalProperties: false`, so the current backend answers a `theme` field with `VALIDATION_FAILED`. The backend that accepts it must be deployed before the frontend that sends it. An old frontend simply ignores the new `UserResponse` field.
 - **A local copy for first paint.** `GET /me` arrives after the first render, so a member who chose dark would see a flash of light on every load. The client therefore keeps the last-known preference in `localStorage` (`theme`) and rewrites it whenever `useMe` returns or the member changes it. The server is the source of truth; the local copy is only a cache.
-- **Before sign-in and before an invite is redeemed** (`/config` has `userId: null`, so there's no User row, [`frontend.md` §7.6](design/frontend.md#76-settingspage)), the local copy applies, or `system` when there isn't one. The join page and the auth callback look right that way.
-- **Demo mode** ([`frontend.md` §17](design/frontend.md#17-demo-mode)): the mock transport's `PATCH /me` keeps the value in memory like the rest of the demo profile, and the local copy keeps it across reloads.
+- **Before sign-in and before an invite is redeemed** (`/config` has `userId: null`, so there's no User row, [`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage)), the local copy applies, or `system` when there isn't one. The join page and the auth callback look right that way.
+- **Demo mode** ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)): the mock transport's `PATCH /me` keeps the value in memory like the rest of the demo profile, and the local copy keeps it across reloads.
 
 ### 13.3 Applying the theme
 
 - **Tailwind `darkMode: "class"`**, with `dark` on `<html>`. A small `state/theme.ts` store turns the preference into the effective theme. For `system` it listens to `matchMedia("(prefers-color-scheme: dark)")`'s `change` event, so the app follows the OS live.
-- **The first-paint script.** A tiny `public/theme-init.js`, loaded with a plain blocking `<script src>` in `<head>`, reads the local copy and the media query and sets the class before anything renders. It has to be a file, because the CSP's `script-src 'self'` forbids inline scripts ([`frontend.md` §12.1](design/frontend.md#121-content-security-policy)). It also needs to be in the service worker's precache, so it loads offline.
+- **The first-paint script.** A tiny `public/theme-init.js`, loaded with a plain blocking `<script src>` in `<head>`, reads the local copy and the media query and sets the class before anything renders. It has to be a file, because the CSP's `script-src 'self'` forbids inline scripts ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)). It also needs to be in the service worker's precache, so it loads offline.
 - **`color-scheme`** is set on `<html>` to match, so native controls, scrollbars and autofill take the theme too.
-- **Browser chrome.** `index.html` gets two `<meta name="theme-color">` tags, one for each `prefers-color-scheme` media query. When the member's choice differs from the system, `state/theme.ts` overrides the meta's `content`. The manifest's `theme_color` and `background_color` ([`frontend.md` §5.1](design/frontend.md#51-manifest)) stay light: the manifest takes only one value, and they only color the splash screen of an installed PWA.
+- **Browser chrome.** `index.html` gets two `<meta name="theme-color">` tags, one for each `prefers-color-scheme` media query. When the member's choice differs from the system, `state/theme.ts` overrides the meta's `content`. The manifest's `theme_color` and `background_color` ([`frontend.md` §5.1](../docs/design/frontend.md#51-manifest)) stay light: the manifest takes only one value, and they only color the splash screen of an installed PWA.
 
 ### 13.4 The color work
 
@@ -639,7 +639,7 @@ This is most of the job. Today's palette is fixed hex values in `tailwind.config
   - the accents (`coral`, `grape`, `mint`, `sky`, `sun`, `peach`): mostly unchanged, but each checked for WCAG AA contrast against the dark surface, with lighter variants where a color fails
 - **Classes that bypass the tokens** need converting first: about 50 `bg-white`, which become `bg-surface`, plus a few `bg-white/60`, `ring-white` and one `from-slate-600`. `text-white` on accent buttons stays. `bg-ink` and `text-cream` used as an inverted pair, such as the primary button, need a deliberate dark-mode look rather than a straight swap.
 - **Shadows.** The `soft`, `card` and `pop` shadows barely show on a dark background. In dark mode cards rely on a `line` border and a slightly lighter surface for depth.
-- **Also covered:** the hand-written markdown prose ruleset in `styles/tailwind.css` ([`frontend.md` §4.3](design/frontend.md#43-typography)), the avatar fallback colors, `ConfirmDialog` and toast backdrops, and the `animate-pulse` loading skeletons.
+- **Also covered:** the hand-written markdown prose ruleset in `styles/tailwind.css` ([`frontend.md` §4.3](../docs/design/frontend.md#43-typography)), the avatar fallback colors, `ConfirmDialog` and toast backdrops, and the `animate-pulse` loading skeletons.
 - **Untouched:** uploaded photos and avatars aren't dimmed or filtered. Push notifications are drawn by the OS.
 
 ### 13.5 Tests and rollout
@@ -651,11 +651,11 @@ This is most of the job. Today's palette is fixed hex values in `tailwind.config
   2. The token refactor ships with light values only. It should change nothing visible, which makes it easy to review on its own.
   3. The dark palette, the first-paint script, the menu switch and the Settings card ship together.
 - **Docs to update when it's built:**
-  - [`frontend.md` §4.2](design/frontend.md#42-theming), which says the app is light-only with fixed hex tokens. Rewrite it for the CSS-variable tokens, the `dark` class and `state/theme.ts`, and drop its link to this section.
-  - [`frontend.md` §7.6](design/frontend.md#76-settingspage), for the Appearance card.
-  - [`frontend.md` §12.1](design/frontend.md#121-content-security-policy), for the first-paint script.
-  - [`api.md` §2.3](design/api.md#23-patch-me), for the `theme` field.
-  - [`data-model.md` §2.1](design/data-model.md#21-user), for `User.theme`.
+  - [`frontend.md` §4.2](../docs/design/frontend.md#42-theming), which says the app is light-only with fixed hex tokens. Rewrite it for the CSS-variable tokens, the `dark` class and `state/theme.ts`, and drop its link to this section.
+  - [`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage), for the Appearance card.
+  - [`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy), for the first-paint script.
+  - [`api.md` §2.3](../docs/design/api.md#23-patch-me), for the `theme` field.
+  - [`data-model.md` §2.1](../docs/design/data-model.md#21-user), for `User.theme`.
 
 **Open questions.**
 - How should the hero gradients (`from-lavender … to-blush`) and the edition-phase colors look in the dark? This needs a design pass with real screenshots, not just token values.
@@ -670,14 +670,14 @@ Each group's admins choose how often the group's newsletter comes out, from week
 
 ### 14.1 Where things stand
 
-- **The cadence is set per deployment.** Two Lambda environment variables set it, `CYCLE_FREQUENCY` (`monthly` or `weekly`) and `CYCLE_WEEKLY_START` (default `sun 21:00`, in each group's timezone) ([`lifecycle.md` §13](design/lifecycle.md#13-cycle-cadence), [decision](decisions.md#cycle-cadence)). Only `lambda-cycle-tick` reads it to schedule cycles, and `lambda-groups` reads it to cap the response window and serve `GET /config`'s `cycleCadence`.
+- **The cadence is set per deployment.** Two Lambda environment variables set it, `CYCLE_FREQUENCY` (`monthly` or `weekly`) and `CYCLE_WEEKLY_START` (default `sun 21:00`, in each group's timezone) ([`lifecycle.md` §13](../docs/design/lifecycle.md#13-cycle-cadence), [decision](../docs/decisions.md#cycle-cadence)). Only `lambda-cycle-tick` reads it to schedule cycles, and `lambda-groups` reads it to cap the response window and serve `GET /config`'s `cycleCadence`.
 - **Where the values come from.** `infra/opennewsletter/config.py` defaults them by environment: weekly for dev and monthly for prod. A same-named key in `.env.local`, or in the environment at `cdk synth`, overrides the default. `deploy.yml` and `release.yml` pass neither variable, so a CI deploy always gets the defaults. Changing a CI-deployed environment means changing `config.py` or adding the variables to the workflow.
-- **A live deployment can switch cadence without a migration** ([`lifecycle.md` §13.2](design/lifecycle.md#132-cycle-ids-across-a-cadence-change)):
+- **A live deployment can switch cadence without a migration** ([`lifecycle.md` §13.2](../docs/design/lifecycle.md#132-cycle-ids-across-a-cadence-change)):
   - Monthly `yyyymm` and weekly `yyyymmdd` cycle IDs sort correctly together.
   - The switch takes effect at the next successor, so the cycle that's already scheduled keeps its dates.
   - A stored window above the new cap is capped when the next cycle is scheduled.
-- **Group admins can't change the cadence.** They can change `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` (up to 28 days monthly, 7 weekly) and `timezone`. Under [D10](decisions.md#d10), those changes apply from the next cycle created, and nothing moves a cycle that's already scheduled.
-- **Admins have no manual controls over a cycle at all** ([`lifecycle.md` §7](design/lifecycle.md#7-manual-admin-overrides)): no early publish, no skip and no cancel. The only exception is the dev-only deadline rewind ([`api.md` §11a.1](design/api.md#11a1-post-admindevtickcycle)).
+- **Group admins can't change the cadence.** They can change `questionsPerCycle`, `votesPerUserPerCycle`, `responseWindowDays` (up to 28 days monthly, 7 weekly) and `timezone`. Under [D10](../docs/decisions.md#d10), those changes apply from the next cycle created, and nothing moves a cycle that's already scheduled.
+- **Admins have no manual controls over a cycle at all** ([`lifecycle.md` §7](../docs/design/lifecycle.md#7-manual-admin-overrides)): no early publish, no skip and no cancel. The only exception is the dev-only deadline rewind ([`api.md` §11a.1](../docs/design/api.md#11a1-post-admindevtickcycle)).
 
 ### 14.2 Frequencies
 
@@ -695,47 +695,47 @@ Each group's admins choose how often the group's newsletter comes out, from week
   - `weeklyStart` (a weekday and time), used for weekly and every-2-weeks groups
   - `anchorMonth` (1–12), used for every-3-months, every-6-months and yearly groups. For example, an `anchorMonth` of 12 on a yearly group gives one edition each December, and an `anchorMonth` of 3 on an every-3-months group opens in March, June, September and December.
 - **Deployment default.** `CYCLE_FREQUENCY` and `CYCLE_WEEKLY_START` stay, as the default for new groups and for any group that hasn't stored a frequency. Dev stays weekly without any group setting changes, and existing rows need no backfill.
-- **Successors.** A successor is always one period after the current cycle's ID. That's the same anchoring rule as today ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)), with the period taken from the group instead of the deployment. The `responseCloseAt` floor from §13.1 applies to every frequency: a cycle never opens before the one before it closes.
+- **Successors.** A successor is always one period after the current cycle's ID. That's the same anchoring rule as today ([`lifecycle.md` §5.4](../docs/design/lifecycle.md#54-create_next_voting_cyclegroup-after)), with the period taken from the group instead of the deployment. The `responseCloseAt` floor from §13.1 applies to every frequency: a cycle never opens before the one before it closes.
 - **Cycle IDs stay sortable dates.** Week-based frequencies use the open date (`yyyymmdd`) and month-based ones the open month (`yyyymm`). Mixed formats already sort chronologically. Two cycles can't share an ID, because the shortest period, a week, is longer than a day and every month-based period is at least a month. `CycleCadence::from_env` becomes `CycleCadence::for_group(group, deployment_default)`, and everything that schedules a cycle takes the group's cadence.
 - **Labels and wording come from the cycle, not the deployment.**
   - Each new Newsletter row stores its own `frequency`, and `NewsletterResponse` returns it. A group that changes frequency then still labels its past editions correctly.
   - Week-based editions are labelled by publication date ("Nov 15, 2026") and monthly ones by month ("October 2026"). The longer frequencies are labelled by the month and year they open ("December 2026").
   - Copy that today says "this month's" or "this week's" says "this edition's" for every frequency except weekly and monthly.
-  - Push wording ([`notifications.md` §5.1](design/notifications.md#51-per-kind-copy)) reads the cycle's stored `frequency`, falling back to its ID's format for older rows.
+  - Push wording ([`notifications.md` §5.1](../docs/design/notifications.md#51-per-kind-copy)) reads the cycle's stored `frequency`, falling back to its ID's format for older rows.
   - `GET /config`'s `cycleCadence` stays, as the deployment default, so older frontends keep working.
 
 ### 14.3 The schedule controls
 
 All three need an admin, work through new routes in `lambda-groups` or `lambda-newsletters`, and send the group a push, under the existing cycle-open preference.
 
-**Extend the deadline (+24 hours).** On an `open` edition whose `responseCloseAt` is still in the future, **Extend by a day** moves `responseCloseAt` one calendar day later in the group's timezone. That keeps its wall-clock time across a DST change ([`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group)). The admin can press it again for another day.
-- **It's one conditioned update.** The update sets `responseCloseAt`, `nextTransitionAt` and `gsi2sk`, and increments `deadline_extended_days`, conditioned on `status = open` and `response_close_at = :seen`. Two admins pressing it at once therefore extend by one day, not two, and a close that has already passed can't be revived. Answer saves and the auto-publish sweep already read `responseCloseAt` inside their own transactions ([`lifecycle.md` §8](design/lifecycle.md#8-race-conditions-and-idempotency)), so they follow the new deadline without changes.
+**Extend the deadline (+24 hours).** On an `open` edition whose `responseCloseAt` is still in the future, **Extend by a day** moves `responseCloseAt` one calendar day later in the group's timezone. That keeps its wall-clock time across a DST change ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group)). The admin can press it again for another day.
+- **It's one conditioned update.** The update sets `responseCloseAt`, `nextTransitionAt` and `gsi2sk`, and increments `deadline_extended_days`, conditioned on `status = open` and `response_close_at = :seen`. Two admins pressing it at once therefore extend by one day, not two, and a close that has already passed can't be revived. Answer saves and the auto-publish sweep already read `responseCloseAt` inside their own transactions ([`lifecycle.md` §8](../docs/design/lifecycle.md#8-race-conditions-and-idempotency)), so they follow the new deadline without changes.
 - **The cap.** Extensions are capped in total at `MAX_DEADLINE_EXTENSION_DAYS` (new in `config.rs`) or half the period, whichever is smaller: 3 days for a weekly group, perhaps 7 for the others.
 - **It can push the next edition back.** If the new close lands after the next edition's scheduled open, which it always does for a weekly group with a 7-day window, that edition's `responseOpenAt`/`voteWindowCloseAt` move to the new close in the same transaction, conditioned on it still being `voting`. Its `responseCloseAt` stays put, so it loses that much of its window, and the cycle after it is back on the normal schedule. Shifting the whole next edition instead would cascade: its later close would collide with the edition after it, and the `responseCloseAt` floor would then skip a whole week. The button warns about this ("This also opens the next edition a day later, so it has one day less").
-- **Reminders fire again.** Deadline reminders are claimed once per offset (`NOTIFIED#CLOSE#{offset_hours}`, [`data-model.md` §2.15](design/data-model.md#215-counters-and-idempotency-markers)). So the extension deletes the markers whose reminder time is now in the future again, in the same transaction. The extension's push says when answers are now due.
+- **Reminders fire again.** Deadline reminders are claimed once per offset (`NOTIFIED#CLOSE#{offset_hours}`, [`data-model.md` §2.15](../docs/design/data-model.md#215-counters-and-idempotency-markers)). So the extension deletes the markers whose reminder time is now in the future again, in the same transaction. The extension's push says when answers are now due.
 - **The edition records it.** The open and published edition shows "Deadline extended by n days."
 
 **Skip the next edition.** While the next edition is still `voting`, **Skip** moves it one period later. A skipped December becomes January, and the candidates and votes carry over. The open edition can't be skipped, because members may already have answered it; the admin can extend it instead. Skipping again moves the edition another period later.
 
 **Pause and resume.**
 - **Pausing** sets `Group.paused_at`/`paused_by` and takes the next edition off the schedule. Any `open` edition still publishes on its date, because answers may already be in. Members can keep suggesting and voting, so the pool is ready when the group resumes, and the Upcoming page says "Paused by an admin, no edition is scheduled."
-- **Resuming** schedules the next edition for the first slot strictly after now under the group's frequency, the same rule as a group's first cycle ([`lifecycle.md` §4.2](design/lifecycle.md#42-default-schedule-per-group)).
-- **A paused `voting` row stays in GSI2,** under a far-future sentinel `gsi2sk`, the same way terminal states are kept there. Removing it would make the successor repair ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)) treat the group as missing its next cycle and create a second one.
+- **Resuming** schedules the next edition for the first slot strictly after now under the group's frequency, the same rule as a group's first cycle ([`lifecycle.md` §4.2](../docs/design/lifecycle.md#42-default-schedule-per-group)).
+- **A paused `voting` row stays in GSI2,** under a far-future sentinel `gsi2sk`, the same way terminal states are kept there. Removing it would make the successor repair ([`lifecycle.md` §5.4](../docs/design/lifecycle.md#54-create_next_voting_cyclegroup-after)) treat the group as missing its next cycle and create a second one.
 - **A successor created while the group is paused** is written unscheduled the same way. `create_next_voting_cycle` checks `paused_at` with a ConditionCheck on the group in its transaction, so a pause racing a promotion can't leave an edition scheduled.
 
 ### 14.4 Moving the next edition: the main design problem
 
 Skip, resume and a frequency change all move the scheduled `voting` cycle to a new period. That's harder than it sounds, because today a cycle's ID *is* its period:
-- The successor is anchored on the ID ([`lifecycle.md` §5.4](design/lifecycle.md#54-create_next_voting_cyclegroup-after)).
+- The successor is anchored on the ID ([`lifecycle.md` §5.4](../docs/design/lifecycle.md#54-create_next_voting_cyclegroup-after)).
 - The current-cycle lookup and newest-first lists rely on IDs sorting in date order.
 
 If the cycle kept its ID and only changed its dates, the next successor would be computed from the stale ID. Moving it *earlier* would break the sort order: a yearly group's `202712` changed to weekly opens on Nov 22, 2026, and its successor `20261129` would sort before it.
 
 **Recommendation: re-key the Newsletter row, and leave the candidate pool where it is.**
 - **The move is one transaction:** Put a Newsletter row under the new period's ID, and Delete the old row, conditioned on `status = voting`.
-- **The new row points at the existing pool.** Candidates, votes and vote tallies live in the cycle's partition (`GROUP#{g}#CYCLE#{c}`, [`data-model.md` §2.6](design/data-model.md#26-candidate-question-in-voting-pool)), so the new row carries `candidate_pool_cycle_id`, the old ID. Everything that reads or writes candidates for a cycle uses `candidate_pool_cycle_id`, defaulting to `cycle_id` when it's absent. That leaves nothing to copy: no candidate, vote or tally rows move, and there's no window where some have moved and some haven't.
+- **The new row points at the existing pool.** Candidates, votes and vote tallies live in the cycle's partition (`GROUP#{g}#CYCLE#{c}`, [`data-model.md` §2.6](../docs/design/data-model.md#26-candidate-question-in-voting-pool)), so the new row carries `candidate_pool_cycle_id`, the old ID. Everything that reads or writes candidates for a cycle uses `candidate_pool_cycle_id`, defaulting to `cycle_id` when it's absent. That leaves nothing to copy: no candidate, vote or tally rows move, and there's no window where some have moved and some haven't.
 - **Clients notice nothing.** The candidate routes (`/groups/{groupId}/candidate-questions`) resolve the current `voting` cycle on the server and take no cycle ID. A vote in flight against the old row fails with `CYCLE_NOT_VOTING`, and the client refetches.
-- **Promotion reads the pool by `candidate_pool_cycle_id` too** ([`lifecycle.md` §5.2](design/lifecycle.md#52-promote_and_opennl)). The locked questions go under the new cycle's ID as usual.
+- **Promotion reads the pool by `candidate_pool_cycle_id` too** ([`lifecycle.md` §5.2](../docs/design/lifecycle.md#52-promote_and_opennl)). The locked questions go under the new cycle's ID as usual.
 
 That keeps every existing invariant: IDs remain period dates, IDs sort chronologically, and the successor stays anchored on the ID.
 
@@ -743,7 +743,7 @@ That keeps every existing invariant: IDs remain period dates, IDs sort chronolog
 
 A frequency change can't wait for D10's "next new cycle". A yearly group switching to monthly would otherwise wait up to a year, because the cycle already scheduled stays as stored. So saving a new frequency re-keys the scheduled `voting` cycle (§14.4) into the first slot under the new frequency, at or after the `open` edition's close. Any open edition is untouched. The settings form shows the new date before the admin saves ("The next edition will open Sun Nov 22, 9pm").
 
-This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is about *passive* setting saves moving dates members were told. Frequency, skip and pause are explicit actions with a confirmation, and each one sends a push. Record it in [`decisions.md`](decisions.md) by amending D10. A window that's too long for the new frequency is capped by the existing rule ([`lifecycle.md` §13.3](design/lifecycle.md#133-window-limits-and-overlap)).
+This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is about *passive* setting saves moving dates members were told. Frequency, skip and pause are explicit actions with a confirmation, and each one sends a push. Record it in [`decisions.md`](../docs/decisions.md) by amending D10. A window that's too long for the new frequency is capped by the existing rule ([`lifecycle.md` §13.3](../docs/design/lifecycle.md#133-window-limits-and-overlap)).
 
 ### 14.6 API, frontend and rollout
 
@@ -770,12 +770,12 @@ This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is
 - The leaderboard's streaks (§5) count editions, so they read as weeks for a weekly group and years for a yearly one. That's fine as is.
 
 **Docs to update when it's built:**
-- [`lifecycle.md`](design/lifecycle.md): §1–§2 for the paused state; §5.4 and §13, with §13 rewritten for per-group cadence; and §7 for the new admin controls.
-- [`data-model.md`](design/data-model.md): §2.3 Group and §2.5 Newsletter for the new fields and `candidate_pool_cycle_id`.
-- [`api.md`](design/api.md): the new routes and fields.
-- [`frontend.md`](design/frontend.md): the admin page and edition labels.
-- [`notifications.md`](design/notifications.md): the new pushes and how reminders fire again after an extension.
-- D10 and the cycle-cadence decision in [`decisions.md`](decisions.md).
+- [`lifecycle.md`](../docs/design/lifecycle.md): §1–§2 for the paused state; §5.4 and §13, with §13 rewritten for per-group cadence; and §7 for the new admin controls.
+- [`data-model.md`](../docs/design/data-model.md): §2.3 Group and §2.5 Newsletter for the new fields and `candidate_pool_cycle_id`.
+- [`api.md`](../docs/design/api.md): the new routes and fields.
+- [`frontend.md`](../docs/design/frontend.md): the admin page and edition labels.
+- [`notifications.md`](../docs/design/notifications.md): the new pushes and how reminders fire again after an extension.
+- D10 and the cycle-cadence decision in [`decisions.md`](../docs/decisions.md).
 
 **Open questions.**
 - Should a yearly group pick the day as well as the month, so it can open on, say, Dec 1 and close before Christmas?
@@ -787,13 +787,13 @@ This is a deliberate exception to D10, and it needs the owner's sign-off. D10 is
 
 ## 15. Invite-only accounts, enforced at sign-up
 
-The app tells people it's invite-only: Home, `/signin` and `/join` all say "You can't create an account without an invite code from a group" ([`frontend.md` §7.8](design/frontend.md#78-joinpage-joincode)). Cognito doesn't enforce it. These are two independent ways to back the promise up: §15.2 rejects sign-ups without an invite, and §15.3 deletes accounts that never redeem one. Either can ship alone.
+The app tells people it's invite-only: Home, `/signin` and `/join` all say "You can't create an account without an invite code from a group" ([`frontend.md` §7.8](../docs/design/frontend.md#78-joinpage-joincode)). Cognito doesn't enforce it. These are two independent ways to back the promise up: §15.2 rejects sign-ups without an invite, and §15.3 deletes accounts that never redeem one. Either can ship alone.
 
 ### 15.1 Where things stand
 
-- The `PreSignUp` trigger auto-confirms every federated sign-up. The invite code never reaches Cognito: it travels in the browser's OIDC state and is redeemed only after the user holds a JWT ([`auth.md` §3](design/auth.md#3-presignup-lambda)).
-- The app's own account, the `COGNITO_SUB#{sub}` lookup and the `User` row, is created at the first redemption ([`auth.md` §4.2](design/auth.md#42-algorithm)).
-- So anyone with a Google or Facebook account gets a Cognito user and a JWT. That account can't see any group's data, but its API calls still run Lambdas (open question 3 in [`PROGRESS.md`](../plans/PROGRESS.md)). Such accounts also pile up in the user pool and count as Cognito monthly active users.
+- The `PreSignUp` trigger auto-confirms every federated sign-up. The invite code never reaches Cognito: it travels in the browser's OIDC state and is redeemed only after the user holds a JWT ([`auth.md` §3](../docs/design/auth.md#3-presignup-lambda)).
+- The app's own account, the `COGNITO_SUB#{sub}` lookup and the `User` row, is created at the first redemption ([`auth.md` §4.2](../docs/design/auth.md#42-algorithm)).
+- So anyone with a Google or Facebook account gets a Cognito user and a JWT. That account can't see any group's data, but its API calls still run Lambdas (open question 3 in [`PROGRESS.md`](PROGRESS.md)). Such accounts also pile up in the user pool and count as Cognito monthly active users.
 
 ### 15.2 Reject sign-ups without an invite
 
@@ -806,23 +806,23 @@ The app tells people it's invite-only: Home, `/signin` and `/join` all say "You 
 
 Trade-offs for the owner to decide:
 - **Every invite for someone new must be bound to an email.** Open "anyone with this link" invites would only work for people who already have an account. The admin Invites tab would need an email field, required for newcomers.
-- **Facebook.** Facebook doesn't send `email_verified`, and redeeming a bound invite requires a Google-verified email ([D5](decisions.md#d5)). A Facebook newcomer would pass `PreSignUp` and then fail redemption with `INVITE_EMAIL_MISMATCH`. A Facebook account may also have no email at all. So new users become Google-only unless D5 is relaxed.
+- **Facebook.** Facebook doesn't send `email_verified`, and redeeming a bound invite requires a Google-verified email ([D5](../docs/decisions.md#d5)). A Facebook newcomer would pass `PreSignUp` and then fail redemption with `INVITE_EMAIL_MISMATCH`. A Facebook account may also have no email at all. So new users become Google-only unless D5 is relaxed.
 - **A different address.** Someone signing in with a Google account other than the invited one is turned away and has to ask for an invite to that address.
 - Matching an unverified email at sign-up is acceptable for this gate. Passing it only creates an inert account, and redemption still checks properly.
 
 Alternatives considered:
 - A pre-token-generation trigger that refuses tokens. The Cognito user already exists by then.
 - An unauthenticated "check this code" endpoint before sign-in. It breaks the idle-backend principle, and the check still couldn't be tied to Cognito creating the user.
-- Passing the code to `PreSignUp` as `clientMetadata`. The OAuth redirect flow doesn't forward it ([`auth.md` §3.1](design/auth.md#31-role)).
+- Passing the code to `PreSignUp` as `clientMetadata`. The OAuth redirect flow doesn't forward it ([`auth.md` §3.1](../docs/design/auth.md#31-role)).
 
 ### 15.3 Delete accounts that don't redeem an invite within 24 hours
 
-This limits how many inert accounts can exist, rather than preventing them: someone deleted can sign in again and get another 24 hours. It needs no change to invites, so it's the cheaper of the two. It's the cleanup job of [`archival.md` §6](design/archival.md#6-inactive-account-cleanup-separate-but-related), with a 24-hour threshold.
+This limits how many inert accounts can exist, rather than preventing them: someone deleted can sign in again and get another 24 hours. It needs no change to invites, so it's the cheaper of the two. It's the cleanup job of [`archival.md` §6](../docs/design/archival.md#6-inactive-account-cleanup-separate-but-related), with a 24-hour threshold.
 
 - **The sweep.** An hourly scheduled Lambda, on EventBridge like the cycle and notify ticks, pages through Cognito `ListUsers`. Each user created more than 24 hours ago with no `COGNITO_SUB#{sub}` row is deleted with `AdminDeleteUser`. With an hourly run, deletion lands 24–25 hours after sign-up.
 - **Who's kept.** Anyone who has ever redeemed an invite has the lookup row and is kept, even after leaving every group. The dev scripts (`bootstrap_admin.py`, `seed_dev_data.py`) write the row for the users they create. A Cognito user made by hand without it would be swept.
-- **The prod bootstrap admin** creates their Cognito user by signing in with Google, then redeems a bound invite ([`auth.md` §9.1a](design/auth.md#91a-scriptsbootstrap_adminpy--prod-d5)). They'd have to redeem within the 24 hours, like everyone else.
-- **Race with a live token.** Deleting a Cognito user doesn't invalidate an ID token it already holds, which lasts up to 60 minutes ([`auth.md` §7](design/auth.md#7-token-lifetime-and-refresh)). A redemption in that window would create a `User` row for a `sub` Cognito no longer has. To prevent it, the sweep first writes a tombstone at `COGNITO_SUB#{sub}`, with a TTL a little over the token lifetime, and only then deletes the user:
+- **The prod bootstrap admin** creates their Cognito user by signing in with Google, then redeems a bound invite ([`auth.md` §9.1a](../docs/design/auth.md#91a-scriptsbootstrap_adminpy--prod-d5)). They'd have to redeem within the 24 hours, like everyone else.
+- **Race with a live token.** Deleting a Cognito user doesn't invalidate an ID token it already holds, which lasts up to 60 minutes ([`auth.md` §7](../docs/design/auth.md#7-token-lifetime-and-refresh)). A redemption in that window would create a `User` row for a `sub` Cognito no longer has. To prevent it, the sweep first writes a tombstone at `COGNITO_SUB#{sub}`, with a TTL a little over the token lifetime, and only then deletes the user:
   - `/invites/redeem` step 4 treats a tombstone as `401`;
   - a redemption that read before the tombstone landed fails step 6's existing `attribute_not_exists(pk)` condition.
 - **UX.** Home's no-group state would add "Accounts that don't join a group within 24 hours are removed. You can sign in again any time with an invite." Signing in again creates a fresh account, and nothing is lost, because nothing was stored.
@@ -836,56 +836,18 @@ This limits how many inert accounts can exist, rather than preventing them: some
 
 ---
 
-## 16. Owner UX review notes
+## 16. Group page: Editions, Leaderboard and Members as tabs
 
-Smaller UX fixes from an owner pass over the shipped app, each independent of the others.
-
-### 16.1 Home page: demo and sign-in first, sign-up tucked under the invite notice
-
-Today's signed-out Home ([`frontend.md` §7.1](design/frontend.md#71-homepage)) leads with a primary **Sign up** and a secondary **Sign in**, with the invite-only notice and **See a demo** below. For an invite-only app, most first-time visitors have nothing to sign up *for* yet — the useful actions are **See a demo** and, for an invited member, **Sign in**.
-
-- Promote **See a demo** and **Sign in** to the page's primary calls to action.
-- Move **Sign up** to sit directly under the invite-only notice, reframed as a question-and-answer pair: "**Received an invite?**" followed by the **Sign up** button. That ties the button to the one condition under which it's useful, instead of presenting it as a generic front-door action.
-- No API or data change — this is a `components/home/Landing.tsx` layout change only.
-
-### 16.2 RespondPage: make autosave and auto-publish legible
-
-[`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq) already autosaves drafts and auto-publishes non-empty ones at close, but the UI still center on a manual **Publish** button per question, which reads as "nothing happens until I press this" — the opposite of what's actually true.
-
-- **Reframe the button.** Drop the per-question **Publish** label (which implies the answer wasn't saved until pressed) in favor of **Done** or **Continue**, which moves the member to the next unanswered question rather than describing a storage action. The existing autosave indicator keeps doing the "this is saved" job; the button's job becomes only "I'm finished with this one for now."
-  - This likely means retiring the manual immediate-publish semantics in favor of relying on the existing auto-publish-at-close behavior for everyone, not just members who never press anything — worth an explicit decision, since today's design ([`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4) treats a manual publish and the close-time auto-publish as two different paths with different `editions_answered` timing (see §16.4).
-  - The existing "Drafts are published automatically when responses close" note and the **Edit** toggle on a published answer ([`frontend.md` §7.3](design/frontend.md#73-respondpage-ggncrespondq)) already say answers stay editable up to the deadline; that copy carries over unchanged.
-- **A completion celebration.** When a member has a non-empty draft or answer on every question of the open edition, returning to the edition's question list (§7.2, the `open` layout) shows a one-time, full-screen congratulatory overlay — confetti/sparkle animation, "You completed the newsletter!" — with a line reminding them they can still edit any answer until the deadline. `prefers-reduced-motion` gets a static version. It shows once per edition per device (a flag in `localStorage`, since there's nothing server-side worth persisting this for); revisiting an already-celebrated, fully-answered edition doesn't show it again.
-- No API change: "every question answered" is derivable client-side from the same `GET /groups/{g}/newsletters/{c}` payload the question list already renders.
-
-### 16.3 Group page: Editions, Leaderboard and Members as tabs
-
-Today Home (§7.1) shows only the current group's editions; the leaderboard (§5, [`frontend.md` §7.9](design/frontend.md#79-leaderboardpage-ggleaderboard)) is a separate route linked from an edition's header, and a members list ([§7](#7-members-page-profile-fields-and-the-city-map)) isn't built yet.
+Today Home ([`frontend.md` §7.1](../docs/design/frontend.md#71-homepage-)) shows only the current group's editions; the leaderboard (§5, [`frontend.md` §7.9](../docs/design/frontend.md#79-leaderboardpage-ggleaderboard)) is a separate route linked from an edition's header, and a members list ([§7](#7-members-page-profile-fields-and-the-city-map)) isn't built yet.
 
 - Once §7 ships, present **Editions**, **Leaderboard** and **Members** as tabs of one group page, rather than as separate destinations reached by different links. Editions stays the default tab (what Home shows today); the other two become `?tab=` states of the same route rather than full navigations, so switching between them doesn't refetch `/config`.
 - This is a navigation/layout change on top of pages that otherwise work as already specced; it doesn't change what §5 or §7 return from the API.
-
-### 16.4 Decision: `editions_answered` counts only once the edition closes
-
-**This reverses shipped behavior**, not just an unbuilt idea: `editions_answered` bumps today the moment a member first publishes a non-empty answer, inside `save_response`'s transaction (`backend/crates/persistence/src/responses.rs`, `bump_editions_answered`; [`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4, §2.17). Implementing this needs an actual backend change, a `data-model.md`/`lifecycle.md` edit and a `progress-log.md` entry, not just this doc — see the note at the end of this section.
-
-**Decision.** `editions_answered` — and the live leaderboard it feeds — no longer updates during the response window. It's decided once, at close, alongside the existing non-empty check.
-
-**Why, beyond visibility.** The owner's original "someone drafts something the moment the edition opens, then fleshes it out right before the deadline" worry about *speed* is already handled separately: the "Early bird" card (§11.1) now scores by the last edit before close, not the first publish ([decision](decisions.md#early-bird-uses-last-edit-not-first-publish)). But there's a second, sharper gap counting-at-first-publish leaves open: **a member can empty an already-published answer.** `PUT …/my-response`'s validation accepts an empty `body` unconditionally — `validation::body("")` is accepted — and publishing is sticky (`status` never reverts), so emptying a published text answer doesn't un-publish it, it just leaves a published row with nothing in it. Today's real-time bump already fired at the first publish, so a member who published early, then cleared their answer entirely before close, is still credited with having answered an edition they ultimately left blank. Moving the bump to close time, decided from the content that's actually there at that moment, closes this.
-
-- **Drop the real-time bump.** A manual `PUT …/my-response` with `publish: true` no longer touches `MemberStats` at all.
-- **Widen the close-time pass.** `publish(nl)`'s existing sweep over the cycle's response rows ([`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl), [`data-model.md` §4](design/data-model.md#4-transactional-invariants) #4a) already auto-publishes non-empty drafts using a content check (text: non-whitespace `body` or `imageMediaIds`/`audioMediaIds` non-empty; poll: `pollOptionId` set). That same check, applied to *every* response row in the cycle regardless of its current `status` — not just rows still `draft` — decides the bump: if any of a member's answers in the cycle is non-empty at that moment, bump `editions_answered` once, through the existing `last_answered_cycle` marker (so a retried tick, or a member with several non-empty answers, still counts once). This folds the old draft-only auto-publish bump (#4a) and the old manual-publish bump (#4) into one close-time rule, rather than keeping two paths that can disagree.
-- **What doesn't change.** Publishing stays sticky — an emptied answer still shows up in the published edition as an empty card, exactly as it does today. This decision only changes whether it counts toward `editions_answered` and the leaderboard, not what's rendered.
-- **Polls are unaffected.** `pollOptionId` is required on every poll save and there's no "clear" action (§7.3's own open question), so a poll answer can't be emptied once picked — this gap is text/image/audio-answer-only.
-- **Trade-off accepted.** The leaderboard and "who's answered" no longer update live during the response window; standing is visible only once the edition is out. That matches "the leaderboard is about editions, not about who's fastest."
-
-**To actually ship this:** update `data-model.md` §4 #4/#4a and §2.17, `lifecycle.md` §5.3, change `save_response`'s `bump_editions_answered` wiring and the close-time sweep in `backend/crates/persistence/src/responses.rs`/`lambda-cycle-tick`, update their tests, and log it in `plans/archive/progress-log.md`. Recorded in [`decisions.md`](decisions.md#editions-answered-counted-at-close).
 
 ---
 
 ## 17. Self-serve group creation, with site-admin approval
 
-Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a) — there's no API route a signed-in member can call to start a new group. This adds one, gated behind approval by a new, site-wide role.
+Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`auth.md` §9.1](../docs/design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a) — there's no API route a signed-in member can call to start a new group. This adds one, gated behind approval by a new, site-wide role.
 
 ### 17.1 Requesting a group
 
@@ -899,8 +861,8 @@ Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`
 This is new: every role that exists today ([`entities.rs`](../backend/crates/domain/src/entities.rs) `enum Role`) is scoped to one group. Approving group requests needs a role that isn't.
 
 - **A `SiteAdmin` row**, not a field on `User`: `pk=SITEADMIN#{user_id}`, so granting or revoking one is a single conditioned Put/Delete rather than a migration, and checking "is this caller a site admin" is a single `GetItem` any handler can make.
-- **The bootstrap admin is a site admin from the start.** `scripts/bootstrap_admin.py` writes the `SiteAdmin` row for the account it creates (both the dev and prod paths, [`auth.md` §9.1](design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a), so there's always at least one.
-- **A site admin can grant the role to others.** `PUT /site-admins/{userId}` and `DELETE /site-admins/{userId}`, both site-admin-only, let the role spread past the bootstrap account without another script run. A site admin can't remove themselves if they're the last one, the same kind of guard admin-removal already has at the group level ([`api.md`](design/api.md), group admin demotion rules).
+- **The bootstrap admin is a site admin from the start.** `scripts/bootstrap_admin.py` writes the `SiteAdmin` row for the account it creates (both the dev and prod paths, [`auth.md` §9.1](../docs/design/auth.md#91-scriptsbootstrap_adminpy--dev)/§9.1a), so there's always at least one.
+- **A site admin can grant the role to others.** `PUT /site-admins/{userId}` and `DELETE /site-admins/{userId}`, both site-admin-only, let the role spread past the bootstrap account without another script run. A site admin can't remove themselves if they're the last one, the same kind of guard admin-removal already has at the group level ([`api.md`](../docs/design/api.md), group admin demotion rules).
 - **Scope stays narrow in v1.** A site admin's only power is deciding group requests (§17.3) — not reading groups' content, not moderating members. Broader site-admin powers are a separate decision if they're ever needed.
 
 ### 17.3 Deciding a request

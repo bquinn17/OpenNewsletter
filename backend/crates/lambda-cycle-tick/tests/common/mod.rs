@@ -93,8 +93,7 @@ pub enum Answer<'a> {
     Poll(&'a str),
 }
 
-/// Save an answer through the real save transaction, as `PUT my-response`
-/// does: a draft, or a publish with the first-publish bump.
+/// Save an answer through the real save transaction, as `PUT my-response` does.
 pub async fn save(
     repo: &Repo,
     nl: &Newsletter,
@@ -130,7 +129,7 @@ pub async fn save(
         image_media_ids: &images,
         publish,
     };
-    responses::save_response(repo, &save, Timestamp::now(), publish)
+    responses::save_response(repo, &save, Timestamp::now())
         .await
         .unwrap();
 }

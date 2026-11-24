@@ -79,6 +79,7 @@ function renderAt(questionId: string) {
         <MemoryRouter initialEntries={[`/g/g1/n/c1/respond/${questionId}`]}>
           <Routes>
             <Route path="/g/:groupId/n/:cycleId/respond/:questionId" element={<RespondPage />} />
+            <Route path="/g/:groupId/n/:cycleId" element={<div>Edition page</div>} />
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>
@@ -131,7 +132,7 @@ describe("RespondPage", () => {
     vi.useRealTimers();
   });
 
-  it("publishes a text response with the typed body and an empty imageMediaIds", async () => {
+  it("Done flushes the typed body and moves to the edition page when it's the only question", async () => {
     vi.mocked(api.getNewsletter).mockResolvedValue(
       openDetail([
         {
@@ -152,11 +153,11 @@ describe("RespondPage", () => {
       groupId: "g1",
       cycleId: "c1",
       kind: "text",
-      status: "published",
+      status: "draft",
       body: "Hello world",
       imageMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
-      publishedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
     });
 
     renderAt("q1");
@@ -165,7 +166,7 @@ describe("RespondPage", () => {
     fireEvent.change(textarea, { target: { value: "Hello world" } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
       await flush();
     });
 
@@ -173,8 +174,268 @@ describe("RespondPage", () => {
       kind: "text",
       body: "Hello world",
       imageMediaIds: [],
-      publish: true,
+      publish: false,
     });
+    expect(await screen.findByText("Edition page")).toBeInTheDocument();
+  });
+
+  it("Done moves on without saving when the question is left blank", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "What's new?",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+      ]),
+    );
+
+    renderAt("q1");
+
+    await screen.findByPlaceholderText("Tell us about it…");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    expect(saveMyResponse).not.toHaveBeenCalled();
+    expect(await screen.findByText("Edition page")).toBeInTheDocument();
+  });
+
+  it("Done navigates to the next unanswered question, in display order", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "First question",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: {
+            responseId: "r1",
+            status: "draft",
+            body: "Already answered",
+            imageMediaIds: [],
+            updatedAt: "2026-06-01T00:00:00Z",
+            publishedAt: null,
+          },
+        },
+        {
+          questionId: "q2",
+          kind: "text",
+          prompt: "Second question",
+          displayOrder: 1,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+        {
+          questionId: "q3",
+          kind: "text",
+          prompt: "Third question",
+          displayOrder: 2,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+      ]),
+    );
+    saveMyResponse.mockResolvedValue({
+      responseId: "r2",
+      userId: "u_quinn",
+      questionId: "q2",
+      groupId: "g1",
+      cycleId: "c1",
+      kind: "text",
+      status: "draft",
+      body: "Second answer",
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    });
+
+    renderAt("q2");
+
+    const textarea = await screen.findByPlaceholderText("Tell us about it…");
+    fireEvent.change(textarea, { target: { value: "Second answer" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Third question" })).toBeInTheDocument();
+  });
+
+  it("Done wraps around to an earlier unanswered question", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "First question",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+        {
+          questionId: "q2",
+          kind: "text",
+          prompt: "Second question",
+          displayOrder: 1,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: {
+            responseId: "r2",
+            status: "draft",
+            body: "Already answered",
+            imageMediaIds: [],
+            updatedAt: "2026-06-01T00:00:00Z",
+            publishedAt: null,
+          },
+        },
+        {
+          questionId: "q3",
+          kind: "text",
+          prompt: "Third question",
+          displayOrder: 2,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+      ]),
+    );
+    saveMyResponse.mockResolvedValue({
+      responseId: "r3",
+      userId: "u_quinn",
+      questionId: "q3",
+      groupId: "g1",
+      cycleId: "c1",
+      kind: "text",
+      status: "draft",
+      body: "Third answer",
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    });
+
+    renderAt("q3");
+
+    const textarea = await screen.findByPlaceholderText("Tell us about it…");
+    fireEvent.change(textarea, { target: { value: "Third answer" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    expect(await screen.findByRole("heading", { name: "First question" })).toBeInTheDocument();
+  });
+
+  it("Done navigates to the edition page once every question is answered", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "First question",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: {
+            responseId: "r1",
+            status: "draft",
+            body: "Already answered",
+            imageMediaIds: [],
+            updatedAt: "2026-06-01T00:00:00Z",
+            publishedAt: null,
+          },
+        },
+        {
+          questionId: "q2",
+          kind: "text",
+          prompt: "Second question",
+          displayOrder: 1,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+      ]),
+    );
+    saveMyResponse.mockResolvedValue({
+      responseId: "r2",
+      userId: "u_quinn",
+      questionId: "q2",
+      groupId: "g1",
+      cycleId: "c1",
+      kind: "text",
+      status: "draft",
+      body: "Second answer",
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    });
+
+    renderAt("q2");
+
+    const textarea = await screen.findByPlaceholderText("Tell us about it…");
+    fireEvent.change(textarea, { target: { value: "Second answer" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    expect(await screen.findByText("Edition page")).toBeInTheDocument();
+  });
+
+  it("never sends publish: true from the Done button", async () => {
+    vi.mocked(api.getNewsletter).mockResolvedValue(
+      openDetail([
+        {
+          questionId: "q1",
+          kind: "text",
+          prompt: "What's new?",
+          displayOrder: 0,
+          askedBy: null,
+          isAnonymous: false,
+          myResponse: null,
+        },
+      ]),
+    );
+    saveMyResponse.mockResolvedValue({
+      responseId: "r1",
+      userId: "u_quinn",
+      questionId: "q1",
+      groupId: "g1",
+      cycleId: "c1",
+      kind: "text",
+      status: "draft",
+      body: "Hello",
+      imageMediaIds: [],
+      updatedAt: "2026-06-02T00:00:00Z",
+      publishedAt: null,
+    });
+
+    renderAt("q1");
+
+    const textarea = await screen.findByPlaceholderText("Tell us about it…");
+    fireEvent.change(textarea, { target: { value: "Hello" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    for (const call of saveMyResponse.mock.calls) {
+      expect((call[3] as S["SaveResponseRequest"]).publish).toBe(false);
+    }
   });
 
   it("keeps a draft's existing images when the editor opens and the body is edited", async () => {
@@ -406,7 +667,7 @@ describe("RespondPage", () => {
     expect(saveMyResponse).not.toHaveBeenCalled();
   });
 
-  it("publishes a poll response with the selected option", async () => {
+  it("Done waits for the poll pick's save to settle, then moves on, without publishing", async () => {
     vi.mocked(api.getNewsletter).mockResolvedValue(
       openDetail([
         {
@@ -424,41 +685,29 @@ describe("RespondPage", () => {
         },
       ]),
     );
-    saveMyResponse.mockResolvedValue({
-      responseId: "r2",
-      userId: "u_quinn",
-      questionId: "q2",
-      groupId: "g1",
-      cycleId: "c1",
-      kind: "poll",
-      status: "published",
-      pollOptionId: "optB",
-      imageMediaIds: [],
-      updatedAt: "2026-06-02T00:00:00Z",
-      publishedAt: "2026-06-02T00:00:00Z",
-    });
+    saveMyResponse.mockResolvedValue(pollDraft("optB"));
 
     renderAt("q2");
 
     const optionButton = await screen.findByRole("button", { name: "Option B" });
-    // The pick itself saves as a draft first (D2); Publish then promotes it.
-    saveMyResponse.mockResolvedValueOnce(pollDraft("optB"));
     await act(async () => {
       fireEvent.click(optionButton);
       await flush();
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
       await flush();
     });
 
-    expect(saveMyResponse).toHaveBeenCalledTimes(2);
-    expect(saveMyResponse).toHaveBeenLastCalledWith("g1", "c1", "q2", {
+    // The pick already saved as a draft on selection — Done sends nothing new.
+    expect(saveMyResponse).toHaveBeenCalledTimes(1);
+    expect(saveMyResponse).toHaveBeenCalledWith("g1", "c1", "q2", {
       kind: "poll",
       pollOptionId: "optB",
-      publish: true,
+      publish: false,
     });
+    expect(await screen.findByText("Edition page")).toBeInTheDocument();
   });
 
   it("saves the first poll pick immediately as a draft (D2)", async () => {

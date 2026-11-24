@@ -6,7 +6,7 @@ Where the project stands, what's blocking it, and what's next. It's read at the 
 
 ## Status
 
-- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard and the app's own sign-in pages.
+- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages and the owner UX review fixes (the group page tabs, [`future-ideas.md` §16](future-ideas.md#16-group-page-editions-leaderboard-and-members-as-tabs), wait on the members page).
 - **Dev runs the latest `main`.** Every push to `main` deploys it ([D6](../docs/decisions.md#d6)).
 - **Deploy-shaped gates:** the API side of every dev gate has passed; [`build-order.md`](build-order.md) marks each check. What's left needs a browser, a second Google account or a phone (next step 3).
 - **M1** is partly done (B5).
@@ -54,7 +54,7 @@ Workstation setup for either machine: [`environments.md` §0](../docs/developmen
 
 These came out of the performance and cost review ([archived](archive/design-review-performance-cost.md)). Each needs the owner's call before or soon after M14. Questions 2 and 4 are settled; the numbers are kept so references stay valid.
 1. **Merge the API Lambdas into one?** That gives fewer cold starts, a shared membership cache, alarms that fit the ≤10 budget and a single build artifact. The cost is one broader IAM role, though every function already has table read/write.
-3. **Cap cost exposure.** Any Google or Facebook user can get a JWT. Options are reserved concurrency on the API function (easiest after 1), lower per-route throttles, or both. Rejecting sign-ups without an invite, or deleting accounts that don't redeem one within 24 hours, would also limit it ([`future-ideas.md` §15](../docs/future-ideas.md#15-invite-only-accounts-enforced-at-sign-up)).
+3. **Cap cost exposure.** Any Google or Facebook user can get a JWT. Options are reserved concurrency on the API function (easiest after 1), lower per-route throttles, or both. Rejecting sign-ups without an invite, or deleting accounts that don't redeem one within 24 hours, would also limit it ([`future-ideas.md` §15](future-ideas.md#15-invite-only-accounts-enforced-at-sign-up)).
 5. **Raise the Lambda account concurrency quota.** Dev and prod share it. It's enough for launch, but too low before inviting many groups.
 
 ---

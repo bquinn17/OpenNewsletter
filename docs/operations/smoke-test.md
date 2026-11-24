@@ -66,7 +66,7 @@ aws lambda invoke --function-name OpenNewsletter-CycleTick-$ENV \
 ## 6. Draft, publish, comment, react (dev; on prod, during a real open cycle)
 
 - [ ] As B, open the newsletter → answer a question. Type a few lines and attach an image. Wait for the thumbnail, then reload. The draft and the image are still there.
-- [ ] Publish the answer, and answer any poll question.
+- [ ] Press **Done**, and answer any poll question. There's no Publish button: answers publish at close.
 - [ ] Fast-forward to publication (same curl as step 5). The response shows `open → published`, and a new `voting` cycle with `from: null`.
 - [ ] Open the published edition. B's answer and image render, loaded from a presigned S3 URL ([`media.md` §4](../design/media.md#4-serving-presigned-s3-gets)).
 - [ ] **Media serving** ([`infrastructure.md` §5.2](../design/infrastructure.md#52-image-serving)). `MediaImage` and `Avatar` load in CORS mode, so if the processed bucket's CORS policy is wrong, *every* image and avatar fails to load, not just offline caching. In DevTools → Network, pick the image request and check:

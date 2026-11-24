@@ -77,6 +77,39 @@ async fn the_tick_publishes_non_empty_drafts_at_close_and_leaves_empty_ones() {
         assert_eq!(empty.status, ResponseStatus::Draft, "{user}");
         assert_eq!(empty.published_at, None, "{user}");
     }
+
+    // u1 has two non-empty answers in the cycle (one published by this sweep,
+    // one that was already a draft needing it too); still counted once.
+    assert_eq!(common::editions_answered(&repo, "u1", "g-auto").await, 1);
+    // u2 mixes an already-published answer with a draft the sweep publishes.
+    assert_eq!(common::editions_answered(&repo, "u2", "g-auto").await, 1);
+    assert_eq!(common::editions_answered(&repo, "u4", "g-auto").await, 1);
+    // u3's only answer is whitespace; u5's only image was deleted — neither
+    // ever becomes non-empty, so neither is counted.
+    assert_eq!(common::editions_answered(&repo, "u3", "g-auto").await, 0);
+    assert_eq!(common::editions_answered(&repo, "u5", "g-auto").await, 0);
+}
+
+/// A member who published an answer and then emptied it (a later autosave
+/// with `publish=false`, which leaves a published row's content overwritten
+/// but still published — `docs/design/lifecycle.md` §5.3) isn't counted:
+/// `is_non_empty` is checked on the row as it stands at close, not at the
+/// moment it was published.
+#[tokio::test]
+async fn a_published_answer_emptied_before_close_is_not_counted() {
+    let (_c, repo) = common::make_test_repo().await;
+    let nl = common::seed_open_cycle(&repo, "g-emptied", &[TEXT_Q]).await;
+    common::put_membership(&repo, "u1", "g-emptied").await;
+    let text = |body| Answer::Text { body, images: &[] };
+    common::save(&repo, &nl, "u1", TEXT_Q, text("my answer"), true).await;
+    common::save(&repo, &nl, "u1", TEXT_Q, text(""), false).await;
+    common::close_cycle(&repo, &nl).await;
+
+    run_tick(&repo, CycleCadence::Monthly).await;
+
+    let answer = common::response(&repo, &nl, "u1", TEXT_Q).await;
+    assert_eq!(answer.status, ResponseStatus::Published);
+    assert_eq!(common::editions_answered(&repo, "u1", "g-emptied").await, 0);
 }
 
 #[tokio::test]
@@ -119,7 +152,7 @@ async fn a_tick_that_crashed_mid_sweep_is_finished_by_the_next_without_double_co
     let outcome = responses::auto_publish_draft(&repo, &first, closed.response_close_at)
         .await
         .unwrap();
-    assert_eq!(outcome, AutoPublishOutcome::Published { counted: true });
+    assert_eq!(outcome, AutoPublishOutcome::Published);
     // Second tick: a full sweep, then died before the flip.
     assert_eq!(auto_publish_drafts(&repo, &closed).await.published, 2);
     assert_eq!(

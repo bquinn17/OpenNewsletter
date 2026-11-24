@@ -89,7 +89,7 @@ The current data model and API already guarantee what this design needs, with no
 - **Everything the archive blob needs is regenerable from canonical rows.** The archive procedure (§3) derives the blob entirely from the rows it's about to delete; no data this design needs is stored only in a form that can't be reconstructed.
 - **Writes to an `archived` cycle are already rejected.** The engagement routes' check order ([`api.md` §8](api.md#8-engagement-routes-comments--reactions)) returns 410 `NEWSLETTER_ARCHIVED` before the `published`-status check, so comments and reactions can't be created on an archived cycle once one exists — even though no cycle can reach `archived` today without the archival job this document describes.
 - **Every entity carries `group_id` and `cycle_id` as plain attributes**, not only encoded in its key ([`data-model.md` §2](data-model.md#2-entity-catalog)), so the archiver can reconstruct a cycle's data without re-deriving identifiers from key strings.
-- **Leaderboard counters survive archival.** `MemberStats` rows ([`data-model.md` §2.17](data-model.md#217-memberstats)) live in the group's own `GROUP#g#STATS` partition, so deleting a cycle's rows leaves them alone. The most-reacted-answer board reads the Response rows' GSI2 entries (AP24), and those go with the rows. Unless the archiver snapshots a group's top answers first, the board then covers only unarchived editions. That choice is still open ([`future-ideas.md` §5](../future-ideas.md#5-group-leaderboard)).
+- **Leaderboard counters survive archival.** `MemberStats` rows ([`data-model.md` §2.17](data-model.md#217-memberstats)) live in the group's own `GROUP#g#STATS` partition, so deleting a cycle's rows leaves them alone. The most-reacted-answer board reads the Response rows' GSI2 entries (AP24), and those go with the rows. Unless the archiver snapshots a group's top answers first, the board then covers only unarchived editions. That choice is still open ([`future-ideas.md` §5](../../plans/future-ideas.md#5-group-leaderboard)).
   - **The stats backfill can't see archived editions.** `scripts/backfill_member_stats.py` recomputes the counters from the cycles' rows and overwrites `MemberStats` with absolute values. Once archival has deleted a cycle's rows, a backfill run would drop that cycle from every counter and streak, wiping the history this bullet says survives. Before archival ships, the backfill must either read the archived blobs too, or refuse to run on a group with archived cycles.
 
 ---
@@ -100,7 +100,7 @@ Cognito users who never finished onboarding (created an account but never redeem
 - `userCreateDate < now - 24 hours`
 - AND have no `COGNITO_SUB#{sub}` lookup row, i.e. never redeemed an invite
 
-The full design, including the race with a still-valid ID token, is [`future-ideas.md` §15.3](../future-ideas.md#153-delete-accounts-that-dont-redeem-an-invite-within-24-hours).
+The full design, including the race with a still-valid ID token, is [`future-ideas.md` §15.3](../../plans/future-ideas.md#153-delete-accounts-that-dont-redeem-an-invite-within-24-hours).
 
 The same Lambda would also delete expired invite rows that aren't auto-cleaned by TTL (defensive).
 

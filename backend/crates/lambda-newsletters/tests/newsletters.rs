@@ -69,7 +69,7 @@ async fn get_newsletter_detail_404s_for_a_missing_cycle() {
 }
 
 #[tokio::test]
-async fn list_newsletters_reports_my_draft_and_published_counts() {
+async fn list_newsletters_reports_my_draft_published_and_answered_counts() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gct", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
@@ -100,6 +100,26 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
         },
     )
     .await;
+    // A whitespace-only draft is a draft, but not an answer.
+    common::put_response(
+        &repo,
+        &Response {
+            response_id: ResponseId::new("r2"),
+            user_id: UserId::new("u1"),
+            question_id: QuestionId::new("q2"),
+            group_id: GroupId::new("gct"),
+            cycle_id: CycleId::new("202606"),
+            kind: QuestionKind::Text,
+            status: ResponseStatus::Draft,
+            body: Some("   ".into()),
+            poll_option_id: None,
+            image_media_ids: Vec::new(),
+            updated_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+            published_at: None,
+            reaction_count: 0,
+        },
+    )
+    .await;
 
     let state = state(repo);
     let response = handlers::list_newsletters(
@@ -119,8 +139,9 @@ async fn list_newsletters_reports_my_draft_and_published_counts() {
         .find(|i| i.cycle_id == CycleId::new("202606"))
         .expect("the open cycle is in the list");
     assert_eq!(item.question_count, 2);
-    assert_eq!(item.my_draft_count, 1);
+    assert_eq!(item.my_draft_count, 2);
     assert_eq!(item.my_published_count, 0);
+    assert_eq!(item.my_answered_count, 1);
 }
 
 #[tokio::test]

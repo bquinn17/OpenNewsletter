@@ -171,9 +171,7 @@ async fn save_response_creates_a_draft_and_keeps_the_response_id_stable_across_s
         &[],
         false,
     );
-    responses::save_response(&repo, &save, now, false)
-        .await
-        .unwrap();
+    responses::save_response(&repo, &save, now).await.unwrap();
 
     let first = responses::get_my_response(&repo, &group_id, &cycle_id, &question_id, &user_id)
         .await
@@ -192,7 +190,7 @@ async fn save_response_creates_a_draft_and_keeps_the_response_id_stable_across_s
         &[],
         false,
     );
-    responses::save_response(&repo, &save2, later, false)
+    responses::save_response(&repo, &save2, later)
         .await
         .unwrap();
 
@@ -208,7 +206,10 @@ async fn save_response_creates_a_draft_and_keeps_the_response_id_stable_across_s
 }
 
 #[tokio::test]
-async fn save_response_with_publish_sets_published_at_and_bumps_editions_answered() {
+async fn save_response_with_publish_sets_published_at_but_does_not_bump_editions_answered() {
+    // `editions_answered` is decided once at cycle close
+    // (`docs/design/lifecycle.md` §5.3), not on a manual publish through this
+    // transaction.
     let (_c, repo) = common::make_repo().await;
     newsletters::write_status_transition(&repo, &open_newsletter("g2", "202606"))
         .await
@@ -231,9 +232,7 @@ async fn save_response_with_publish_sets_published_at_and_bumps_editions_answere
         &[],
         true,
     );
-    responses::save_response(&repo, &save, now, true)
-        .await
-        .unwrap();
+    responses::save_response(&repo, &save, now).await.unwrap();
 
     let published = responses::get_my_response(&repo, &group_id, &cycle_id, &question_id, &user_id)
         .await
@@ -242,7 +241,7 @@ async fn save_response_with_publish_sets_published_at_and_bumps_editions_answere
     assert_eq!(published.status, ResponseStatus::Published);
     assert_eq!(published.published_at, Some(now));
 
-    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 0);
 }
 
 #[tokio::test]
@@ -271,7 +270,6 @@ async fn publishing_after_a_draft_keeps_the_same_publish_call_semantics() {
             false,
         ),
         draft_at,
-        false,
     )
     .await
     .unwrap();
@@ -287,7 +285,6 @@ async fn publishing_after_a_draft_keeps_the_same_publish_call_semantics() {
             true,
         ),
         publish_at,
-        false,
     )
     .await
     .unwrap();
@@ -327,7 +324,6 @@ async fn a_non_publishing_save_after_publish_keeps_the_response_published() {
             true,
         ),
         publish_at,
-        false,
     )
     .await
     .unwrap();
@@ -345,7 +341,6 @@ async fn a_non_publishing_save_after_publish_keeps_the_response_published() {
             false,
         ),
         edit_at,
-        false,
     )
     .await
     .unwrap();
@@ -361,129 +356,6 @@ async fn a_non_publishing_save_after_publish_keeps_the_response_published() {
         still_published.body.as_deref(),
         Some("edited after publish")
     );
-}
-
-#[tokio::test]
-async fn a_second_publish_in_the_same_cycle_does_not_bump_editions_answered_again() {
-    let (_c, repo) = common::make_repo().await;
-    newsletters::write_status_transition(&repo, &open_newsletter("g5", "202606"))
-        .await
-        .unwrap();
-    let m = common::membership("u1", "g5", domain::Role::Member);
-    common::put_membership(&repo, &m).await;
-
-    let group_id = GroupId::new("g5");
-    let cycle_id = CycleId::new("202606");
-    let user_id = UserId::new("u1");
-    let now = utc("2026-06-02T00:00:00Z");
-
-    responses::save_response(
-        &repo,
-        &text_save(
-            &group_id,
-            &cycle_id,
-            &QuestionId::new("q1"),
-            &user_id,
-            "answer one",
-            &[],
-            true,
-        ),
-        now,
-        true,
-    )
-    .await
-    .unwrap();
-    responses::save_response(
-        &repo,
-        &text_save(
-            &group_id,
-            &cycle_id,
-            &QuestionId::new("q2"),
-            &user_id,
-            "answer two",
-            &[],
-            true,
-        ),
-        now,
-        false,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
-}
-
-/// Two concurrent first-time publishes to different questions both pass the
-/// handler's AP15 pre-read, so both ask for the bump. The `lastAnsweredCycle`
-/// marker in the transaction must still count the cycle exactly once
-/// (regression for the M13 double-count).
-#[tokio::test]
-async fn concurrent_first_publishes_to_different_questions_count_the_cycle_once() {
-    let (_c, repo) = common::make_repo().await;
-    newsletters::write_status_transition(&repo, &open_newsletter("gconcpub", "202606"))
-        .await
-        .unwrap();
-    let m = common::membership("u1", "gconcpub", domain::Role::Member);
-    common::put_membership(&repo, &m).await;
-
-    let group_id = GroupId::new("gconcpub");
-    let cycle_id = CycleId::new("202606");
-    let user_id = UserId::new("u1");
-    let q1 = QuestionId::new("q1");
-    let q2 = QuestionId::new("q2");
-    let now = utc("2026-06-02T00:00:00Z");
-    let save1 = text_save(&group_id, &cycle_id, &q1, &user_id, "answer one", &[], true);
-    let save2 = text_save(&group_id, &cycle_id, &q2, &user_id, "answer two", &[], true);
-
-    let (r1, r2) = tokio::join!(
-        responses::save_response(&repo, &save1, now, true),
-        responses::save_response(&repo, &save2, now, true),
-    );
-    r1.unwrap();
-    r2.unwrap();
-
-    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
-    for q in [&q1, &q2] {
-        let saved = responses::get_my_response(&repo, &group_id, &cycle_id, q, &user_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(saved.status, ResponseStatus::Published);
-    }
-}
-
-#[tokio::test]
-async fn a_repeated_bump_request_in_the_same_cycle_still_saves_and_counts_once() {
-    let (_c, repo) = common::make_repo().await;
-    newsletters::write_status_transition(&repo, &open_newsletter("grebump", "202606"))
-        .await
-        .unwrap();
-    let m = common::membership("u1", "grebump", domain::Role::Member);
-    common::put_membership(&repo, &m).await;
-
-    let group_id = GroupId::new("grebump");
-    let cycle_id = CycleId::new("202606");
-    let user_id = UserId::new("u1");
-    let q1 = QuestionId::new("q1");
-    let q2 = QuestionId::new("q2");
-    let now = utc("2026-06-02T00:00:00Z");
-
-    let first = text_save(&group_id, &cycle_id, &q1, &user_id, "one", &[], true);
-    responses::save_response(&repo, &first, now, true)
-        .await
-        .unwrap();
-    // A stale pre-read asks for the bump again: the save must still land.
-    let second = text_save(&group_id, &cycle_id, &q2, &user_id, "two", &[], true);
-    responses::save_response(&repo, &second, now, true)
-        .await
-        .unwrap();
-
-    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
-    let saved = responses::get_my_response(&repo, &group_id, &cycle_id, &q2, &user_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(saved.body.as_deref(), Some("two"));
 }
 
 #[tokio::test]
@@ -513,7 +385,6 @@ async fn save_response_is_a_lost_race_when_the_cycle_is_not_open() {
             false,
         ),
         now,
-        false,
     )
     .await
     .expect_err("cycle is not open");
@@ -546,7 +417,6 @@ async fn save_response_is_a_lost_race_once_the_deadline_has_passed() {
             false,
         ),
         past_deadline,
-        false,
     )
     .await
     .expect_err("deadline has passed");
@@ -578,9 +448,7 @@ async fn save_response_stores_a_poll_vote() {
         image_media_ids: &[],
         publish: true,
     };
-    responses::save_response(&repo, &save, now, false)
-        .await
-        .unwrap();
+    responses::save_response(&repo, &save, now).await.unwrap();
 
     let saved = responses::get_my_response(&repo, &group_id, &cycle_id, &question_id, &user_id)
         .await
@@ -617,34 +485,23 @@ async fn list_answers_reads_past_the_one_megabyte_query_page() {
 }
 
 /// `editions_answered` lives on `MemberStats` (`docs/design/data-model.md`
-/// §2.17), so leaving and rejoining keeps it, like every other stat.
+/// §2.17), so leaving and rejoining keeps it, like every other stat. The bump
+/// itself is `lambda-cycle-tick`'s close-time sweep's job
+/// (`docs/design/lifecycle.md` §5.3), exercised directly here.
 #[tokio::test]
 async fn editions_answered_survives_a_leave_and_rejoin() {
     let (_c, repo) = common::make_repo().await;
     let mut g = common::group("g-ed-rejoin", "u0");
     g.member_count = 2;
     persistence::groups::put_group(&repo, &g).await.unwrap();
-    newsletters::write_status_transition(&repo, &open_newsletter("g-ed-rejoin", "202606"))
-        .await
-        .unwrap();
     let m = common::membership("u1", "g-ed-rejoin", domain::Role::Member);
     common::put_membership(&repo, &m).await;
 
     let group_id = GroupId::new("g-ed-rejoin");
     let cycle_id = CycleId::new("202606");
-    let question_id = QuestionId::new("q1");
     let user_id = UserId::new("u1");
-    let now = utc("2026-06-02T00:00:00Z");
-    let save = text_save(
-        &group_id,
-        &cycle_id,
-        &question_id,
-        &user_id,
-        "answer",
-        &[],
-        true,
-    );
-    responses::save_response(&repo, &save, now, true)
+
+    persistence::member_stats::bump_editions_answered(&repo, &group_id, &user_id, &cycle_id)
         .await
         .unwrap();
 
@@ -652,6 +509,27 @@ async fn editions_answered_survives_a_leave_and_rejoin() {
         .await
         .unwrap();
     common::put_membership(&repo, &m).await;
+
+    assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
+}
+
+/// A retried close-time bump for the same cycle must not double-count
+/// (`docs/design/lifecycle.md` §5.3's `last_answered_cycle` marker).
+#[tokio::test]
+async fn bump_editions_answered_counts_the_same_cycle_once() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = GroupId::new("g-bump-once");
+    let cycle_id = CycleId::new("202606");
+    let user_id = UserId::new("u1");
+
+    persistence::member_stats::bump_editions_answered(&repo, &group_id, &user_id, &cycle_id)
+        .await
+        .unwrap();
+    let err =
+        persistence::member_stats::bump_editions_answered(&repo, &group_id, &user_id, &cycle_id)
+            .await
+            .expect_err("already counted");
+    assert!(err.is_lost_race());
 
     assert_eq!(editions_answered(&repo, &group_id, &user_id).await, 1);
 }

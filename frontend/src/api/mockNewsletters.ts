@@ -124,7 +124,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
 
 // ---- §7 response store. Seeded with each group's initial drafts/publishes
 // (kept consistent with `newsletters[groupId]`'s `myDraftCount`/
-// `myPublishedCount`), then mutated by `PUT .../my-response`. ----
+// `myPublishedCount`/`myAnsweredCount`), then mutated by `PUT .../my-response`. ----
 
 const responses = new Map<string, ResponseDto>();
 let nextResponseId = 1;
@@ -487,12 +487,20 @@ function handleGetDetail(groupId: string, cycleId: string): S["NewsletterDetailR
 function adjustSummaryCounts(
   groupId: string,
   cycleId: string,
-  delta: { draft: number; published: number },
+  delta: { draft: number; published: number; answered: number },
 ): void {
   const summary = findSummary(groupId, cycleId);
   if (!summary) return;
   summary.myDraftCount = Math.max(0, summary.myDraftCount + delta.draft);
   summary.myPublishedCount = Math.max(0, summary.myPublishedCount + delta.published);
+  summary.myAnsweredCount = Math.max(0, summary.myAnsweredCount + delta.answered);
+}
+
+/** The backend's `Response::is_non_empty`, which `myAnsweredCount` counts. */
+function isNonEmpty(response: ResponseDto | undefined): boolean {
+  if (!response) return false;
+  if (response.kind === "poll") return !!response.pollOptionId;
+  return (response.body?.trim().length ?? 0) > 0 || response.imageMediaIds.length > 0;
 }
 
 function handlePutMyResponse(
@@ -540,13 +548,17 @@ function handlePutMyResponse(
   };
   responses.set(key, dto);
 
+  const answered = Number(isNonEmpty(dto)) - Number(isNonEmpty(existing));
   if (!existing) {
     adjustSummaryCounts(groupId, cycleId, {
       draft: dto.status === "draft" ? 1 : 0,
       published: dto.status === "published" ? 1 : 0,
+      answered,
     });
   } else if (!wasPublished && dto.status === "published") {
-    adjustSummaryCounts(groupId, cycleId, { draft: -1, published: 1 });
+    adjustSummaryCounts(groupId, cycleId, { draft: -1, published: 1, answered });
+  } else {
+    adjustSummaryCounts(groupId, cycleId, { draft: 0, published: 0, answered });
   }
 
   return dto;

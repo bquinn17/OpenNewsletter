@@ -74,9 +74,14 @@ export function Landing() {
         </p>
 
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link to="/join" className={buttonClassName({ size: "lg", className: "min-w-[8rem]" })}>
-            Sign up
-          </Link>
+          {/* A plain link, not a router `Link`: the demo is decided when a page loads, so
+              entering it has to be a full page load (`docs/design/frontend.md` §17). */}
+          <a
+            href={DEMO_BASENAME}
+            className={buttonClassName({ size: "lg", className: "min-w-[8rem]" })}
+          >
+            See a demo
+          </a>
           <Link
             to="/signin"
             className={buttonClassName({ variant: "ghost", size: "lg", className: "min-w-[8rem]" })}
@@ -85,18 +90,14 @@ export function Landing() {
           </Link>
         </div>
         <InviteOnlyNote className="mx-auto mt-5 max-w-sm">
-          <p className="text-inkmuted">
-            Got one? Use it to sign up. Don&apos;t have one yet? Try the demo below.
-          </p>
+          <p className="font-semibold text-ink">Received an invite?</p>
+          <Link
+            to="/join"
+            className={buttonClassName({ variant: "soft", size: "sm", className: "mt-2" })}
+          >
+            Sign up
+          </Link>
         </InviteOnlyNote>
-        {/* A plain link, not a router `Link`: the demo is decided when a page loads, so
-            entering it has to be a full page load (`docs/design/frontend.md` §17). */}
-        <a
-          href={DEMO_BASENAME}
-          className="mt-4 inline-block text-sm font-semibold text-grape underline underline-offset-2"
-        >
-          See a demo
-        </a>
       </div>
 
       <section aria-labelledby="how-it-works" className="mt-12">

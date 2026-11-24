@@ -709,6 +709,7 @@ export interface components {
             avatarUrl: string | null;
             /** Format: date-time */
             joinedAt: string;
+            /** @description Editions with at least one non-empty answer from this member, decided once at cycle close (not updated during the response window). */
             editionsAnswered: number;
         };
         LeaderboardResponse: {
@@ -719,6 +720,7 @@ export interface components {
         };
         MemberStatsResponse: {
             userId: string;
+            /** @description Editions with at least one non-empty answer from this member, decided once at cycle close (not updated during the response window). */
             editionsAnswered: number;
             /** @description Reactions from other members on this member's answers. */
             reactionsReceived: number;
@@ -848,6 +850,8 @@ export interface components {
             questionCount: number;
             myDraftCount: number;
             myPublishedCount: number;
+            /** @description The caller's non-empty answers in this cycle, draft or published (text with a non-blank body or an image, or a poll pick). Every one publishes at close, so this is what "answered" means while a cycle is open. */
+            myAnsweredCount: number;
         };
         NewsletterListResponse: {
             items: components["schemas"]["NewsletterSummary"][];
@@ -1948,7 +1952,8 @@ export interface operations {
                      *           "publishedAt": null,
                      *           "questionCount": 5,
                      *           "myDraftCount": 2,
-                     *           "myPublishedCount": 0
+                     *           "myPublishedCount": 0,
+                     *           "myAnsweredCount": 2
                      *         }
                      *       ],
                      *       "nextCursor": null

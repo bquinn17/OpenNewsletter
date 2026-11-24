@@ -40,7 +40,7 @@ test.describe("dev-stack golden paths (`docs/development/testing-and-ci.md` §4.
     test.fixme();
   });
 
-  test("7. publish answer → cycle closes → comments enabled", async () => {
+  test("7. answer → cycle closes → comments enabled", async () => {
     test.fixme();
   });
 

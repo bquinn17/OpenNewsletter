@@ -275,7 +275,7 @@ Symptom of DynamoDB Local not running on either platform: tests panic with `Dyna
 
 ## 11. Ephemeral CI stacks
 
-Not built ([D12](../decisions.md#d12)). Design moved to [`future-ideas.md` §3](../future-ideas.md#3-ephemeral-per-pr-ci-stacks). `e2e.yml` targets the long-lived `dev` stack via `E2E_BASE_URL`.
+Not built ([D12](../decisions.md#d12)). Design moved to [`future-ideas.md` §3](../../plans/future-ideas.md#3-ephemeral-per-pr-ci-stacks). `e2e.yml` targets the long-lived `dev` stack via `E2E_BASE_URL`.
 
 ---
 

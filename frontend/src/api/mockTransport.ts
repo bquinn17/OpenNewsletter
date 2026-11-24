@@ -206,6 +206,7 @@ function handleRedeemInvite(body: unknown): S["RedeemResponse"] {
         questionCount: 0,
         myDraftCount: 0,
         myPublishedCount: 0,
+        myAnsweredCount: 0,
       },
     ];
   }

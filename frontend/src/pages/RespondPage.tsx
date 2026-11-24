@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { useConfig, useMembership, useNewsletter, useUploads } from "../api/queries";
+import { queryKeys, useConfig, useMembership, useNewsletter, useUploads } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
@@ -9,14 +10,13 @@ import { Spinner } from "../components/ui/Spinner";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
 import { ResponseEditor } from "../components/responses/ResponseEditor";
 import { AUTO_PUBLISH_BADGE, DraftStatusBadge } from "../components/responses/DraftStatusBadge";
-import { PublishButton } from "../components/responses/PublishButton";
 import { useResponseEditor } from "../components/responses/useResponseEditor";
 import { useHydratedImages } from "../components/responses/useHydratedImages";
 import { usePollResponse } from "../components/responses/usePollResponse";
 import { PollPicker } from "../components/responses/PollPicker";
 import { MarkdownBody } from "../utils/markdown";
-import { useToasts } from "../state/toast";
 import { formatInZone, shortCountdown } from "../utils/dates";
+import { nextUnansweredQuestionId } from "../utils/responseProgress";
 import type { components } from "../types/api";
 
 type S = components["schemas"];
@@ -95,7 +95,7 @@ function QuestionBody({
   responseCloseAt: string;
 }) {
   const navigate = useNavigate();
-  const pushToast = useToasts((s) => s.push);
+  const queryClient = useQueryClient();
   const { data: config } = useConfig();
   const isText = question.kind === "text";
 
@@ -116,19 +116,6 @@ function QuestionBody({
 
   const [showEditor, setShowEditor] = useState(() => question.myResponse?.status !== "published");
   const [uploading, setUploading] = useState(false);
-  const prevStatusRef = useRef<S["ResponseStatus"] | undefined>(question.myResponse?.status);
-
-  useEffect(() => {
-    const newStatus = editor.lastResponse?.status;
-    if (newStatus && newStatus !== prevStatusRef.current) {
-      if (newStatus === "published") {
-        pushToast("Published — friends can see this when the edition publishes.", "success");
-        setShowEditor(false);
-      }
-      prevStatusRef.current = newStatus;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pushToast` is a stable zustand setter.
-  }, [editor.lastResponse]);
 
   // The read-only view follows the current draft, including images added on this visit. Their
   // rows are the uploader's own `uploadQuery` entries, already cached.
@@ -149,12 +136,27 @@ function QuestionBody({
     ? textIsUnpublishedDraft && !editor.readOnly
     : poll.isUnpublishedDraft && !poll.closed;
 
-  async function handlePublish() {
+  // "Done" (`docs/design/frontend.md` §7.3): flushes any pending edit, then moves on to the
+  // next unanswered question of this edition, wrapping around, or back to the edition page
+  // once every question has a non-empty draft or answer. The frontend no longer publishes
+  // manually — a non-empty answer auto-publishes at close.
+  async function handleDone() {
     if (isText) {
-      await editor.publish();
+      await editor.flush();
     } else {
-      await poll.publish();
+      await poll.settle();
     }
+
+    const cached = queryClient.getQueryData<S["NewsletterDetailResponse"]>(
+      queryKeys.newsletter(groupId, cycleId),
+    );
+    const questions = cached && cached.status === "open" ? cached.questions : [question];
+    const nextQuestionId = nextUnansweredQuestionId(questions, question.questionId);
+    navigate(
+      nextQuestionId
+        ? `/g/${groupId}/n/${cycleId}/respond/${nextQuestionId}`
+        : `/g/${groupId}/n/${cycleId}`,
+    );
   }
 
   return (
@@ -277,18 +279,17 @@ function QuestionBody({
             Save &amp; exit
           </Button>
           {isText && !editor.readOnly && (
-            <PublishButton
-              isPublished={isPublished}
-              disabled={!canPublishText || uploading}
-              onPublish={() => void handlePublish()}
-            />
+            <Button
+              onClick={() => void handleDone()}
+              disabled={uploading || !!editor.problemDetail}
+            >
+              Done
+            </Button>
           )}
           {!isText && !poll.closed && (
-            <PublishButton
-              isPublished={poll.isPublished}
-              disabled={!poll.pollOptionId || poll.saving}
-              onPublish={() => void handlePublish()}
-            />
+            <Button onClick={() => void handleDone()} disabled={poll.saving}>
+              Done
+            </Button>
           )}
         </div>
       </div>

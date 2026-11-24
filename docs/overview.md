@@ -178,8 +178,7 @@ CDK reads `--context env=dev|prod` and merges from `infra/opennewsletter/config.
 - **[`development/`](development/)** covers workstation setup and the dev stack, testing and CI, and the coding standards.
 - **[`operations/`](operations/)** has the operator's one-time setup, the deploy runbook and the post-deploy smoke test.
 - **[`decisions.md`](decisions.md)** records the owner's standing decisions. Pages cite them by ID, e.g. [D8](decisions.md#d8).
-- **[`future-ideas.md`](future-ideas.md)** holds designs that are kept but not scheduled.
 
-Project tracking is kept apart from the docs, in [`plans/`](../plans/): [`PROGRESS.md`](../plans/PROGRESS.md) has current status and blockers, [`build-order.md`](../plans/build-order.md) has the milestones and their done-when gates, and [`archive/`](../plans/archive/) has the milestone history and the [original spec](../plans/archive/original-spec.md).
+Project tracking is kept apart from the docs, in [`plans/`](../plans/): [`PROGRESS.md`](../plans/PROGRESS.md) has current status and blockers, [`build-order.md`](../plans/build-order.md) has the milestones and their done-when gates, [`future-ideas.md`](../plans/future-ideas.md) holds designs that are kept but not scheduled, and [`archive/`](../plans/archive/) has the milestone history and the [original spec](../plans/archive/original-spec.md).
 
 **Section numbers are stable.** Code comments cite design sections by number, e.g. `docs/design/lifecycle.md` §5.3, and cross-references between pages look like [`lifecycle.md` §5.3](design/lifecycle.md#53-publishnl). When editing a page, reword headings freely but never renumber them; new sections go at the end.

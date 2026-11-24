@@ -114,7 +114,7 @@ The token is now on your clipboard. It expires after an hour; copy a fresh one w
 
 ## 1. Signed-out pages and sign-in
 
-- [ ] As a signed-out visitor (a fresh profile, or after signing out), open `/`. It shows a tilted stack of editions, "Your group's newsletter, together.", **Sign up** and **Sign in** buttons, a 🔒 "Invite only" notice ("You can't create an account without an invite code from a group."), **See a demo**, and three "How it works" cards. The header shows the "O" logo and a **Sign in** button.
+- [ ] As a signed-out visitor (a fresh profile, or after signing out), open `/`. It shows a tilted stack of editions, "Your group's newsletter, together.", **See a demo** and **Sign in** buttons, a 🔒 "Invite only" notice ("You can't create an account without an invite code from a group.") ending in "Received an invite?" and a small **Sign up** button, and three "How it works" cards. The header shows the "O" logo and a **Sign in** button.
 - [ ] **Sign up** opens `/join`: steps "Invite code → Sign in → You're in!" with step 1 current, "Join your group", the invite code field, the "Invite only" notice telling you to ask a group admin for an invite link, and a **Sign in** link. **Sign in** there opens `/signin`.
 - [ ] Open `/settings` while signed out. You land on `/signin?returnTo=%2Fsettings`: a greeting for the time of day, "Welcome back", **Continue with Google** and **Continue with Facebook**, and the "Invite only" notice ("Signing in is for members. New here? Sign up with your invite code", linking to `/join`). The header's **Sign in** is hidden. No Cognito page appears anywhere in this section.
 - [ ] Click **Continue with Google**. The button reads "Opening Google…", then Google's own account picker opens directly. Press Back: the buttons work again. §2.2 checks that sign-in returns you to the page you asked for. Back on `/signin` afterwards, the Google button has a **Last used** pill.
@@ -268,11 +268,11 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.1 Draft and autosave (B)
 
-- [ ] As B, open Q1. Eyebrow "Question · question", the prompt as the title, the countdown pill, a coral "Closes …" banner, the prompt card, and an editor with a **Preview** toggle, the placeholder "Tell us about it…", a dropzone ("Drag photos here, or choose files", "0/10 images · JPEG, PNG, WebP or GIF · up to 15 MB each") and "0 words". The bottom bar has a save badge, **Save & exit**, and a disabled **Publish**.
+- [ ] As B, open Q1. Eyebrow "Question · question", the prompt as the title, the countdown pill, a coral "Closes …" banner, the prompt card, and an editor with a **Preview** toggle, the placeholder "Tell us about it…", a dropzone ("Drag photos here, or choose files", "0/10 images · JPEG, PNG, WebP or GIF · up to 15 MB each") and "0 words". The bottom bar has a save badge, **Save & exit**, and **Done**.
 - [ ] Press **Save & exit** without typing. Q1 is still "Not started": visiting a question doesn't create a draft.
 - [ ] Open Q1 again and type a sentence. The badge reads "Unsaved changes", then "● Saving…" about 1.5 seconds after you stop, then "Draft — publishes automatically at the deadline". A yellow note appears: "Drafts are published automatically when responses close on {date}. Clear your answer if you don't want it included." The word count updates.
 - [ ] Type, then click outside the textarea at once: it saves straight away. Type, then switch to another tab at once: it saves before you come back.
-- [ ] **Save & exit**. On the edition, Q1 reads "Draft" with an ellipsis icon and a preview of your text. Its progress segment turns a lighter coral. "You've answered 0 of 5", because drafts don't count until published.
+- [ ] **Save & exit**. On the edition, Q1 reads "Draft" with an ellipsis icon and a preview of your text. Its progress segment fills in coral, and the page reads "You've answered 1 of 5": a non-empty draft counts as answered, because it publishes at close.
 - [ ] Reload Q1: the text is still there.
 
 ### 8.2 Markdown and sanitizing
@@ -283,7 +283,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.3 Images
 
-- [ ] Click the dropzone and choose the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail with a "Describe this image" field. `![](image:<id>)` is inserted into the text at the cursor. **Publish** is disabled while the upload is in progress.
+- [ ] Click the dropzone and choose the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail with a "Describe this image" field. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
 - [ ] Drag the PNG and the WebP onto the dropzone together: it highlights, and both upload. Add the animated GIF too.
 - [ ] Add one more image and reload while its tile reads "Processing…". After the reload the tile carries on and reaches its thumbnail.
 - [ ] **Preview** shows the images inline, where their tokens are.
@@ -293,15 +293,15 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 - [ ] Delete one image's token line from the text by hand, but leave its tile. That image will appear in the answer's image grid instead of inline (§12).
 - [ ] Reload: the text and the four images are still there.
 
-### 8.4 Publish and edit
+### 8.4 Done and the next question
 
-- [ ] **Publish**. Toast "Published — friends can see this when the edition publishes." The page switches to a read-only view of your answer with an **Edit** link. The bottom button reads **Save changes**.
-- [ ] Back on the edition, Q1 reads "Published" with a ✓, and "You've answered 1 of 5".
-- [ ] Open Q1 and press **Edit**. A note reads "Changes save automatically and update your published answer." Edit the text: it autosaves and stays published.
-- [ ] As B, answer Q2 with an image only: add one image, then delete everything in the textarea, including the image's token, but leave the image tile. **Publish** is still enabled. Publish it.
-- [ ] As B, type a few words into Q3 and leave it unpublished. Don't publish this one: it checks auto-publish in §11.
-- [ ] As A, type into Q1, wait for the save, then delete all the text. The yellow note disappears and **Publish** is disabled. Leave it empty: an emptied draft must not publish at close.
-- [ ] As A, answer and publish Q2.
+- [ ] On Q1, press **Done**. It saves, then opens Q2, the next unanswered question. There's no **Publish** button anywhere, and no "Published" toast.
+- [ ] As B, answer Q2 with an image only: add one image, then delete everything in the textarea, including the image's token, but leave the image tile. Press **Done**: it opens Q3.
+- [ ] Press **Done** on Q3 without typing. It moves on to Q4 and creates no draft.
+- [ ] As B, type a few words into Q3 and press **Save & exit**. It checks auto-publish in §11.
+- [ ] As A, type into Q1, wait for the save, then delete all the text. The yellow note disappears. Leave it empty: an emptied draft must not publish at close, and on the edition Q1 reads "Not started".
+- [ ] As A, answer Q2.
+- [ ] An answer published by an older release (`publish: true` sent through the API by hand, for example with curl) opens read-only with an **Edit** link. **Edit** shows "Changes save automatically and update your published answer.", and an edit autosaves and stays published.
 
 ### 8.5 Network failures
 
@@ -310,19 +310,19 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ## 9. Answering poll questions
 
-- [ ] As B, open Q4. The eyebrow reads "Question · poll". The options show as rows with radio circles. The badge reads "Pick one" and **Publish** is disabled.
+- [ ] As B, open Q4. The eyebrow reads "Question · poll". The options show as rows with radio circles. The badge reads "Pick one".
 - [ ] Pick Summer. It saves at once ("● Saving…", then "Draft — publishes automatically at the deadline"). The note reads "Drafts are published automatically when responses close on {date}.", without the sentence about clearing. Pick Autumn: it saves again.
-- [ ] **Publish**. Toast "Published — friends can see this when the edition publishes."; the badge reads "Saved" and the button **Save changes**. Pick Spring: it saves at once and stays published.
-- [ ] On the edition, Q4 reads "Published" with "Spring" as its preview.
-- [ ] As B, pick Coffee on Q5 and don't publish (checks poll auto-publish).
-- [ ] As A, pick and publish an option on Q4. Leave Q5 unanswered.
+- [ ] Press **Done**. It opens Q5, the next unanswered question.
+- [ ] On the edition, Q4 reads "Answered" with "Autumn" as its preview.
+- [ ] As B, pick Coffee on Q5 and press **Done**. B has now answered every question: back on the edition, a "You completed the newsletter!" dialog opens over a confetti burst, with the deadline. **Nice!** closes it. Reload: it doesn't show again on this device. With reduced motion on (System Settings → Accessibility), there's no confetti and the dialog doesn't animate.
+- [ ] As A, pick an option on Q4. Leave Q5 unanswered.
 - [ ] There's no way to clear a poll pick once made (§21).
 
 ## 10. Deadline reminders
 
 Push must be on for A and B (§5). Read the edition's countdown pill before each step, and rewind just far enough to put the close inside the next reminder's window. A reminder is due once the time left is at or under its offset (96, 48 or 24 hours). Its title names the offset, not the exact time left.
 
-At this point B has answered all five questions (published, or a non-empty draft, which counts because it auto-publishes), and A has answered two (an emptied draft doesn't count). Members who have answered everything get different copy, so A and B see different bodies.
+At this point B has answered all five questions (a non-empty draft counts, because it auto-publishes), and A has answered two (an emptied draft doesn't count). Members who have answered everything get different copy, so A and B see different bodies.
 
 - [ ] Rewind until about 3 days remain. For example, if the pill reads "31d 04h", run `advance 28d`. The pill now reads about "3d 04h", the "Closes" date has moved, and Home's row agrees.
 - [ ] Run `notify`. The response lists a `deadline_reminder` with `"offsetHours": 96`. A gets "Dev Group: 4 days left" with "Don't forget — write your answers before {weekday, month day}." B gets the same title with "5/5 answers in. You're done — but you can still edit."
@@ -333,11 +333,11 @@ At this point B has answered all five questions (published, or a non-empty draft
 
 ## 11. Closing the edition
 
-- [ ] As B, open Q3 (the unpublished draft) and add a sentence. Wait for the badge to settle. Also open Q5 in a second tab.
+- [ ] As B, open Q3 and add a sentence. Wait for the badge to settle. Also open Q5 in a second tab.
 - [ ] Run `advance` by a little more than the pill shows (for example `1d` when it reads "22h 10m"). The response lists `"from": "open", "to": "published"`.
 - [ ] Notification for A and B: "Dev Group: this month's edition is out", "4 answers, 2 polls — go read it." The 4 are B's answers to Q1, Q2 and Q3 and A's to Q2. This notification has no opt-out.
 - [ ] In B's Q3 tab, type a few more words. The save is refused and the tab moves to the published edition. The "This edition has closed — your last saved version stands." note may flash first. In §12, Q3 shows the sentence saved before the close, without the words typed after it.
-- [ ] In B's Q5 tab, pick Tea. Toast "This edition has closed — your last saved version stands."; the pick returns to Coffee, the same note appears, and **Publish** is gone.
+- [ ] In B's Q5 tab, pick Tea. Toast "This edition has closed — your last saved version stands."; the pick returns to Coffee, the same note appears, and **Done** is gone.
 - [ ] Open any `/respond/…` URL of this edition: it redirects to the edition page.
 
 ## 12. Reading the published edition

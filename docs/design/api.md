@@ -190,7 +190,9 @@ Returns past + current + upcoming newsletters for the group, newest first. Uses 
 
 Response 200: `NewsletterListResponse` in `shared/openapi.yaml`.
 
-Implementation note: `myDraftCount`/`myPublishedCount` are computed via AP15 (one Query per cycle returned). Cap `limit` at 24 to keep this bounded.
+`myAnsweredCount` counts the caller's non-empty answers in the cycle, draft or published, using the same content check as the close-time sweep ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4a). Home shows it for an open cycle.
+
+Implementation note: `myDraftCount`/`myPublishedCount`/`myAnsweredCount` are computed via AP15 (one Query per cycle returned). Cap `limit` at 24 to keep this bounded.
 
 The API does NOT return month-name or year labels. Clients derive display strings (e.g. `"June"` / `"2026"`) from `responseOpenAt` using the group's `timezone`. The published timestamp (`publishedAt`) and `responseOpenAt` together let the UI compute every label it needs.
 
@@ -298,10 +300,10 @@ Image captions are stored on the `ImageMedia` row itself (set via `PATCH /upload
 Behavior:
 - Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
 - "Open" means `status = open` **and** `now < responseCloseAt`. The second clause covers the ≤5-minute gap before the cycle tick flips the status, so a save that lands just past the deadline is refused even though the row still says `open`.
-- If `publish=true`, status moves to `published` and `publishedAt` is set. With `publish=false`, a new response is saved as `draft`.
-- **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it, and this keeps the `editionsAnswered` count from being bumped twice ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). There is no unpublish in v1.
+- If `publish=true`, status moves to `published` and `publishedAt` is set. With `publish=false`, a new response is saved as `draft`. The SPA always sends `publish=false` and leaves publishing to the close-time sweep ([`frontend.md` §7.3](frontend.md#73-respondpage-ggncrespondq)); `publish=true` stays supported for installed PWAs running an older release.
+- **Publishing is sticky.** Once a response is `published`, later saves with `publish=false` still update its content but leave `status=published` and the original `publishedAt` untouched. Autosaves of an edited published answer must not unpublish it. There is no unpublish in v1.
 - `responseId` is assigned on the first save and stays the same across later saves.
-- Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`), and the `editionsAnswered` bump on the first publish ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
+- Every save is one transaction: the response write, a condition check on the Newsletter row (`status = open AND responseCloseAt > now`) ([`data-model.md` §4](data-model.md#4-transactional-invariants) #4). A save never changes `editionsAnswered`, which is counted at close (#4a). If the tick wins that race, the save returns 409 `CYCLE_NOT_OPEN`.
 - The kind in the body must match the question's kind (else `VALIDATION_FAILED`). Image IDs are de-duplicated before the ≤10 check. Failing that check returns `IMAGE_LIMIT_EXCEEDED`. Any image that fails the ownership/`ready`/cycle/purpose rules returns `VALIDATION_FAILED` naming the image. The save does not modify `ImageMedia` rows; the image's question is fixed at `POST /uploads` time (§9.1).
 - **Concurrency: last-write-wins.** Cross-device editing is rare in this app and the autosave debounce (≥1500 ms after the last keystroke) makes interleaved saves unlikely. We skip optimistic-concurrency tokens and conflict-resolution UI in v1; whichever save lands last is the canonical state. Revisit if real-world telemetry shows clobbering.
 - Validation: text body 0–20000 chars, ≤10 image IDs, all referenced ImageMedia must (a) belong to caller, (b) be in `ready` status, (c) reference this `groupId`+`cycleId`, (d) have `purpose: "response"`.

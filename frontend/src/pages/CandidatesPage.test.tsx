@@ -131,6 +131,7 @@ describe("CandidatesPage", () => {
           questionCount: 0,
           myDraftCount: 0,
           myPublishedCount: 0,
+          myAnsweredCount: 0,
         },
       ]),
     );
@@ -165,6 +166,7 @@ describe("CandidatesPage", () => {
           questionCount: 0,
           myDraftCount: 0,
           myPublishedCount: 0,
+          myAnsweredCount: 0,
         },
       ]),
     );
@@ -292,6 +294,7 @@ describe("CandidatesPage", () => {
           questionCount: 0,
           myDraftCount: 0,
           myPublishedCount: 0,
+          myAnsweredCount: 0,
         },
         {
           cycleId: "202611w2",
@@ -302,6 +305,7 @@ describe("CandidatesPage", () => {
           questionCount: 4,
           myDraftCount: 0,
           myPublishedCount: 0,
+          myAnsweredCount: 0,
         },
       ]),
     );

@@ -168,7 +168,10 @@ async fn interleaved_saves_last_write_wins_with_stable_response_id() {
 }
 
 #[tokio::test]
-async fn publish_sets_published_at_and_bumps_editions_answered_once() {
+async fn publish_sets_published_at_but_does_not_bump_editions_answered() {
+    // `editions_answered` is decided once at cycle close, by
+    // `lambda-cycle-tick`'s sweep, not on this handler's publish
+    // (`docs/design/lifecycle.md` §5.3).
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gpb", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
@@ -176,14 +179,13 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
         .await
         .unwrap();
     common::put_locked_question(&repo, &common::locked_question("gpb", "202606", "q1", "u1")).await;
-    common::put_locked_question(&repo, &common::locked_question("gpb", "202606", "q2", "u1")).await;
 
     let state = state(repo);
     let caller = UserId::new("u1");
     let group_id = GroupId::new("gpb");
     let cycle_id = CycleId::new("202606");
 
-    let published_first = handlers::save_response(
+    let published = handlers::save_response(
         &state,
         &caller,
         &group_id,
@@ -193,76 +195,10 @@ async fn publish_sets_published_at_and_bumps_editions_answered_once() {
     )
     .await
     .unwrap();
-    assert_eq!(published_first.status, ResponseStatus::Published);
-    assert!(published_first.published_at.is_some());
+    assert_eq!(published.status, ResponseStatus::Published);
+    assert!(published.published_at.is_some());
 
-    assert_eq!(editions_answered(&state, &group_id, &caller).await, 1);
-
-    handlers::save_response(
-        &state,
-        &caller,
-        &group_id,
-        &cycle_id,
-        &QuestionId::new("q2"),
-        text_request("answer two", vec![], true),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        editions_answered(&state, &group_id, &caller).await,
-        1,
-        "a second publish in the same cycle must not double-count"
-    );
-}
-
-#[tokio::test]
-async fn first_publish_in_a_second_group_same_month_still_bumps_editions_answered() {
-    // Cycle ids are calendar months shared by every group, and GSI1's
-    // `USER#{u}#NL#{cycleId}` key has no group: group A's published answer
-    // must not count as "already published" for group B (`docs/design/data-model.md` AP15 note).
-    let (_c, repo) = common::make_repo().await;
-    for g in ["gx-a", "gx-b"] {
-        let group = common::group(g, "u1");
-        common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
-        newsletters::write_status_transition(&repo, &common::open_newsletter(g, "202606"))
-            .await
-            .unwrap();
-    }
-    common::put_locked_question(
-        &repo,
-        &common::locked_question("gx-a", "202606", "qa", "u1"),
-    )
-    .await;
-    common::put_locked_question(
-        &repo,
-        &common::locked_question("gx-b", "202606", "qb", "u1"),
-    )
-    .await;
-
-    let state = state(repo);
-    let caller = UserId::new("u1");
-    let cycle_id = CycleId::new("202606");
-    for (g, q) in [("gx-a", "qa"), ("gx-b", "qb")] {
-        handlers::save_response(
-            &state,
-            &caller,
-            &GroupId::new(g),
-            &cycle_id,
-            &QuestionId::new(q),
-            text_request("an answer", vec![], true),
-        )
-        .await
-        .unwrap();
-    }
-
-    for g in ["gx-a", "gx-b"] {
-        assert_eq!(
-            editions_answered(&state, &GroupId::new(g), &caller).await,
-            1,
-            "group {g}"
-        );
-    }
+    assert_eq!(editions_answered(&state, &group_id, &caller).await, 0);
 }
 
 #[tokio::test]

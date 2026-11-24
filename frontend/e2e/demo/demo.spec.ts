@@ -76,7 +76,7 @@ test("the demo sends nothing off the site and stores nothing in the browser", as
 
   await page.getByRole("link", { name: "See a demo" }).click();
   await expectInDemo(page);
-  await page.getByRole("link", { name: /you've published/ }).click();
+  await page.getByRole("link", { name: /you've answered/ }).click();
   await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
   await page.getByPlaceholder("Tell us about it…").fill("A demo answer with a photo");
   await page.locator('input[type="file"]').setInputFiles(PHOTO);
