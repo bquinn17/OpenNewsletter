@@ -44,7 +44,7 @@ function PlaceholderCard({
   );
 }
 
-/** Renders a `giphy:{id}` token (`docs/design/frontend.md` §18.3/§9.2/§9.4). */
+/** Renders a `giphy:{id}` token (`docs/design/frontend.md` §18.3, §18.4). */
 export function GiphyEmbed({ id, alt, variant }: Props) {
   const entry = useGiphyGif(id);
   const [reduced] = useState(prefersReducedMotion);

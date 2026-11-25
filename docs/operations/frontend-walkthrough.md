@@ -271,7 +271,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.1 Draft and autosave (B)
 
-- [ ] As B, open Q1. Eyebrow "Question · question", the prompt as the title, the countdown pill, the prompt card, and an editor with a **Preview** toggle, the placeholder "Tell us about it…", a dropzone ("Drag photos here, or choose files", "0/10 images · JPEG, PNG, WebP or GIF · up to 15 MB each") and "0 words". The bottom bar has a save badge and **Done**, and no other button.
+- [ ] As B, open Q1. Eyebrow "Question · question", the prompt as the title, the countdown pill, the prompt card, and an editor with a **Preview** toggle, the placeholder "Tell us about it…", a **+ Add** button under the textarea, and "0 words". The bottom bar has a save badge and **Done**, and no other button.
 - [ ] Press the back arrow without typing. Q1 is still "Not started": visiting a question doesn't create a draft.
 - [ ] Open Q1 again and type a sentence. The badge reads "Unsaved changes", then "● Saving…" about 1.5 seconds after you stop, then "Saved · publishes at close". No other note about publishing appears. The word count updates.
 - [ ] Type, then click outside the textarea at once: it saves straight away. Type, then switch to another tab at once: it saves before you come back.
@@ -286,12 +286,13 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.3 Images
 
-- [ ] Click the dropzone and choose the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
-- [ ] Drag the PNG and the WebP onto the dropzone together: it highlights, and both upload. Add the animated GIF too.
+- [ ] Press **+ Add**. A menu opens with **Photo** ("0/10 images · up to 15 MB each") and, in a build with a GIPHY key, **GIF** ("Search GIPHY"). Choose **Photo** and pick the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
+- [ ] Drag the PNG and the WebP onto the editor together: a "Drop to attach" overlay shows, and both upload. Add the animated GIF too.
+- [ ] Copy an image and paste it into the textarea: it attaches the same way.
 - [ ] Add one more image and reload while its tile reads "Processing…". After the reload the tile carries on and reaches its thumbnail.
 - [ ] **Preview** shows the images inline, where their tokens are.
 - [ ] Select the PDF and the 15 MB+ JPEG together. Errors list each file by name: "{name}: That file type isn't supported." and "{name}: That image is larger than 15 MB."
-- [ ] Keep adding images, reusing the same files, until "10/10". The next file shows "You can attach up to 10 images."
+- [ ] Keep adding images, reusing the same files, until the **Photo** item reads "10/10 images" and is disabled. Dropping one more file shows "You can attach up to 10 images."
 - [ ] Press × on a ready tile. A dialog "Delete this image?" with "This permanently deletes the image. It can't be recovered." appears. **Cancel** keeps the image. **Delete image** removes the tile and its token from the text, and the draft saves. Delete images until four remain.
 - [ ] Delete one image's token line from the text by hand, but leave its tile. That image will appear in the answer's image grid instead of inline (§12).
 - [ ] Reload: the text and the four images are still there.
@@ -310,6 +311,15 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 - [ ] As B, DevTools → Network → **Offline**. Type into Q3. The badge reads "You're offline". Close the tab. Go back online, open the same question: your unsaved text is restored from local storage, the badge reads "Unsaved changes", and it then saves.
 - [ ] Block the API host instead (Network → right-click a request to it → **Block request domain**). Type. The badge reads "Saving failed — retrying". Unblock it: the save succeeds within about 30 seconds, without a reload.
+
+### 8.6 GIFs
+
+These need a build with a GIPHY key ([`operator-setup.md` §11](operator-setup.md#11-giphy-api-keys)). Without one, the **GIF** item isn't in the menu and existing GIFs show as their titles.
+
+- [ ] Press **+ Add** → **GIF**. The picker shows a "Search GIPHY" field, the chips "lol", "yes", "wow", "thank you" and "celebrate", and "Powered by GIPHY". In DevTools → Network, opening it and typing send nothing to `api.giphy.com`.
+- [ ] Press Enter or the search button, or tap a chip: one request goes out and a grid of GIFs appears. **More GIFs** loads the next page.
+- [ ] Pick a GIF. The picker closes and `![title](giphy:<id>)` is inserted at the cursor. **Preview** shows it looping, with a "GIPHY" badge.
+- [ ] Add GIFs until the **GIF** item reads "5/5 GIFs" and is disabled.
 
 ## 9. Answering poll questions
 
@@ -374,10 +384,10 @@ Reactions and comments appear only on published text answers, never on polls.
 
 ## 14. Comments
 
-- [ ] Each answer card ends with an "Add a comment…" box, a one-image dropzone ("0/1 image") and a **Post** button, disabled while the box is empty.
+- [ ] Each answer card ends with an "Add a comment…" box, a **+** button (**Photo** and **GIF**) and a **Post** button, disabled while the box is empty.
 - [ ] As A, comment on B's Q1 answer with markdown (`**nice**` and a link). It appears with A's avatar, A's name and a relative time. Hovering the time shows the full date in the group's timezone. The bold and the link render. An `![](image:…)` token in a comment renders nothing, and a remote image becomes a link.
 - [ ] Type 1,801 characters: a counter "1801/2000" appears. The box stops at 2,000.
-- [ ] Attach an image and wait for its thumbnail. **Post** is disabled while it uploads. Post an image-only comment: the thumbnail shows, and clicking it opens the full image.
+- [ ] Attach an image with **+** → **Photo** and wait for its thumbnail. **Post** is disabled while it uploads. Post an image-only comment: the thumbnail shows, and clicking it opens the full image.
 - [ ] Post enough comments to reach five. Only the last three show, with a "Show all 5 comments" link above them. Clicking it shows all five.
 - [ ] **Edit** one of A's comments. **Cancel** restores it. Edit and **Save**: the text updates and "(edited)" appears. As B, reload: the edit shows.
 - [ ] Edit A's image-only comment, clear nothing, and press **Remove image**: the uploader appears. **Save**: "Add some text or an image.", because the comment would be empty. Type some text and **Save** again: a dialog "Delete the attached image?" with "This permanently deletes the image. It can't be recovered." and **Delete image and save**. Confirm: the image is gone and the text shows.
@@ -453,7 +463,7 @@ A phone can't reach `localhost:5173` on your computer, and that's the only local
 
 - [ ] At 375 px wide (DevTools device toolbar): content fills the width with side padding, nothing scrolls sideways, and the respond page's fixed bottom bar doesn't cover the end of the editor or the image tiles.
 - [ ] On a wide desktop window, content sits in a narrow centred column.
-- [ ] Keyboard only, from page load: Tab reaches the logo, the switcher, the avatar menu, every vote button, the sort buttons, the dropzone (Enter or Space opens the file picker), reaction pills and **＋**, admin tabs and every dialog button. Focus rings are visible. Opening a menu moves focus into it, and Escape returns focus to its button.
+- [ ] Keyboard only, from page load: Tab reaches the logo, the switcher, the avatar menu, every vote button, the sort buttons, the **+** attach button (Enter or Space opens its menu, the arrow keys move through it, and Escape closes it), reaction pills and **＋**, admin tabs and every dialog button. Focus rings are visible. Opening a menu moves focus into it, and Escape returns focus to its button.
 - [ ] Confirm dialogs close on Escape and on a click outside, but not while their action is in progress.
 - [ ] With a screen reader (VoiceOver: Cmd+F5), form errors on the suggest form, the join form and the profile form are announced when they appear. Vote buttons announce "Upvote …" or "Remove your vote for …" and whether they're pressed.
 
@@ -474,7 +484,6 @@ cd frontend && npm run dev      # http://localhost:5173, VITE_USE_MOCKS=true
 These are how the current build behaves. Don't log them as failures unless you think the behaviour itself should change.
 
 - **A poll pick can't be cleared**, so any poll pick auto-publishes at close ([`frontend.md` §7.3](../design/frontend.md#73-respondpage-ggncrespondq); open question in [`PROGRESS.md`](../../plans/PROGRESS.md)).
-- **Image alt text isn't saved.** The "Describe this image" field under each uploaded image only lives in the page. Reload, and it's empty again.
 - **No UI to delete a candidate question or to create a group.** Groups come from `scripts/bootstrap_admin.py`.
 - **The header avatar** shows an initial taken from the sign-in token. It doesn't show the profile photo or colour, or a display name changed in Settings.
 - **An untouched question** shows "Saved just now" (or "Saved {time} ago") in the badge before you've typed anything.

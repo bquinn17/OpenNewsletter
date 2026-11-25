@@ -54,7 +54,7 @@ type Props = {
 export type ImageUploaderHandle = {
   /** Opens the native file picker — called by the "+" menu's Photo item (`docs/design/frontend.md` §18.1). */
   openPicker: () => void;
-  /** Routes dropped or pasted files into the same validation/upload path as the picker (§10.3). */
+  /** Routes dropped or pasted files into the same validation/upload path as the picker (`docs/design/frontend.md` §18.2). */
   acceptFiles: (files: File[]) => void;
 };
 

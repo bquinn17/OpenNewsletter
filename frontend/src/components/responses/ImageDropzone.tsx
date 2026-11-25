@@ -12,9 +12,9 @@ type Props = {
 
 /**
  * The hidden file input behind `ImageUploader`'s "Photo" attach-menu item
- * (`docs/design/frontend.md` §18.1/§10.5). The visible dashed box is gone — the "+" menu
+ * (`docs/design/frontend.md` §18.2). The visible dashed box is gone — the "+" menu
  * (`AttachMenu`) opens this via `openPicker`, and the whole composer is the drop target
- * (`ResponseEditor`/`CommentComposer`, §10.3), not this element.
+ * (`ResponseEditor`/`CommentComposer`, §18.2), not this element.
  */
 export const ImageDropzone = forwardRef<ImageDropzoneHandle, Props>(function ImageDropzone(
   { label, onFilesSelected },

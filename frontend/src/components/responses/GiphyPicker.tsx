@@ -11,7 +11,7 @@ import {
 import { giphyLimitRemainingMs, useGiphyLimit } from "../../state/giphyLimit";
 import { Spinner } from "../ui/Spinner";
 
-/** Hard-coded so opening the picker costs no API call (`docs/design/frontend.md` §18.3/§9.3). */
+/** Hard-coded so opening the picker costs no API call (`docs/design/frontend.md` §18.3). */
 const SUGGESTION_CHIPS = ["lol", "yes", "wow", "thank you", "celebrate"];
 const SM_BREAKPOINT_PX = 640;
 

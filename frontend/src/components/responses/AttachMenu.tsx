@@ -33,10 +33,10 @@ export type AttachMenuHandle = {
 };
 
 /**
- * The "+" attach menu (`docs/design/frontend.md` §10): a single button that opens a menu of every
+ * The "+" attach menu (`docs/design/frontend.md` §18): a single button that opens a menu of every
  * attachment kind, built on `useDismissableMenu` (outside click / Escape) the same way
  * `GroupSwitcher` and `MembersTab` do. `items` is a seam — a caller lists only what it has built
- * (§10.2), so a later voice-clips item is one more entry, not a layout change.
+ * (`docs/design/frontend.md` §18.1), so a later voice-clips item is one more entry, not a layout change.
  */
 export const AttachMenu = forwardRef<AttachMenuHandle, Props>(function AttachMenu(
   { items, ariaLabel, showLabel = false },
