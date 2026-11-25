@@ -65,11 +65,13 @@ frontend/
 │   │   └── pushSetup.ts              # subscribe + send to backend
 │   ├── csp/                          # build-only CSP <meta> plugin (§12.1)
 │   ├── components/
-│   │   ├── ui/                       # Avatar, Button, ConfettiBurst, MediaImage, ConfirmDialog, Pill, Spinner, Toast,
-│   │   │                             # useDismissableMenu
+│   │   ├── ui/                       # Avatar, Button, ConfettiBurst, MediaImage, ConfirmDialog, Pill, Spinner, TabBar,
+│   │   │                             # Toast, useDismissableMenu
 │   │   ├── layout/                   # AppShell, GroupSwitcher, PageHeader, PageErrorState
 │   │   ├── auth/                     # ProviderButtons, ProviderLogos, SignUpSteps
 │   │   ├── home/                     # GroupEditions, EditionRow, Landing
+│   │   ├── leaderboard/              # GroupLeaderboard (Home's Leaderboard tab), buildBoards
+│   │   ├── members/                  # GroupMembers (Home's Members tab), MemberSummary
 │   │   ├── join/JoinForm.tsx
 │   │   ├── newsletter/               # QuestionPrompt, AnswerCard, AskedBy, PollWidget, ImageGallery,
 │   │   │                             # CommentList (+ CommentRow, CommentComposer), ReactionBar,
@@ -82,7 +84,7 @@ frontend/
 │   │   ├── pwa/InstallPwaPrompt.tsx
 │   │   └── admin/                    # GroupSettingsForm, useGroupSettingsForm, MembersTab, InvitesTab
 │   ├── pages/
-│   │   ├── HomePage.tsx              # / — the current group's newsletters
+│   │   ├── HomePage.tsx              # / — the current group: Editions, Leaderboard and Members tabs
 │   │   ├── GroupRedirect.tsx         # /g/{g}
 │   │   ├── NewsletterPage.tsx        # /g/{g}/n/{c}
 │   │   ├── RespondPage.tsx           # /g/{g}/n/{c}/respond/{q}
@@ -127,7 +129,7 @@ frontend/
 React Router v6 (`createBrowserRouter`). Pages fetch through TanStack Query hooks (`useNewsletter` etc.), not route loaders.
 
 ```
-/                           Home (newsletter list across all my groups)
+/                           Home: the current group's Editions, Leaderboard and Members tabs (?tab=) (§7.1)
 /auth/callback              OIDC callback
 /signin                     Sign-in: one button per IdP (?returnTo=...) (§7.10)
 /join                       Sign-up and invite redemption (?code=...) (§7.8)
@@ -135,7 +137,7 @@ React Router v6 (`createBrowserRouter`). Pages fetch through TanStack Query hook
 /g/:groupId                 Redirects to most recent newsletter
 /g/:groupId/upcoming        Candidate questions (vote + suggest)
 /g/:groupId/upcoming/suggest    New candidate form
-/g/:groupId/leaderboard     Group leaderboard (§7.9)
+/g/:groupId/leaderboard     Redirects to /?tab=leaderboard, with that group current (§7.9)
 /g/:groupId/n/:cycleId      Newsletter view (voting/open/published states render different UIs)
 /g/:groupId/n/:cycleId/respond/:questionId   Editor for one question
 /g/:groupId/admin           Admin page (gated by role) — Members / Invites / Settings tabs only (no Curate; see lifecycle.md §7)
@@ -299,6 +301,8 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
 
 - Signed out, Home is a landing page (`components/home/Landing.tsx`): a decorative stack of editions, the headline "Your group's newsletter, together.", a primary **See a demo** (§17) and a secondary **Sign in** (`/signin`), the invite-only notice ending in "**Received an invite?**" with a **Sign up** button the size of the two above (`/join`), and a three-step "How it works" (suggest & vote, everyone answers, read it together). The demo and sign-in lead because the app is invite-only: most first-time visitors have nothing to sign up for yet, and the **Sign up** button sits under the one condition that makes it useful, having an invite. Its copy names no cadence, because a signed-out visitor has no `/config` to read it from. The header's **Sign in** links to `/signin`, and is hidden on that page.
 - Shows only the current group (§4.1), not every membership; the header's group switcher changes which one. Calls `GET /config` (cached) and `GET /groups/{g}/newsletters` for that group.
+- Signed in with a group, Home is the group page, with no greeting: the header's group switcher names the group, and the page's `<h1>` carries the group name for screen readers only. At the top, below any install prompt (§14.4), is a `TabBar` of **Editions** (the default), **Leaderboard** (§7.9) and **Members**. The tab is the `?tab=` query parameter (`leaderboard` or `members`; missing or unknown means Editions), so a link can open a tab and a reload keeps it. Switching tabs replaces the history entry and stays on the same page, so nothing remounts or refetches `/config`. Each tab fetches only when it's shown, and its loading and error states stay inside the tab.
+- **Members** (`components/members/GroupMembers.tsx`) lists `GET /groups/{g}`'s `members` under an "{N} members" heading, read-only, in the same rows as the admin page's Members tab (§7.7, `MemberSummary`): avatar, name, "(you)" on the caller's row, an **admin** pill, and "{N} editions answered" or "joined {relative} · pending first answer". Role changes and removal stay on the admin page.
 - Renders editions newest first, in labeled sections (empty ones are hidden): **Taking suggestions** (the voting cycle), **Awaiting responses** (the open cycle), **This month's edition** (published, and its month is the current month in the group's timezone, via `utils/dates.ts#isCurrentCycleMonth`), **Past editions** (up to the 3 most recent published editions from earlier months). On a weekly deployment the third section is **This week's edition**: a published edition whose `publishedAt` is within the last 7 days (`utils/dates.ts#isCurrentEdition` covers both cadences; §14a). Open and voting cycles exist at once during the response window ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl)).
 - Empty state when no memberships: "You haven't joined a group yet. Groups are invite-only: ask an admin of the group for an invite code, then paste it below." with a `<JoinForm/>`. This is where someone lands who signed in without an invite: Cognito still creates their identity ([`auth.md` §3.2](auth.md#32-why-this-is-fine)), but the app has nothing for them until they redeem one. It shows only once `/config` has loaded. Until then Home shows a spinner, and if `/config` fails, or is paused offline, it shows "Couldn't load your groups." with **Try again**, so a member never sees the join form.
 
@@ -403,9 +407,9 @@ On an error, the page shows the reason and the join form again. Redemption happe
 
 If the user leaves the page before the redeem resolves, it still completes, and the stashed invite is cleared and the welcome toast shows, but the page doesn't switch `currentGroup` or navigate, so it never pulls them off the page they went to.
 
-### 7.9 LeaderboardPage `/g/:g/leaderboard`
+### 7.9 Leaderboard tab `/?tab=leaderboard`
 
-- `useLeaderboard` fetches `GET /groups/{g}/leaderboard` ([`api.md` §4.4](api.md#44-get-groupsgroupidleaderboard)). The page joins its raw stats with `useGroup`'s `members` for names and avatars.
+- Home's Leaderboard tab (§7.1, `components/leaderboard/GroupLeaderboard.tsx`). `useLeaderboard` fetches `GET /groups/{g}/leaderboard` ([`api.md` §4.4](api.md#44-get-groupsgroupidleaderboard)). The tab joins its raw stats with `useGroup`'s `members` for names and avatars.
 - A pure `buildBoards` turns the stats into boards, so a new board that uses an existing stat is a frontend-only change. The boards, in order:
   1. **Most-reacted answer**: `topAnswers`, each with its author, question prompt and reaction count, linking to its edition.
   2. **Most reactions received**: `reactionsReceived`.
@@ -413,8 +417,8 @@ If the user leaves the page before the redeem resolves, it still completes, and 
   4. **Longest streak**: `longestStreak`, with the current streak beside it when it's above 0. Streaks count published editions, so the value reads "4 in a row", with no month or week, and stays right across a cadence change.
   5. **Most questions asked**: `questionsAsked`.
   6. **Most comments written**: `commentsWritten`.
-- Each board ranks densely over the top 3 distinct values above 0: members who tie share a rank, and every member with one of those values is shown, so a board can list more than 3 members, and in a small group everyone with a value above 0. A board where nobody is above 0 is hidden. If every board is hidden, the page shows one empty state: "Superlatives show up once your group's first edition is out."
-- Linked from the published edition's header (§7.2). The members page in [`future-ideas.md` §7](../../plans/future-ideas.md#7-members-page-profile-fields-and-the-city-map) will link to it too, once it's built.
+- Each board ranks densely over the top 3 distinct values above 0: members who tie share a rank, and every member with one of those values is shown, so a board can list more than 3 members, and in a small group everyone with a value above 0. A board where nobody is above 0 is hidden. If every board is hidden, the tab shows one empty state: "Superlatives show up once your group's first edition is out."
+- The published edition's **Group leaderboard** link (§7.2) opens `/?tab=leaderboard`. `/g/:g/leaderboard` redirects there, and `AppShell` makes the URL's group current first (§4.1), so old links and bookmarks still land on the right group.
 
 ### 7.10 SignInPage `/signin?returnTo=...`
 

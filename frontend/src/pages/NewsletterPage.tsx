@@ -304,7 +304,7 @@ function PublishedLayout({
 
       <div className="px-5 pt-2">
         <Link
-          to={`/g/${groupId}/leaderboard`}
+          to="/?tab=leaderboard"
           className="inline-flex items-center gap-1 text-sm font-semibold text-grape"
         >
           🏆 Group leaderboard

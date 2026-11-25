@@ -119,7 +119,7 @@ The token is now on your clipboard. It expires after an hour; copy a fresh one w
 - [ ] Open `/settings` while signed out. You land on `/signin?returnTo=%2Fsettings`: a greeting for the time of day, "Welcome back", **Continue with Google** and **Continue with Facebook**, and the "Invite only" notice ("Signing in is for members. New here? Sign up with your invite code", linking to `/join`). The header's **Sign in** is hidden. No Cognito page appears anywhere in this section.
 - [ ] Click **Continue with Google**. The button reads "Opening Google…", then Google's own account picker opens directly. Press Back: the buttons work again. §2.2 checks that sign-in returns you to the page you asked for. Back on `/signin` afterwards, the Google button has a **Last used** pill.
 - [ ] With DevTools → Network set to Offline, click a provider button on `/signin`. The buttons come back and "Couldn't reach sign-in. Check your connection and try again." shows. Set it back to Online.
-- [ ] Open `/admin/bootstrap-login`. Submit it empty: "Username is required" and "Password is required". Submit a wrong password: Cognito's error message appears under the fields. Submit A's real credentials: the button shows "Signing in…", then Home loads with "Hey Dev Admin 👋".
+- [ ] Open `/admin/bootstrap-login`. Submit it empty: "Username is required" and "Password is required". Submit a wrong password: Cognito's error message appears under the fields. Submit A's real credentials: the button shows "Signing in…", then Home loads on the group's **Editions** tab.
 - [ ] In B's profile, sign in with Google (B isn't in any group yet). `/auth/callback` shows a spinner, then Home says "You haven't joined a group yet. Groups are invite-only: ask an admin of the group for an invite code, then paste it below." with the join form. Open `/settings`: you're redirected back to Home. The avatar menu still offers **Sign out**. Sign B out.
 - [ ] Optional, if the Facebook IdP is configured: sign in once with Facebook the same way.
 - [ ] Open `/auth/callback` directly with no query string. On the app's gradient backdrop it shows "That didn't quite work", "Something went wrong finishing sign-in. Give it another go." and a **Try again** button that opens `/signin`.
@@ -181,6 +181,9 @@ Use C (signed in) for each, pasting into Settings → Your groups → **Join wit
 - [ ] `/g/<GROUP_ID>` alone redirects the same way.
 - [ ] `/g/<GROUP_ID>/n/209901` shows "This edition doesn't exist."
 - [ ] Every page header's ← button goes to that page's parent (Home, the edition, Upcoming or Settings).
+- [ ] Home shows **Editions**, **Leaderboard** and **Members** tabs, with Editions selected. Each tab sets `?tab=` in the URL (Editions clears it), a reload keeps the tab, and Back leaves Home rather than stepping through tabs.
+- [ ] **Members** lists everyone under "{N} members": your row says "(you)", admins have an **admin** pill, and there's no ⋯ menu on any row.
+- [ ] `/g/<GROUP_ID>/leaderboard` redirects to `/?tab=leaderboard`.
 
 ## 4. Profile
 
@@ -188,7 +191,7 @@ Do this early, so names, colours and photos are set when later sections show the
 
 - [ ] As B: Settings. The page title is "You". The profile card shows B's colour avatar with an initial, the display name, the email, and **Edit profile** and **Upload photo**.
 - [ ] **Edit profile**. Clear the name: "Name can't be empty." The field stops at 40 characters. Pick each of the 8 colour swatches; the preview avatar changes. **Cancel** discards the changes.
-- [ ] Change the name and colour, then **Save** ("Saving…"). Toast "Profile updated." The Home greeting uses the new name.
+- [ ] Change the name and colour, then **Save** ("Saving…"). Toast "Profile updated." Your row in Home's **Members** tab shows the new name.
 - [ ] **Upload photo** with the GIF: "That file type isn't supported." With the 5–15 MB JPEG: "That image is larger than 5 MB."
 - [ ] **Upload photo** with a small JPEG. The button reads "Uploading N%", then "Processing…" with a spinner over the avatar, then the toast "Profile photo updated." The photo replaces the colour avatar, and **Remove photo** appears.
 - [ ] **Upload photo** again. A dialog asks "Replace your photo?", "This permanently deletes the image. It can't be recovered.", with **Choose a new photo**. Escape, a click outside the dialog, and **Cancel** each close it without changes. Confirm and pick a PNG: the new photo shows.
@@ -353,6 +356,7 @@ At this point B has answered all five questions (a non-empty draft counts, becau
 - [ ] If a text question got no answers, it reads "Nobody answered this one. Maybe next month." To see this, leave a text question unanswered in a later cycle.
 - [ ] The footer reads "That's a wrap on {Month} 🎈" and its **Suggest a question** link goes to Upcoming.
 - [ ] As A: Admin → Members. B's line reads "1 edition answered".
+- [ ] The edition's **Group leaderboard** link opens Home's Leaderboard tab, now with boards. Home → **Members** also shows B's "1 edition answered".
 - [ ] Media serving: in DevTools → Network, pick an image request. It's a presigned S3 URL that returns 200 with `Access-Control-Allow-Origin: http://localhost:5173`. Open the same URL without its query string in a new tab: 403. The full media checks are in [`smoke-test.md`](smoke-test.md) §6.
 
 ## 13. Reactions

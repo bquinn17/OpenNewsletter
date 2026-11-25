@@ -55,7 +55,7 @@ Already designed elsewhere, listed here so this file is the one place to look:
 
 A page of light-hearted superlatives for each group: the most-reacted answer, the most editions answered, the longest answering streak, and so on. It's for fun in a small group, so each board shows only the top few values, and members who tie share a place. Only the group's members can see it.
 
-Built. The design now lives in the owning pages: the `MemberStats` row and the counter transactions in [`data-model.md` §2.17](../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8 and #9, streak settlement in [`lifecycle.md` §5.3](../docs/design/lifecycle.md#53-publishnl), the route in [`api.md` §4.4](../docs/design/api.md#44-get-groupsgroupidleaderboard) and the page in [`frontend.md` §7.9](../docs/design/frontend.md#79-leaderboardpage-ggleaderboard).
+Built. The design now lives in the owning pages: the `MemberStats` row and the counter transactions in [`data-model.md` §2.17](../docs/design/data-model.md#217-memberstats) and §4 #3, #6, #8 and #9, streak settlement in [`lifecycle.md` §5.3](../docs/design/lifecycle.md#53-publishnl), the route in [`api.md` §4.4](../docs/design/api.md#44-get-groupsgroupidleaderboard) and the tab in [`frontend.md` §7.9](../docs/design/frontend.md#79-leaderboard-tab-tableaderboard).
 
 Still open:
 - **A "most places checked into" board**, once check-ins (§6) exist. It needs a `places_checked_in` counter on `MemberStats`, kept by the answer-publish transaction.
@@ -98,14 +98,11 @@ A member can attach a place to any text answer ("📍 Lucali, Brooklyn"). A ques
 
 **Privacy.** Only the group can see a place, the same as the answer it's attached to. Uploaded photos already lose their GPS metadata during processing ([`media.md` §5.1](../docs/design/media.md#51-trigger-configuration)), so the only places an answer can carry are ones the member chose.
 
-## 7. Members page, profile fields and the city map
+## 7. Member map and profile fields
 
-A page that any member can open from an edition. It lists who's in the group, and its map view puts each member's face on their current city.
+A map view of the group that puts each member's face on their current city, plus the profile fields it needs.
 
-**List.**
-- `/g/:groupId/members`, opened from an avatar stack ("12 members") in the edition page's header. It links to the leaderboard (§5).
-- Each row shows the member's avatar, display name, role, the month they joined and the editions they've answered.
-- **No new route is needed.** `GET /groups/{groupId}` already returns `members`, with `avatarUrl`, `avatarColor`, `joinedAt` and `editionsAnswered`, to any member ([`api.md` §4.2](../docs/design/api.md#42-get-groupsgroupid)). Today only the admin page's Members tab displays it.
+The members list it builds on is done: Home's Members tab ([`frontend.md` §7.1](../docs/design/frontend.md#71-homepage-), §16 below). It reads `members` from `GET /groups/{groupId}`, so the map needs no new group route either.
 
 **Current city** is a profile field, set in Settings → Profile with the place search from §6, limited to cities and towns. It's "where I live now", not a birthplace — Facebook separately offers a birthplace permission (`user_hometown`) that this feature doesn't use, to avoid the glossary collision.
 - `User.current_city` holds `{ name, lat, lng, provider_place_id }`, or is absent.
@@ -118,7 +115,7 @@ A page that any member can open from an edition. It lists who's in the group, an
 - No age math anywhere in v1 (no "turns 34" banner, no sort-by-age). That can come later as its own decision once there's a reason for it.
 - **API.** `PATCH /me` accepts `birthday` or `null`. `UserResponse` gains it; `MemberResponse` doesn't, since it's visible only to the member themselves.
 
-**Map view.** The members page gets a List | Map toggle that uses the map component from §6.
+**Map view.** Home's Members tab gets a List | Map toggle that uses the map component from §6.
 - Markers are the members' avatars: the presigned `avatarUrl`, or the colored initial when there isn't one.
 - Members from the same town share one marker, which spreads out into their faces when tapped. A group has at most about 50 members, so it doesn't need a clustering library.
 - The map zooms to fit all the markers. Members without a current city are listed below it.
@@ -838,10 +835,7 @@ This limits how many inert accounts can exist, rather than preventing them: some
 
 ## 16. Group page: Editions, Leaderboard and Members as tabs
 
-Today Home ([`frontend.md` §7.1](../docs/design/frontend.md#71-homepage-)) shows only the current group's editions; the leaderboard (§5, [`frontend.md` §7.9](../docs/design/frontend.md#79-leaderboardpage-ggleaderboard)) is a separate route linked from an edition's header, and a members list ([§7](#7-members-page-profile-fields-and-the-city-map)) isn't built yet.
-
-- Once §7 ships, present **Editions**, **Leaderboard** and **Members** as tabs of one group page, rather than as separate destinations reached by different links. Editions stays the default tab (what Home shows today); the other two become `?tab=` states of the same route rather than full navigations, so switching between them doesn't refetch `/config`.
-- This is a navigation/layout change on top of pages that otherwise work as already specced; it doesn't change what §5 or §7 return from the API.
+Built. Home is the group page, with **Editions**, **Leaderboard** and **Members** as `?tab=` tabs; the Members tab is a read-only list. The design now lives in [`frontend.md` §7.1](../docs/design/frontend.md#71-homepage-) and [§7.9](../docs/design/frontend.md#79-leaderboard-tab-tableaderboard). The member map stays in §7.
 
 ---
 

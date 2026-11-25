@@ -1,11 +1,10 @@
-import { Link, useParams } from "react-router-dom";
-import { useGroup, useLeaderboard, useMembership } from "../api/queries";
-import { PageHeader } from "../components/layout/PageHeader";
-import { PageErrorState } from "../components/layout/PageErrorState";
-import { Avatar } from "../components/ui/Avatar";
-import { Pill } from "../components/ui/Pill";
-import { avatarColorClass } from "../utils/avatarColor";
-import { buildBoards, type Board } from "../components/leaderboard/buildBoards";
+import { Link } from "react-router-dom";
+import { useGroup, useLeaderboard } from "../../api/queries";
+import { Avatar } from "../ui/Avatar";
+import { Button } from "../ui/Button";
+import { Pill } from "../ui/Pill";
+import { avatarColorClass } from "../../utils/avatarColor";
+import { buildBoards, type Board } from "./buildBoards";
 
 const RANK_MEDAL: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
@@ -22,68 +21,58 @@ function valueLabel(boardKey: string, value: number): string {
   return `${value} reaction${value === 1 ? "" : "s"}`;
 }
 
-export function LeaderboardPage() {
-  const { groupId = "" } = useParams();
+/** Home's Leaderboard tab: the group's superlatives (`docs/design/frontend.md` §7.9). */
+export function GroupLeaderboard({ groupId }: { groupId: string }) {
   const leaderboard = useLeaderboard(groupId);
   const group = useGroup(groupId);
-  const membership = useMembership(groupId);
 
-  if (leaderboard.isLoading || group.isLoading) return <LoadingShell groupId={groupId} />;
-
-  if (leaderboard.isError || group.isError) {
-    const error = leaderboard.error ?? group.error;
+  if (leaderboard.isLoading || group.isLoading) {
     return (
-      <PageErrorState
-        title="Leaderboard"
-        back={`/g/${groupId}`}
-        message={error instanceof Error ? error.message : "Couldn't load the leaderboard."}
-        onRetry={() => {
-          leaderboard.refetch();
-          group.refetch();
-        }}
-      />
-    );
-  }
-
-  if (!leaderboard.data || !group.data) return null;
-
-  const boards = buildBoards(leaderboard.data, group.data.members);
-
-  return (
-    <div className="pb-12">
-      <PageHeader
-        eyebrow={`${membership?.groupName ?? group.data.name} · superlatives`}
-        title="Leaderboard"
-        back={`/g/${groupId}`}
-      />
-
-      {boards.length === 0 ? (
-        <div className="px-5 pt-10 text-center text-inkmuted">
-          <div className="mb-3 text-4xl">🏅</div>
-          <p className="font-semibold text-ink">
-            Superlatives show up once your group&apos;s first edition is out.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4 px-5 pt-5">
-          {boards.map((board) => (
-            <BoardCard key={board.key} board={board} groupId={groupId} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LoadingShell({ groupId }: { groupId: string }) {
-  return (
-    <div className="pb-12">
-      <PageHeader title="Leaderboard" eyebrow="Loading…" back={`/g/${groupId}`} />
-      <div className="space-y-3 px-5 pt-6">
+      <div className="space-y-3" aria-label="Loading the leaderboard">
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-28 animate-pulse rounded-3xl border border-line bg-white" />
         ))}
       </div>
+    );
+  }
+
+  if (leaderboard.isError || group.isError || !leaderboard.data || !group.data) {
+    return (
+      <div className="py-6 text-center">
+        <p className="text-sm text-coral">Couldn&apos;t load the leaderboard.</p>
+        <Button
+          className="mt-3"
+          size="sm"
+          variant="soft"
+          onClick={() => {
+            void leaderboard.refetch();
+            void group.refetch();
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  const boards = buildBoards(leaderboard.data, group.data.members);
+
+  if (boards.length === 0) {
+    return (
+      <div className="pt-6 text-center text-inkmuted">
+        <div className="mb-3 text-4xl">🏅</div>
+        <p className="font-semibold text-ink">
+          Superlatives show up once your group&apos;s first edition is out.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {boards.map((board) => (
+        <BoardCard key={board.key} board={board} groupId={groupId} />
+      ))}
     </div>
   );
 }

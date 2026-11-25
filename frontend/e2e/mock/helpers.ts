@@ -32,7 +32,7 @@ export async function collectCspViolations(page: Page): Promise<{ violations: st
 /** The mock app always auto-authenticates as "Quinn" and defaults to the "Trail Crew" group. */
 export async function gotoHome(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("heading", { name: /Hey Quinn/ }).waitFor();
+  await page.getByRole("tab", { name: "Editions" }).waitFor();
 }
 
 /** Home's row for the current group's open edition (`EditionRow.tsx`). */

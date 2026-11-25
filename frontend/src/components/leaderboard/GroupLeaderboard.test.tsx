@@ -1,16 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError } from "../api/client";
-import { AuthContext, type AuthValue } from "../auth/useAuth";
-import type { components } from "../types/api";
-import { LeaderboardPage } from "./LeaderboardPage";
+import { api, ApiError } from "../../api/client";
+import { AuthContext, type AuthValue } from "../../auth/useAuth";
+import type { components } from "../../types/api";
+import { GroupLeaderboard } from "./GroupLeaderboard";
 
 type S = components["schemas"];
 
-vi.mock("../api/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/client")>();
+vi.mock("../../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/client")>();
   return {
     ...actual,
     api: {
@@ -94,10 +94,8 @@ function renderPage() {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={signedIn}>
-        <MemoryRouter initialEntries={["/g/g1/leaderboard"]}>
-          <Routes>
-            <Route path="/g/:groupId/leaderboard" element={<LeaderboardPage />} />
-          </Routes>
+        <MemoryRouter>
+          <GroupLeaderboard groupId="g1" />
         </MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
@@ -108,7 +106,7 @@ beforeEach(() => {
   vi.mocked(api.getConfig).mockResolvedValue(baseConfig());
 });
 
-describe("LeaderboardPage", () => {
+describe("GroupLeaderboard", () => {
   it("shows a loading skeleton before data arrives", async () => {
     vi.mocked(api.getConfig).mockResolvedValue(baseConfig());
     vi.mocked(api.getGroup).mockReturnValue(new Promise(() => undefined));
@@ -116,7 +114,7 @@ describe("LeaderboardPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Loading…")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Loading the leaderboard")).toBeInTheDocument();
   });
 
   it("shows an error state with a retry button", async () => {
