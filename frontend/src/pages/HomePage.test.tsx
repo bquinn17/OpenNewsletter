@@ -160,6 +160,8 @@ describe("HomePage", () => {
       renderHome();
 
       expect(await screen.findByText("No editions yet.")).toBeInTheDocument();
+      expect(screen.queryByText(/Hey Sam/)).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: "Trail Crew" })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: "Editions" })).toHaveAttribute(
         "aria-selected",
         "true",

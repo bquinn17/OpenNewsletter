@@ -57,8 +57,6 @@ function SignedInHome() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseTab(searchParams.get("tab"));
 
-  const greeting = config?.displayName ? `Hey ${config.displayName} 👋` : "Hey there 👋";
-
   // Without `/config` there's no telling a member from someone yet to join,
   // so show neither the editions nor the join form until it loads. Offline,
   // TanStack Query pauses the fetch rather than failing it.
@@ -84,7 +82,9 @@ function SignedInHome() {
   if (!current) {
     return (
       <div className="px-5 py-10">
-        <h1 className="font-display text-2xl font-bold">{greeting}</h1>
+        <h1 className="font-display text-2xl font-bold">
+          {config.displayName ? `Hey ${config.displayName} 👋` : "Hey there 👋"}
+        </h1>
         <p className="mt-2 text-inkmuted">
           You haven&apos;t joined a group yet. Groups are invite-only: ask an admin of the group for
           an invite code, then paste it below.
@@ -97,11 +97,10 @@ function SignedInHome() {
   }
 
   return (
-    <div className="pb-12">
-      <div className="px-5 pb-2 pt-6">
-        <h1 className="font-display text-2xl font-bold leading-tight">{greeting}</h1>
-      </div>
-      <div className="px-5 pb-2">
+    <div className="pb-12 pt-2">
+      {/* The header's group switcher already names the group on screen. */}
+      <h1 className="sr-only">{current.groupName}</h1>
+      <div className="px-5 pt-3 empty:hidden">
         <InstallPwaPrompt />
       </div>
       <TabBar

@@ -38,7 +38,7 @@ function browserStorage(page: Page): Promise<Record<string, string>> {
 
 async function expectInDemo(page: Page): Promise<void> {
   await expect(page.getByRole("region", { name: "Demo" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Hey Quinn/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Trail Crew" })).toBeAttached();
 }
 
 test("a signed-out visitor enters the demo from the home screen", async ({ page }) => {
