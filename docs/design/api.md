@@ -219,7 +219,7 @@ Response 200 (published): `NewsletterDetailResponse` in `shared/openapi.yaml` (t
 
 Image URLs are presigned S3 GET URLs, minted inline by the handler (§9.5); each `displayUrl`/`thumbUrl` is usable as soon as it's returned. See [`media.md` §4](media.md#4-serving-presigned-s3-gets).
 
-**The `open` response shape** is `OpenQuestionResponse` (`shared/openapi.yaml`): each locked question carries `askedBy` redacted per the same anonymity rule as candidates, plus `myResponse` — `null` if the caller has no draft yet, else a `MyResponseSummary`.
+**The `open` response shape** is `OpenQuestionResponse` (`shared/openapi.yaml`): each locked question carries `askedBy` redacted per the same anonymity rule as candidates, `isStanding` (true only for the edition's standing question, which has `askedBy: null` and `isAnonymous: false`; [`lifecycle.md` §14](lifecycle.md#14-the-standing-question)), plus `myResponse` — `null` if the caller has no draft yet, else a `MyResponseSummary`.
 
 **Admin candidate delete and cycle resolution** (§6.5): the route carries no `cycleId`, but a `CandidateQuestion` row is stored under its cycle's key. `lambda-questions` resolves this by checking, in order: (1) the group's current `voting` cycle's candidate pool — if found there, it's still deletable; (2) the group's current `open` cycle's locked questions — a match there means the candidate was promoted between when the admin loaded the list and when the delete arrived, so it returns `CANDIDATE_PROMOTED`; (3) the `open` cycle's own (unpromoted, leftover) candidate rows, still deletable; otherwise `NOT_FOUND`. A group has at most one cycle in each of those two statuses at a time, so this fully covers the promotion race without needing a `cycleId` on the route.
 

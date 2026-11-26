@@ -234,7 +234,7 @@ It is written only inside §4 #1/#2 and the admin candidate-delete cascade, so i
 
 ### 2.8 Locked question
 
-A candidate that has been promoted into a specific newsletter.
+A candidate that has been promoted into a specific newsletter, or the edition's standing question ([`lifecycle.md` §14](lifecycle.md#14-the-standing-question)).
 
 | Attr | Value |
 |---|---|
@@ -248,7 +248,7 @@ A candidate that has been promoted into a specific newsletter.
 | `prompt` | string |
 | `poll_options` | array \| null |
 | `display_order` | number (admin-controllable; default = vote rank when promoted) |
-| `submitted_by` | user_id (copied from the candidate at promotion; returned to non-admins ONLY when `is_anonymous=false`) |
+| `submitted_by` | user_id (copied from the candidate at promotion; returned to non-admins ONLY when `is_anonymous=false`). Absent on the standing question, which nobody asked. |
 | `is_anonymous` | boolean (copied from the candidate at promotion; immutable) |
 | `locked_at` | ISO-8601 |
 
@@ -511,7 +511,7 @@ The following operations MUST use `TransactWriteItems`:
 
    The cancellation reason says which condition failed. A vote row means a concurrent duplicate request (idempotent success); a candidate count means a lost race (retry once); the tally means `VOTE_CAP_REACHED`.
 2. **Withdraw a vote** — Delete `CandidateVote` with `attribute_exists(sk)` AND Update `CandidateQuestion` with `vote_count -= 1` AND new `gsi1sk` AND `ADD votes_cast -1` on the tally (`votes_cast > 0`). The admin candidate delete removes each voter's vote together with the same tally decrement.
-3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items). It also carries one `MemberStats` update (§2.17) per distinct suggester of a promoted, non-anonymous question: `ADD questions_asked :n`, where n is how many of that member's questions were promoted. One update per suggester, because a transaction can't touch the same item twice. That's at most 2 × `questions_per_cycle` + 1 = 41 items. Being in the same transaction means a lost promotion race can't count anything. The status flip is the only conditioned item. A plain `TransactionConflict`, such as a suggester's reaction landing on their `MemberStats` row at that moment, is retried (3 attempts in all). If the conflicts outlast that, the tick logs a warning and leaves the newsletter in `voting`, and the next tick promotes it.
+3. **Promote candidates → locked questions** — for each promoted candidate, Put `LockedQuestion` AND Update `Newsletter` to set `locked_question_ids` and transition status from `voting` to `open`. Single transaction (cap 100 items). It also carries one `MemberStats` update (§2.17) per distinct suggester of a promoted, non-anonymous question: `ADD questions_asked :n`, where n is how many of that member's questions were promoted. One update per suggester, because a transaction can't touch the same item twice. The standing question ([`lifecycle.md` §14](lifecycle.md#14-the-standing-question)) is one more Put and has no suggester. That's at most 2 × `questions_per_cycle` + 2 = 42 items. Being in the same transaction means a lost promotion race can't count anything. The status flip is the only conditioned item. A plain `TransactionConflict`, such as a suggester's reaction landing on their `MemberStats` row at that moment, is retried (3 attempts in all). If the conflicts outlast that, the tick logs a warning and leaves the newsletter in `voting`, and the next tick promotes it.
 4. **Save / publish response** — every response save (draft or publish) is one transaction: Update the response row (content, `updated_at`, `response_id` via `if_not_exists`), plus a ConditionCheck on the Newsletter row. On publish, the Update also sets `status` to `published` and `published_at` via `if_not_exists`; publishing is sticky ([`api.md` §7.3](api.md#73-put-groupsgroupidnewsletterscycleidquestionsquestionidmy-response)). (No `version` attribute exists — drafts are last-write-wins, §5.) Must check `Newsletter.status = open AND response_close_at > now`. A save never touches `MemberStats`: `editions_answered` is decided at close (#4a). `persistence::responses::save_response` reads the cancellation reasons to decide what to do next:
    - only `TransactionConflict`s: retry unchanged (3 attempts in total)
    - anything else: the cycle check lost, which surfaces as `CYCLE_NOT_OPEN`

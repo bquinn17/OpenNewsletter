@@ -167,9 +167,9 @@ Use C (signed in) for each, pasting into Settings → Your groups → **Join wit
 ## 3. App shell and navigation
 
 - [ ] The "O" logo returns to Home from any page.
-- [ ] With one group, the group switcher shows the group's name and gradient avatar with no chevron, and clicking it does nothing.
+- [ ] With one group, the group switcher shows the group's name, gradient avatar and a chevron. Its menu lists the group, then a divider and **＋ Join with an invite code**, which opens `/join`.
 - [ ] To test more than one group, create a second group with a **different** admin email: `. infra/.venv/bin/activate && python scripts/bootstrap_admin.py --env dev --admin-email second-admin@example.com --group-name "Second Group"`. Don't reuse A's email, because the script would write a second user record for A's Cognito account. Sign in as that admin, invite A, and redeem it as A. Then:
-  - [ ] the switcher shows a chevron, and its menu lists both groups with their gradients
+  - [ ] the switcher's menu lists both groups with their gradients, with **Join with an invite code** last
   - [ ] picking a group navigates Home and shows that group's editions
   - [ ] opening a `/g/<other group>/…` URL directly makes that group current in the switcher
   - [ ] the choice survives a reload
@@ -223,10 +223,10 @@ The edition will have 5 slots. This section creates six candidate questions with
 
 ### 6.2 The suggest form
 
-- [ ] **＋ Idea** opens "Suggest a question" (eyebrow "For next month"). The privacy card reads "Asked by you" and "Your friends see “You asked: …” next to this question." Type defaults to **Open**. **Submit** is disabled.
+- [ ] **＋ Idea** opens "Suggest a question" (eyebrow "For next month"). Type defaults to **Open**. The last card before **Submit** reads "Asked by you" and "Your friends see “You asked: …” next to this question.", and its switch is on and labelled "Enabled". **Submit** is disabled.
 - [ ] Type 3 characters: "Add a bit more (at least 5 characters)". The counter reads "3 / 500".
 - [ ] Each of the four "sparks" chips fills the question field.
-- [ ] Toggle anonymous on: the card turns purple and reads "Anonymous to the group" and "Admins can still see who asked — your friends won't." The button changes to **Submit anonymously**. Toggle it off again.
+- [ ] Switch the name off: the label reads "Disabled", and the card turns purple and reads "Anonymous to the group" and "Admins can still see who asked — your friends won't." The button changes to **Submit anonymously**. Switch it back on.
 - [ ] Choose **Poll**. Two empty option fields appear. **＋ Add option** adds fields up to 6, then disappears. The × buttons remove fields down to 2, then disappear.
 - [ ] Leave an option empty: "Required". Enter "Tea" and "tea": `"tea" is already an option`. Paste 81 characters into an option: "80 characters max".
 - [ ] Press the header's ← to go back without submitting.
@@ -261,10 +261,10 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 ## 7. Opening the edition
 
 - [ ] Run `advance 40d`. The response lists `"from": "voting", "to": "open"` for Dev Group, and may also list the next month's cycle with `"from": null, "to": "voting"`.
-- [ ] As A and B (with push on, §5): an OS notification "Dev Group: time to write" with "5 questions are waiting. You have … days to respond." Clicking it opens the new edition. Don't run `advance` again to check for duplicates: with the edition now open, it would rewind the edition's close instead and could publish it.
-- [ ] Reload Home. "Awaiting responses" lists the new edition on a coral tile, with "{countdown} left · you've published 0 of 5". If the next voting cycle was created, "Taking suggestions" lists it too.
-- [ ] Open the edition. The header is coral: eyebrow "Dev Group · editions", title "{Month Year}", and a countdown pill such as "31d 04h". A card reads "Open for responses", "Closes {date, time and zone}", "Your progress" and "You've answered 0 of 5", with five empty progress bars.
-- [ ] The five questions are Q1 to Q5, in that order, each marked "Not started" with an empty circle. Q4 and Q5 are labelled "Poll". Q3 reads "Asked anonymously" for B and shows B's name for A. Q6 isn't there.
+- [ ] As A and B (with push on, §5): an OS notification "Dev Group: time to write" with "6 questions are waiting. You have … days to respond." Clicking it opens the new edition. Don't run `advance` again to check for duplicates: with the edition now open, it would rewind the edition's close instead and could publish it.
+- [ ] Reload Home. "Awaiting responses" lists the new edition on a coral tile, with "{countdown} left · you've published 0 of 6". If the next voting cycle was created, "Taking suggestions" lists it too.
+- [ ] Open the edition. The header is coral: eyebrow "Dev Group · editions", title "{Month Year}", and a countdown pill such as "31d 04h". A card reads "Open for responses", "Closes {date, time and zone}", "Your progress" and "You've answered 0 of 6", with six empty progress bars.
+- [ ] The six questions are Q1 to Q5, in that order, then the standing question (its prompt is [`shared/standing-question.txt`](../../shared/standing-question.txt)), labelled "Every edition". Each is marked "Not started" with an empty circle. Q4 and Q5 are labelled "Poll". Q3 reads "Asked anonymously" for B and shows B's name for A. Q6 isn't there.
 - [ ] Open Upcoming. A link reads "The {Month} edition is open — answer now". If a new voting cycle exists, its list is empty again. If not, the page reads "Voting for the next edition hasn't opened yet."
 
 ## 8. Answering text questions
@@ -275,7 +275,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 - [ ] Press the back arrow without typing. Q1 is still "Not started": visiting a question doesn't create a draft.
 - [ ] Open Q1 again and type a sentence. The badge reads "Unsaved changes", then "● Saving…" about 1.5 seconds after you stop, then "Saved · publishes at close". No other note about publishing appears. The word count updates.
 - [ ] Type, then click outside the textarea at once: it saves straight away. Type, then switch to another tab at once: it saves before you come back.
-- [ ] Press the back arrow. On the edition, Q1 reads "Answered" with a ✓ icon and a preview of your text. Its progress segment fills in coral, and the page reads "You've answered 1 of 5": a non-empty draft counts as answered, because it publishes at close.
+- [ ] Press the back arrow. On the edition, Q1 reads "Answered" with a ✓ icon and a preview of your text. Its progress segment fills in coral, and the page reads "You've answered 1 of 6": a non-empty draft counts as answered, because it publishes at close.
 - [ ] Reload Q1: the text is still there.
 
 ### 8.2 Markdown and sanitizing
@@ -317,7 +317,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 - [ ] Pick Summer. It saves at once ("● Saving…", then "Saved · publishes at close"). Pick Autumn: it saves again.
 - [ ] Press **Done**. It opens Q5, the next unanswered question.
 - [ ] On the edition, Q4 reads "Answered" with "Autumn" as its preview.
-- [ ] As B, pick Coffee on Q5 and press **Done**. B has now answered every question: back on the edition, a "You completed the newsletter!" dialog opens over a confetti burst, with the deadline. **Nice!** closes it. Reload: it doesn't show again on this device. With reduced motion on (System Settings → Accessibility), there's no confetti and the dialog doesn't animate.
+- [ ] As B, pick Coffee on Q5 and press **Done**. It opens the standing question. Write a sentence and press **Done**. B has now answered every question: back on the edition, a "You completed the newsletter!" dialog opens over a confetti burst, with the deadline. **Nice!** closes it. Reload: it doesn't show again on this device. With reduced motion on (System Settings → Accessibility), there's no confetti and the dialog doesn't animate.
 - [ ] As A, pick an option on Q4. Leave Q5 unanswered.
 - [ ] There's no way to clear a poll pick once made (§21).
 
@@ -325,12 +325,12 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 Push must be on for A and B (§5). Read the edition's countdown pill before each step, and rewind just far enough to put the close inside the next reminder's window. A reminder is due once the time left is at or under its offset (96, 48 or 24 hours). Its title names the offset, not the exact time left.
 
-At this point B has answered all five questions (a non-empty draft counts, because it auto-publishes), and A has answered two (an emptied draft doesn't count). Members who have answered everything get different copy, so A and B see different bodies.
+At this point B has answered all six questions (a non-empty draft counts, because it auto-publishes), and A has answered two (an emptied draft doesn't count). Members who have answered everything get different copy, so A and B see different bodies.
 
 - [ ] Rewind until about 3 days remain. For example, if the pill reads "31d 04h", run `advance 28d`. The pill now reads about "3d 04h", the "Closes" date has moved, and Home's row agrees.
-- [ ] Run `notify`. The response lists a `deadline_reminder` with `"offsetHours": 96`. A gets "Dev Group: 4 days left" with "Don't forget — write your answers before {weekday, month day}." B gets the same title with "5/5 answers in. You're done — but you can still edit."
+- [ ] Run `notify`. The response lists a `deadline_reminder` with `"offsetHours": 96`. A gets "Dev Group: 4 days left" with "Don't forget — write your answers before {weekday, month day}." B gets the same title with "6/6 answers in. You're done — but you can still edit."
 - [ ] Run `notify` again: nothing new is sent.
-- [ ] Rewind until under 48 hours remain (from "3d 04h", `advance 30h`), then `notify`. A gets "Dev Group: 2 days left" with "2 of 5 answers written. 3 to go." B gets the "You're done" body again.
+- [ ] Rewind until under 48 hours remain (from "3d 04h", `advance 30h`), then `notify`. A gets "Dev Group: 2 days left" with "2 of 6 answers written. 4 to go." B gets the "You're done" body again.
 - [ ] Rewind until under 24 hours remain (`advance 1d`), then `notify`. A gets "Dev Group: due tomorrow" with "Last call — answers lock at {time}." B gets nothing: members who have answered everything are skipped at the last reminder.
 - [ ] Before one of the steps above, untick **Deadline reminders** for A. A gets no reminder for that step. Tick it again.
 
@@ -338,14 +338,14 @@ At this point B has answered all five questions (a non-empty draft counts, becau
 
 - [ ] As B, open Q3 and add a sentence. Wait for the badge to settle. Also open Q5 in a second tab.
 - [ ] Run `advance` by a little more than the pill shows (for example `1d` when it reads "22h 10m"). The response lists `"from": "open", "to": "published"`.
-- [ ] Notification for A and B: "Dev Group: this month's edition is out", "4 answers, 2 polls — go read it." The 4 are B's answers to Q1, Q2 and Q3 and A's to Q2. This notification has no opt-out.
+- [ ] Notification for A and B: "Dev Group: this month's edition is out", "5 answers, 2 polls — go read it." The 5 are B's answers to Q1, Q2, Q3 and the standing question, and A's to Q2. This notification has no opt-out.
 - [ ] In B's Q3 tab, type a few more words. The save is refused and the tab moves to the published edition. The "This edition has closed — your last saved version stands." note may flash first. In §12, Q3 shows the sentence saved before the close, without the words typed after it.
 - [ ] In B's Q5 tab, pick Tea. Toast "This edition has closed — your last saved version stands."; the pick returns to Coffee, the same note appears, and **Done** is gone.
 - [ ] Open any `/respond/…` URL of this edition: it redirects to the edition page.
 
 ## 12. Reading the published edition
 
-- [ ] Home lists the edition under "This month's edition" (or "Past editions") on a green tile, with "5 questions · published {date}".
+- [ ] Home lists the edition under "This month's edition" (or "Past editions") on a green tile, with "6 questions · published {date}".
 - [ ] The edition header is green: title "{Month Year}" and a "Published" pill. Below it: "Published {date}".
 - [ ] Every question is expanded. Its − button collapses it and + expands it again.
 - [ ] **Q1**: B's answer only. A's emptied draft isn't shown. The answer card shows B's photo, B's name and "published {date}", then the markdown and the inline images. The image whose token you deleted appears in a grid below the text. Clicking a grid thumbnail opens the full image in a new tab.
@@ -421,7 +421,7 @@ This runs a second cycle.
 - [ ] Set Questions per cycle to 2 and Votes per member to 2 (votes can't exceed questions), and turn **Notify members when a cycle opens** off. Save.
 - [ ] Under the cycle settings, the form reads "Cycle setting changes apply from the next new cycle. Cycles already scheduled keep their questions, votes and dates."
 - [ ] Suggest three candidates in the current voting cycle, from A and B. As B, reload Upcoming: the line still reads "You've used 0 of 3 votes", because this cycle was created before the change. Vote for all three.
-- [ ] Run `advance 50d`. The new edition opens with all 3 questions, since its cycle kept its count of 5, and no "time to write" notification arrives (notification settings apply right away). As B, Upcoming now shows the next voting cycle, the first created after the change: "You've used 0 of 2 votes".
+- [ ] Run `advance 50d`. The new edition opens with all 3 questions plus the standing question, since its cycle kept its count of 5, and no "time to write" notification arrives (notification settings apply right away). As B, Upcoming now shows the next voting cycle, the first created after the change: "You've used 0 of 2 votes".
 - [ ] Set Response window to 3 days and save. It's accepted. The open edition's "Closes" date and the voting cycle's dates don't change.
 - [ ] Restore 5 questions, 3 votes, cycle-open notifications and the 7-day window. The voting cycle that already exists keeps 2 questions and 2 votes; the one after it gets 5 and 3.
 
@@ -479,7 +479,7 @@ These are how the current build behaves. Don't log them as failures unless you t
 - **The header avatar** shows an initial taken from the sign-in token. It doesn't show the profile photo or colour, or a display name changed in Settings.
 - **An untouched question** shows "Saved just now" (or "Saved {time} ago") in the badge before you've typed anything.
 - **Offline, group pages redirect to Home**, because their membership check can't load `/config`, and Settings shows a spinner.
-- **An edition with no questions** (nobody suggested any) shows "You've answered 0 of 0" and an empty list while open, and only its header and footer once published. [`lifecycle.md` §9](../design/lifecycle.md#9-empty-cycle-edge-cases) describes an empty-state message that the UI doesn't render.
+- **An edition from before the standing question** ([`lifecycle.md` §14](../design/lifecycle.md#14-the-standing-question)) with no suggested questions shows "You've answered 0 of 0" and an empty list while open, and only its header and footer once published.
 - **Dark mode and reduced motion aren't implemented**, although [`frontend.md`](../design/frontend.md) §4.2 and §11 describe them. The design page and the code disagree here.
 - **Month labels on fast-forwarded cycles** come from the rewound open time, so after several `advance` runs two editions can show the same month. That's an artifact of the dev tick, not of real schedules.
 - **Invites** list consumed and revoked invites until they expire, with no pagination.

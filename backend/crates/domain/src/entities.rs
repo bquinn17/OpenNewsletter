@@ -200,7 +200,7 @@ pub struct CandidateQuestion {
 impl CandidateQuestion {
     /// The order candidates promote in, and the order `sort=top` lists them:
     /// `vote_count` DESC, then `submitted_at` ASC (the older suggestion wins a
-    /// tie), then `question_id` ASC (`docs/design/lifecycle.md` §5.2).
+    /// tie), then `question_id` ASC (`docs/design/lifecycle.md` §14).
     pub fn promotion_order(a: &Self, b: &Self) -> Ordering {
         b.vote_count
             .cmp(&a.vote_count)
@@ -227,9 +227,20 @@ pub struct LockedQuestion {
     pub prompt: String,
     pub poll_options: Option<Vec<PollOption>>,
     pub display_order: u32,
-    pub submitted_by: UserId,
+    /// `None` exactly for the standing question, which nobody asked
+    /// (`docs/design/lifecycle.md` §14); every promoted candidate has `Some`.
+    #[serde(default)]
+    pub submitted_by: Option<UserId>,
     pub is_anonymous: bool,
     pub locked_at: Timestamp,
+}
+
+impl LockedQuestion {
+    /// Whether this is the standing question every cycle carries in addition
+    /// to its promoted candidates (`docs/design/lifecycle.md` §14).
+    pub fn is_standing(&self) -> bool {
+        self.submitted_by.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

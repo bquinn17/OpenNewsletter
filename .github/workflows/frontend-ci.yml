@@ -1,5 +1,6 @@
 # Trigger: pull requests and pushes to main that touch frontend/**,
-# shared/openapi.yaml (the generated api.ts contract), or this workflow file.
+# shared/openapi.yaml (the generated api.ts contract), shared/standing-question.txt
+# (read by the demo data), or this workflow file.
 # Purpose: lint, type-check, test and build the frontend — the PR gate for
 # anything under frontend/.
 name: frontend-ci
@@ -9,12 +10,14 @@ on:
     paths:
       - "frontend/**"
       - "shared/openapi.yaml"
+      - "shared/standing-question.txt"
       - ".github/workflows/frontend-ci.yml"
   push:
     branches: [main]
     paths:
       - "frontend/**"
       - "shared/openapi.yaml"
+      - "shared/standing-question.txt"
       - ".github/workflows/frontend-ci.yml"
 
 permissions:

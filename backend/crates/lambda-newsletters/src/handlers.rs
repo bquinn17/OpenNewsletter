@@ -189,7 +189,7 @@ async fn open_detail(
         state,
         &locked
             .iter()
-            .map(|l| l.submitted_by.clone())
+            .filter_map(|l| l.submitted_by.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>(),
@@ -198,6 +198,7 @@ async fn open_detail(
 
     let mut questions_out = Vec::with_capacity(locked.len());
     for lq in locked {
+        let is_standing = lq.is_standing();
         let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
         let poll_options = poll_option_responses(&lq.poll_options);
         let my_response = by_question
@@ -218,6 +219,7 @@ async fn open_detail(
             display_order: lq.display_order,
             asked_by,
             is_anonymous: lq.is_anonymous,
+            is_standing,
             poll_options,
             my_response,
         });
@@ -254,7 +256,10 @@ async fn published_detail(
 
     // One pass over the text questions' answers collects everything they
     // hydrate: engagement keys, answer authors and answer images.
-    let mut user_ids: HashSet<UserId> = locked.iter().map(|l| l.submitted_by.clone()).collect();
+    let mut user_ids: HashSet<UserId> = locked
+        .iter()
+        .filter_map(|l| l.submitted_by.clone())
+        .collect();
     let mut image_ids: HashSet<ImageId> = HashSet::new();
     let mut text_answers: Vec<(QuestionId, UserId)> = Vec::new();
     for (lq, answers) in locked.iter().zip(&answers_per_question) {
@@ -287,6 +292,7 @@ async fn published_detail(
     let mut questions_out = Vec::with_capacity(locked.len());
     for (lq, answers) in locked.into_iter().zip(answers_per_question) {
         let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
+        let is_standing = lq.is_standing();
         let question = match lq.kind {
             QuestionKind::Text => {
                 published_text_question(
@@ -294,6 +300,7 @@ async fn published_detail(
                     caller,
                     lq,
                     asked_by,
+                    is_standing,
                     answers,
                     &engagement,
                     &profiles,
@@ -301,7 +308,9 @@ async fn published_detail(
                 )
                 .await?
             }
-            QuestionKind::Poll => published_poll_question(caller, lq, asked_by, answers),
+            QuestionKind::Poll => {
+                published_poll_question(caller, lq, asked_by, is_standing, answers)
+            }
         };
         questions_out.push(question);
     }
@@ -320,6 +329,7 @@ async fn published_text_question(
     caller: &UserId,
     lq: LockedQuestion,
     asked_by: Option<AskedBy>,
+    is_standing: bool,
     answers: Vec<domain::Response>,
     engagement: &EngagementByAnswer,
     profiles: &HashMap<UserId, User>,
@@ -368,6 +378,7 @@ async fn published_text_question(
         display_order: lq.display_order,
         asked_by,
         is_anonymous: lq.is_anonymous,
+        is_standing,
         answers: Some(answers_out),
         options: None,
         my_vote_option_id: None,
@@ -378,6 +389,7 @@ fn published_poll_question(
     caller: &UserId,
     lq: LockedQuestion,
     asked_by: Option<AskedBy>,
+    is_standing: bool,
     answers: Vec<domain::Response>,
 ) -> PublishedQuestionResponse {
     let mut tallies: HashMap<PollOptionId, u32> = HashMap::new();
@@ -413,6 +425,7 @@ fn published_poll_question(
         display_order: lq.display_order,
         asked_by,
         is_anonymous: lq.is_anonymous,
+        is_standing,
         answers: None,
         options: Some(options),
         my_vote_option_id,
@@ -631,11 +644,14 @@ async fn locked_asked_by(
     lq: &LockedQuestion,
     profiles: &HashMap<UserId, User>,
 ) -> Result<Option<AskedBy>, ApiError> {
-    let visible = !lq.is_anonymous || is_admin || lq.submitted_by == *caller;
+    let Some(submitted_by) = &lq.submitted_by else {
+        return Ok(None);
+    };
+    let visible = !lq.is_anonymous || is_admin || *submitted_by == *caller;
     if !visible {
         return Ok(None);
     }
-    match profiles.get(&lq.submitted_by) {
+    match profiles.get(submitted_by) {
         Some(user) => Ok(Some(to_asked_by(state, user).await?)),
         None => Ok(None),
     }

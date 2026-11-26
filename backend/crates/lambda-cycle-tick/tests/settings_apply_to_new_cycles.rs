@@ -120,9 +120,12 @@ async fn promotion_locks_the_cycles_own_question_count_not_the_groups_current_on
         .unwrap()
         .unwrap();
     assert_eq!(opened.status, NewsletterStatus::Open);
+    // The cycle's own count (2), not the group's current one (5), plus the
+    // standing question appended last (never counted towards the limit).
+    assert_eq!(opened.locked_question_ids.len(), 3);
     assert_eq!(
-        opened.locked_question_ids,
-        vec![QuestionId::new("q-a"), QuestionId::new("q-b")]
+        &opened.locked_question_ids[..2],
+        &[QuestionId::new("q-a"), QuestionId::new("q-b")]
     );
     // Its successor takes the group's current value.
     let successor = newsletters::find_voting_cycle(&repo, &voting.group_id)

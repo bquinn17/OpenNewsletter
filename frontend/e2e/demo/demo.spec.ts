@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { STANDING_QUESTION_PROMPT } from "../standingQuestion";
 
 /**
  * The demo (`docs/design/frontend.md` §17) against a real, non-mock build — the shape of the
@@ -77,7 +78,7 @@ test("the demo sends nothing off the site and stores nothing in the browser", as
   await page.getByRole("link", { name: "See a demo" }).click();
   await expectInDemo(page);
   await page.getByRole("link", { name: /you've answered/ }).click();
-  await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
+  await page.getByRole("link", { name: STANDING_QUESTION_PROMPT }).click();
   await page.getByPlaceholder("Tell us about it…").fill("A demo answer with a photo");
   await page.locator('input[type="file"]').setInputFiles(PHOTO);
   await expect(page.getByPlaceholder("Describe this image")).toBeVisible({

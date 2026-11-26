@@ -174,7 +174,7 @@ Route guards:
 
 There is no bottom tab bar. Navigation is the header: the logo goes Home, the group switcher picks the group Home shows, and the avatar menu holds Settings. Home's edition rows lead to the open edition (respond) and the voting cycle (Upcoming). A bottom tab bar would duplicate Home and cover RespondPage's own bottom bar ([`decisions.md`](../decisions.md#home-shows-one-group)).
 
-The current group (`state/currentGroup.ts`, persisted) is set by the switcher, defaults to the first membership, and follows the URL: opening any `/g/:groupId/*` page makes that group current, so a deep link from a push notification or shared link doesn't leave Home showing a different group. Picking a group in the switcher navigates to Home.
+The current group (`state/currentGroup.ts`, persisted) is set by the switcher, defaults to the first membership, and follows the URL: opening any `/g/:groupId/*` page makes that group current, so a deep link from a push notification or shared link doesn't leave Home showing a different group. Picking a group in the switcher navigates to Home. The switcher opens even with one group, because its menu always ends with **Join with an invite code**, a link to `/join` (§7.8).
 
 Tailwind container choice: stick with `max-w-2xl` on large screens. The "middle third" requirement from the spec is achieved by capping width rather than using a 3-column grid — simpler, more legible, same visual outcome.
 
@@ -314,6 +314,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
   - `open` → list of questions; each row shows: prompt, "your draft" preview if any, status pill (`Not started` / `Draft` / `Published`), CTA → respond. Once the caller has a non-empty draft or answer on every question (`utils/responseProgress.ts#allQuestionsAnswered`), `CompletionCelebration` shows a one-time modal over a confetti burst (`ConfettiBurst`, static under `prefers-reduced-motion`): "You completed the newsletter!", a line that any answer stays editable until the deadline, and **Nice!** to dismiss (Escape too). It shows once per edition per device: the flag `celebrated:{groupId}/{cycleId}` is set in `appStorage` when it opens, and a storage error just means it may show again.
   - `published` → questions list; each question expandable, showing all answers (with images, comments, reactions). Polls show stacked-bar tally with caller's vote highlighted.
 - Notes:
+  - Above each prompt, `AskedBy` shows "{name} asked", "Asked anonymously", or "Every edition" for the standing question (`isStanding`, [`lifecycle.md` §14](lifecycle.md#14-the-standing-question)). RespondPage shows the same line.
   - Every date on a group page is rendered in the group's timezone (`useMembership(groupId).timezone` from `/config`, via `utils/dates.ts#formatInZone` / `cycleLabels`), never the viewer's.
   - The published payload carries no `responseOpenAt`, so the month/year label comes from the cycle's `NewsletterSummary` (`useNewsletters`), falling back to `publishedAt`.
   - Published questions are expanded by default, with a collapse toggle.
@@ -365,7 +366,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
   ]);
   ```
 - Submit redirects back to candidates page with a toast.
-- The form also has an "Ask anonymously" checkbox (`isAnonymous`, default off) and mirrors the server's trimming and duplicate-label rules. Server `fieldErrors` map onto form fields.
+- The last control before **Submit** is a name switch (`role="switch"`, "Show my name"), on by default. On, the card reads "Asked by you" and the question carries the asker's name; off sends `isAnonymous: true`, and the card reads "Anonymous to the group". The form mirrors the server's trimming and duplicate-label rules. Server `fieldErrors` map onto form fields.
 
 ### 7.6 SettingsPage
 

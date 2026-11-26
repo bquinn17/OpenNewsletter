@@ -29,7 +29,7 @@ const schema = z
       .trim()
       .min(MIN_PROMPT_CHARS, `Add a bit more (at least ${MIN_PROMPT_CHARS} characters)`)
       .max(MAX_PROMPT_CHARS, `${MAX_PROMPT_CHARS} characters max`),
-    isAnonymous: z.boolean(),
+    showName: z.boolean(),
     pollOptions: z.array(
       z.object({ label: z.string().max(MAX_POLL_OPTION_LABEL_CHARS, "80 characters max") }),
     ),
@@ -95,7 +95,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
     defaultValues: {
       kind: "text",
       prompt: "",
-      isAnonymous: false,
+      showName: true,
       pollOptions: [{ label: "" }, { label: "" }],
     },
   });
@@ -103,19 +103,20 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
 
   const kind = watch("kind");
   const prompt = watch("prompt") ?? "";
-  const isAnonymous = watch("isAnonymous") ?? false;
+  const isAnonymous = !(watch("showName") ?? true);
 
   const onSubmit = handleSubmit(async (values) => {
+    const isAnonymous = !values.showName;
     try {
       await createCandidate.mutateAsync({
         kind: values.kind,
         prompt: values.prompt,
-        isAnonymous: values.isAnonymous,
+        isAnonymous,
         ...(values.kind === "poll"
           ? { pollOptions: values.pollOptions.map((o) => ({ label: o.label.trim() })) }
           : {}),
       });
-      onSuccess(values.isAnonymous);
+      onSuccess(isAnonymous);
     } catch (error) {
       if (error instanceof ApiError && error.code === "VALIDATION_FAILED") {
         const fieldErrors = error.problem?.fieldErrors ?? [];
@@ -158,42 +159,6 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
       )}
 
       <div className="px-5 pt-5">
-        <label
-          className={clsx(
-            "block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition",
-            isAnonymous ? "border-grape/40 bg-grape/5 text-grape" : "border-line bg-white text-ink",
-          )}
-        >
-          <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
-          <div className="flex-1">
-            <div className="flex items-center justify-between gap-3">
-              <strong>{isAnonymous ? "Anonymous to the group" : "Asked by you"}</strong>
-              <input type="checkbox" className="peer sr-only" {...register("isAnonymous")} />
-              <span
-                aria-hidden
-                className={clsx(
-                  "relative h-6 w-10 shrink-0 rounded-full transition-colors",
-                  isAnonymous ? "bg-grape" : "bg-line",
-                )}
-              >
-                <span
-                  className={clsx(
-                    "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                    isAnonymous && "translate-x-4",
-                  )}
-                />
-              </span>
-            </div>
-            <div className="mt-1 text-xs opacity-90">
-              {isAnonymous
-                ? "Admins can still see who asked — your friends won't."
-                : "Your friends see “You asked: …” next to this question."}
-            </div>
-          </div>
-        </label>
-      </div>
-
-      <div className="mt-5 px-5">
         <div className="mb-2 text-xs font-bold uppercase tracking-widest text-inkmuted">Type</div>
         <div className="grid grid-cols-2 gap-3">
           <KindButton
@@ -320,7 +285,55 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
         </div>
       </div>
 
+      {/* The switch is on when the question carries your name; switching it off asks anonymously. */}
       <div className="mt-6 px-5">
+        <label
+          className={clsx(
+            "block flex cursor-pointer gap-3 rounded-3xl border p-4 text-sm transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-coral/30",
+            isAnonymous ? "border-grape/40 bg-grape/5 text-grape" : "border-line bg-white text-ink",
+          )}
+        >
+          <span className="text-lg">{isAnonymous ? "🎭" : "💬"}</span>
+          <div className="flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <strong>{isAnonymous ? "Anonymous to the group" : "Asked by you"}</strong>
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="Show my name"
+                className="sr-only"
+                {...register("showName")}
+              />
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="text-xs font-semibold">
+                  {isAnonymous ? "Disabled" : "Enabled"}
+                </span>
+                <span
+                  aria-hidden
+                  className={clsx(
+                    "relative h-6 w-10 shrink-0 rounded-full transition-colors",
+                    isAnonymous ? "bg-line" : "bg-coral",
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                      !isAnonymous && "translate-x-4",
+                    )}
+                  />
+                </span>
+              </span>
+            </div>
+            <div className="mt-1 text-xs opacity-90">
+              {isAnonymous
+                ? "Admins can still see who asked — your friends won't."
+                : "Your friends see “You asked: …” next to this question."}
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div className="mt-5 px-5">
         <Button type="submit" disabled={!isValid || createCandidate.isPending} className="w-full">
           {createCandidate.isPending
             ? "Submitting…"

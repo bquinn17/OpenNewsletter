@@ -50,6 +50,40 @@ async fn an_answered_member_extends_the_streak_and_raises_the_longest() {
 }
 
 #[tokio::test]
+async fn a_standing_only_edition_still_extends_the_streak() {
+    // A cycle whose only locked question is the standing question (no
+    // candidates were promoted) is still answerable, and settlement treats
+    // it like any other edition (`docs/design/lifecycle.md` §5.2, §5.3).
+    const STANDING_Q: &str = "q-standing";
+    let (_c, repo) = common::make_test_repo().await;
+    let nl = common::seed_open_cycle(&repo, "g-streak-standing-only", &[STANDING_Q]).await;
+    common::put_membership(&repo, "u1", "g-streak-standing-only").await;
+    common::seed_streak(&repo, "g-streak-standing-only", "u1", 3, 3, "202605").await;
+    common::save(
+        &repo,
+        &nl,
+        "u1",
+        STANDING_Q,
+        Answer::Text {
+            body: "Nothing much, just the usual.",
+            images: &[],
+        },
+        false,
+    )
+    .await;
+    common::close_cycle(&repo, &nl).await;
+
+    run_tick(&repo, CycleCadence::Monthly).await;
+
+    let stats = common::member_stats(&repo, "g-streak-standing-only", "u1")
+        .await
+        .expect("u1 has a stats row");
+    assert_eq!(stats.current_streak, 4);
+    assert_eq!(stats.longest_streak, 4);
+    assert_eq!(stats.streak_cycle, Some(nl.cycle_id.clone()));
+}
+
+#[tokio::test]
 async fn a_member_who_did_not_answer_has_their_streak_reset_but_keeps_the_longest() {
     let (_c, repo) = common::make_test_repo().await;
     let nl = common::seed_open_cycle(&repo, "g-streak-reset", &[TEXT_Q]).await;

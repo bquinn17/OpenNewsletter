@@ -170,6 +170,16 @@ for (idx, c) in enumerate(chosen):
         isAnonymous: c.isAnonymous,
         lockedAt: now,
     })
+# Every edition also gets the standing question, last (§14)
+locked.append({
+    questionId: new_id(),
+    kind: "text",
+    prompt: STANDING_QUESTION_PROMPT,
+    displayOrder: len(chosen),
+    submittedBy: None,
+    isAnonymous: False,
+    lockedAt: now,
+})
 
 # Single TransactWriteItems
 items = [
@@ -182,7 +192,7 @@ items = [
     *[Put(LockedQuestion(...)) for each in locked],
     # Leaderboard: one per distinct suggester of a non-anonymous promoted question
     *[Update(MemberStats(nl.groupId, u), Add: questionsAsked=n)
-      for (u, n) in count_by(submittedBy, [l for l in locked if not l.isAnonymous])],
+      for (u, n) in count_by(submittedBy, [l for l in locked if l.submittedBy and not l.isAnonymous])],
 ]
 write_transact(items)
 
@@ -195,7 +205,7 @@ fanout_cycle_open_notification(nl)   # see docs/design/notifications.md
 
 If `TransactWriteItems` fails because the cycle's status changed concurrently (another tick in-flight), this run drops the item — the other run owns the transition.
 
-If `chosen` is empty (no candidate questions submitted): the cycle still transitions to `open` with `lockedQuestionIds = []`. The UI shows an empty state ("Nobody suggested questions this month — see you next time!"). Members still get the cycle-open notification but it includes a note. The cycle then auto-publishes 7 days later ([D3](../decisions.md#d3)) as an empty edition.
+If `chosen` is empty (no candidate questions submitted): the cycle still transitions to `open`, with the standing question (§14) as its only locked question, and members can answer it as usual. The cycle then publishes at close ([D3](../decisions.md#d3)) like any other.
 
 ### 5.3 `publish(nl)`
 
@@ -240,7 +250,8 @@ A draft whose only content is images that have since been deleted is skipped, ne
 
 ```
 if nl.lockedQuestionIds is empty:
-    skip   # an empty edition (§9) neither extends nor breaks a streak
+    skip   # an edition with no questions at all neither extends nor breaks a streak;
+           # every edition gets the standing question (§14), so only older rows are empty
 authors = { a.userId for every published answer in the sweep's AP14 reads,
             plus every draft the sweep published or found already published }
 stats = query AP23   # pk=GROUP#{g}#STATS, one paginated read
@@ -368,7 +379,7 @@ The simpler rule is intentional: every member's vote counts equally and the sche
 
 ## 9. Empty-cycle edge cases
 
-- **No candidate questions, no votes**: cycle transitions to `open` with empty `lockedQuestionIds`; transitions to `published` empty 7 days later ([D3](../decisions.md#d3)). The UI renders an empty-state for both.
+- **No candidate questions, no votes**: cycle transitions to `open` with only the standing question (§14), and publishes at close ([D3](../decisions.md#d3)) with whatever answers it got.
 - **No responses**: cycle transitions to `published` with no answers (the auto-publish sweep in §5.3 has nothing non-empty to find). UI renders "No one responded this month." There is nothing to comment on or react to: engagement targets published text answers only ([`api.md` §8](api.md#8-engagement-routes-comments--reactions), [`engagement.md` §3](engagement.md#3-polls)).
 - **Group with 1 member**: works fine. The member can vote on their own questions, write their own answers, comment on themselves. Slightly silly, never broken.
 
@@ -461,3 +472,11 @@ A weekly window equal to the period (7 days) is allowed: cycle N closes at the s
 ### 13.4 Labels
 
 On a monthly deployment, the SPA names an edition by month ("October 2026"). On a weekly one, it names an edition by its publication date ("Nov 15, 2026"): `publishedAt` once published, and the scheduled `responseCloseAt` before that ([`frontend.md` §14a](frontend.md#14a-client-derived-display-data-not-api-fields)).
+
+## 14. The standing question
+
+Every edition ends with the same free-response question, after the promoted candidates. Its full prompt is written once, in [`shared/standing-question.txt`](../../shared/standing-question.txt). The backend embeds it as `shared::config::STANDING_QUESTION_PROMPT`, and the frontend's demo data imports the same file.
+
+- **Created at promotion.** `promote_and_open` (§5.2) appends it as a `text` `LockedQuestion` with a fresh `question_id` and `display_order` equal to the number of promoted candidates, so it is always last. It is added even when no candidate was promoted, and it doesn't count toward `questionsPerCycle`.
+- **Nobody asked it.** Its `submitted_by` is absent ([`data-model.md` §2.8](data-model.md#28-locked-question)), so the API returns `askedBy: null` and `isAnonymous: false`, plus `isStanding: true` ([`api.md` §5.2](api.md#52-get-groupsgroupidnewsletterscycleid)). It adds nothing to any member's `questions_asked`.
+- **Otherwise an ordinary text question.** Answers to it autosave, publish at close, count toward `editions_answered`, and take comments and reactions like any other.

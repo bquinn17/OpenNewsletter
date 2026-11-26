@@ -28,7 +28,7 @@ fn locked_question(
         prompt: prompt.to_owned(),
         poll_options: None,
         display_order: 0,
-        submitted_by: UserId::new("u1"),
+        submitted_by: Some(UserId::new("u1")),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     }

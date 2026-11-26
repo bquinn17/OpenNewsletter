@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { gotoHome, openCurrentEdition, openUpcoming } from "./helpers";
+import { STANDING_QUESTION_PROMPT } from "../standingQuestion";
 
 /**
  * As many of `docs/development/testing-and-ci.md` §4.3's golden paths as the mock transport
@@ -103,7 +104,7 @@ test.describe("save draft → reload", () => {
 
     await gotoHome(page);
     await openCurrentEdition(page);
-    await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
+    await page.getByRole("link", { name: STANDING_QUESTION_PROMPT }).click();
 
     const textarea = page.getByPlaceholder("Tell us about it…");
     await textarea.fill(draftText);

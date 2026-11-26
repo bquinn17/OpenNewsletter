@@ -166,6 +166,7 @@ function QuestionBody({
             kind={question.kind}
             askedBy={question.askedBy}
             isAnonymous={question.isAnonymous}
+            isStanding={question.isStanding}
           />
         </div>
       </div>

@@ -290,7 +290,7 @@ export const newsletters: Record<string, S["NewsletterSummary"][]> = {
       responseOpenAt: iso(-2 * DAY_MS),
       responseCloseAt: iso(5 * DAY_MS),
       publishedAt: null,
-      questionCount: 4,
+      questionCount: 5,
       myDraftCount: 2,
       myPublishedCount: 0,
       myAnsweredCount: 2,

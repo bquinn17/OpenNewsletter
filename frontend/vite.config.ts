@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { VitePWA } from "vite-plugin-pwa";
@@ -53,7 +53,11 @@ export default defineConfig(({ mode }) => ({
       },
     }),
   ],
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    // The demo data imports `shared/standing-question.txt`, outside this package.
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), "../shared"] },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

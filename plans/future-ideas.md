@@ -845,10 +845,10 @@ Today a `Group` is created only by `scripts/bootstrap_admin.py`, out-of-band ([`
 
 ### 17.1 Requesting a group
 
-- On the Home page, under "Your groups," next to **+ Join with an invite code**, add **+ Create a group**.
+- The entry that ends the header's group switcher menu ([`frontend.md` §4.1](../docs/design/frontend.md#41-shell)) and the one under Settings → Your groups, both **Join with an invite code** today, become **＋ Join or create a group**. Each opens a new page that offers both: paste an invite code (today's `JoinForm`), or request a new group (the form below).
 - The form asks for a group name and a short description. The submitter becomes that group's admin once (and if) it's approved.
 - `POST /groups/requests` (new route, any authenticated user) creates a `GroupRequest` row: `pk=GROUPREQ#{request_id}`, holding `name`, `description`, `requested_by`, `status` (`pending` | `approved` | `rejected`), `created_at` and `decided_at`/`decided_by`. It does **not** create a `Group` row yet — nothing exists for other members to see or join until a site admin approves it.
-- The requester sees their pending request's status on Home in place of the create button, so they can't submit a second one while the first is undecided.
+- The requester sees their pending request's status on that page in place of the request form, so they can't submit a second one while the first is undecided.
 
 ### 17.2 The Site Admin role
 

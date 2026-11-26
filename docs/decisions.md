@@ -266,6 +266,15 @@ Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-
 
 **Where.** [`data-model.md` §1](design/data-model.md#1-table-shape-recap), [`lifecycle.md` §5.5](design/lifecycle.md#55-time-math-rust), [`api.md` §1](design/api.md#1-general-conventions).
 
+<a id="standing-question"></a>
+### Every edition ends with a standing free-response question
+
+**Decision.** Promotion adds one free-response question to every edition, after the voted-in ones. Its wording is in [`shared/standing-question.txt`](../shared/standing-question.txt). It doesn't use up a `questionsPerCycle` slot, nobody is credited with asking it, and groups can't turn it off.
+
+**Why.** It gives members somewhere to share news that no suggested question asked about. It also means an edition always has something to answer, even in a cycle where nobody suggested a question.
+
+**Where.** [`lifecycle.md` §14](design/lifecycle.md#14-the-standing-question), [`data-model.md` §2.8](design/data-model.md#28-locked-question), [`api.md` §5.2](design/api.md#52-get-groupsgroupidnewsletterscycleid).
+
 ---
 
 ## Design review: performance and cost

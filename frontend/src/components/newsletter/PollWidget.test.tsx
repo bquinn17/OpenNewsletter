@@ -15,6 +15,7 @@ function question(
     displayOrder: 0,
     askedBy: null,
     isAnonymous: true,
+    isStanding: false,
     options: [
       { optionId: "a", label: "Mt Si", voteCount: 3 },
       { optionId: "b", label: "Lake 22", voteCount: 1 },

@@ -78,7 +78,7 @@ mod tests {
                 },
             ]),
             display_order: 0,
-            submitted_by: domain::UserId::new("u1"),
+            submitted_by: Some(domain::UserId::new("u1")),
             is_anonymous: false,
             locked_at: domain::Timestamp::now(),
         }
