@@ -540,6 +540,7 @@ paths:
                       avatarColor: "teal"
                       avatarUrl: null
                     isAnonymous: false
+                    isStanding: false
                     answers:
                       - responseId: "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c"
                         userId: "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f"
@@ -558,6 +559,7 @@ paths:
                     displayOrder: 1
                     askedBy: null
                     isAnonymous: true
+                    isStanding: false
                     options:
                       - optionId: "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e"
                         label: "Mt Si"
@@ -2628,7 +2630,7 @@ components:
 
     OpenQuestionResponse:
       type: object
-      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous, myResponse]
+      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous, isStanding, myResponse]
       properties:
         questionId:
           type: string
@@ -2644,6 +2646,11 @@ components:
             - type: "null"
         isAnonymous:
           type: boolean
+        isStanding:
+          type: boolean
+          description: >
+            True only for the standing question every cycle carries in
+            addition to its promoted candidates (`docs/design/lifecycle.md` §14).
         pollOptions:
           type: array
           items:
@@ -2811,7 +2818,7 @@ components:
 
     PublishedQuestionResponse:
       type: object
-      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous]
+      required: [questionId, kind, prompt, displayOrder, askedBy, isAnonymous, isStanding]
       description: Exactly one of `answers` (text) / `options`+`myVoteOptionId` (poll) is present, matching `kind`.
       properties:
         questionId:
@@ -2828,6 +2835,11 @@ components:
             - type: "null"
         isAnonymous:
           type: boolean
+        isStanding:
+          type: boolean
+          description: >
+            True only for the standing question every cycle carries in
+            addition to its promoted candidates (`docs/design/lifecycle.md` §14).
         answers:
           type: array
           items:

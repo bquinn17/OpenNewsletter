@@ -153,7 +153,8 @@ async fn a_cycle_runs_from_voting_through_open_to_published_and_seeds_the_next_c
         .unwrap()
         .expect("cycle exists");
     assert_eq!(opened.status, NewsletterStatus::Open);
-    assert_eq!(opened.locked_question_ids.len(), 2);
+    // The top 2 promoted candidates, plus the standing question appended last.
+    assert_eq!(opened.locked_question_ids.len(), 3);
     assert_eq!(opened.locked_question_ids[0], question_ids[0]);
     assert_eq!(opened.locked_question_ids[1], question_ids[1]);
 

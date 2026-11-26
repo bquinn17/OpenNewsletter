@@ -6,12 +6,12 @@
 use domain::api::{CycleTransition, DevTickCycleResponse};
 use domain::{
     CandidateQuestion, CycleId, GroupId, LockedQuestion, MemberStats, Newsletter, NewsletterStatus,
-    Response, ResponseStatus, Timestamp, UserId,
+    QuestionId, QuestionKind, Response, ResponseStatus, Timestamp, UserId,
 };
 use futures::StreamExt;
 use persistence::responses::AutoPublishOutcome;
 use persistence::{groups, member_stats, newsletters, questions, responses, Repo, RepoError};
-use shared::config::STREAK_SETTLE_CONCURRENCY;
+use shared::config::{STANDING_QUESTION_PROMPT, STREAK_SETTLE_CONCURRENCY};
 use shared::cycle_time::CycleCadence;
 use std::collections::{HashMap, HashSet};
 
@@ -245,7 +245,8 @@ async fn promote_and_open(
     chosen.sort_by(CandidateQuestion::promotion_order);
     chosen.truncate(nl.questions_to_promote(&group.cycle_settings) as usize);
 
-    let locked: Vec<LockedQuestion> = chosen
+    let promoted_count = chosen.len();
+    let mut locked: Vec<LockedQuestion> = chosen
         .into_iter()
         .enumerate()
         .map(|(idx, c)| LockedQuestion {
@@ -256,11 +257,26 @@ async fn promote_and_open(
             prompt: c.prompt,
             poll_options: c.poll_options,
             display_order: idx as u32,
-            submitted_by: c.submitted_by,
+            submitted_by: Some(c.submitted_by),
             is_anonymous: c.is_anonymous,
             locked_at: now,
         })
         .collect();
+
+    // The standing question (§14): always appended last, regardless of the
+    // candidate pool, and never counted against `questionsPerCycle`.
+    locked.push(LockedQuestion {
+        question_id: QuestionId::generate(),
+        group_id: nl.group_id.clone(),
+        cycle_id: nl.cycle_id.clone(),
+        kind: QuestionKind::Text,
+        prompt: STANDING_QUESTION_PROMPT.into(),
+        poll_options: None,
+        display_order: promoted_count as u32,
+        submitted_by: None,
+        is_anonymous: false,
+        locked_at: now,
+    });
 
     let mut opened = nl.clone();
     opened.status = NewsletterStatus::Open;
@@ -609,7 +625,8 @@ async fn bump_answerers(repo: &Repo, nl: &Newsletter, answerers: &HashSet<UserId
 /// `published` (`docs/design/data-model.md` §4 call-out under §2.17;
 /// `docs/design/lifecycle.md` §5.3). Skipped entirely for an empty edition
 /// (`lifecycle.md` §9: no locked questions) — it neither extends nor breaks a
-/// streak. `authors` is [`SweepReport::authors`]: every user with at least
+/// streak. Promotion always adds the standing question (§14), so an edition
+/// holding only that question still settles streaks like any other. `authors` is [`SweepReport::authors`]: every user with at least
 /// one published answer to a locked question, after the sweep.
 ///
 /// Members settle concurrently, up to `STREAK_SETTLE_CONCURRENCY` at a time.

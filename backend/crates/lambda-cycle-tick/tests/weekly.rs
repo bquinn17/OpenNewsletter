@@ -63,7 +63,9 @@ async fn a_weekly_tick_promotes_a_cycle_and_creates_a_yyyymmdd_successor_at_the_
         .unwrap()
         .unwrap();
     assert_eq!(opened.status, NewsletterStatus::Open);
-    assert_eq!(opened.locked_question_ids, vec![QuestionId::new("q1")]);
+    // The one promoted candidate, plus the standing question appended last.
+    assert_eq!(opened.locked_question_ids.len(), 2);
+    assert_eq!(opened.locked_question_ids[0], QuestionId::new("q1"));
 
     let next_voting = newsletters::find_voting_cycle(&repo, &voting.group_id)
         .await

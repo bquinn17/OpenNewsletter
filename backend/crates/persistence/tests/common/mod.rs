@@ -147,7 +147,27 @@ pub fn locked_question(
         prompt: "What's your favorite hike?".into(),
         poll_options: None,
         display_order: 0,
-        submitted_by: UserId::new(submitter),
+        submitted_by: Some(UserId::new(submitter)),
+        is_anonymous: false,
+        locked_at: utc("2026-06-01T00:00:00Z"),
+    }
+}
+
+pub fn standing_locked_question(
+    group_id: &str,
+    cycle_id: &str,
+    question_id: &str,
+    display_order: u32,
+) -> LockedQuestion {
+    LockedQuestion {
+        question_id: QuestionId::new(question_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        kind: QuestionKind::Text,
+        prompt: shared::config::STANDING_QUESTION_PROMPT.into(),
+        poll_options: None,
+        display_order,
+        submitted_by: None,
         is_anonymous: false,
         locked_at: utc("2026-06-01T00:00:00Z"),
     }

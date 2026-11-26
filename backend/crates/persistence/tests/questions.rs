@@ -371,3 +371,39 @@ async fn delete_vote_if_present_releases_the_voters_slot() {
         .await
         .unwrap();
 }
+
+/// The standing question (`docs/design/lifecycle.md` §5.2) has no submitter,
+/// so it must never bump anyone's `MemberStats.questions_asked`, unlike a
+/// promoted candidate.
+#[tokio::test]
+async fn promote_candidates_tx_never_bumps_questions_asked_for_the_standing_question() {
+    let (_c, repo) = common::make_repo().await;
+    let group_id = "g-standing-stats";
+    let nl = common::voting_newsletter(group_id, "202606");
+    persistence::newsletters::write_status_transition(&repo, &nl)
+        .await
+        .unwrap();
+
+    let promoted = common::locked_question(group_id, "202606", "q1", "u1");
+    let standing = common::standing_locked_question(group_id, "202606", "q-standing", 1);
+
+    let mut opened = nl.clone();
+    opened.status = NewsletterStatus::Open;
+    opened.locked_question_ids = vec![promoted.question_id.clone(), standing.question_id.clone()];
+    opened.next_transition_at = Some(Timestamp::now());
+    questions::promote_candidates_tx(&repo, &[promoted, standing], &opened)
+        .await
+        .unwrap();
+
+    let stats = persistence::member_stats::list_stats_for_group(&repo, &GroupId::new(group_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        stats.len(),
+        1,
+        "only u1's promoted candidate bumps a stats row"
+    );
+    let u1_stats = &stats[0];
+    assert_eq!(u1_stats.user_id, UserId::new("u1"));
+    assert_eq!(u1_stats.questions_asked, 1);
+}

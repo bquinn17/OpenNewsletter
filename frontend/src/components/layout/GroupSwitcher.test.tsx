@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { GroupSwitcher } from "./GroupSwitcher";
 
@@ -20,11 +21,19 @@ const memberships = [
   },
 ];
 
+function renderSwitcher(list: typeof memberships, onPick = vi.fn()) {
+  render(
+    <MemoryRouter>
+      <GroupSwitcher memberships={list} currentGroupId="g1" onPick={onPick} />
+    </MemoryRouter>,
+  );
+}
+
 describe("GroupSwitcher", () => {
   it("is fully keyboard operable: open, pick, and Escape back to the trigger", async () => {
     const user = userEvent.setup();
     const onPick = vi.fn();
-    render(<GroupSwitcher memberships={memberships} currentGroupId="g1" onPick={onPick} />);
+    renderSwitcher(memberships, onPick);
 
     const trigger = screen.getByRole("button", { name: /Trail Crew/ });
     await user.click(trigger);
@@ -37,5 +46,16 @@ describe("GroupSwitcher", () => {
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: /Game Night/ }));
     expect(onPick).toHaveBeenCalledWith("g2");
+  });
+
+  it("ends the menu with a link to join another group, even with only one group", async () => {
+    const user = userEvent.setup();
+    renderSwitcher(memberships.slice(0, 1));
+
+    await user.click(screen.getByRole("button", { name: /Trail Crew/ }));
+    const items = screen.getAllByRole("menuitem");
+    expect(items).toHaveLength(2);
+    expect(items.at(-1)).toHaveAccessibleName("Join with an invite code");
+    expect(items.at(-1)).toHaveAttribute("href", "/join");
   });
 });

@@ -66,12 +66,74 @@ async fn ties_go_to_the_older_suggestion_and_zero_vote_candidates_fill_the_rest(
         .unwrap()
         .unwrap();
     assert_eq!(opened.status, NewsletterStatus::Open);
+    // The top 3 promoted, in order, plus the standing question appended last
+    // with a freshly generated id (`docs/design/lifecycle.md` §5.2).
+    assert_eq!(opened.locked_question_ids.len(), 4);
     assert_eq!(
-        opened.locked_question_ids,
-        vec![
+        &opened.locked_question_ids[..3],
+        &[
             QuestionId::new("q-z"),
             QuestionId::new("q-a"),
             QuestionId::new("q-m")
         ]
     );
+    let locked = questions::list_locked_questions(&repo, &voting.group_id, &voting.cycle_id)
+        .await
+        .unwrap();
+    let standing = locked
+        .iter()
+        .find(|lq| lq.question_id == opened.locked_question_ids[3])
+        .expect("standing question row exists");
+    assert!(standing.is_standing());
+    assert_eq!(standing.display_order, 3);
+    assert_eq!(standing.prompt, shared::config::STANDING_QUESTION_PROMPT);
+}
+
+/// Even with no candidates suggested at all, the cycle still promotes to
+/// `open` — with exactly the standing question (`docs/design/lifecycle.md`
+/// §5.2, §9).
+#[tokio::test]
+async fn an_empty_candidate_pool_still_promotes_with_just_the_standing_question() {
+    let (_c, repo) = common::make_test_repo().await;
+    let group = common::group("g-empty-pool", "u1");
+    groups::put_group(&repo, &group).await.unwrap();
+
+    let now = Timestamp::now();
+    let tz = shared::cycle_time::time_zone(&group.timezone).unwrap();
+    let voting = Newsletter {
+        group_id: GroupId::new("g-empty-pool"),
+        cycle_id: shared::cycle_time::cycle_id_for(CycleCadence::Monthly, now, &tz),
+        status: NewsletterStatus::Voting,
+        vote_window_open_at: now - SignedDuration::from_hours(30 * 24),
+        vote_window_close_at: now - SignedDuration::from_mins(1),
+        response_open_at: now - SignedDuration::from_mins(1),
+        response_close_at: now + SignedDuration::from_hours(7 * 24),
+        published_at: None,
+        next_transition_at: Some(now - SignedDuration::from_mins(1)),
+        locked_question_ids: Vec::new(),
+        notified_offsets_hours: Vec::new(),
+        notified_on_open: false,
+        questions_per_cycle: None,
+        votes_per_user_per_cycle: None,
+    };
+    newsletters::write_status_transition(&repo, &voting)
+        .await
+        .unwrap();
+
+    run_tick(&repo, CycleCadence::Monthly).await;
+
+    let opened = newsletters::get_newsletter(&repo, &voting.group_id, &voting.cycle_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opened.status, NewsletterStatus::Open);
+    assert_eq!(opened.locked_question_ids.len(), 1);
+
+    let locked = questions::list_locked_questions(&repo, &voting.group_id, &voting.cycle_id)
+        .await
+        .unwrap();
+    assert_eq!(locked.len(), 1);
+    assert!(locked[0].is_standing());
+    assert_eq!(locked[0].display_order, 0);
+    assert_eq!(locked[0].prompt, shared::config::STANDING_QUESTION_PROMPT);
 }

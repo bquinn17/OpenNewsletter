@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Avatar } from "../ui/Avatar";
 import { useDismissableMenu } from "../ui/useDismissableMenu";
 import { gradientClasses } from "../../utils/gradient";
@@ -37,18 +38,16 @@ export function GroupSwitcher({ memberships, currentGroupId, onPick }: Props) {
           colorClassName={gradientClasses(current.gradient)}
         />
         <span className="max-w-[10rem] truncate text-sm font-semibold">{current.groupName}</span>
-        {memberships.length > 1 && (
-          <svg
-            className="h-4 w-4 shrink-0 text-inkmuted"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            aria-hidden
-          >
-            <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" />
-          </svg>
-        )}
+        <svg
+          className="h-4 w-4 shrink-0 text-inkmuted"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden
+        >
+          <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" />
+        </svg>
       </button>
-      {open && memberships.length > 1 && (
+      {open && (
         <div
           role="menu"
           className="absolute left-0 z-40 mt-2 w-60 rounded-2xl border border-line bg-white p-1 shadow-pop"
@@ -67,6 +66,22 @@ export function GroupSwitcher({ memberships, currentGroupId, onPick }: Props) {
               <span className="truncate text-sm font-semibold">{m.groupName}</span>
             </button>
           ))}
+          {/* Always last, so joining another group is one tap from any page (`docs/design/frontend.md` §7.1). */}
+          <div role="separator" className="my-1 border-t border-line" />
+          <Link
+            to="/join"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-cream"
+          >
+            <span
+              aria-hidden
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 border-dashed border-line text-xs text-inkmuted"
+            >
+              ＋
+            </span>
+            <span className="truncate text-sm font-semibold">Join with an invite code</span>
+          </Link>
         </div>
       )}
     </div>

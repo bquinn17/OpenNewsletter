@@ -113,6 +113,7 @@ function textQuestion(
     displayOrder: 0,
     askedBy: null,
     isAnonymous: false,
+    isStanding: false,
     myResponse,
   };
 }
@@ -142,6 +143,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -189,6 +191,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -216,6 +219,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: {
             responseId: "r1",
             status: "draft",
@@ -232,6 +236,7 @@ describe("RespondPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
         {
@@ -241,6 +246,7 @@ describe("RespondPage", () => {
           displayOrder: 2,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -282,6 +288,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
         {
@@ -291,6 +298,7 @@ describe("RespondPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: {
             responseId: "r2",
             status: "draft",
@@ -307,6 +315,7 @@ describe("RespondPage", () => {
           displayOrder: 2,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -348,6 +357,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: {
             responseId: "r1",
             status: "draft",
@@ -364,6 +374,7 @@ describe("RespondPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -405,6 +416,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -448,6 +460,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: {
             responseId: "r1",
             status: "draft",
@@ -521,6 +534,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
       ]),
@@ -677,6 +691,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           pollOptions: [
             { optionId: "optA", label: "Option A" },
             { optionId: "optB", label: "Option B" },
@@ -720,6 +735,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           pollOptions: [
             { optionId: "optA", label: "Option A" },
             { optionId: "optB", label: "Option B" },
@@ -758,6 +774,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           pollOptions: [
             { optionId: "optA", label: "Option A" },
             { optionId: "optB", label: "Option B" },
@@ -814,6 +831,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           pollOptions: [
             { optionId: "optA", label: "Option A" },
             { optionId: "optB", label: "Option B" },
@@ -854,6 +872,7 @@ describe("RespondPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           pollOptions: [
             { optionId: "optA", label: "Option A" },
             { optionId: "optB", label: "Option B" },

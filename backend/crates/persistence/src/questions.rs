@@ -592,7 +592,9 @@ pub async fn promote_candidates_tx(
     // (`docs/design/data-model.md` §4 #3).
     let mut questions_asked: HashMap<&UserId, i64> = HashMap::new();
     for q in locked.iter().filter(|q| !q.is_anonymous) {
-        *questions_asked.entry(&q.submitted_by).or_insert(0) += 1;
+        if let Some(submitter) = &q.submitted_by {
+            *questions_asked.entry(submitter).or_insert(0) += 1;
+        }
     }
 
     if locked.len() + questions_asked.len() + 1 > 99 {

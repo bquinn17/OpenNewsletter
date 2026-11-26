@@ -122,6 +122,44 @@ async fn save_draft_stores_and_returns_the_draft() {
     assert_eq!(ResponseDto::from(stored), saved);
 }
 
+/// Answering the standing question (`docs/design/lifecycle.md` §5.2) is just
+/// answering a text question — its `submittedBy` is absent, which this route
+/// never consults.
+#[tokio::test]
+async fn a_member_can_save_and_submit_an_answer_to_the_standing_question() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("g-standing-save", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Member).await;
+    newsletters::write_status_transition(
+        &repo,
+        &common::open_newsletter("g-standing-save", "202606"),
+    )
+    .await
+    .unwrap();
+    let mut standing = common::locked_question("g-standing-save", "202606", "q-standing", "u1");
+    standing.submitted_by = None;
+    common::put_locked_question(&repo, &standing).await;
+
+    let state = state(repo);
+    let caller = UserId::new("u1");
+    let group_id = GroupId::new("g-standing-save");
+    let cycle_id = CycleId::new("202606");
+    let question_id = QuestionId::new("q-standing");
+
+    let saved = handlers::save_response(
+        &state,
+        &caller,
+        &group_id,
+        &cycle_id,
+        &question_id,
+        text_request("Nothing much, just the usual.", vec![], true),
+    )
+    .await
+    .expect("member can submit an answer to the standing question");
+    assert_eq!(saved.status, ResponseStatus::Published);
+    assert_eq!(saved.body.as_deref(), Some("Nothing much, just the usual."));
+}
+
 #[tokio::test]
 async fn interleaved_saves_last_write_wins_with_stable_response_id() {
     let (_c, repo) = common::make_repo().await;

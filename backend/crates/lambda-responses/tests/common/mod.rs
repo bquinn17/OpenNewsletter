@@ -132,7 +132,7 @@ pub fn poll_locked_question(
                 .collect(),
         ),
         display_order: 0,
-        submitted_by: UserId::new(submitter),
+        submitted_by: Some(UserId::new(submitter)),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     }

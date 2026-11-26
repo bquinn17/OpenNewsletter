@@ -232,6 +232,7 @@ function QuestionRow({
           kind={q.kind}
           askedBy={q.askedBy}
           isAnonymous={q.isAnonymous}
+          isStanding={q.isStanding}
           className="mt-0.5"
         />
         {preview && <div className="mt-1 text-sm text-inkmuted">{preview}</div>}
@@ -328,6 +329,7 @@ function PublishedLayout({
                 kind={q.kind}
                 askedBy={q.askedBy}
                 isAnonymous={q.isAnonymous}
+                isStanding={q.isStanding}
               />
               <span className="mt-1 flex-shrink-0 text-inkmuted" aria-hidden>
                 {isExpanded ? "−" : "+"}

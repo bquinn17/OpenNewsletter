@@ -209,7 +209,7 @@ async fn open_detail_shows_only_the_callers_own_draft() {
         prompt: "Best hike?".into(),
         poll_options: None,
         display_order: 0,
-        submitted_by: UserId::new("u1"),
+        submitted_by: Some(UserId::new("u1")),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
@@ -252,6 +252,80 @@ async fn open_detail_shows_only_the_callers_own_draft() {
                 questions[0].my_response.is_none(),
                 "u1 has no draft; must not see u2's"
             );
+            assert!(!questions[0].is_standing);
+        }
+        other => panic!("expected Open, got {other:?}"),
+    }
+}
+
+/// The standing question (`docs/design/lifecycle.md` §5.2) always has a null
+/// `askedBy` and `isAnonymous: false`, whatever its `submittedBy`, and is
+/// distinguished from a promoted candidate only by `isStanding`.
+#[tokio::test]
+async fn open_detail_marks_the_standing_question() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gstand", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    persistence::users::put_user(&repo, &common::user("u1"))
+        .await
+        .unwrap();
+
+    let mut open = common::voting_newsletter("gstand", "202606");
+    open.status = domain::NewsletterStatus::Open;
+    open.locked_question_ids = vec![QuestionId::new("q-promoted"), QuestionId::new("q-standing")];
+    nl_repo::write_status_transition(&repo, &open)
+        .await
+        .unwrap();
+
+    let promoted = LockedQuestion {
+        question_id: QuestionId::new("q-promoted"),
+        group_id: GroupId::new("gstand"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Text,
+        prompt: "Best hike?".into(),
+        poll_options: None,
+        display_order: 0,
+        submitted_by: Some(UserId::new("u1")),
+        is_anonymous: false,
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
+    };
+    let standing = LockedQuestion {
+        question_id: QuestionId::new("q-standing"),
+        group_id: GroupId::new("gstand"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Text,
+        prompt: shared::config::STANDING_QUESTION_PROMPT.into(),
+        poll_options: None,
+        display_order: 1,
+        submitted_by: None,
+        is_anonymous: false,
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
+    };
+    for lq in [&promoted, &standing] {
+        put_locked_question_directly(&repo, lq).await;
+    }
+
+    let state = state(repo);
+    let detail = handlers::get_newsletter_detail(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gstand"),
+        &CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
+
+    match detail {
+        NewsletterDetailResponse::Open { questions, .. } => {
+            assert_eq!(questions.len(), 2);
+            assert!(!questions[0].is_standing);
+            assert!(questions[1].is_standing);
+            assert!(questions[1].asked_by.is_none());
+            assert!(!questions[1].is_anonymous);
+            assert_eq!(
+                questions[1].prompt,
+                shared::config::STANDING_QUESTION_PROMPT
+            );
         }
         other => panic!("expected Open, got {other:?}"),
     }
@@ -285,7 +359,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
         prompt: "Best hike?".into(),
         poll_options: None,
         display_order: 0,
-        submitted_by: UserId::new("u1"),
+        submitted_by: Some(UserId::new("u1")),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
@@ -306,7 +380,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             },
         ]),
         display_order: 1,
-        submitted_by: UserId::new("u2"),
+        submitted_by: Some(UserId::new("u2")),
         is_anonymous: true,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
@@ -401,6 +475,7 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             assert_eq!(questions.len(), 2);
 
             let text_q = &questions[0];
+            assert!(!text_q.is_standing);
             let answers = text_q.answers.as_ref().expect("text question has answers");
             assert_eq!(answers.len(), 1);
             assert_eq!(answers[0].body.as_deref(), Some("Lake 22, hands down."));
@@ -411,10 +486,90 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
             assert!(answers[0].reaction_groups[0].reacted_by_me);
 
             let poll_q = &questions[1];
+            assert!(!poll_q.is_standing);
             assert!(poll_q.is_anonymous);
             // The caller (u1) is a group admin, so anonymity is redacted even
             // though u1 isn't the submitter (u2) — admins always see attribution.
             assert!(poll_q.asked_by.is_some());
+        }
+        other => panic!("expected Published, got {other:?}"),
+    }
+}
+
+/// The standing question keeps `isStanding: true`, a null `askedBy` and
+/// `isAnonymous: false` once the edition is published too.
+#[tokio::test]
+async fn published_detail_marks_the_standing_question() {
+    let (_c, repo) = common::make_repo().await;
+    let group = common::group("gstandpub", "u1");
+    common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
+    persistence::users::put_user(&repo, &common::user("u1"))
+        .await
+        .unwrap();
+
+    let mut published = common::voting_newsletter("gstandpub", "202606");
+    published.status = domain::NewsletterStatus::Published;
+    published.published_at = Some("2026-06-05T00:00:00Z".parse::<Timestamp>().unwrap());
+    published.locked_question_ids = vec![QuestionId::new("q-standing")];
+    nl_repo::write_status_transition(&repo, &published)
+        .await
+        .unwrap();
+
+    let standing = LockedQuestion {
+        question_id: QuestionId::new("q-standing"),
+        group_id: GroupId::new("gstandpub"),
+        cycle_id: CycleId::new("202606"),
+        kind: QuestionKind::Text,
+        prompt: shared::config::STANDING_QUESTION_PROMPT.into(),
+        poll_options: None,
+        display_order: 0,
+        submitted_by: None,
+        is_anonymous: false,
+        locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
+    };
+    put_locked_question_directly(&repo, &standing).await;
+
+    common::put_response(
+        &repo,
+        &Response {
+            response_id: ResponseId::new("r1"),
+            user_id: UserId::new("u1"),
+            question_id: QuestionId::new("q-standing"),
+            group_id: GroupId::new("gstandpub"),
+            cycle_id: CycleId::new("202606"),
+            kind: QuestionKind::Text,
+            status: ResponseStatus::Published,
+            body: Some("Nothing much, just the usual.".into()),
+            poll_option_id: None,
+            image_media_ids: Vec::new(),
+            updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
+            published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
+            reaction_count: 0,
+        },
+    )
+    .await;
+
+    let state = state(repo);
+    let detail = handlers::get_newsletter_detail(
+        &state,
+        &UserId::new("u1"),
+        &GroupId::new("gstandpub"),
+        &CycleId::new("202606"),
+    )
+    .await
+    .unwrap();
+
+    match detail {
+        NewsletterDetailResponse::Published { questions, .. } => {
+            assert_eq!(questions.len(), 1);
+            assert!(questions[0].is_standing);
+            assert!(questions[0].asked_by.is_none());
+            assert!(!questions[0].is_anonymous);
+            let answers = questions[0]
+                .answers
+                .as_ref()
+                .expect("text question has answers");
+            assert_eq!(answers.len(), 1);
         }
         other => panic!("expected Published, got {other:?}"),
     }
@@ -514,7 +669,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
         prompt: "Best hike?".into(),
         poll_options: None,
         display_order: 0,
-        submitted_by: UserId::new("u1"),
+        submitted_by: Some(UserId::new("u1")),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };
@@ -535,7 +690,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
             },
         ]),
         display_order: 1,
-        submitted_by: UserId::new("u2"),
+        submitted_by: Some(UserId::new("u2")),
         is_anonymous: false,
         locked_at: "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     };

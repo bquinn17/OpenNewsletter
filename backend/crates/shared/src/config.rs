@@ -58,6 +58,12 @@ pub const MAX_RESPONSE_WINDOW_DAYS: u32 = 28;
 /// its own period.
 pub const MAX_WEEKLY_RESPONSE_WINDOW_DAYS: u32 = 7;
 
+/// Prompt for the standing question every cycle carries in addition to its
+/// promoted candidates (`docs/design/lifecycle.md` §14). The text lives in
+/// `shared/standing-question.txt`, which the frontend's demo data reads too.
+pub const STANDING_QUESTION_PROMPT: &str =
+    include_str!("../../../../shared/standing-question.txt").trim_ascii();
+
 pub const MAX_PROMPT_CHARS: usize = 500;
 pub const MIN_PROMPT_CHARS: usize = 5;
 pub const MAX_RESPONSE_BODY_CHARS: usize = 20_000;
@@ -249,6 +255,13 @@ pub fn default_group_settings() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standing_question_prompt_is_a_valid_trimmed_prompt() {
+        let len = STANDING_QUESTION_PROMPT.chars().count();
+        assert!((MIN_PROMPT_CHARS..=MAX_PROMPT_CHARS).contains(&len));
+        assert_eq!(STANDING_QUESTION_PROMPT, STANDING_QUESTION_PROMPT.trim());
+    }
 
     #[test]
     fn default_group_settings_has_the_keys_get_config_contracts_on() {

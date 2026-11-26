@@ -38,6 +38,7 @@ function publishedWith(
         displayOrder: 0,
         askedBy: null,
         isAnonymous: false,
+        isStanding: false,
         answers: [
           {
             responseId: "r1",

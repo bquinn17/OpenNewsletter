@@ -875,6 +875,8 @@ export interface components {
             displayOrder: number;
             askedBy: components["schemas"]["AskedBy"] | null;
             isAnonymous: boolean;
+            /** @description True only for the standing question every cycle carries in addition to its promoted candidates (`docs/design/lifecycle.md` §14). */
+            isStanding: boolean;
             pollOptions?: components["schemas"]["PollOptionResponse"][];
             myResponse: components["schemas"]["MyResponseSummary"] | null;
         };
@@ -953,6 +955,8 @@ export interface components {
             displayOrder: number;
             askedBy: components["schemas"]["AskedBy"] | null;
             isAnonymous: boolean;
+            /** @description True only for the standing question every cycle carries in addition to its promoted candidates (`docs/design/lifecycle.md` §14). */
+            isStanding: boolean;
             answers?: components["schemas"]["PublishedAnswerResponse"][];
             options?: components["schemas"]["PublishedPollOptionResponse"][];
             myVoteOptionId?: string;
@@ -2007,6 +2011,7 @@ export interface operations {
                      *             "avatarUrl": null
                      *           },
                      *           "isAnonymous": false,
+                     *           "isStanding": false,
                      *           "answers": [
                      *             {
                      *               "responseId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
@@ -2033,6 +2038,7 @@ export interface operations {
                      *           "displayOrder": 1,
                      *           "askedBy": null,
                      *           "isAnonymous": true,
+                     *           "isStanding": false,
                      *           "options": [
                      *             {
                      *               "optionId": "018f2b6b-6c1b-7c3a-9d4e-6f7a8b9c0d1e",

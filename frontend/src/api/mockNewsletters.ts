@@ -9,6 +9,7 @@ import {
   newsletters,
   type MockRequest,
 } from "./mockShared";
+import standingQuestionPrompt from "../../../shared/standing-question.txt?raw";
 
 type S = components["schemas"];
 type AskedBy = S["AskedBy"];
@@ -31,6 +32,9 @@ const TARA: AskedBy = {
 // up live from the `responses` store below so a PUT is reflected on the next
 // GET). ----
 
+/** The standing question's prompt, from the same file the backend reads (`docs/design/lifecycle.md` §14). */
+const STANDING_PROMPT = standingQuestionPrompt.trim();
+
 export type OpenQuestionSeed = Omit<OpenQuestion, "myResponse">;
 
 export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
@@ -42,6 +46,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 0,
       askedBy: SAM,
       isAnonymous: false,
+      isStanding: false,
     },
     {
       questionId: "q_trail_photo",
@@ -50,6 +55,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 1,
       askedBy: null,
       isAnonymous: false,
+      isStanding: false,
     },
     {
       questionId: "q_trail_poll",
@@ -58,6 +64,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 2,
       askedBy: null,
       isAnonymous: true,
+      isStanding: false,
       pollOptions: [
         { optionId: "opt_misi", label: "Mt Si" },
         { optionId: "opt_lake22", label: "Lake 22" },
@@ -65,20 +72,22 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       ],
     },
     {
-      questionId: "q_trail_mind",
-      kind: "text",
-      prompt: "💬 On Your Mind — what's been on your mind lately?",
-      displayOrder: 3,
-      askedBy: null,
-      isAnonymous: false,
-    },
-    {
       questionId: "q_trail_checkout",
       kind: "text",
       prompt: "👀 Check It Out — recommend something",
+      displayOrder: 3,
+      askedBy: null,
+      isAnonymous: false,
+      isStanding: false,
+    },
+    {
+      questionId: "q_trail_mind",
+      kind: "text",
+      prompt: STANDING_PROMPT,
       displayOrder: 4,
       askedBy: null,
       isAnonymous: false,
+      isStanding: true,
     },
   ],
   g_meeple: [
@@ -89,6 +98,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 0,
       askedBy: TARA,
       isAnonymous: false,
+      isStanding: false,
     },
     {
       questionId: "q_meeple_poll",
@@ -97,6 +107,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 1,
       askedBy: null,
       isAnonymous: true,
+      isStanding: false,
       pollOptions: [
         { optionId: "opt_coop", label: "Co-op" },
         { optionId: "opt_party", label: "Party games" },
@@ -110,6 +121,7 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 2,
       askedBy: null,
       isAnonymous: false,
+      isStanding: false,
     },
     {
       questionId: "q_meeple_checkout",
@@ -118,6 +130,16 @@ export const OPEN_QUESTIONS: Record<string, OpenQuestionSeed[]> = {
       displayOrder: 3,
       askedBy: null,
       isAnonymous: false,
+      isStanding: false,
+    },
+    {
+      questionId: "q_meeple_mind",
+      kind: "text",
+      prompt: STANDING_PROMPT,
+      displayOrder: 4,
+      askedBy: null,
+      isAnonymous: false,
+      isStanding: true,
     },
   ],
 };
@@ -228,6 +250,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
     displayOrder: 0,
     askedBy: SAM,
     isAnonymous: false,
+    isStanding: false,
     answers: [
       {
         responseId: "pub_r1",
@@ -285,6 +308,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
     displayOrder: 1,
     askedBy: null,
     isAnonymous: false,
+    isStanding: false,
     answers: [
       {
         responseId: "pub_r3",
@@ -305,6 +329,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
     displayOrder: 2,
     askedBy: null,
     isAnonymous: true,
+    isStanding: false,
     options: [
       { optionId: "opt_misi", label: "Mt Si", voteCount: 3 },
       { optionId: "opt_lake22", label: "Lake 22", voteCount: 1 },
@@ -313,32 +338,13 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
     myVoteOptionId: "opt_misi",
   },
   {
-    questionId: "q_trail_mind",
-    kind: "text",
-    prompt: "💬 On Your Mind — what's been on your mind lately?",
-    displayOrder: 3,
-    askedBy: null,
-    isAnonymous: false,
-    answers: [
-      {
-        responseId: "pub_r4",
-        userId: CALLER_ID,
-        displayName: "Quinn",
-        body: "Planning next year's trip already.",
-        images: [],
-        publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 4000).toISOString(),
-        comments: [],
-        reactionGroups: [],
-      },
-    ],
-  },
-  {
     questionId: "q_trail_checkout",
     kind: "text",
     prompt: "👀 Check It Out — recommend something",
-    displayOrder: 4,
+    displayOrder: 3,
     askedBy: null,
     isAnonymous: false,
+    isStanding: false,
     answers: [
       {
         responseId: "pub_r5",
@@ -347,6 +353,27 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         body: "A podcast about long-distance trail running.",
         images: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 5000).toISOString(),
+        comments: [],
+        reactionGroups: [],
+      },
+    ],
+  },
+  {
+    questionId: "q_trail_mind",
+    kind: "text",
+    prompt: STANDING_PROMPT,
+    displayOrder: 4,
+    askedBy: null,
+    isAnonymous: false,
+    isStanding: true,
+    answers: [
+      {
+        responseId: "pub_r4",
+        userId: CALLER_ID,
+        displayName: "Quinn",
+        body: "Planning next year's trip already.",
+        images: [],
+        publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 4000).toISOString(),
         comments: [],
         reactionGroups: [],
       },
@@ -381,6 +408,7 @@ function simplePublishedQuestions(
       displayOrder: 0,
       askedBy: null,
       isAnonymous: false,
+      isStanding: false,
       answers: [
         {
           responseId: `pub_${groupId}_mine`,
@@ -402,6 +430,7 @@ function simplePublishedQuestions(
       displayOrder: 1,
       askedBy: null,
       isAnonymous: true,
+      isStanding: false,
       options: [
         { optionId: "opt_a", label: "The comeback", voteCount: 2 },
         { optionId: "opt_b", label: "The group photo", voteCount: 1 },

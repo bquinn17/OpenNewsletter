@@ -514,6 +514,9 @@ pub struct OpenQuestionResponse {
     pub display_order: u32,
     pub asked_by: Option<AskedBy>,
     pub is_anonymous: bool,
+    /// True only for the standing question every cycle carries
+    /// (`docs/design/lifecycle.md` §14).
+    pub is_standing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_options: Option<Vec<PollOptionResponse>>,
     pub my_response: Option<MyResponseSummary>,
@@ -574,6 +577,9 @@ pub struct PublishedQuestionResponse {
     pub display_order: u32,
     pub asked_by: Option<AskedBy>,
     pub is_anonymous: bool,
+    /// True only for the standing question every cycle carries
+    /// (`docs/design/lifecycle.md` §14).
+    pub is_standing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answers: Option<Vec<PublishedAnswerResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]

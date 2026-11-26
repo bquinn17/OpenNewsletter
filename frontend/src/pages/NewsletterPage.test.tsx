@@ -115,6 +115,7 @@ describe("NewsletterPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: null,
         },
         {
@@ -124,6 +125,7 @@ describe("NewsletterPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: {
             responseId: "r1",
             status: "published",
@@ -171,6 +173,7 @@ describe("NewsletterPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: draft("r1", "Half an answer"),
         },
         {
@@ -180,6 +183,7 @@ describe("NewsletterPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           myResponse: draft("r2", "   "),
         },
       ],
@@ -225,6 +229,7 @@ describe("NewsletterPage", () => {
           displayOrder: 0,
           askedBy: null,
           isAnonymous: false,
+          isStanding: false,
           answers: [
             {
               responseId: "r1",
@@ -245,6 +250,7 @@ describe("NewsletterPage", () => {
           displayOrder: 1,
           askedBy: null,
           isAnonymous: true,
+          isStanding: false,
           options: [
             { optionId: "a", label: "Option A", voteCount: 3 },
             { optionId: "b", label: "Option B", voteCount: 1 },

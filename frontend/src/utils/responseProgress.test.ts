@@ -21,6 +21,7 @@ function textQuestion(
     displayOrder,
     askedBy: null,
     isAnonymous: false,
+    isStanding: false,
     myResponse,
   };
 }
@@ -37,6 +38,7 @@ function pollQuestion(
     displayOrder,
     askedBy: null,
     isAnonymous: false,
+    isStanding: false,
     pollOptions: [{ optionId: "optA", label: "A" }],
     myResponse,
   };
