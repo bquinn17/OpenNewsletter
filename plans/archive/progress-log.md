@@ -1430,3 +1430,5 @@ Built from `future-ideas.md` §9–§10. GIFs are frontend only; the image-capti
 
 **Found in review.** The renderer's 5-GIF cap counted tokens during render, so React's StrictMode double render hid the third GIF in dev; the cap now drops extra tokens from the body string before rendering (`capGiphyTokens`). Code comments cited `future-ideas.md`'s §9.x numbering as `frontend.md` sections; they cite §18 now.
 
+**Found taking the PR's screenshots.** No GIF ever rendered in the demo or mock builds: the mock IDs had underscores (`demo_party`), which the renderer rejects as GIPHY IDs are alphanumeric, and the generated stand-in GIF files were corrupt. The mock now uses two GIFs the owner picked from GIPHY, and a demo test checks a published answer's GIF shows. Separately, in the demo the banner sat inside the sticky app bar, making it taller than a page's sticky header, so the app bar showed under a pinned edition header; the banner now sits above the bar.
+

@@ -19,7 +19,7 @@ export type GiphyGif = {
   rating: string;
   width: number;
   height: number;
-  /** The `fixed_width` mp4 rendition (or, in mock/demo mode, a local looping GIF). */
+  /** The `fixed_width` mp4 rendition (or, in mock/demo mode, a GIF served from `public/demo-media/`). */
   videoUrl: string;
   /** The `fixed_width_still` rendition (or, in mock/demo mode, a local single-frame GIF). */
   stillUrl: string;

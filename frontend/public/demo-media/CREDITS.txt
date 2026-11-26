@@ -15,7 +15,11 @@ summit.jpg
   "Hanging Rock Hiker" by the Bureau of Land Management Oregon and Washington, public domain
   https://commons.wikimedia.org/wiki/File:Hanging_Rock_Hiker_(11408438663).jpg
 
-demo-gif-wave.gif, demo-gif-clap.gif, demo-gif-party.gif
-  Generated, not downloaded: a small looping two-color checkerboard, stand-ins for the mock
-  GIPHY client's GIF results (`docs/design/frontend.md` §9.3/§17 — GIPHY's real terms forbid
-  caching or re-hosting its media, so the demo can't use real GIPHY assets).
+demo-gif-office.gif, demo-gif-dance.gif
+  GIFs from GIPHY, used as the mock GIPHY client's results (`docs/design/frontend.md` §17),
+  unmodified. demo-gif-office.gif backs two of the three fixtures.
+  https://media.giphy.com/media/IwAZ6dvvvaTtdI8SD5/giphy.gif
+  https://media.giphy.com/media/ujTVMASREzuRbH6zy5/giphy.gif
+
+demo-gif-office-still.png, demo-gif-dance-still.png
+  The first frame of each GIF, shown under reduced motion.
