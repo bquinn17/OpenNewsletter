@@ -9,9 +9,9 @@ use domain::api::{
     PublishedPollOptionResponse, PublishedQuestionResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, CandidateQuestion, Comment, CycleId, GroupId, GroupMembership, ImageId,
-    ImageMedia, LockedQuestion, Newsletter, NewsletterStatus, PollOptionId, QuestionId,
-    QuestionKind, Reaction, ResponseStatus, Role, User, UserId,
+    ApiError, ApiErrorCode, CandidateQuestion, Comment, CycleId, GroupId, ImageId, ImageMedia,
+    LockedQuestion, Newsletter, NewsletterStatus, PollOptionId, QuestionId, QuestionKind, Reaction,
+    ResponseStatus, User, UserId,
 };
 use futures::future::try_join_all;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -94,7 +94,7 @@ pub async fn get_newsletter_detail(
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<NewsletterDetailResponse, ApiError> {
-    let membership = auth::require_membership(&state.repo, caller, group_id, false).await?;
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
     let nl = newsletters::get_newsletter(&state.repo, group_id, cycle_id)
         .await
         .map_err(|e| {
@@ -104,13 +104,9 @@ pub async fn get_newsletter_detail(
         .ok_or_else(|| ApiError::not_found("newsletter not found"))?;
 
     match nl.status {
-        NewsletterStatus::Voting => {
-            voting_detail(state, caller, &membership, group_id, cycle_id).await
-        }
-        NewsletterStatus::Open => open_detail(state, caller, &membership, group_id, &nl).await,
-        NewsletterStatus::Published => {
-            published_detail(state, caller, &membership, group_id, &nl).await
-        }
+        NewsletterStatus::Voting => voting_detail(state, caller, group_id, cycle_id).await,
+        NewsletterStatus::Open => open_detail(state, caller, group_id, &nl).await,
+        NewsletterStatus::Published => published_detail(state, caller, group_id, &nl).await,
         NewsletterStatus::Archived => Err(ApiError::new(
             ApiErrorCode::NewsletterArchived,
             "this edition has been archived",
@@ -121,7 +117,6 @@ pub async fn get_newsletter_detail(
 async fn voting_detail(
     state: &AppState,
     caller: &UserId,
-    membership: &GroupMembership,
     group_id: &GroupId,
     cycle_id: &CycleId,
 ) -> Result<NewsletterDetailResponse, ApiError> {
@@ -145,7 +140,6 @@ async fn voting_detail(
         })?;
     let voted_ids: HashSet<QuestionId> = my_votes.into_iter().map(|v| v.question_id).collect();
 
-    let is_admin = membership.role == Role::Admin;
     let submitter_ids: Vec<UserId> = pool
         .iter()
         .map(|c| c.submitted_by.clone())
@@ -157,7 +151,7 @@ async fn voting_detail(
     let mut candidates = Vec::with_capacity(pool.len());
     for c in pool {
         let voted_by_me = voted_ids.contains(&c.question_id);
-        candidates.push(candidate_item(state, caller, is_admin, &profiles, c, voted_by_me).await?);
+        candidates.push(candidate_item(state, &profiles, c, voted_by_me).await?);
     }
 
     Ok(NewsletterDetailResponse::Voting { candidates })
@@ -166,7 +160,6 @@ async fn voting_detail(
 async fn open_detail(
     state: &AppState,
     caller: &UserId,
-    membership: &GroupMembership,
     group_id: &GroupId,
     nl: &Newsletter,
 ) -> Result<NewsletterDetailResponse, ApiError> {
@@ -184,7 +177,6 @@ async fn open_detail(
         .map(|r| (r.question_id.clone(), r))
         .collect();
 
-    let is_admin = membership.role == Role::Admin;
     let profiles = load_profiles(
         state,
         &locked
@@ -198,7 +190,7 @@ async fn open_detail(
 
     let mut questions_out = Vec::with_capacity(locked.len());
     for lq in locked {
-        let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
+        let asked_by = locked_asked_by(state, &lq, &profiles).await?;
         let poll_options = poll_option_responses(&lq.poll_options);
         let my_response = by_question
             .remove(&lq.question_id)
@@ -238,7 +230,6 @@ async fn open_detail(
 async fn published_detail(
     state: &AppState,
     caller: &UserId,
-    membership: &GroupMembership,
     group_id: &GroupId,
     nl: &Newsletter,
 ) -> Result<NewsletterDetailResponse, ApiError> {
@@ -283,10 +274,9 @@ async fn published_detail(
         load_images(state, group_id, cycle_id, &image_ids),
     )?;
 
-    let is_admin = membership.role == Role::Admin;
     let mut questions_out = Vec::with_capacity(locked.len());
     for (lq, answers) in locked.into_iter().zip(answers_per_question) {
-        let asked_by = locked_asked_by(state, caller, is_admin, &lq, &profiles).await?;
+        let asked_by = locked_asked_by(state, &lq, &profiles).await?;
         let question = match lq.kind {
             QuestionKind::Text => {
                 published_text_question(
@@ -595,14 +585,12 @@ fn poll_option_responses(
 
 async fn candidate_item(
     state: &AppState,
-    caller: &UserId,
-    is_admin: bool,
     profiles: &HashMap<UserId, User>,
     candidate: CandidateQuestion,
     voted_by_me: bool,
 ) -> Result<CandidateItemResponse, ApiError> {
-    let visible = !candidate.is_anonymous || is_admin || candidate.submitted_by == *caller;
-    let asked_by = match visible
+    // An anonymous question carries no name for anyone (`docs/design/api.md` §6.1).
+    let asked_by = match (!candidate.is_anonymous)
         .then(|| profiles.get(&candidate.submitted_by))
         .flatten()
     {
@@ -624,15 +612,14 @@ async fn candidate_item(
     })
 }
 
+/// The asker of a locked question, or `None` when it was asked anonymously:
+/// nobody, admins included, sees who asked it (`docs/design/api.md` §6.1).
 async fn locked_asked_by(
     state: &AppState,
-    caller: &UserId,
-    is_admin: bool,
     lq: &LockedQuestion,
     profiles: &HashMap<UserId, User>,
 ) -> Result<Option<AskedBy>, ApiError> {
-    let visible = !lq.is_anonymous || is_admin || lq.submitted_by == *caller;
-    if !visible {
+    if lq.is_anonymous {
         return Ok(None);
     }
     match profiles.get(&lq.submitted_by) {

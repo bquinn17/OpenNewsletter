@@ -365,7 +365,7 @@ See [`auth.md`](auth.md) for the full sequence. The frontend pieces:
   ]);
   ```
 - Submit redirects back to candidates page with a toast.
-- The form also has an "Ask anonymously" checkbox (`isAnonymous`, default off) and mirrors the server's trimming and duplicate-label rules. Server `fieldErrors` map onto form fields.
+- The form also has an "Ask anonymously" checkbox (`isAnonymous`, default off; an anonymous question shows no name to anyone, admins and the submitter included, [`api.md` §6.1](api.md#61-get-groupsgroupidcandidate-questions)) and mirrors the server's trimming and duplicate-label rules. Server `fieldErrors` map onto form fields.
 
 ### 7.6 SettingsPage
 

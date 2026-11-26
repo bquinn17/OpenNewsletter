@@ -412,9 +412,9 @@ async fn published_detail_hydrates_answers_comments_and_reactions() {
 
             let poll_q = &questions[1];
             assert!(poll_q.is_anonymous);
-            // The caller (u1) is a group admin, so anonymity is redacted even
-            // though u1 isn't the submitter (u2) — admins always see attribution.
-            assert!(poll_q.asked_by.is_some());
+            // The caller (u1) is a group admin, and an anonymous question still
+            // carries no name for admins.
+            assert!(poll_q.asked_by.is_none());
         }
         other => panic!("expected Published, got {other:?}"),
     }

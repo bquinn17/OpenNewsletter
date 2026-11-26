@@ -226,7 +226,7 @@ The edition will have 5 slots. This section creates six candidate questions with
 - [ ] **＋ Idea** opens "Suggest a question" (eyebrow "For next month"). The privacy card reads "Asked by you" and "Your friends see “You asked: …” next to this question." Type defaults to **Open**. **Submit** is disabled.
 - [ ] Type 3 characters: "Add a bit more (at least 5 characters)". The counter reads "3 / 500".
 - [ ] Each of the four "sparks" chips fills the question field.
-- [ ] Toggle anonymous on: the card turns purple and reads "Anonymous to the group" and "Admins can still see who asked — your friends won't." The button changes to **Submit anonymously**. Toggle it off again.
+- [ ] Toggle anonymous on: the card turns purple and reads "Anonymous to the group" and "Nobody in the group sees who asked, admins included." The button changes to **Submit anonymously**. Toggle it off again.
 - [ ] Choose **Poll**. Two empty option fields appear. **＋ Add option** adds fields up to 6, then disappears. The × buttons remove fields down to 2, then disappear.
 - [ ] Leave an option empty: "Required". Enter "Tea" and "tea": `"tea" is already an option`. Paste 81 characters into an option: "80 characters max".
 - [ ] Press the header's ← to go back without submitting.
@@ -245,7 +245,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 | Q6 | A | Open | "Filler: this one should not be promoted." | submit last, never vote for it |
 
 - [ ] Each card shows the asker's avatar and "{name} asked", the prompt, and "0 votes · submitted {date}". Poll cards also show "Poll · N options" and an option chip for each option.
-- [ ] As B, Q3 reads "Asked anonymously" and its meta line ends with "· anonymous". As A, an admin, Q3 shows B's name and avatar.
+- [ ] Q3 reads "Asked anonymously", with no avatar, for both B (who asked it) and A (an admin).
 
 ### 6.4 Voting
 
@@ -264,7 +264,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 - [ ] As A and B (with push on, §5): an OS notification "Dev Group: time to write" with "5 questions are waiting. You have … days to respond." Clicking it opens the new edition. Don't run `advance` again to check for duplicates: with the edition now open, it would rewind the edition's close instead and could publish it.
 - [ ] Reload Home. "Awaiting responses" lists the new edition on a coral tile, with "{countdown} left · you've published 0 of 5". If the next voting cycle was created, "Taking suggestions" lists it too.
 - [ ] Open the edition. The header is coral: eyebrow "Dev Group · editions", title "{Month Year}", and a countdown pill such as "31d 04h". A card reads "Open for responses", "Closes {date, time and zone}", "Your progress" and "You've answered 0 of 5", with five empty progress bars.
-- [ ] The five questions are Q1 to Q5, in that order, each marked "Not started" with an empty circle. Q4 and Q5 are labelled "Poll". Q3 reads "Asked anonymously" for B and shows B's name for A. Q6 isn't there.
+- [ ] The five questions are Q1 to Q5, in that order, each marked "Not started" with an empty circle. Q4 and Q5 are labelled "Poll". Q3 reads "Asked anonymously" for both A and B. Q6 isn't there.
 - [ ] Open Upcoming. A link reads "The {Month} edition is open — answer now". If a new voting cycle exists, its list is empty again. If not, the page reads "Voting for the next edition hasn't opened yet."
 
 ## 8. Answering text questions
@@ -350,7 +350,7 @@ At this point B has answered all five questions (a non-empty draft counts, becau
 - [ ] Every question is expanded. Its − button collapses it and + expands it again.
 - [ ] **Q1**: B's answer only. A's emptied draft isn't shown. The answer card shows B's photo, B's name and "published {date}", then the markdown and the inline images. The image whose token you deleted appears in a grid below the text. Clicking a grid thumbnail opens the full image in a new tab.
 - [ ] **Q2**: B's image-only answer and A's answer.
-- [ ] **Q3**: B's unpublished draft, auto-published at close, as last saved before the close (§11). The byline reads "Asked anonymously" for B and B's name for A.
+- [ ] **Q3**: B's unpublished draft, auto-published at close, as last saved before the close (§11). The byline reads "Asked anonymously" for both A and B.
 - [ ] **Q4**: "{N} votes", each option with "count · percent" and a bar. Your own pick has a purple bar, a ring and a "Your vote" badge. There's nothing to click.
 - [ ] **Q5**: B's unpublished Coffee pick counts as a vote, because it auto-published.
 - [ ] If a text question got no answers, it reads "Nobody answered this one. Maybe next month." To see this, leave a text question unanswered in a later cycle.

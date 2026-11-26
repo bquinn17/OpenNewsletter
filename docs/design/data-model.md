@@ -186,7 +186,7 @@ Suggested by users for the next not-yet-opened cycle.
 | `prompt` | string (≤500 chars) |
 | `poll_options` | array<{ option_id: UUIDv7, label: string }> \| null (only when `kind=poll`) |
 | `vote_count` | number (denormalized; updated transactionally on vote add/remove) |
-| `submitted_by` | user_id (always recorded; returned to non-admins ONLY when `is_anonymous=false`) |
+| `submitted_by` | user_id (always recorded; returned to callers ONLY when `is_anonymous=false`) |
 | `is_anonymous` | boolean (submitter's choice at creation; immutable thereafter) |
 | `submitted_at` | ISO-8601 |
 
@@ -248,7 +248,7 @@ A candidate that has been promoted into a specific newsletter.
 | `prompt` | string |
 | `poll_options` | array \| null |
 | `display_order` | number (admin-controllable; default = vote rank when promoted) |
-| `submitted_by` | user_id (copied from the candidate at promotion; returned to non-admins ONLY when `is_anonymous=false`) |
+| `submitted_by` | user_id (copied from the candidate at promotion; returned to callers ONLY when `is_anonymous=false`) |
 | `is_anonymous` | boolean (copied from the candidate at promotion; immutable) |
 | `locked_at` | ISO-8601 |
 

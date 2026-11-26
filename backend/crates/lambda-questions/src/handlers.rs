@@ -10,7 +10,7 @@ use domain::api::{
     CreateCandidateRequest, PollOptionResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, CandidateQuestion, CandidateVote, CycleId, GroupId, QuestionId, Role,
+    ApiError, ApiErrorCode, CandidateQuestion, CandidateVote, CycleId, GroupId, QuestionId,
     Timestamp, User, UserId,
 };
 use persistence::questions::VoteTxError;
@@ -53,7 +53,7 @@ pub async fn list_candidates(
     limit: u32,
     cursor: Option<&str>,
 ) -> Result<CandidateListResponse, ApiError> {
-    let membership = auth::require_membership(&state.repo, caller, group_id, false).await?;
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
     let group = load_group(state, group_id).await?;
     let next_cycle = require_voting_cycle(state, group_id).await?;
 
@@ -83,13 +83,12 @@ pub async fn list_candidates(
     let voted_ids: HashSet<QuestionId> = my_votes.iter().map(|v| v.question_id.clone()).collect();
     let my_vote_count = my_votes.len() as u32;
 
-    let is_admin = membership.role == Role::Admin;
     let profiles = load_submitter_profiles(state, &page).await?;
 
     let mut items = Vec::with_capacity(page.len());
     for c in page {
         let voted_by_me = voted_ids.contains(&c.question_id);
-        items.push(to_candidate_item(state, caller, is_admin, &profiles, c, voted_by_me).await?);
+        items.push(to_candidate_item(state, &profiles, c, voted_by_me).await?);
     }
 
     Ok(CandidateListResponse {
@@ -134,11 +133,11 @@ pub async fn create_candidate(
             ApiError::internal("failed to create candidate question")
         })?;
 
-    // The submitter always sees their own attribution, even when isAnonymous=true (§6.2).
+    // An anonymous question carries no name, even back to its submitter (§6.1).
     let submitter = load_user(state, caller).await?;
     let mut profiles = HashMap::with_capacity(1);
     profiles.insert(caller.clone(), submitter);
-    to_candidate_item(state, caller, false, &profiles, candidate, false).await
+    to_candidate_item(state, &profiles, candidate, false).await
 }
 
 /// `POST .../votes` (§6.3). Idempotent — re-voting returns the current state.
@@ -551,13 +550,11 @@ async fn load_submitter_profiles(
 
 async fn to_candidate_item(
     state: &AppState,
-    caller: &UserId,
-    is_admin: bool,
     profiles: &HashMap<UserId, User>,
     candidate: CandidateQuestion,
     voted_by_me: bool,
 ) -> Result<CandidateItemResponse, ApiError> {
-    let asked_by = asked_by(state, caller, is_admin, &candidate, profiles).await?;
+    let asked_by = asked_by(state, &candidate, profiles).await?;
     let poll_options = candidate.poll_options.map(|opts| {
         opts.into_iter()
             .map(|o| PollOptionResponse {
@@ -580,17 +577,14 @@ async fn to_candidate_item(
     })
 }
 
-/// §6.1 — `askedBy` is populated when `isAnonymous=false`, or the caller is the
-/// submitter, or the caller is a group admin; otherwise `None`.
+/// §6.1 — `askedBy` is populated only when `isAnonymous=false`. An anonymous
+/// question carries no name for anyone: not admins, not its submitter.
 async fn asked_by(
     state: &AppState,
-    caller: &UserId,
-    is_admin: bool,
     candidate: &CandidateQuestion,
     profiles: &HashMap<UserId, User>,
 ) -> Result<Option<AskedBy>, ApiError> {
-    let visible = !candidate.is_anonymous || is_admin || candidate.submitted_by == *caller;
-    if !visible {
+    if candidate.is_anonymous {
         return Ok(None);
     }
     let Some(user) = profiles.get(&candidate.submitted_by) else {

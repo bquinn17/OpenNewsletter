@@ -643,7 +643,7 @@ paths:
               isAnonymous: false
       responses:
         "201":
-          description: The created candidate, with `askedBy` populated (the submitter always sees their own attribution).
+          description: The created candidate. `askedBy` is `null` when `isAnonymous=true`, even for the submitter.
           content:
             application/json:
               schema:
@@ -2440,8 +2440,8 @@ components:
       type: object
       required: [userId, displayName, avatarColor, avatarUrl]
       description: >
-        `null` (at the call site, not here) when `isAnonymous=true` and the
-        caller is neither the submitter nor a group admin.
+        `null` (at the call site, not here) when `isAnonymous=true`, for every
+        caller: admins and the submitter included.
       properties:
         userId:
           type: string
@@ -2538,7 +2538,7 @@ components:
         isAnonymous:
           type: boolean
           default: false
-          description: Fixed at creation; hides `askedBy` from non-admin members when `true`.
+          description: Fixed at creation; when `true`, `askedBy` is `null` for every caller, admins and the submitter included.
 
     CandidateVoteResponse:
       type: object
