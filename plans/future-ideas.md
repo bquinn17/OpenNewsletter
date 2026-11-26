@@ -872,3 +872,48 @@ This is new: every role that exists today ([`entities.rs`](../backend/crates/dom
 - Does a new group need any default `CycleSettings` beyond what `bootstrap_admin.py` already picks, or a way for the requester to set them (cadence, timezone) at request time rather than after approval?
 - Should site admins be notified (push or email) when a request comes in, rather than having to check `/site-admin`?
 - Is a `SiteAdmin` row the right shape, or should this ride on a Cognito group/custom attribute instead, given Cognito already issues the JWT every request carries?
+
+---
+
+## 18. Instagram Reels embedded in answers and comments
+
+A member pastes an ordinary Instagram Reel link into an answer or a comment, and readers see the Reel playing inline, the way Discord, Slack and X turn a pasted link into an embed. Members never paste embed HTML: a raw `<script>` or `<iframe>` from a user is an XSS hole, and the sanitizer already strips both ([`engagement.md` §5](../docs/design/engagement.md#5-sanitization)).
+
+### 18.1 UX
+
+- **Paste and detect.** The member copies a Reel link from the Instagram app or a browser and pastes it into the response editor or the comment composer. Nothing else is needed.
+- **Live preview.** As soon as the field holds a valid Reel URL:
+  - a light loading skeleton shows under the text box
+  - then a preview of the embed, with a small **×** (Remove embed) so the member can post it as a plain link instead
+- **Display.**
+  - **In answers**, the full vertical Reel player, capped at about 400–540 px wide so it doesn't dominate a desktop screen.
+  - **In comments**, a compact card (thumbnail and a **Watch Reel** button) that keeps threads scannable, expanding to the full player only when tapped.
+- **Fallback.** A Reel from a private account, or with embedding turned off, renders as a clean link card rather than Instagram's broken-embed box.
+- **No layout shift.** The container reserves its size before the embed loads (`aspect-ratio: 9 / 16`, or a ~500 px minimum height), so the edition doesn't jump while a member is scrolling.
+
+### 18.2 Architecture
+
+| Layer | Approach |
+|---|---|
+| URL extraction | A strict regex for `instagram.com/reel/{shortcode}` (and `/reels/`, `/p/` if wanted), applied in both the frontend and the backend. Anything else stays an ordinary link. |
+| Resolution | The backend passes the clean URL to Meta's Instagram oEmbed endpoint (`GET https://graph.facebook.com/{version}/instagram_oembed?url=…`) with a server-side app access token. The token can't ship in the bundle, so unlike GIPHY (§9.3) this needs a Lambda. |
+| Caching | The oEmbed response (embed HTML, thumbnail URL, author name) is cached in DynamoDB, so page loads don't hit Meta's rate limits. Check Meta's platform terms on how long it may be kept, and which fields the response still carries. |
+| Rendering | The embed renders inside a sandboxed `<iframe>`, or Instagram's `embed.js` inside an isolated component. User HTML is never injected into the app's DOM. |
+
+**Storage.** Like a GIF (§9.2), the Reel can live in the body as text, here simply the link itself. No new attribute is needed, and an older client renders it as a plain link, so the renderer can ship before the paste detection.
+
+### 18.3 Things to know before building it
+
+- **Meta App Review.** The official oEmbed API needs a registered Meta developer app with the oEmbed Read feature approved. The Facebook IdP already has a Meta app ([`decisions.md`](../docs/decisions.md)), which may be reusable for this.
+- **SPA re-rendering.** `embed.js` scans the page once on load. In React, `window.instgrm.Embeds.process()` has to be called from an effect whenever new answers or comments mount.
+- **Fits the existing rules?**
+  - The sanitizer's forbidden list includes `iframe` and `embed` ([`engagement.md` §5](../docs/design/engagement.md#5-sanitization)). The iframe must come from our own component, never from the body.
+  - The CSP gains `frame-src https://www.instagram.com`, plus `script-src` for `embed.js` if it's used ([`frontend.md` §12.1](../docs/design/frontend.md#121-content-security-policy)).
+  - **Privacy is the same trade-off as GIFs (§9.5), only bigger.** Every reader's browser contacts Instagram, where most members are logged in, so Meta learns who read which edition. It needs the same owner decision, probably as a per-group setting, off by default, and maybe tap-to-load for readers.
+- **Demo mode** must make no Instagram calls, so the mock renders a local placeholder card ([`frontend.md` §17](../docs/design/frontend.md#17-demo-mode)).
+
+### 18.4 Open questions
+
+- Reels only, or any Instagram post (`/p/`)? Other platforms (TikTok, YouTube Shorts) through the same pattern?
+- oEmbed through a Lambda, or the token-free `https://www.instagram.com/reel/{shortcode}/embed` iframe URL, which needs no Meta app but has no preview data and no supported contract?
+- The privacy decision, recorded in [`decisions.md`](../docs/decisions.md).
