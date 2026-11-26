@@ -142,6 +142,17 @@ test("an image uploaded to a comment shows the picture that was picked", async (
   expect(await renderedWidth(posted)).toBe(3);
 });
 
+test("a GIF in a published answer renders from the mock GIPHY", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+  const answer = page.locator("article", { hasText: "Planning next year's trip" });
+
+  await expect(answer.getByRole("img", { name: "party" })).toBeVisible();
+});
+
 test("the published edition links to Home's populated Leaderboard tab", async ({ page }) => {
   await page.goto("/demo");
   await page

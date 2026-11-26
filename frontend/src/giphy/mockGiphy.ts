@@ -3,11 +3,12 @@ import type { GiphyGif } from "./giphyClient";
 /**
  * Fixed GIF fixtures for mock mode and the demo (`docs/design/frontend.md` §18.5/§17). Served from
  * `public/demo-media/` rather than the real GIPHY, so mock builds and the demo make no GIPHY
- * calls — the demo's off-site-request check (`frontend.md` §17) must still pass.
+ * calls — the demo's off-site-request check (`frontend.md` §17) must still pass. IDs are
+ * alphanumeric like GIPHY's, or the renderer drops them (`GIPHY_ID_RE`).
  */
 const FIXTURES: (GiphyGif & { tags: string[] })[] = [
   {
-    id: "demo_wave",
+    id: "demowave",
     title: "wave",
     rating: "g",
     width: 40,
@@ -17,7 +18,7 @@ const FIXTURES: (GiphyGif & { tags: string[] })[] = [
     tags: ["lol", "yes", "wave", "hi"],
   },
   {
-    id: "demo_clap",
+    id: "democlap",
     title: "clap",
     rating: "g",
     width: 40,
@@ -27,7 +28,7 @@ const FIXTURES: (GiphyGif & { tags: string[] })[] = [
     tags: ["wow", "thank you", "clap", "nice"],
   },
   {
-    id: "demo_party",
+    id: "demoparty",
     title: "party",
     rating: "g",
     width: 40,
