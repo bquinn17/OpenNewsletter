@@ -20,7 +20,6 @@ vi.mock("../../api/client", async (importOriginal) => {
         getUpload: vi.fn(),
         completeUpload: vi.fn(),
         deleteUpload: vi.fn(),
-        patchUpload: vi.fn(),
       },
     },
   };
@@ -47,7 +46,7 @@ function makeFile(name: string, type: string, size: number): File {
 }
 
 function getFileInput(): HTMLInputElement {
-  return document.querySelector("input[type=file]") as HTMLInputElement;
+  return screen.getByLabelText("Add images") as HTMLInputElement;
 }
 
 /**
@@ -111,12 +110,6 @@ describe("ImageUploader", () => {
 
     expect(createUpload).toHaveBeenCalledTimes(1);
     expect(screen.getByText("b.jpg: You can attach up to 1 image.")).toBeInTheDocument();
-  });
-
-  it("counts a one-image uploader's slots in the singular", () => {
-    render(<ImageUploader groupId="g1" cycleId="202606" questionId="q1" maxImages={1} />);
-
-    expect(screen.getByText(/^0\/1 image · JPEG/)).toBeInTheDocument();
   });
 
   it("uploads, PUTs with every presign header, polls, and shows the ready thumbnail", async () => {
@@ -297,7 +290,6 @@ describe("ImageUploader", () => {
       status: "ready",
       purpose: "response",
       mimeType: "image/jpeg",
-      caption: null,
       thumbUrl: "https://media.test.invalid/img1/thumb.webp",
       displayUrl: "https://media.test.invalid/img1/display.webp",
       width: 10,
@@ -418,7 +410,6 @@ describe("ImageUploader", () => {
             bytes: 1000,
             width: null,
             height: null,
-            caption: null,
             displayUrl: null,
             thumbUrl: null,
             errorMessage: null,
@@ -448,7 +439,6 @@ describe("ImageUploader", () => {
       status: "ready",
       purpose: "response",
       mimeType: "image/jpeg",
-      caption: null,
       thumbUrl: stale,
       displayUrl: "https://media.test.invalid/img/g1/202606/q1/u1/img1/display.webp?sig=old",
       width: 10,

@@ -112,7 +112,6 @@ type PendingImage = {
   file: File | null;     // null for an image the draft already had
   status: "uploading" | "processing" | "ready" | "failed";
   progress: number;       // 0-1
-  altText: string;        // user-entered
   error: string | null;
 };
 ```
@@ -241,7 +240,7 @@ S3 GETs are $0.0004 per 1,000, and egress is covered by AWS's 100 GB/month alway
 
 ## 7. Image references in markdown
 
-Stored format: `![alt text](image:{imageId})`.
+Stored format: `![alt text](image:{imageId})`. The editor inserts the token with empty alt text, `![](image:{imageId})`; a member can type a description between the brackets.
 
 Server-side: nothing. The `body` is stored verbatim.
 

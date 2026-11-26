@@ -288,7 +288,6 @@ pub struct ImageMedia {
     pub bytes: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    pub caption: Option<String>,
     pub uploaded_at: Timestamp,
     pub processed_at: Option<Timestamp>,
     /// Why `status` is `failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED`

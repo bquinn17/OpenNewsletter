@@ -9,8 +9,9 @@ import { AnswerCard } from "../components/newsletter/AnswerCard";
 import { CompletionCelebration } from "../components/newsletter/CompletionCelebration";
 import { PollWidget } from "../components/newsletter/PollWidget";
 import { QuestionPrompt } from "../components/newsletter/QuestionPrompt";
+import { GiphyLookupProvider } from "../giphy/GiphyLookupProvider";
 import { cadenceNoun, editionLabel, formatInZone, shortCountdown } from "../utils/dates";
-import { stripImageTokens } from "../utils/markdown";
+import { referencedGiphyIds, stripImageTokens } from "../utils/markdown";
 import { allQuestionsAnswered, isQuestionAnswered } from "../utils/responseProgress";
 import type { components } from "../types/api";
 
@@ -33,6 +34,21 @@ function draftPreview(question: S["OpenQuestionResponse"]): string | null {
   return stripped.length > PREVIEW_MAX_CHARS
     ? `${stripped.slice(0, PREVIEW_MAX_CHARS).trimEnd()}…`
     : stripped;
+}
+
+/** Every `giphy:` id across a published edition's answers and comments, for one batched lookup (`docs/design/frontend.md` §18.3). */
+function pageGiphyIds(questions: S["PublishedQuestionResponse"][]): string[] {
+  const ids = new Set<string>();
+  for (const q of questions) {
+    if (q.kind !== "text") continue;
+    for (const answer of q.answers ?? []) {
+      for (const id of referencedGiphyIds(answer.body ?? "")) ids.add(id);
+      for (const comment of answer.comments) {
+        for (const id of referencedGiphyIds(comment.body)) ids.add(id);
+      }
+    }
+  }
+  return [...ids];
 }
 
 // Every non-empty answer publishes at close, so a row says whether there's an answer, not
@@ -284,98 +300,100 @@ function PublishedLayout({
   );
 
   return (
-    <div className="pb-12">
-      <PageHeader
-        eyebrow={`${groupName} · editions`}
-        title={title}
-        back="/"
-        rightSlot={<Pill tone="ink">Published</Pill>}
-        phase="published"
-      />
+    <GiphyLookupProvider ids={pageGiphyIds(sorted)}>
+      <div className="pb-12">
+        <PageHeader
+          eyebrow={`${groupName} · editions`}
+          title={title}
+          back="/"
+          rightSlot={<Pill tone="ink">Published</Pill>}
+          phase="published"
+        />
 
-      <div className="flex items-center justify-between px-5 pt-5 text-sm text-inkmuted">
-        <span>Published {formatInZone(data.publishedAt, timezone)}</span>
-        {reactionTotal > 0 && (
-          <span>
-            {reactionTotal} reaction{reactionTotal === 1 ? "" : "s"}
-          </span>
-        )}
-      </div>
-
-      <div className="px-5 pt-2">
-        <Link
-          to="/?tab=leaderboard"
-          className="inline-flex items-center gap-1 text-sm font-semibold text-grape"
-        >
-          🏆 Group leaderboard
-        </Link>
-      </div>
-
-      {sorted.map((q) => {
-        const isExpanded = !collapsed[q.questionId];
-        return (
-          <section key={q.questionId} className="mt-6 px-5">
-            <button
-              type="button"
-              aria-expanded={isExpanded}
-              onClick={() =>
-                setCollapsed((prev) => ({ ...prev, [q.questionId]: !prev[q.questionId] }))
-              }
-              className="flex w-full items-start justify-between gap-3 text-left"
-            >
-              <QuestionPrompt
-                prompt={q.prompt}
-                kind={q.kind}
-                askedBy={q.askedBy}
-                isAnonymous={q.isAnonymous}
-              />
-              <span className="mt-1 flex-shrink-0 text-inkmuted" aria-hidden>
-                {isExpanded ? "−" : "+"}
-              </span>
-            </button>
-
-            {isExpanded &&
-              (q.kind === "text" ? (
-                <div className="mt-3">
-                  {(q.answers ?? []).map((a) => (
-                    <AnswerCard
-                      key={a.responseId}
-                      answer={a}
-                      groupId={groupId}
-                      cycleId={data.cycleId}
-                      questionId={q.questionId}
-                      timezone={timezone}
-                    />
-                  ))}
-                  {(q.answers ?? []).length === 0 && (
-                    <div className="rounded-3xl border border-dashed border-line bg-white p-6 text-center text-sm text-inkmuted">
-                      Nobody answered this one. Maybe next {cadenceNoun(frequency)}.
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="mt-3">
-                  <PollWidget question={q} />
-                </div>
-              ))}
-          </section>
-        );
-      })}
-
-      <div className="mt-12 px-5 text-center text-sm text-inkmuted">
-        <div className="mb-1 font-display text-2xl text-ink">
-          {frequency === "weekly"
-            ? `That's a wrap on the ${short} edition 🎈`
-            : `That's a wrap on ${short} 🎈`}
+        <div className="flex items-center justify-between px-5 pt-5 text-sm text-inkmuted">
+          <span>Published {formatInZone(data.publishedAt, timezone)}</span>
+          {reactionTotal > 0 && (
+            <span>
+              {reactionTotal} reaction{reactionTotal === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
-        <p>
-          The next edition opens soon.{" "}
-          <Link to={`/g/${groupId}/upcoming`} className="font-semibold text-grape">
-            Suggest a question
-          </Link>{" "}
-          anytime.
-        </p>
+
+        <div className="px-5 pt-2">
+          <Link
+            to="/?tab=leaderboard"
+            className="inline-flex items-center gap-1 text-sm font-semibold text-grape"
+          >
+            🏆 Group leaderboard
+          </Link>
+        </div>
+
+        {sorted.map((q) => {
+          const isExpanded = !collapsed[q.questionId];
+          return (
+            <section key={q.questionId} className="mt-6 px-5">
+              <button
+                type="button"
+                aria-expanded={isExpanded}
+                onClick={() =>
+                  setCollapsed((prev) => ({ ...prev, [q.questionId]: !prev[q.questionId] }))
+                }
+                className="flex w-full items-start justify-between gap-3 text-left"
+              >
+                <QuestionPrompt
+                  prompt={q.prompt}
+                  kind={q.kind}
+                  askedBy={q.askedBy}
+                  isAnonymous={q.isAnonymous}
+                />
+                <span className="mt-1 flex-shrink-0 text-inkmuted" aria-hidden>
+                  {isExpanded ? "−" : "+"}
+                </span>
+              </button>
+
+              {isExpanded &&
+                (q.kind === "text" ? (
+                  <div className="mt-3">
+                    {(q.answers ?? []).map((a) => (
+                      <AnswerCard
+                        key={a.responseId}
+                        answer={a}
+                        groupId={groupId}
+                        cycleId={data.cycleId}
+                        questionId={q.questionId}
+                        timezone={timezone}
+                      />
+                    ))}
+                    {(q.answers ?? []).length === 0 && (
+                      <div className="rounded-3xl border border-dashed border-line bg-white p-6 text-center text-sm text-inkmuted">
+                        Nobody answered this one. Maybe next {cadenceNoun(frequency)}.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <PollWidget question={q} />
+                  </div>
+                ))}
+            </section>
+          );
+        })}
+
+        <div className="mt-12 px-5 text-center text-sm text-inkmuted">
+          <div className="mb-1 font-display text-2xl text-ink">
+            {frequency === "weekly"
+              ? `That's a wrap on the ${short} edition 🎈`
+              : `That's a wrap on ${short} 🎈`}
+          </div>
+          <p>
+            The next edition opens soon.{" "}
+            <Link to={`/g/${groupId}/upcoming`} className="font-semibold text-grape">
+              Suggest a question
+            </Link>{" "}
+            anytime.
+          </p>
+        </div>
       </div>
-    </div>
+    </GiphyLookupProvider>
   );
 }

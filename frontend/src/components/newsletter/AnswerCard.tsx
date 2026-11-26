@@ -37,7 +37,15 @@ export function AnswerCard({ answer, groupId, cycleId, questionId, timezone }: P
         </div>
       </header>
 
-      {answer.body && <MarkdownBody body={answer.body} images={answer.images} className="mt-3" />}
+      {answer.body && (
+        <MarkdownBody
+          body={answer.body}
+          images={answer.images}
+          className="mt-3"
+          maxGiphy={5}
+          giphyVariant="answer"
+        />
+      )}
 
       <ImageGallery images={answer.images} body={answer.body ?? ""} />
 

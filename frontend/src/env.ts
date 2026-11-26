@@ -19,6 +19,12 @@ type Env = {
   useMocks: boolean;
   /** Quiet period after the last keystroke before a draft autosaves (`docs/design/frontend.md` §7.3, §8.2). */
   autosaveDebounceMs: number;
+  /**
+   * GIPHY beta API key (`docs/design/frontend.md` §18.5), one per environment. `null` when unset —
+   * every environment works without one, since GIFs are opt-in: the "+" menu's GIF item hides and
+   * `giphy:` tokens render as their title text with no lookup (`docs/design/frontend.md` §18.3).
+   */
+  giphyApiKey: string | null;
 };
 
 /** The `VITE_*` variables `buildEnv` reads; every one may be missing. */
@@ -60,6 +66,7 @@ export function buildEnv(raw: RawEnv): Env {
     buildSha: raw.VITE_BUILD_SHA ?? "dev",
     useMocks,
     autosaveDebounceMs: Math.max(1500, Number(raw.VITE_AUTOSAVE_DEBOUNCE_MS) || 1500),
+    giphyApiKey: raw.VITE_GIPHY_API_KEY || null,
   };
 }
 

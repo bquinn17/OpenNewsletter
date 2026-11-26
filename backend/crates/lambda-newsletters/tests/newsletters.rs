@@ -436,7 +436,6 @@ fn ready_image(image_id: &str, owner: &str, purpose: ImagePurpose) -> ImageMedia
         bytes: 1000,
         width: Some(1200),
         height: Some(800),
-        caption: None,
         uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: Some("2026-06-02T00:01:00Z".parse::<Timestamp>().unwrap()),
         error_message: None,
@@ -550,10 +549,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
             status: MediaStatus::Pending,
             ..ready_image("img-pending", "u2", ImagePurpose::Response)
         },
-        ImageMedia {
-            caption: Some("trail".into()),
-            ..ready_image("img-c", "u3", ImagePurpose::Comment)
-        },
+        ready_image("img-c", "u3", ImagePurpose::Comment),
         ready_image("img-d", "u1", ImagePurpose::Comment),
     ] {
         persistence::media::put_image(&repo, &img).await.unwrap();
@@ -639,8 +635,7 @@ async fn published_detail_hydrates_images_and_deleted_comments_across_answers() 
     let live = &u2.comments[0];
     assert_eq!(live.comment_id.as_str(), "c1");
     assert_eq!(live.body, "comment c1");
-    let live_image = live.image.as_ref().expect("ready comment image hydrated");
-    assert_eq!(live_image.caption.as_deref(), Some("trail"));
+    assert!(live.image.is_some(), "ready comment image hydrated");
     let deleted = &u2.comments[1];
     assert_eq!(deleted.comment_id.as_str(), "c2");
     assert!(deleted.deleted_at.is_some());

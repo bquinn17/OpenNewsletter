@@ -464,7 +464,6 @@ describe("RespondPage", () => {
       status: "ready",
       purpose: "response",
       mimeType: "image/jpeg",
-      caption: null,
       thumbUrl: "https://media.example/img1-thumb.webp",
       displayUrl: "https://media.example/img1.webp",
       width: 100,
@@ -545,7 +544,6 @@ describe("RespondPage", () => {
       bytes: 1000,
       width: 800,
       height: 600,
-      caption: null,
       displayUrl: "https://media.test.invalid/img1/display.webp",
       thumbUrl: "https://media.test.invalid/img1/thumb.webp",
       errorMessage: null,
@@ -580,7 +578,7 @@ describe("RespondPage", () => {
     renderAt("q1");
 
     const textarea = await screen.findByPlaceholderText("Tell us about it…");
-    const fileInput = document.querySelector("input[type=file]") as HTMLInputElement;
+    const fileInput = screen.getByLabelText("Add photos") as HTMLInputElement;
     const file = new File([new Uint8Array(100)], "photo.jpg", { type: "image/jpeg" });
 
     vi.useFakeTimers();
@@ -646,7 +644,6 @@ describe("RespondPage", () => {
       status: "ready",
       purpose: "response",
       mimeType: "image/jpeg",
-      caption: null,
       thumbUrl: "https://media.example/img1-thumb.webp",
       displayUrl: "https://media.example/img1.webp",
       width: 100,

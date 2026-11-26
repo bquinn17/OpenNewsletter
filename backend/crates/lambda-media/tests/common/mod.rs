@@ -212,7 +212,6 @@ pub async fn seed_image(
         bytes: 123_456,
         width: None,
         height: None,
-        caption: None,
         uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: None,
         error_message: None,

@@ -79,8 +79,8 @@ test("the demo sends nothing off the site and stores nothing in the browser", as
   await page.getByRole("link", { name: /you've answered/ }).click();
   await page.getByRole("link", { name: /what's been on your mind lately/i }).click();
   await page.getByPlaceholder("Tell us about it…").fill("A demo answer with a photo");
-  await page.locator('input[type="file"]').setInputFiles(PHOTO);
-  await expect(page.getByPlaceholder("Describe this image")).toBeVisible({
+  await page.getByLabel("Add photos").setInputFiles(PHOTO);
+  await expect(page.getByAltText("Uploaded image")).toBeVisible({
     timeout: UPLOAD_TIMEOUT_MS,
   });
 
@@ -130,9 +130,9 @@ test("an image uploaded to a comment shows the picture that was picked", async (
     .click();
   const answer = page.locator("article", { hasText: "ridge walk" });
 
-  await answer.locator('input[type="file"]').setInputFiles(PHOTO);
+  await answer.getByLabel("Add a photo", { exact: true }).setInputFiles(PHOTO);
   await expect(answer.getByText(/Uploading \d+%/)).toBeVisible();
-  await expect(answer.getByPlaceholder("Describe this image")).toBeVisible({
+  await expect(answer.getByAltText("Uploaded image")).toBeVisible({
     timeout: UPLOAD_TIMEOUT_MS,
   });
   await answer.getByRole("button", { name: "Post" }).click();
@@ -140,6 +140,17 @@ test("an image uploaded to a comment shows the picture that was picked", async (
   const posted = answer.locator('a[href^="blob:"] img');
   await expect(posted).toBeVisible();
   expect(await renderedWidth(posted)).toBe(3);
+});
+
+test("a GIF in a published answer renders from the mock GIPHY", async ({ page }) => {
+  await page.goto("/demo");
+  await page
+    .getByRole("link", { name: /questions · published/ })
+    .first()
+    .click();
+  const answer = page.locator("article", { hasText: "Planning next year's trip" });
+
+  await expect(answer.getByRole("img", { name: "party" })).toBeVisible();
 });
 
 test("the published edition links to Home's populated Leaderboard tab", async ({ page }) => {

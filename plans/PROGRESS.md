@@ -6,7 +6,7 @@ Where the project stands, what's blocking it, and what's next. It's read at the 
 
 ## Status
 
-- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages, the owner UX review fixes and the group page tabs (Editions, Leaderboard, Members).
+- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages, the owner UX review fixes, the group page tabs (Editions, Leaderboard, Members), and the "+" attach menu with GIFs from GIPHY.
 - **Dev runs the latest `main`.** Every push to `main` deploys it ([D6](../docs/decisions.md#d6)).
 - **Deploy-shaped gates:** the API side of every dev gate has passed; [`build-order.md`](build-order.md) marks each check. What's left needs a browser, a second Google account or a phone (next step 3).
 - **M1** is partly done (B5).
@@ -43,6 +43,7 @@ Release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo
 2. **Operator setup on GitHub** ([`.github/workflows/README.md`](../.github/workflows/README.md)). `release.yml` stops early until it's done:
    - add the prod `VITE_*` secrets ([`operator-setup.md` §6](../docs/operations/operator-setup.md#6-frontend-media-origins) covers the media ones)
    - delete the `production` environment's `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` secrets. The workflows read those names as repo variables, so the secrets are unused.
+   - create the GIPHY keys and set `DEV_VITE_GIPHY_API_KEY` and `VITE_GIPHY_API_KEY` ([`operator-setup.md` §11](../docs/operations/operator-setup.md#11-giphy-api-keys)); until then the GIF picker stays hidden
    - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5)
 3. **Finish the unmarked gates in [`build-order.md`](build-order.md) against dev.** If `scripts/backfill_member_stats.py --env dev` hasn't been run since the leaderboard deployed, run it first, while the group is quiet: until it runs, the leaderboard and `editionsAnswered` count only what happened since that deploy ([`scripts/README.md`](../scripts/README.md)). The unmarked gates are the UI and device checks: uploading and the media CORS check in a browser (M8), the simulated month (M9), push on Chrome and an installed iOS PWA (M11), the rename showing without a reload (M12), `make redeploy-volatile` (M3.5), the full [`smoke-test.md`](../docs/operations/smoke-test.md), and the cadence settings pass in [`frontend-walkthrough.md`](../docs/operations/frontend-walkthrough.md) §16.2.
 4. **M14:** check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14) and run `scripts/backfill_member_stats.py --env prod` once. The prod hostnames are already set as repo variables.

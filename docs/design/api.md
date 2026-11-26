@@ -287,15 +287,13 @@ The only response route is the save (§7.3). The caller reads their own drafts a
 
 ### 7.2 Images on a draft
 
-`myResponse.imageMediaIds` lists a draft's images by ID only. To show them, the respond page loads each one with `GET /uploads/{imageId}` (§9.3), which returns its presigned URLs and caption. An image that can't be loaded (for example, one that was deleted) is left out rather than blocking the editor ([`frontend.md` §8](frontend.md#8-drafts--detailed-flow)).
+`myResponse.imageMediaIds` lists a draft's images by ID only. To show them, the respond page loads each one with `GET /uploads/{imageId}` (§9.3), which returns its presigned URLs. An image that can't be loaded (for example, one that was deleted) is left out rather than blocking the editor ([`frontend.md` §8](frontend.md#8-drafts--detailed-flow)).
 
 ### 7.3 `PUT /groups/{groupId}/newsletters/{cycleId}/questions/{questionId}/my-response`
 
 **Lambda**: `lambda-responses`. The autosave/save-draft endpoint.
 
 Body: `SaveResponseRequest` in `shared/openapi.yaml` (tagged by `kind`: text carries `body`+`imageMediaIds`, poll carries `pollOptionId`).
-
-Image captions are stored on the `ImageMedia` row itself (set via `PATCH /uploads/{imageId}`, see §9.6) — they are not part of the response save payload. This keeps a caption attached to its image across edits and means an image's caption is the same wherever the image appears.
 
 Behavior:
 - Cycle must be in status `open` (else `CYCLE_NOT_OPEN`). Once the cycle has transitioned to `published`, this endpoint refuses all writes — including poll vote changes — and the SPA hides edit affordances accordingly.
@@ -400,7 +398,7 @@ The frontend then `PUT`s the binary directly to `uploadUrl` with **every** liste
 
 ### 9.0 Addressing an existing upload
 
-An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` ([`data-model.md` §2.10](data-model.md#210-imagemedia)), so every `/uploads/{imageId}` route (§9.2–§9.4, §9.6) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
+An `ImageMedia` row is keyed by `(groupId, cycleId, imageId)` ([`data-model.md` §2.10](data-model.md#210-imagemedia)), so every `/uploads/{imageId}` route (§9.2–§9.4) takes **required `groupId` and `cycleId` query parameters**. Without them the lookup would need an unbounded scan of the caller's GSI1 uploads. The caller must be a member of `groupId` (403 otherwise). `GET` and `/complete` are open to any member; `PATCH` and `DELETE` require the caller to own the image (403 otherwise).
 
 Every one of these routes that returns a body returns `ImageMediaResponse` (`shared/openapi.yaml`): the row's fields in camelCase, minus the S3 keys, plus absolute `displayUrl`/`thumbUrl` (null until `ready`) and `errorMessage` (`IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` when `failed`). `DELETED` is not a possible value here — `DELETE /uploads/{imageId}` deletes the row instead of soft-marking it (§9.4).
 
@@ -434,16 +432,6 @@ There's no media route to call first: a URL is usable as soon as it's returned.
 - Clients treat the URLs as opaque. The query string changes between windows, so anything that caches the bytes keys on the path, not the full URL.
 
 See [`media.md` §4](media.md#4-serving-presigned-s3-gets) and [`decisions.md`](../decisions.md#presigned-s3-media).
-
-### 9.6 `PATCH /uploads/{imageId}`
-
-**Lambda**: `lambda-media`. **Role**: caller must own the image.
-
-Body: `PatchUploadRequest` in `shared/openapi.yaml` (`caption` ≤140 chars after trimming; `null` or an all-whitespace string clears it).
-
-Updates the `ImageMedia.caption` field. Allowed regardless of whether the image is referenced by a draft or published response — the caption is a property of the image, not of a particular usage.
-
-Response 200: `ImageMediaResponse`.
 
 ### 9.7 Avatar routes
 
@@ -558,7 +546,7 @@ The contract test that keeps the Rust structs and YAML in sync (`ROUTE_TABLE` in
 | `*` comments/reactions GET/POST, reactions PUT/DELETE | member |
 | `PATCH` comment | author only |
 | `DELETE` comment | author OR admin |
-| `POST /uploads*`, `GET /uploads/{id}`, `PATCH /uploads/{id}`, `DELETE /uploads/{id}` | member (owner for PATCH/DELETE) |
+| `POST /uploads*`, `GET /uploads/{id}`, `DELETE /uploads/{id}` | member (owner for DELETE) |
 | `POST /avatars`, `GET /avatars/{id}`, `DELETE /avatars/{id}` | self (owner) |
 | `*` push routes | self |
 | `GET /healthz` | authenticated |

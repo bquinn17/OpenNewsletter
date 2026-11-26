@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { MarkdownBody, referencedImageIds, stripImageTokens } from "./markdown";
+import { capGiphyTokens, MarkdownBody, referencedImageIds, stripImageTokens } from "./markdown";
 
 const { refreshMediaUrls } = vi.hoisted(() => ({ refreshMediaUrls: vi.fn() }));
 
@@ -167,5 +167,17 @@ describe("referencedImageIds", () => {
 
   it("returns an empty set when there are none", () => {
     expect(referencedImageIds("no images here").size).toBe(0);
+  });
+});
+
+describe("capGiphyTokens", () => {
+  it("keeps the first max GIF tokens and drops the rest", () => {
+    const body = "a ![1](giphy:A) b ![2](giphy:B) c ![3](giphy:C)";
+    expect(capGiphyTokens(body, 2)).toBe("a ![1](giphy:A) b ![2](giphy:B) c ");
+  });
+
+  it("leaves image tokens and bodies under the cap alone", () => {
+    const body = "![pic](image:img-1) ![g](giphy:A)";
+    expect(capGiphyTokens(body, 1)).toBe(body);
   });
 });

@@ -199,7 +199,7 @@ These apply regardless of language.
 
 ### 3.10 Accessibility
 - Every interactive element is reachable by keyboard.
-- Every `<img>` has an `alt`. User-uploaded images require user-provided alt text (field next to the upload thumbnail).
+- Every `<img>` has an `alt`. User-uploaded images take theirs from the markdown token, which is empty (decorative) unless the author types one; the text around the image gives its context ([`frontend.md` §11](../design/frontend.md#11-accessibility--ux)).
 - Every form control has an associated `<label>`.
 - `prefers-reduced-motion` respected for transitions and toasts.
 - Color-only signaling is forbidden — pair with text or icon.

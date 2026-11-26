@@ -36,5 +36,10 @@ test.describe("Content-Security-Policy meta tag", () => {
     // `.env.e2e`'s VITE_UPLOAD_ORIGINS, reduced to its origin — the presigned upload PUT target.
     expect(directives.get("connect-src")).toContain("https://uploads.e2e.opennewsletter.test");
     expect(directives.get("script-src")).toEqual(["'self'"]);
+    // GIPHY (`docs/design/frontend.md` §9): search/lookup over `connect-src`, media over
+    // `img-src`/`media-src`.
+    expect(directives.get("connect-src")).toContain("https://api.giphy.com");
+    expect(directives.get("img-src")).toContain("https://*.giphy.com");
+    expect(directives.get("media-src")).toContain("https://*.giphy.com");
   });
 });

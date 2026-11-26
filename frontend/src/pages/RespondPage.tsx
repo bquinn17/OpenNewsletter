@@ -14,7 +14,8 @@ import { useResponseEditor } from "../components/responses/useResponseEditor";
 import { useHydratedImages } from "../components/responses/useHydratedImages";
 import { usePollResponse } from "../components/responses/usePollResponse";
 import { PollPicker } from "../components/responses/PollPicker";
-import { MarkdownBody } from "../utils/markdown";
+import { GiphyLookupProvider } from "../giphy/GiphyLookupProvider";
+import { MarkdownBody, referencedGiphyIds } from "../utils/markdown";
 import { shortCountdown } from "../utils/dates";
 import { nextUnansweredQuestionId } from "../utils/responseProgress";
 import type { components } from "../types/api";
@@ -174,7 +175,15 @@ function QuestionBody({
         isPublished && !showEditor ? (
           <div className="mt-4 px-5">
             <div className="rounded-3xl border border-line bg-white p-5 shadow-soft">
-              <MarkdownBody body={editor.body} images={viewImages} className="mt-1" />
+              <GiphyLookupProvider ids={[...referencedGiphyIds(editor.body)]}>
+                <MarkdownBody
+                  body={editor.body}
+                  images={viewImages}
+                  className="mt-1"
+                  maxGiphy={5}
+                  giphyVariant="answer"
+                />
+              </GiphyLookupProvider>
               <button
                 type="button"
                 onClick={() => setShowEditor(true)}

@@ -3,7 +3,7 @@
 
 use crate::handlers;
 use crate::state::AppState;
-use domain::api::{CreateAvatarRequest, CreateUploadRequest, PatchUploadRequest};
+use domain::api::{CreateAvatarRequest, CreateUploadRequest};
 use domain::{ApiError, AvatarId, CycleId, GroupId, ImageId, UserId};
 use lambda_http::http::Method;
 use lambda_http::{Body, Request, RequestExt, Response};
@@ -47,22 +47,6 @@ async fn dispatch(state: &AppState, req: &Request) -> Result<Response<Body>, Api
                 &group_id,
                 &cycle_id,
                 &ImageId::new(*image_id),
-            )
-            .await?;
-            Ok(http::json_response(200, &response, &correlation_id))
-        }
-
-        (&Method::PATCH, ["uploads", image_id]) => {
-            let user_id = caller(state, req).await?;
-            let (group_id, cycle_id) = group_and_cycle_query(req)?;
-            let body: PatchUploadRequest = http::parse_body(req)?;
-            let response = handlers::patch_upload(
-                state,
-                &user_id,
-                &group_id,
-                &cycle_id,
-                &ImageId::new(*image_id),
-                body,
             )
             .await?;
             Ok(http::json_response(200, &response, &correlation_id))

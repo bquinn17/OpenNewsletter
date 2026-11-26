@@ -187,38 +187,6 @@ pub async fn count_active_response_images(
     Ok(query_all(request).await?.len())
 }
 
-/// `PATCH /uploads/{imageId}` (§9.6) — overwrite just the caption. The caller
-/// already resolved ownership via [`get_image`], so this doesn't re-check it.
-///
-/// Conditioned on the row existing: `DELETE /uploads` hard-deletes rows, and
-/// an unconditioned `SET` racing it would recreate a partial row that never
-/// deserializes. A lost race is `RepoError::ConditionalCheckFailed`.
-pub async fn set_image_caption(
-    repo: &Repo,
-    group_id: &GroupId,
-    cycle_id: &CycleId,
-    image_id: &ImageId,
-    caption: Option<&str>,
-) -> Result<(), RepoError> {
-    let value = match caption {
-        Some(c) => AttributeValue::S(c.to_owned()),
-        None => AttributeValue::Null(true),
-    };
-    repo.client
-        .update_item()
-        .table_name(&repo.table)
-        .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
-        .key(attr::SK, AttributeValue::S(image_sk(image_id)))
-        .update_expression("SET caption = :caption")
-        .condition_expression("attribute_exists(#pk)")
-        .expression_attribute_names("#pk", attr::PK)
-        .expression_attribute_values(":caption", value)
-        .send()
-        .await
-        .map_err(error::from_update_item_error)?;
-    Ok(())
-}
-
 /// Deletes an `ImageMedia` row (`docs/design/api.md` §9.4). Called by the
 /// `media-delete` helper only after the image's S3 objects are gone. Deleting an absent row succeeds, so a retry is harmless.
 ///

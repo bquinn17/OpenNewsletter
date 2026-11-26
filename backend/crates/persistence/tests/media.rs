@@ -157,53 +157,6 @@ async fn it_counts_active_response_images_for_one_question() {
 }
 
 #[tokio::test]
-async fn it_sets_and_clears_an_image_caption() {
-    let (_c, repo) = common::make_repo().await;
-    let img = common::image_media("gcap", "202606", "img-01", "u1");
-    media::put_image(&repo, &img).await.unwrap();
-
-    media::set_image_caption(
-        &repo,
-        &GroupId::new("gcap"),
-        &CycleId::new("202606"),
-        &ImageId::new("img-01"),
-        Some("Cocoa thermos at mile two."),
-    )
-    .await
-    .unwrap();
-    let got = media::get_image(
-        &repo,
-        &GroupId::new("gcap"),
-        &CycleId::new("202606"),
-        &ImageId::new("img-01"),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(got.caption, Some("Cocoa thermos at mile two.".to_owned()));
-
-    media::set_image_caption(
-        &repo,
-        &GroupId::new("gcap"),
-        &CycleId::new("202606"),
-        &ImageId::new("img-01"),
-        None,
-    )
-    .await
-    .unwrap();
-    let cleared = media::get_image(
-        &repo,
-        &GroupId::new("gcap"),
-        &CycleId::new("202606"),
-        &ImageId::new("img-01"),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(cleared.caption, None);
-}
-
-#[tokio::test]
 async fn it_deletes_an_image_row_idempotently() {
     let (_c, repo) = common::make_repo().await;
     let group_id = GroupId::new("gdel");

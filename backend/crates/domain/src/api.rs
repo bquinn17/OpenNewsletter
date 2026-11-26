@@ -649,9 +649,7 @@ impl From<Response> for ResponseDto {
     }
 }
 
-/// `PUT .../my-response` request body (§7.3), tagged by `kind`. Image captions
-/// are set separately via `PATCH /uploads/{imageId}` (§9.6) — not part of this
-/// payload.
+/// `PUT .../my-response` request body (§7.3), tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum SaveResponseRequest {
@@ -680,7 +678,6 @@ pub struct CommentImageResponse {
     pub thumb_url: String,
     pub width: u32,
     pub height: u32,
-    pub caption: Option<String>,
 }
 
 /// One comment (§8, `docs/design/engagement.md` §1.1). Used both on the dedicated
@@ -783,8 +780,8 @@ pub struct CreateUploadResponse {
     pub expires_in_seconds: u64,
 }
 
-/// `GET /uploads/{imageId}`, `PATCH /uploads/{imageId}`, and
-/// `POST /uploads/{imageId}/complete` response (§9.2, §9.3, §9.6).
+/// `GET /uploads/{imageId}` and `POST /uploads/{imageId}/complete` response
+/// (§9.2, §9.3).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageMediaResponse {
@@ -799,7 +796,6 @@ pub struct ImageMediaResponse {
     pub bytes: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    pub caption: Option<String>,
     /// Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md`
     /// §4.2); `null` until `status=ready`.
     pub display_url: Option<String>,
@@ -825,7 +821,6 @@ impl ImageMediaResponse {
             bytes: image.bytes,
             width: image.width,
             height: image.height,
-            caption: image.caption,
             display_url,
             thumb_url,
             error_message: image.error_message,
@@ -833,15 +828,6 @@ impl ImageMediaResponse {
             processed_at: image.processed_at,
         }
     }
-}
-
-/// `PATCH /uploads/{imageId}` request body (§9.6). `caption` is a required
-/// key (per the YAML schema) whose value is either a string or `null` —
-/// there is no "absent" state to distinguish, unlike `PatchMeRequest`.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PatchUploadRequest {
-    pub caption: Option<String>,
 }
 
 /// `POST /avatars` request body (§9.7). `mimeType` is a bare `String` for the

@@ -238,6 +238,8 @@ export function CommentRow({
                 body={comment.body}
                 images={[]}
                 allowImages={false}
+                maxGiphy={1}
+                giphyVariant="comment"
                 className="mt-0.5"
               />
               {comment.image && (
@@ -249,7 +251,7 @@ export function CommentRow({
                 >
                   <MediaImage
                     src={comment.image.thumbUrl}
-                    alt={comment.image.caption ?? ""}
+                    alt="Attached image"
                     {...thumbSize(comment.image.width, comment.image.height, IMAGE_MAX_HEIGHT_PX)}
                     className="max-h-48 rounded-xl"
                   />

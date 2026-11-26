@@ -36,7 +36,6 @@ pub fn pending_image(
         bytes: 0,
         width: None,
         height: None,
-        caption: None,
         uploaded_at: "2026-06-02T12:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: None,
         error_message: None,

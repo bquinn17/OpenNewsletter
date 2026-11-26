@@ -324,7 +324,9 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         responseId: "pub_r4",
         userId: CALLER_ID,
         displayName: "Quinn",
-        body: "Planning next year's trip already.",
+        // Seeded with a GIF token (`docs/design/frontend.md` §18.3/§17) — the mock GIPHY client
+        // resolves `demoparty` to a GIF served from `public/demo-media/`, no GIPHY call involved.
+        body: "Planning next year's trip already.\n\n![party](giphy:demoparty)",
         images: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 4000).toISOString(),
         comments: [],

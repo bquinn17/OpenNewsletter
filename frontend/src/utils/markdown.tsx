@@ -4,23 +4,26 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema, type Options as Schema } from "rehype-sanitize";
 import clsx from "clsx";
 import { MediaImage } from "../components/ui/MediaImage";
+import { GiphyEmbed } from "../components/newsletter/GiphyEmbed";
+import { GIPHY_ID_RE } from "../giphy/giphyClient";
 import { thumbSize } from "./media";
 
 /**
- * Allows `image:{imageId}` tokens (`docs/design/media.md` §7) through the
- * sanitizer on `img[src]` in addition to the default `http`/`https`.
- * `<script>`/`<iframe>`/`<style>`, event handlers, and `javascript:` links
- * are rejected by `defaultSchema` already and untouched here.
+ * Allows `image:{imageId}` and `giphy:{gifId}` tokens (`docs/design/media.md` §7,
+ * `docs/design/frontend.md` §18.3) through the sanitizer on `img[src]` in addition to the default
+ * `http`/`https`. `<script>`/`<iframe>`/`<style>`, event handlers, and `javascript:` links are
+ * rejected by `defaultSchema` already and untouched here.
  */
 const markdownSanitizeSchema: Schema = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
-    src: [...(defaultSchema.protocols?.src ?? []), "image"],
+    src: [...(defaultSchema.protocols?.src ?? []), "image", "giphy"],
   },
 };
 
 const IMAGE_TOKEN_RE = /!\[[^\]]*\]\(image:([^)\s]+)\)/g;
+const GIPHY_TOKEN_RE = /!\[[^\]]*\]\(giphy:([^)\s]+)\)/g;
 
 /**
  * `react-markdown`'s own URL sanitizer (independent of `rehype-sanitize`)
@@ -30,7 +33,7 @@ const IMAGE_TOKEN_RE = /!\[[^\]]*\]\(image:([^)\s]+)\)/g;
  * everything else (still rejecting `javascript:` etc.).
  */
 function urlTransform(value: string): string {
-  if (value.startsWith("image:")) return value;
+  if (value.startsWith("image:") || value.startsWith("giphy:")) return value;
   return defaultUrlTransform(value);
 }
 
@@ -41,6 +44,25 @@ export function referencedImageIds(body: string): Set<string> {
     if (match[1]) ids.add(match[1]);
   }
   return ids;
+}
+
+/** The `giphy:{id}` ids referenced inline in a body, for a page's one batched lookup (`docs/design/frontend.md` §18.3). */
+export function referencedGiphyIds(body: string): Set<string> {
+  const ids = new Set<string>();
+  for (const match of body.matchAll(GIPHY_TOKEN_RE)) {
+    if (match[1] && GIPHY_ID_RE.test(match[1])) ids.add(match[1]);
+  }
+  return ids;
+}
+
+/**
+ * `body` with every `giphy:` token after the first `max` removed, so the renderer draws no more
+ * GIFs than the editor allows (`docs/design/frontend.md` §18.3). Done on the string, before
+ * rendering, so the cap doesn't depend on render order or on how often React renders.
+ */
+export function capGiphyTokens(body: string, max: number): string {
+  let seen = 0;
+  return body.replace(GIPHY_TOKEN_RE, (token) => (seen++ < max ? token : ""));
 }
 
 /** `body` with every `![alt](image:{id})` token removed, whitespace collapsed. */
@@ -64,17 +86,31 @@ type Props = {
    * When `false` (comments — `docs/design/engagement.md` §1.3/§5), `image:{id}` tokens
    * never render an `<img>`, regardless of `images`. A remote `http(s)` image
    * already degrades to a link either way, so this only changes the
-   * `image:` token path.
+   * `image:` token path. `giphy:` tokens are unaffected — comments keep this `false` for
+   * everything except GIFs (`docs/design/frontend.md` §18.3).
    */
   allowImages?: boolean;
+  /**
+   * How many `giphy:` tokens this body may render inline: 5 for an answer, 1 for a comment
+   * (`docs/design/frontend.md` §18.3). The editor enforces the cap when a GIF is picked; this is
+   * the renderer's own backstop for a hand-typed or legacy body.
+   */
+  maxGiphy?: number;
+  /** Variant passed through to each `GiphyEmbed` for its sizing (`docs/design/frontend.md` §18.3). */
+  giphyVariant?: "answer" | "comment";
 };
 
 type ImageRendering = {
   byId: Map<string, MarkdownImage>;
   allowImages: boolean;
+  giphyVariant: "answer" | "comment";
 };
 
-const ImageRenderingContext = createContext<ImageRendering>({ byId: new Map(), allowImages: true });
+const ImageRenderingContext = createContext<ImageRendering>({
+  byId: new Map(),
+  allowImages: true,
+  giphyVariant: "answer",
+});
 
 function MarkdownLink({ href, children }: ComponentProps<"a">) {
   return (
@@ -85,8 +121,15 @@ function MarkdownLink({ href, children }: ComponentProps<"a">) {
 }
 
 function MarkdownImg({ src, alt }: ComponentProps<"img">) {
-  const { byId, allowImages } = useContext(ImageRenderingContext);
+  const { byId, allowImages, giphyVariant } = useContext(ImageRenderingContext);
   if (!src) return null;
+
+  if (src.startsWith("giphy:")) {
+    const gifId = src.slice("giphy:".length);
+    if (!GIPHY_ID_RE.test(gifId)) return null;
+    return <GiphyEmbed id={gifId} alt={alt ?? ""} variant={giphyVariant} />;
+  }
+
   // Only uploaded images render inline. A remote image would be blocked
   // by the CSP's `img-src` (`docs/design/frontend.md` §12.1) and would leak readers' IPs to
   // its host, so it degrades to a link.
@@ -132,14 +175,23 @@ const components: Components = { a: MarkdownLink, img: MarkdownImg };
  * `image:{id}` tokens against `images` into `<MediaImage>`s. An id with no
  * match (not yet uploaded, or removed) renders nothing.
  */
-export function MarkdownBody({ body, images, className, allowImages = true }: Props) {
+export function MarkdownBody({
+  body,
+  images,
+  className,
+  allowImages = true,
+  maxGiphy = 5,
+  giphyVariant = "answer",
+}: Props) {
   const rendering = useMemo(
     () => ({
       byId: new Map(images.map((image) => [image.imageId, image])),
       allowImages,
+      giphyVariant,
     }),
-    [images, allowImages],
+    [images, allowImages, giphyVariant],
   );
+  const cappedBody = useMemo(() => capGiphyTokens(body, maxGiphy), [body, maxGiphy]);
 
   return (
     <div className={clsx("prose prose-sm max-w-none text-[15px] leading-relaxed", className)}>
@@ -150,7 +202,7 @@ export function MarkdownBody({ body, images, className, allowImages = true }: Pr
           urlTransform={urlTransform}
           components={components}
         >
-          {body}
+          {cappedBody}
         </ReactMarkdown>
       </ImageRenderingContext.Provider>
     </div>

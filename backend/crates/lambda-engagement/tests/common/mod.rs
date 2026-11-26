@@ -305,7 +305,6 @@ pub async fn seed_comment_image(
         bytes: 123_456,
         width: Some(1200),
         height: Some(800),
-        caption: None,
         uploaded_at: "2026-06-04T00:00:00Z".parse::<Timestamp>().unwrap(),
         processed_at: Some("2026-06-04T00:01:00Z".parse::<Timestamp>().unwrap()),
         error_message: None,

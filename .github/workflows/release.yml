@@ -203,6 +203,9 @@ jobs:
           VITE_ENV: prod
           VITE_USE_MOCKS: "false"
           VITE_BUILD_SHA: ${{ github.sha }}
+          # A GIPHY beta key is public by design (`docs/design/frontend.md` §9.3), so it's a repo
+          # variable, not a secret. Unset is fine too — the GIF picker just hides.
+          VITE_GIPHY_API_KEY: ${{ vars.VITE_GIPHY_API_KEY }}
 
       - name: Write GitHub Pages CNAME
         working-directory: frontend

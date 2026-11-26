@@ -367,8 +367,7 @@ export interface paths {
         delete: operations["deleteUpload"];
         options?: never;
         head?: never;
-        /** Set or clear an image's caption (`docs/design/api.md` §9.6). Caller must own the image. */
-        patch: operations["patchUpload"];
+        patch?: never;
         trace?: never;
     };
     "/uploads/{imageId}/complete": {
@@ -891,7 +890,6 @@ export interface components {
             thumbUrl: string;
             width: number;
             height: number;
-            caption: string | null;
         };
         /** @description One comment (`docs/design/engagement.md` §1.1). Used both on the engagement routes and inline in the published newsletter. A soft-deleted comment has `deletedAt` set, an empty `body` and a null `image`. */
         CommentResponse: {
@@ -998,7 +996,7 @@ export interface components {
             /** Format: date-time */
             publishedAt: string | null;
         };
-        /** @description Tagged by `kind`. Image captions are set separately via `PATCH /uploads/{imageId}` (§9.6), not part of this payload. */
+        /** @description Tagged by `kind`. */
         SaveResponseRequest: {
             /** @enum {string} */
             kind: "text";
@@ -1052,7 +1050,6 @@ export interface components {
             bytes: number;
             width: number | null;
             height: number | null;
-            caption: string | null;
             /** @description Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`. */
             displayUrl: string | null;
             /** @description Presigned S3 GET URL, valid for up to 1 hour (`docs/design/media.md` §4.2); null until `status=ready`. */
@@ -1063,10 +1060,6 @@ export interface components {
             uploadedAt: string;
             /** Format: date-time */
             processedAt: string | null;
-        };
-        PatchUploadRequest: {
-            /** @description `null` or an all-whitespace string clears the caption. */
-            caption: string | null;
         };
         CreateAvatarRequest: {
             mimeType: components["schemas"]["AvatarMimeType"];
@@ -2455,8 +2448,7 @@ export interface operations {
                      *         "displayUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *         "thumbUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/g/202606/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *         "width": 1200,
-                     *         "height": 800,
-                     *         "caption": null
+                     *         "height": 800
                      *       },
                      *       "createdAt": "2026-06-05T09:00:00.000Z",
                      *       "editedAt": null,
@@ -2824,7 +2816,6 @@ export interface operations {
                      *       "bytes": 4823920,
                      *       "width": 4032,
                      *       "height": 3024,
-                     *       "caption": null,
                      *       "displayUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/display.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "thumbUrl": "https://opennewsletter-media-processed-prod-123456789012.s3.us-east-1.amazonaws.com/img/018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a/202606/018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b/018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f/018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c/thumb.webp?X-Amz-Expires=3600&X-Amz-Signature=3b1f…",
                      *       "errorMessage": null,
@@ -2870,70 +2861,6 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
-    patchUpload: {
-        parameters: {
-            query: {
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a */
-                groupId: components["parameters"]["GroupIdQuery"];
-                /**
-                 * @description Required with `groupId` because an ImageMedia row is keyed by `(groupId, cycleId, imageId)` (`docs/design/data-model.md` §2.10).
-                 * @example 202606
-                 */
-                cycleId: components["parameters"]["CycleIdQuery"];
-            };
-            header?: never;
-            path: {
-                /** @example 018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c */
-                imageId: components["parameters"]["ImageIdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "caption": "Cocoa thermos at mile two."
-                 *     }
-                 */
-                "application/json": components["schemas"]["PatchUploadRequest"];
-            };
-        };
-        responses: {
-            /** @description The updated image. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "imageId": "018f2b6b-6c1b-7c3a-9d4e-4d5e6f7a8b9c",
-                     *       "userId": "018f2b6b-6c1b-7c3a-9d4e-1a2b3c4d5e6f",
-                     *       "groupId": "018f2b6b-6c1b-7c3a-9d4e-2b3c4d5e6f7a",
-                     *       "cycleId": "202606",
-                     *       "questionId": "018f2b6b-6c1b-7c3a-9d4e-3c4d5e6f7a8b",
-                     *       "purpose": "response",
-                     *       "mimeType": "image/png",
-                     *       "status": "pending",
-                     *       "bytes": 1048576,
-                     *       "width": null,
-                     *       "height": null,
-                     *       "caption": "Cocoa thermos at mile two.",
-                     *       "displayUrl": null,
-                     *       "thumbUrl": null,
-                     *       "errorMessage": null,
-                     *       "uploadedAt": "2026-06-02T10:00:00.000Z",
-                     *       "processedAt": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ImageMediaResponse"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            422: components["responses"]["ValidationFailed"];
-        };
-    };
     completeUpload: {
         parameters: {
             query: {
@@ -2973,7 +2900,6 @@ export interface operations {
                      *       "bytes": 16777216,
                      *       "width": null,
                      *       "height": null,
-                     *       "caption": null,
                      *       "displayUrl": null,
                      *       "thumbUrl": null,
                      *       "errorMessage": "IMAGE_TOO_LARGE",

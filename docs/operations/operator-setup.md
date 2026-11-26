@@ -161,6 +161,18 @@ This repo's GitHub Pages site serves dev (`dev.betterloop.site`), and a repo hos
 
 **GitHub**: variable `PROD_PAGES_REPO`, secret `PROD_PAGES_DEPLOY_KEY`.
 
+## 11. GIPHY API keys
+
+GIFs ([D13](../decisions.md#d13), [`frontend.md` §18](../design/frontend.md#18-the--attach-menu-and-gifs-from-giphy)) need a GIPHY API key in the frontend build. Without one, the build still works: the GIF item is hidden and existing GIFs show as their titles.
+
+1. At [developers.giphy.com](https://developers.giphy.com/dashboard/), create an app of type **API** and copy its beta key. Create one app per env, so dev testing can't use up prod's hourly allowance.
+2. Set the repo variables `DEV_VITE_GIPHY_API_KEY` (dev) and `VITE_GIPHY_API_KEY` (prod). They're variables, not secrets: the key ships in the bundle, and GIPHY's keys are public by design.
+3. For `make fe` against dev, put `VITE_GIPHY_API_KEY=<dev key>` in `frontend/.env.local`.
+
+Watch usage on GIPHY's dashboard. A beta key allows 100 calls an hour across everyone using the app ([`frontend.md` §18.4](../design/frontend.md#184-the-shared-rate-limit)).
+
+**GitHub**: variables `DEV_VITE_GIPHY_API_KEY`, `VITE_GIPHY_API_KEY`.
+
 ---
 
 ## Done when

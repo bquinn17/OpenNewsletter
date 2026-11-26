@@ -13,17 +13,20 @@ describe("buildCspPolicy", () => {
     expect(policy).toContain("default-src 'self'");
     expect(policy).toContain("script-src 'self'");
     expect(policy).toContain("style-src 'self' 'unsafe-inline'");
-    expect(policy).toContain("img-src 'self' data: blob: https://media.example.com");
+    expect(policy).toContain(
+      "img-src 'self' data: blob: https://media.example.com https://*.giphy.com",
+    );
     expect(policy).toContain(
       "connect-src 'self' https://api.example.com https://uploads-a.example.com " +
         "https://uploads-b.example.com https://cognito-idp.us-east-1.amazonaws.com " +
-        "https://my-pool.auth.us-east-1.amazoncognito.com",
+        "https://my-pool.auth.us-east-1.amazoncognito.com https://api.giphy.com",
     );
     expect(policy).toContain("font-src 'self'");
     expect(policy).toContain("base-uri 'self'");
     expect(policy).toContain("form-action 'self' https://my-pool.auth.us-east-1.amazoncognito.com");
     expect(policy).toContain("worker-src 'self'");
     expect(policy).toContain("manifest-src 'self'");
+    expect(policy).toContain("media-src 'self' https://*.giphy.com");
 
     // No path/query leaked through into the policy — only the origin.
     expect(policy).not.toContain("/some/path");
@@ -58,7 +61,7 @@ describe("buildCspPolicy", () => {
         .split(";")
         .find((d) => d.trim().startsWith("img-src"))
         ?.trim(),
-    ).toBe("img-src 'self' data: blob:");
+    ).toBe("img-src 'self' data: blob: https://*.giphy.com");
   });
 
   it("drops an invalid or empty entry from uploadOrigins without dropping the valid ones", () => {

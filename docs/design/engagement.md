@@ -198,8 +198,9 @@ Bars are pure CSS (no chart library). Caller's pick gets the ring highlight.
 
 All user-authored markdown (responses + comments) goes through a strict allowlist sanitizer; the renderer itself (image token handling, URL transform) is owned by [`frontend.md` §9](frontend.md#9-renderers). The allowlist:
 
-- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img`. Comments render with `allowImages={false}`, so no inline images at all — engagement's single attached image (§1.3) renders separately from the markdown body.
+- Allowed elements: `p, em, strong, code, pre, ul, ol, li, blockquote, a, br, hr, h1..h6, img`. Comments render with `allowImages={false}`, so no inline images, except a `giphy:` GIF token. Engagement's single attached image (§1.3) renders separately from the markdown body.
 - Allowed attributes: `href` on `a` (https only, no `javascript:`/`data:`); `src/alt/width/height` on `img`; `class` is stripped.
+- Allowed `img` sources: `image:{imageId}` (an uploaded image) and `giphy:{gifId}` (a GIF from GIPHY, whose id must match `^[A-Za-z0-9]+$`). Each is resolved and rendered by its own component; any other source renders as a link.
 - Forbidden: `script, style, iframe, object, embed, form, input, button, svg, math` and any `on*` attributes.
 
 Implemented in `frontend/src/utils/markdown.tsx` using `rehype-sanitize` with a custom `defaultSchema`.

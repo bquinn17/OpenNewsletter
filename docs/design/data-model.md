@@ -312,7 +312,6 @@ Each uploaded image. Originals lifecycle is owned by S3; the table tracks metada
 | `status` | `pending` \| `ready` \| `failed` |
 | `bytes` | number |
 | `width` / `height` | numbers (from processor) |
-| `caption` | string \| null (author-supplied, ≤140 chars; rendered beneath the image in the published view) |
 | `uploaded_at` | ISO-8601 |
 | `processed_at` | ISO-8601 \| null |
 | `error_message` | string \| null — why `status=failed`: `IMAGE_TOO_LARGE` or `IMAGE_DECODE_FAILED` ([`media.md` §3.2](media.md#32-presign)). `DELETED` is not written: `DELETE /uploads/{imageId}` deletes the row outright instead of soft-marking it `failed` ([D8](../decisions.md#d8); [`api.md` §9.4](api.md#94-delete-uploadsimageid)). |

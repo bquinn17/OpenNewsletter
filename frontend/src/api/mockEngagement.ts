@@ -53,7 +53,6 @@ function mockCommentImage(imageId: string): S["CommentImageResponse"] {
     thumbUrl: row?.thumbUrl ?? MOCK_IMAGE_DATA_URL,
     width: row?.width ?? 800,
     height: row?.height ?? 600,
-    caption: row?.caption ?? null,
   };
 }
 

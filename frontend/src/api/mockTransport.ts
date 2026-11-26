@@ -235,7 +235,6 @@ function handleCreateUpload(body: unknown): S["CreateUploadResponse"] {
     bytes: request.byteSize,
     width: null,
     height: null,
-    caption: null,
     displayUrl: null,
     thumbUrl: null,
     errorMessage: null,
@@ -275,15 +274,6 @@ function handleGetUpload(imageId: string, poll: boolean): S["ImageMediaResponse"
 function handleDeleteUpload(imageId: string): undefined {
   deleteMockImage(imageId);
   return undefined;
-}
-
-function handlePatchUpload(imageId: string, body: unknown): S["ImageMediaResponse"] {
-  const row = imageRows.get(imageId);
-  if (!row) fail(404, "NOT_FOUND", `image ${imageId} not found`);
-  // Trusted internal shape — the only caller is our own typed `api.media.patchUpload`.
-  const patch = body as S["PatchUploadRequest"];
-  row.caption = patch.caption?.trim() ? patch.caption : null;
-  return { ...row };
 }
 
 function handleCreateAvatar(body: unknown): S["CreateAvatarResponse"] {
@@ -382,9 +372,6 @@ function routeMockRequest(method: Method, path: string, body: unknown): unknown 
   }
   if (method === "DELETE" && segments.length === 2 && segments[0] === "uploads") {
     return handleDeleteUpload(decodeURIComponent(segments[1]));
-  }
-  if (method === "PATCH" && segments.length === 2 && segments[0] === "uploads") {
-    return handlePatchUpload(decodeURIComponent(segments[1]), body);
   }
   if (
     method === "POST" &&
