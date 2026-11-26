@@ -145,7 +145,7 @@ async fn voting_on_a_non_voting_cycle_is_refused() {
 }
 
 #[tokio::test]
-async fn create_candidate_populates_the_submitters_own_attribution() {
+async fn anonymous_candidate_hides_the_name_even_from_its_admin_submitter() {
     let (_c, repo) = common::make_repo().await;
     let group = common::group("gat", "u1");
     common::seed_group_and_membership(&repo, &group, "u1", Role::Admin).await;
@@ -166,12 +166,8 @@ async fn create_candidate_populates_the_submitters_own_attribution() {
             .expect("member can submit a candidate");
 
     assert!(item.is_anonymous);
-    assert_eq!(
-        item.asked_by
-            .expect("submitter always sees own attribution")
-            .user_id,
-        UserId::new("u1")
-    );
+    // u1 is both the submitter and a group admin, and still gets no name back.
+    assert!(item.asked_by.is_none());
     assert_eq!(item.vote_count, 0);
     assert!(!item.voted_by_me);
 }

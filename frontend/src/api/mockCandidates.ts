@@ -2,7 +2,6 @@ import type { components } from "../types/api";
 import {
   CALLER_ID,
   fail,
-  isAdminOf,
   newsletters,
   NO_MOCK_ROUTE,
   validationFailed,
@@ -220,18 +219,14 @@ function requireVotingCycle(groupId: string): S["NewsletterSummary"] {
   return voting;
 }
 
-function toItem(
-  candidate: StoredCandidate,
-  isAdmin: boolean,
-  votedByMe: boolean,
-): CandidateItemResponse {
-  const visible = !candidate.isAnonymous || isAdmin || candidate.submitter.userId === CALLER_ID;
+function toItem(candidate: StoredCandidate, votedByMe: boolean): CandidateItemResponse {
   return {
     questionId: candidate.questionId,
     kind: candidate.kind,
     prompt: candidate.prompt,
     ...(candidate.pollOptions ? { pollOptions: candidate.pollOptions } : {}),
-    askedBy: visible ? candidate.submitter : null,
+    // An anonymous question carries no name for anyone, admins and the submitter included (§6.1).
+    askedBy: candidate.isAnonymous ? null : candidate.submitter,
     isAnonymous: candidate.isAnonymous,
     voteCount: candidate.voteCount,
     votedByMe,
@@ -250,13 +245,12 @@ function listCandidates(groupId: string, query: URLSearchParams): S["CandidateLi
       : new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
   );
   const votedSet = votesFor(groupId, voting.cycleId);
-  const isAdmin = isAdminOf(groupId, CALLER_ID);
 
   return {
     nextCycleId: voting.cycleId,
     votesPerUserPerCycle: VOTES_PER_USER_PER_CYCLE,
     myVoteCount: votedSet.size,
-    items: sorted.map((c) => toItem(c, isAdmin, votedSet.has(c.questionId))),
+    items: sorted.map((c) => toItem(c, votedSet.has(c.questionId))),
     nextCursor: null,
   };
 }
@@ -338,8 +332,7 @@ function createCandidate(groupId: string, body: unknown): CandidateItemResponse 
   };
   ensurePool(groupId, voting.cycleId).push(candidate);
 
-  // The submitter always sees their own attribution, even when isAnonymous=true (§6.2).
-  return toItem(candidate, isAdminOf(groupId, CALLER_ID), false);
+  return toItem(candidate, false);
 }
 
 function castVote(groupId: string, questionId: string): S["CandidateVoteResponse"] {

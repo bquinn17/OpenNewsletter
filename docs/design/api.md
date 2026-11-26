@@ -237,7 +237,7 @@ Query: `?sort=top|recent&limit=&cursor=`
 
 Response 200: `CandidateListResponse` in `shared/openapi.yaml`.
 
-`askedBy`, when populated, mirrors the member-listing avatar fields (`AskedBy` schema) so the UI can render a small avatar swatch next to the asker. It's populated when `isAnonymous=false`, OR whenever the caller is a group admin (admins always see authorship for moderation). When `isAnonymous=true` and the caller is a non-admin, `askedBy` is `null`. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
+`askedBy`, when populated, mirrors the member-listing avatar fields (`AskedBy` schema) so the UI can render a small avatar swatch next to the asker. It's populated only when `isAnonymous=false`. When `isAnonymous=true`, `askedBy` is `null` for every caller: admins don't see who asked, and neither does the submitter, so an anonymous question looks the same to everyone. The internal `submittedBy` userId attribute is never returned directly — it's only surfaced through the redacted `askedBy` object.
 
 `sort=top` orders by `voteCount` DESC, then `submittedAt` ASC (oldest first), then `questionId` ASC — the same tie-break promotion uses ([`lifecycle.md` §5.2](lifecycle.md#52-promote_and_opennl), [`data-model.md` §2.6](data-model.md#26-candidate-question-in-voting-pool)). `sort=recent` uses AP10 with sort by `submittedAt`. Default (when `sort` is omitted) is `top`. Since a group's candidate pool is bounded by its member count (soft-capped, typically ≤50), `lambda-questions` fetches the full pool via AP10 and sorts/pages it in memory rather than using AP11's GSI1 — whose tie order (newest-first on vote-count ties) doesn't match promotion's and would make the UI's "top" list disagree with which candidates actually get promoted.
 
@@ -247,9 +247,9 @@ Response 200: `CandidateListResponse` in `shared/openapi.yaml`.
 
 Body: `CreateCandidateRequest` in `shared/openapi.yaml` (`pollOptions`, a `CreatePollOptionRequest[]`, is required only for `kind: poll`).
 
-Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars after trimming, no duplicate labels (compared case-insensitively, [`engagement.md` §3.3](engagement.md#33-validation)). `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from non-admin members. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
+Validation: prompt 5–500 chars. Poll: 2–6 options, each label 1–80 chars after trimming, no duplicate labels (compared case-insensitively, [`engagement.md` §3.3](engagement.md#33-validation)). `isAnonymous` is optional and defaults to `false` (the question will be attributed to the submitter); set to `true` to hide authorship from everyone, admins and the submitter included. The submitter's `userId` is always recorded server-side regardless of `isAnonymous`. The flag is fixed at creation and cannot be changed later.
 
-Response 201: `CandidateItemResponse`, with `askedBy` populated (the submitter is always allowed to see their own attribution, even when `isAnonymous=true`).
+Response 201: `CandidateItemResponse`. `askedBy` is `null` when `isAnonymous=true`, as on every other read.
 
 Errors: `VALIDATION_FAILED`, `CYCLE_NOT_VOTING` (if no eligible "next" cycle exists — e.g., the upcoming cycle has already locked).
 

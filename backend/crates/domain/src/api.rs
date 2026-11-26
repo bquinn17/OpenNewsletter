@@ -388,8 +388,8 @@ pub struct LeaderboardResponse {
 
 // ===== `docs/design/api.md` §5/§6 — Newsletter and candidate-question routes =====
 
-/// "Who asked this" for a candidate or locked question (§6.1), redacted to `None`
-/// when `isAnonymous=true` and the caller is neither the submitter nor a group admin.
+/// "Who asked this" for a candidate or locked question (§6.1), `None` whenever
+/// `isAnonymous=true`, for every caller (admins and the submitter included).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskedBy {

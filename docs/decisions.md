@@ -266,6 +266,15 @@ Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-
 
 **Where.** [`data-model.md` §1](design/data-model.md#1-table-shape-recap), [`lifecycle.md` §5.5](design/lifecycle.md#55-time-math-rust), [`api.md` §1](design/api.md#1-general-conventions).
 
+<a id="anonymous-means-anonymous"></a>
+### An anonymous question shows no name to anyone, admins and the submitter included
+
+**Decision.** When `isAnonymous=true`, every read returns `askedBy: null`, for every caller, on candidate and locked questions alike. Admins don't see who asked, and the submitter doesn't get their own name back either, not even in the `201` from creating the question. The server still records `submitted_by`.
+
+**Why.** Showing admins the asker meant "anonymous" wasn't anonymous to the people running the group. Showing submitters their own name on their anonymous questions made those questions look attributed, and a member reported it as a privacy bug. When everyone sees the same thing, nobody can mistake what the group sees.
+
+**Where.** [`api.md` §6.1](design/api.md#61-get-groupsgroupidcandidate-questions), [`data-model.md` §2.8](design/data-model.md#28-locked-question).
+
 ---
 
 ## Design review: performance and cost

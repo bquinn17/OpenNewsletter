@@ -79,11 +79,11 @@ describe("mockCandidateRoute", () => {
     expect(anonymous!.askedBy).toBeNull();
   });
 
-  it("lets a group admin see askedBy on anonymous questions in g_trail", () => {
+  it("redacts anonymous askedBy for a group admin of g_trail too", () => {
     const list = listCandidates("g_trail");
     const anonymous = list.items.find((i) => i.isAnonymous);
     expect(anonymous).toBeDefined();
-    expect(anonymous!.askedBy).not.toBeNull();
+    expect(anonymous!.askedBy).toBeNull();
   });
 
   it("rejects an unknown group with FORBIDDEN", () => {
@@ -98,13 +98,13 @@ describe("mockCandidateRoute", () => {
     );
   });
 
-  it("creates a text candidate and always shows the submitter their own attribution", () => {
+  it("creates an anonymous text candidate with no name, even for its submitter", () => {
     const created = createCandidate("g_game", {
       kind: "text",
       prompt: "What's a game you want to try next?",
       isAnonymous: true,
     });
-    expect(created.askedBy).not.toBeNull();
+    expect(created.askedBy).toBeNull();
     expect(created.isAnonymous).toBe(true);
     expect(created.voteCount).toBe(0);
 

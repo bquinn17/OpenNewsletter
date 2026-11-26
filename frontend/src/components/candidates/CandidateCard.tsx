@@ -77,7 +77,6 @@ export function CandidateCard({ item, timezone, disabled, pending, onToggleVote 
               month: "short",
               day: "numeric",
             })}
-            {item.isAnonymous ? " · anonymous" : ""}
           </div>
         </div>
       </div>

@@ -186,7 +186,7 @@ export function SuggestQuestionForm({ groupId, onSuccess }: Props) {
             </div>
             <div className="mt-1 text-xs opacity-90">
               {isAnonymous
-                ? "Admins can still see who asked — your friends won't."
+                ? "Nobody in the group sees who asked, admins included."
                 : "Your friends see “You asked: …” next to this question."}
             </div>
           </div>

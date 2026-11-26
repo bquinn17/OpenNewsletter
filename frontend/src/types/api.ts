@@ -789,7 +789,7 @@ export interface components {
         ResponseStatus: "draft" | "published";
         /** @enum {string} */
         NewsletterStatus: "voting" | "open" | "published" | "archived";
-        /** @description `null` (at the call site, not here) when `isAnonymous=true` and the caller is neither the submitter nor a group admin. */
+        /** @description `null` (at the call site, not here) when `isAnonymous=true`, for every caller: admins and the submitter included. */
         AskedBy: {
             userId: string;
             displayName: string;
@@ -827,7 +827,7 @@ export interface components {
             prompt: string;
             pollOptions?: components["schemas"]["CreatePollOptionRequest"][];
             /**
-             * @description Fixed at creation; hides `askedBy` from non-admin members when `true`.
+             * @description Fixed at creation; when `true`, `askedBy` is `null` for every caller, admins and the submitter included.
              * @default false
              */
             isAnonymous: boolean;
@@ -2158,7 +2158,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created candidate, with `askedBy` populated (the submitter always sees their own attribution). */
+            /** @description The created candidate. `askedBy` is `null` when `isAnonymous=true`, even for the submitter. */
             201: {
                 headers: {
                     [name: string]: unknown;
