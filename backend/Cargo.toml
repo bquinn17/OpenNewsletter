@@ -15,6 +15,7 @@ members = [
     "crates/lambda-media",
     "crates/lambda-push",
     "crates/lambda-image-process",
+    "crates/lambda-audio-process",
     "crates/lambda-cycle-tick",
     "crates/lambda-notify-tick",
 ]

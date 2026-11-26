@@ -11,13 +11,14 @@
 //! plain `cargo test`.
 
 use domain::api::{
-    AvatarMediaResponse, CandidateItemResponse, CandidateListResponse, CandidateVoteResponse,
-    CommentListResponse, CommentResponse, ConfigResponse, CreateAvatarRequest,
-    CreateAvatarResponse, CreateCandidateRequest, CreateCommentRequest, CreateInviteRequest,
-    CreateInviteResponse, CreateUploadRequest, CreateUploadResponse, DevTickCycleRequest,
-    DevTickCycleResponse, DevTickNotifyResponse, GroupResponse, HealthResponse, ImageMediaResponse,
-    InviteListResponse, LeaderboardResponse, MemberResponse, NewsletterDetailResponse,
-    NewsletterListResponse, PatchCommentRequest, PatchGroupRequest, PatchMeRequest,
+    AudioMediaResponse, AvatarMediaResponse, CandidateItemResponse, CandidateListResponse,
+    CandidateVoteResponse, CommentListResponse, CommentResponse, ConfigResponse,
+    CreateAudioUploadRequest, CreateAudioUploadResponse, CreateAvatarRequest, CreateAvatarResponse,
+    CreateCandidateRequest, CreateCommentRequest, CreateInviteRequest, CreateInviteResponse,
+    CreateUploadRequest, CreateUploadResponse, DevTickCycleRequest, DevTickCycleResponse,
+    DevTickNotifyResponse, GroupResponse, HealthResponse, ImageMediaResponse, InviteListResponse,
+    LeaderboardResponse, MemberResponse, NewsletterDetailResponse, NewsletterListResponse,
+    PatchAudioUploadRequest, PatchCommentRequest, PatchGroupRequest, PatchMeRequest,
     PatchMemberRequest, ProblemDetails, PushPreferenceListResponse, PushPreferenceResponse,
     PushSubscribeRequest, PushSubscribeResponse, PushSubscriptionListResponse, PushTestResponse,
     PushUnsubscribeRequest, PutPushPreferenceRequest, ReactionsResponse, RedeemRequest,
@@ -455,6 +456,61 @@ const ROUTE_TABLE: &[(&str, &str, &str, Checker)] = &[
         "POST",
         "/uploads/{imageId}/complete",
         "404",
+        round_trip::<ProblemDetails>,
+    ),
+    // ---- `docs/design/media.md` §12 — Voice clip routes ----
+    (
+        "POST",
+        "/audio-uploads",
+        "request",
+        round_trip::<CreateAudioUploadRequest>,
+    ),
+    (
+        "POST",
+        "/audio-uploads",
+        "201",
+        round_trip::<CreateAudioUploadResponse>,
+    ),
+    (
+        "POST",
+        "/audio-uploads",
+        "422",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "GET",
+        "/audio-uploads/{audioId}",
+        "200",
+        round_trip::<AudioMediaResponse>,
+    ),
+    (
+        "GET",
+        "/audio-uploads/{audioId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PATCH",
+        "/audio-uploads/{audioId}",
+        "request",
+        round_trip::<PatchAudioUploadRequest>,
+    ),
+    (
+        "PATCH",
+        "/audio-uploads/{audioId}",
+        "200",
+        round_trip::<AudioMediaResponse>,
+    ),
+    (
+        "PATCH",
+        "/audio-uploads/{audioId}",
+        "404",
+        round_trip::<ProblemDetails>,
+    ),
+    (
+        "PATCH",
+        "/audio-uploads/{audioId}",
+        "422",
         round_trip::<ProblemDetails>,
     ),
     (

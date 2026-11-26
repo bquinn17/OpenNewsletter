@@ -1,13 +1,13 @@
-"""MediaPipelineStack — lambda-image-process and its S3 event subscription.
+"""MediaPipelineStack — lambda-image-process, lambda-audio-process and their S3 event subscriptions.
 
 This stack is deliberately volatile: destroy and redeploy it freely without
-touching the media buckets (and the images in them) in MediaPersistentStack.
-
-The Lambda code is a shell stub at M3; the real Rust implementation lands in M8.
+touching the media buckets (and the images and voice clips in them) in
+MediaPersistentStack.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
@@ -96,6 +96,83 @@ class MediaPipelineStack(cdk.Stack):
             )
         )
 
+        # --- Voice clips: lambda-audio-process and its ffmpeg layer ---
+
+        # `scripts/fetch_ffmpeg.sh` puts a static arm64 ffmpeg at
+        # backend/target/ffmpeg-layer/bin/ffmpeg, so it lands at /opt/bin/ffmpeg.
+        # Without it the function deploys with no layer, like a missing binary
+        # deploys a stub (`lambda_assets.py`), so a clean checkout still synths;
+        # `scripts/check_lambda_binaries.sh` refuses to deploy that.
+        ffmpeg_layer_dir = (
+            Path(__file__).parent.parent.parent / "backend" / "target" / "ffmpeg-layer"
+        )
+        ffmpeg_layer: aws_lambda.LayerVersion | None = None
+        if (ffmpeg_layer_dir / "bin" / "ffmpeg").is_file():
+            ffmpeg_layer = aws_lambda.LayerVersion(
+                self,
+                "FfmpegLayer",
+                code=aws_lambda.Code.from_asset(str(ffmpeg_layer_dir)),
+                compatible_architectures=[aws_lambda.Architecture.ARM_64],
+                compatible_runtimes=[aws_lambda.Runtime.PROVIDED_AL2023],
+            )
+
+        audio_log_group = logs.LogGroup(
+            self,
+            "AudioProcessLogs",
+            log_group_name=f"/aws/lambda/OpenNewsletter-AudioProcess-{config.env}",
+            retention=logs.RetentionDays.ONE_MONTH
+            if config.env == "dev"
+            else logs.RetentionDays.THREE_MONTHS,
+            removal_policy=cdk.RemovalPolicy.DESTROY
+            if config.env == "dev"
+            else cdk.RemovalPolicy.RETAIN,
+        )
+
+        self.audio_process_fn = aws_lambda.Function(
+            self,
+            "AudioProcessFn",
+            function_name=f"OpenNewsletter-AudioProcess-{config.env}",
+            runtime=aws_lambda.Runtime.PROVIDED_AL2023,
+            architecture=aws_lambda.Architecture.ARM_64,
+            handler="bootstrap",
+            code=lambda_code("audio-process"),
+            memory_size=1024,
+            timeout=cdk.Duration.seconds(60),
+            environment={
+                "TABLE_NAME": table.table_name,
+                "MEDIA_ORIGINALS_BUCKET": originals_bucket.bucket_name,
+                "PROCESSED_BUCKET": processed_bucket.bucket_name,
+                "FFMPEG_PATH": "/opt/bin/ffmpeg",
+                "RUST_LOG": "info",
+                "ENV": config.env,
+            },
+            log_group=audio_log_group,
+            layers=[ffmpeg_layer] if ffmpeg_layer else [],
+        )
+
+        # Least-privilege IAM, scoped to the audio prefixes: it never sees images.
+        table.grant(
+            self.audio_process_fn,
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+        )
+        processed_bucket.grant_put(self.audio_process_fn, "aud/*")
+        self.audio_process_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[originals_bucket.arn_for_objects("audio-uploads/*")],
+            )
+        )
+        self.audio_process_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:DeleteObject"],
+                resources=[
+                    originals_bucket.arn_for_objects("audio-uploads/*"),
+                    processed_bucket.arn_for_objects("aud/*"),
+                ],
+            )
+        )
+
         # S3 event subscription — fires on every upload to the originals prefix.
         #
         # `add_event_notification` attaches its BucketNotifications custom resource
@@ -127,4 +204,14 @@ class MediaPipelineStack(cdk.Stack):
             s3.EventType.OBJECT_CREATED,
             s3_notifications.LambdaDestination(self.image_process_fn),
             s3.NotificationKeyFilter(prefix="uploads/"),
+        )
+
+        # Voice clips go to their own Lambda. They're on the same imported bucket
+        # construct as the image trigger, so one BucketNotifications resource
+        # writes the bucket's whole notification config; a second one would race
+        # it. `uploads/` and `audio-uploads/` don't overlap, so S3 accepts both.
+        notifications_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3_notifications.LambdaDestination(self.audio_process_fn),
+            s3.NotificationKeyFilter(prefix="audio-uploads/"),
         )

@@ -3,14 +3,15 @@
 use crate::batch::batch_get_items;
 use crate::error::{self, RepoError};
 use crate::keys::{
-    attr, avatar_sk, image_gsi1pk, image_gsi1sk, image_pk, image_sk, index, user_pk,
+    attr, audio_gsi1pk, audio_gsi1sk, audio_pk, audio_sk, avatar_sk, image_gsi1pk, image_gsi1sk,
+    image_pk, image_sk, index, user_pk,
 };
 use crate::query::query_all;
 use crate::repo::Repo;
 use aws_sdk_dynamodb::types::{AttributeValue, Update};
 use domain::{
-    AvatarId, AvatarMedia, CommentId, CycleId, GroupId, ImageId, ImageMedia, MediaStatus,
-    QuestionId, UserId,
+    AudioId, AudioMedia, AvatarId, AvatarMedia, CommentId, CycleId, GroupId, ImageId, ImageMedia,
+    MediaStatus, QuestionId, UserId,
 };
 use serde_dynamo::{from_item, to_item};
 use std::collections::HashMap;
@@ -296,6 +297,218 @@ pub fn detach_image_from_comment_update(
         .table_name(&repo.table)
         .key(attr::PK, AttributeValue::S(image_pk(group_id, cycle_id)))
         .key(attr::SK, AttributeValue::S(image_sk(image_id)))
+        .update_expression("REMOVE attached_comment_id")
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+// ---------- AudioMedia (voice clips, `docs/design/media.md` §12) ----------
+// Mirrors every ImageMedia function above.
+
+pub async fn get_audio(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<Option<AudioMedia>, RepoError> {
+    let resp = repo
+        .client
+        .get_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
+        .send()
+        .await?;
+    match resp.item {
+        Some(item) => Ok(Some(from_item(item)?)),
+        None => Ok(None),
+    }
+}
+
+pub async fn put_audio(repo: &Repo, audio: &AudioMedia) -> Result<(), RepoError> {
+    let mut item: std::collections::HashMap<String, AttributeValue> = to_item(audio)?;
+    item.insert(
+        attr::PK.into(),
+        AttributeValue::S(audio_pk(&audio.group_id, &audio.cycle_id)),
+    );
+    item.insert(
+        attr::SK.into(),
+        AttributeValue::S(audio_sk(&audio.audio_id)),
+    );
+    item.insert(
+        attr::GSI1PK.into(),
+        AttributeValue::S(audio_gsi1pk(&audio.user_id)),
+    );
+    item.insert(
+        attr::GSI1SK.into(),
+        AttributeValue::S(audio_gsi1sk(audio.uploaded_at, &audio.audio_id)),
+    );
+    item.insert(attr::ENTITY.into(), AttributeValue::S("AudioMedia".into()));
+
+    repo.client
+        .put_item()
+        .table_name(&repo.table)
+        .set_item(Some(item))
+        .send()
+        .await?;
+    Ok(())
+}
+
+/// Fetch many clips of one `(groupId, cycleId)` partition in one round trip,
+/// mirroring [`get_images_batch`].
+pub async fn get_audio_batch(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_ids: &[AudioId],
+) -> Result<HashMap<AudioId, AudioMedia>, RepoError> {
+    if audio_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let unique: std::collections::HashSet<&AudioId> = audio_ids.iter().collect();
+    let keys = unique
+        .into_iter()
+        .map(|audio_id| {
+            HashMap::from([
+                (
+                    attr::PK.to_owned(),
+                    AttributeValue::S(audio_pk(group_id, cycle_id)),
+                ),
+                (attr::SK.to_owned(), AttributeValue::S(audio_sk(audio_id))),
+            ])
+        })
+        .collect();
+
+    let mut audio = HashMap::with_capacity(audio_ids.len());
+    for item in batch_get_items(repo, keys).await? {
+        let clip: AudioMedia = from_item(item)?;
+        audio.insert(clip.audio_id.clone(), clip);
+    }
+    Ok(audio)
+}
+
+/// The caller's `purpose=response` clip count for `(cycleId, questionId)`,
+/// excluding `failed` rows, mirroring [`count_active_response_images`].
+pub async fn count_active_response_audio(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    user_id: &UserId,
+    question_id: &QuestionId,
+) -> Result<usize, RepoError> {
+    let request = repo
+        .client
+        .query()
+        .table_name(&repo.table)
+        .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+        .filter_expression(
+            "user_id = :user_id AND question_id = :question_id AND purpose = :purpose \
+             AND #status <> :failed",
+        )
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#sk", attr::SK)
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":pk", AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .expression_attribute_values(":prefix", AttributeValue::S("AUD#".into()))
+        .expression_attribute_values(":user_id", AttributeValue::S(user_id.to_string()))
+        .expression_attribute_values(":question_id", AttributeValue::S(question_id.to_string()))
+        .expression_attribute_values(":purpose", AttributeValue::S("response".into()))
+        .expression_attribute_values(":failed", AttributeValue::S("failed".into()));
+
+    Ok(query_all(request).await?.len())
+}
+
+/// `PATCH /audio-uploads/{audioId}` — overwrite just the caption. The caller
+/// already resolved ownership via [`get_audio`], so this doesn't re-check it.
+///
+/// Conditioned on the row existing: `DELETE /audio-uploads` hard-deletes rows,
+/// and an unconditioned `SET` racing it would recreate a partial row that never
+/// deserializes. A lost race is `RepoError::ConditionalCheckFailed`.
+pub async fn set_audio_caption(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+    caption: Option<&str>,
+) -> Result<(), RepoError> {
+    let value = match caption {
+        Some(c) => AttributeValue::S(c.to_owned()),
+        None => AttributeValue::Null(true),
+    };
+    repo.client
+        .update_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
+        .update_expression("SET caption = :caption")
+        .condition_expression("attribute_exists(#pk)")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_values(":caption", value)
+        .send()
+        .await
+        .map_err(error::from_update_item_error)?;
+    Ok(())
+}
+
+/// Deletes an `AudioMedia` row, mirroring [`delete_image_row`].
+pub async fn delete_audio_row(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+    status: MediaStatus,
+) -> Result<(), RepoError> {
+    repo.client
+        .delete_item()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
+        .condition_expression("attribute_not_exists(#pk) OR #s = :status")
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_names("#s", "status")
+        .expression_attribute_values(":status", serde_dynamo::to_attribute_value(status)?)
+        .send()
+        .await
+        .map_err(error::from_delete_item_error)?;
+    Ok(())
+}
+
+/// Mirrors [`attach_image_to_comment_update`] for a voice clip.
+pub fn attach_audio_to_comment_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+    comment_id: &CommentId,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
+        .update_expression("SET attached_comment_id = :cid")
+        .condition_expression(
+            "attribute_exists(#pk) AND (attribute_not_exists(attached_comment_id) \
+             OR attached_comment_id = :null OR attached_comment_id = :cid)",
+        )
+        .expression_attribute_names("#pk", attr::PK)
+        .expression_attribute_values(":null", AttributeValue::Null(true))
+        .expression_attribute_values(":cid", AttributeValue::S(comment_id.to_string()))
+        .build()
+        .map_err(|e| RepoError::Dynamo(format!("{e:?}")))
+}
+
+/// Mirrors [`detach_image_from_comment_update`] for a voice clip.
+pub fn detach_audio_from_comment_update(
+    repo: &Repo,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<Update, RepoError> {
+    Update::builder()
+        .table_name(&repo.table)
+        .key(attr::PK, AttributeValue::S(audio_pk(group_id, cycle_id)))
+        .key(attr::SK, AttributeValue::S(audio_sk(audio_id)))
         .update_expression("REMOVE attached_comment_id")
         .build()
         .map_err(|e| RepoError::Dynamo(format!("{e:?}")))

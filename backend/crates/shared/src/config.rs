@@ -105,6 +105,22 @@ pub const MAX_GIF_FRAMES: usize = 300;
 pub const MAX_GIF_TOTAL_PIXELS: u64 = 100_000_000;
 pub const MAX_DISPLAY_NAME_CHARS: usize = 40;
 
+/// Voice clips (`docs/design/media.md` §12). Same cap for answers and comments.
+pub const MAX_AUDIO_SECONDS: u32 = 120;
+pub const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
+pub const MAX_AUDIO_CLIPS_PER_RESPONSE: usize = 3;
+pub const MAX_AUDIO_CLIPS_PER_COMMENT: usize = 1;
+/// Number of waveform buckets `lambda-audio-process` computes per clip.
+pub const AUDIO_PEAK_COUNT: usize = 48;
+/// Slack added to `MAX_AUDIO_SECONDS` before a decoded clip is rejected as
+/// `AUDIO_TOO_LONG`, so a clip landing exactly at the cap isn't rejected by
+/// rounding.
+pub const AUDIO_DURATION_SLACK_MS: u64 = 1_000;
+/// `Cache-Control: max-age` on processed voice clips — same lifetime as
+/// processed images (`IMAGE_CACHE_MAX_AGE_SECONDS`).
+pub const AUDIO_CACHE_MAX_AGE_SECONDS: u64 = 60 * 86_400;
+pub const MAX_AUDIO_CAPTION_CHARS: usize = 140;
+
 pub const MAX_POLL_OPTIONS: usize = 6;
 pub const MIN_POLL_OPTIONS: usize = 2;
 pub const MAX_POLL_OPTION_LABEL_CHARS: usize = 80;

@@ -53,6 +53,7 @@ fn reacted_answer(
         body: Some("An answer.".into()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
+        audio_media_ids: Vec::new(),
         updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
         published_at: Some("2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count,

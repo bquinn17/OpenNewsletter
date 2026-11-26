@@ -272,6 +272,34 @@ export const api = {
 
     deleteAvatar: (avatarId: string): Promise<void> =>
       apiFetch(`/avatars/${encodeURIComponent(avatarId)}`, { method: "DELETE" }),
+
+    createAudioUpload: (
+      body: S["CreateAudioUploadRequest"],
+    ): Promise<S["CreateAudioUploadResponse"]> =>
+      apiFetch("/audio-uploads", { method: "POST", body }),
+
+    getAudioUpload: (
+      audioId: string,
+      groupId: string,
+      cycleId: string,
+    ): Promise<S["AudioMediaResponse"]> =>
+      apiFetch(`/audio-uploads/${encodeURIComponent(audioId)}?${mediaQuery(groupId, cycleId)}`),
+
+    patchAudioUpload: (
+      audioId: string,
+      groupId: string,
+      cycleId: string,
+      body: S["PatchAudioUploadRequest"],
+    ): Promise<S["AudioMediaResponse"]> =>
+      apiFetch(`/audio-uploads/${encodeURIComponent(audioId)}?${mediaQuery(groupId, cycleId)}`, {
+        method: "PATCH",
+        body,
+      }),
+
+    deleteAudioUpload: (audioId: string, groupId: string, cycleId: string): Promise<void> =>
+      apiFetch(`/audio-uploads/${encodeURIComponent(audioId)}?${mediaQuery(groupId, cycleId)}`, {
+        method: "DELETE",
+      }),
   },
 
   engagement: {

@@ -286,7 +286,7 @@ Submit these in this order. After each one, you return to Upcoming with the toas
 
 ### 8.3 Images
 
-- [ ] Press **+ Add**. A menu opens with **Photo** ("0/10 images · up to 15 MB each") and, in a build with a GIPHY key, **GIF** ("Search GIPHY"). Choose **Photo** and pick the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
+- [ ] Press **+ Add**. A menu opens with **Photo** ("0/10 images · up to 15 MB each"), **Record a voice clip** (in a browser that can record), **Upload audio** and, in a build with a GIPHY key, **GIF** ("Search GIPHY"). Choose **Photo** and pick the JPEG. A tile shows "Uploading N%", then "Processing…", then the thumbnail. `![](image:<id>)` is inserted into the text at the cursor. **Done** is disabled while the upload is in progress.
 - [ ] Drag the PNG and the WebP onto the editor together: a "Drop to attach" overlay shows, and both upload. Add the animated GIF too.
 - [ ] Copy an image and paste it into the textarea: it attaches the same way.
 - [ ] Add one more image and reload while its tile reads "Processing…". After the reload the tile carries on and reaches its thumbnail.
@@ -320,6 +320,20 @@ These need a build with a GIPHY key ([`operator-setup.md` §11](operator-setup.m
 - [ ] Press Enter or the search button, or tap a chip: one request goes out and a grid of GIFs appears. **More GIFs** loads the next page.
 - [ ] Pick a GIF. The picker closes and `![title](giphy:<id>)` is inserted at the cursor. **Preview** shows it looping, with a "GIPHY" badge.
 - [ ] Add GIFs until the **GIF** item reads "5/5 GIFs" and is disabled.
+
+### 8.7 Voice clips
+
+Do these on a laptop, then again on a phone, including an installed iOS PWA ([`frontend.md` §19](../design/frontend.md#19-voice-clips)).
+
+- [ ] Press **+ Add** → **Record a voice clip**. The browser asks for the microphone once. A recorder bar shows the elapsed time against 2:00 and a moving level meter. **Cancel** discards the clip; record again and press the square stop button.
+- [ ] A clip card appears with play/pause, a waveform and the duration, **Re-record**, a remove button and a "Describe this clip" field. It goes through uploading and processing to ready, and the draft saves.
+- [ ] Type a description, wait, and reload: the clip and its description are still there.
+- [ ] Record past 2 minutes: recording stops at 2:00 with the toast "That's the 2-minute limit."
+- [ ] **+ Add** → **Upload audio** and pick a voice memo (M4A or MP3). It processes the same way.
+- [ ] Add clips until both voice items read "3/3 clips" and are disabled.
+- [ ] Block the microphone in the browser's site settings and press **Record a voice clip**: "Microphone is blocked. Allow it in your browser settings, or" with a link to upload a recording instead.
+- [ ] Clear the text and remove the images, leaving one clip: **Done** still moves on, and the question counts as answered.
+- [ ] After close, in the published edition, each clip shows its waveform, duration and description. Play one: starting another pauses the first. The speed toggle cycles 1×, 1.5× and 2×, and tapping the waveform seeks.
 
 ## 9. Answering poll questions
 
@@ -384,7 +398,7 @@ Reactions and comments appear only on published text answers, never on polls.
 
 ## 14. Comments
 
-- [ ] Each answer card ends with an "Add a comment…" box, a **+** button (**Photo** and **GIF**) and a **Post** button, disabled while the box is empty.
+- [ ] Each answer card ends with an "Add a comment…" box, a **+** button (**Photo**, the two voice-clip items and **GIF**) and a **Post** button, disabled while the box is empty.
 - [ ] As A, comment on B's Q1 answer with markdown (`**nice**` and a link). It appears with A's avatar, A's name and a relative time. Hovering the time shows the full date in the group's timezone. The bold and the link render. An `![](image:…)` token in a comment renders nothing, and a remote image becomes a link.
 - [ ] Type 1,801 characters: a counter "1801/2000" appears. The box stops at 2,000.
 - [ ] Attach an image with **+** → **Photo** and wait for its thumbnail. **Post** is disabled while it uploads. Post an image-only comment: the thumbnail shows, and clicking it opens the full image.

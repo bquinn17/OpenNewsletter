@@ -5,10 +5,10 @@ use crate::state::AppState;
 use crate::validation;
 use domain::api::{
     CommentImageResponse, CommentListResponse, CommentResponse, CreateCommentRequest,
-    PatchCommentRequest, ReactionsResponse,
+    PatchCommentRequest, PublishedAudioResponse, ReactionsResponse,
 };
 use domain::{
-    ApiError, ApiErrorCode, Comment, CommentId, CycleId, GroupId, ImageId, ImagePurpose,
+    ApiError, ApiErrorCode, AudioId, Comment, CommentId, CycleId, GroupId, ImageId, ImagePurpose,
     MediaStatus, NewsletterStatus, QuestionId, QuestionKind, Reaction, Response, ResponseId,
     ResponseStatus, Timestamp, User, UserId,
 };
@@ -94,7 +94,11 @@ pub async fn create_comment(
         Some(raw) => Some(validation::body(raw)?),
         None => None,
     };
-    validation::require_body_or_image(body.as_deref(), request.image_media_id.as_ref())?;
+    validation::require_body_or_attachment(
+        body.as_deref(),
+        request.image_media_id.as_ref(),
+        request.audio_media_id.as_ref(),
+    )?;
 
     if let Some(image_id) = &request.image_media_id {
         validate_comment_image(
@@ -104,6 +108,18 @@ pub async fn create_comment(
             cycle_id,
             question_id,
             image_id,
+            None,
+        )
+        .await?;
+    }
+    if let Some(audio_id) = &request.audio_media_id {
+        validate_comment_audio(
+            state,
+            caller,
+            group_id,
+            cycle_id,
+            question_id,
+            audio_id,
             None,
         )
         .await?;
@@ -120,6 +136,7 @@ pub async fn create_comment(
         author_user_id: caller,
         body: body.as_deref().unwrap_or(""),
         image_media_id: request.image_media_id.as_ref(),
+        audio_media_id: request.audio_media_id.as_ref(),
         created_at: now,
     };
 
@@ -129,7 +146,7 @@ pub async fn create_comment(
             if e.is_lost_race() {
                 ApiError::invalid_field(
                     "imageMediaId",
-                    "image is attached to another comment or was deleted",
+                    "image or voice clip is attached to another comment or was deleted",
                 )
             } else {
                 tracing::error!(error = ?e, group_id = %group_id, "comment create failed");
@@ -159,10 +176,11 @@ pub async fn patch_comment(
     let answer_user_id = answer.user_id;
 
     // Read-compute-write, retried when the write lost a race to a concurrent
-    // image change on this comment (its transaction is conditioned on the
-    // image read here, so a stale detach can't release the wrong image).
+    // image/audio change on this comment (its transaction is conditioned on
+    // the image/audio read here, so a stale detach can't release the wrong
+    // attachment).
     let mut attempts = 0;
-    let released_image_id = loop {
+    let (released_image_id, released_audio_id) = loop {
         attempts += 1;
         let existing = load_live_comment(
             state,
@@ -188,9 +206,15 @@ pub async fn patch_comment(
             Some(None) => None,
             None => existing.image_media_id.clone(),
         };
-        validation::require_body_or_image(
+        let resulting_audio_id: Option<AudioId> = match &request.audio_media_id {
+            Some(Some(id)) => Some(id.clone()),
+            Some(None) => None,
+            None => existing.audio_media_id.clone(),
+        };
+        validation::require_body_or_attachment(
             Some(resulting_body.as_str()),
             resulting_image_id.as_ref(),
+            resulting_audio_id.as_ref(),
         )?;
 
         let mut attach_image_id: Option<ImageId> = None;
@@ -216,6 +240,29 @@ pub async fn patch_comment(
             }
         }
 
+        let mut attach_audio_id: Option<AudioId> = None;
+        let mut detach_audio_id: Option<AudioId> = None;
+        if let Some(audio_change) = &request.audio_media_id {
+            match audio_change {
+                Some(new_id) if existing.audio_media_id.as_ref() != Some(new_id) => {
+                    validate_comment_audio(
+                        state,
+                        caller,
+                        group_id,
+                        cycle_id,
+                        question_id,
+                        new_id,
+                        Some(comment_id),
+                    )
+                    .await?;
+                    attach_audio_id = Some(new_id.clone());
+                    detach_audio_id = existing.audio_media_id.clone();
+                }
+                Some(_unchanged) => {}
+                None => detach_audio_id = existing.audio_media_id.clone(),
+            }
+        }
+
         let loc = CommentLocation {
             group_id,
             cycle_id,
@@ -230,18 +277,22 @@ pub async fn patch_comment(
             &loc,
             new_body.as_deref(),
             request.image_media_id.as_ref().map(Option::as_ref),
+            request.audio_media_id.as_ref().map(Option::as_ref),
             Timestamp::now(),
             existing.image_media_id.as_ref(),
             detach_image_id.as_ref(),
             attach_image_id.as_ref(),
+            existing.audio_media_id.as_ref(),
+            detach_audio_id.as_ref(),
+            attach_audio_id.as_ref(),
         )
         .await;
         match update {
-            Ok(()) => break detach_image_id,
+            Ok(()) => break (detach_image_id, detach_audio_id),
             Err(e) if e.is_lost_race() => {
-                // Deleted meanwhile → 404 from `load_live_comment`; image
-                // changed meanwhile → retry against the fresh state;
-                // otherwise the new image was claimed by another comment.
+                // Deleted meanwhile → 404 from `load_live_comment`; image or
+                // audio changed meanwhile → retry against the fresh state;
+                // otherwise the new attachment was claimed by another comment.
                 let current = load_live_comment(
                     state,
                     group_id,
@@ -251,10 +302,12 @@ pub async fn patch_comment(
                     comment_id,
                 )
                 .await?;
-                if current.image_media_id == existing.image_media_id {
+                if current.image_media_id == existing.image_media_id
+                    && current.audio_media_id == existing.audio_media_id
+                {
                     return Err(ApiError::invalid_field(
                         "imageMediaId",
-                        "image is attached to another comment or was deleted",
+                        "image or voice clip is attached to another comment or was deleted",
                     ));
                 }
                 if attempts >= COMMENT_WRITE_ATTEMPTS {
@@ -270,6 +323,9 @@ pub async fn patch_comment(
     };
     if let Some(image_id) = &released_image_id {
         delete_released_image(state, group_id, cycle_id, image_id).await;
+    }
+    if let Some(audio_id) = &released_audio_id {
+        delete_released_audio(state, group_id, cycle_id, audio_id).await;
     }
 
     let updated = engagement::get_comment_by_id(
@@ -360,12 +416,16 @@ pub async fn delete_comment(
             &existing.author_user_id,
             Timestamp::now(),
             existing.image_media_id.as_ref(),
+            existing.audio_media_id.as_ref(),
         )
         .await
         {
             Ok(()) => {
                 if let Some(image_id) = &existing.image_media_id {
                     delete_released_image(state, group_id, cycle_id, image_id).await;
+                }
+                if let Some(audio_id) = &existing.audio_media_id {
+                    delete_released_audio(state, group_id, cycle_id, audio_id).await;
                 }
                 return Ok(());
             }
@@ -419,6 +479,28 @@ async fn delete_released_image(
         media_delete::delete_image_media(&state.repo, &state.image_deleter, &image).await
     {
         tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "released comment image delete failed");
+    }
+}
+
+/// Mirrors [`delete_released_image`] for a voice clip.
+async fn delete_released_audio(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) {
+    let audio = match media::get_audio(&state.repo, group_id, cycle_id, audio_id).await {
+        Ok(Some(audio)) => audio,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, audio_id = %audio_id, "released comment clip lookup failed; not deleted");
+            return;
+        }
+    };
+    if let Err(e) =
+        media_delete::delete_audio_media(&state.repo, &state.image_deleter, &audio).await
+    {
+        tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, audio_id = %audio_id, "released comment clip delete failed");
     }
 }
 
@@ -727,6 +809,57 @@ async fn validate_comment_image(
     }
 }
 
+/// An attached `audioMediaId` must not be `failed`, owned by the caller,
+/// uploaded for this group/cycle/question with `purpose=comment`, and not
+/// attached to a *different* comment. Mirrors [`validate_comment_image`],
+/// except a `pending`/`processing` clip is accepted (same decided difference
+/// as `lambda-responses`' own clip validation).
+async fn validate_comment_audio(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    audio_id: &AudioId,
+    existing_comment_id: Option<&CommentId>,
+) -> Result<(), ApiError> {
+    let audio = media::get_audio(&state.repo, group_id, cycle_id, audio_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "audio lookup failed");
+            ApiError::internal("failed to load voice clip")
+        })?
+        .ok_or_else(|| {
+            ApiError::invalid_field(
+                "audioMediaId",
+                format!("voice clip `{audio_id}` does not exist"),
+            )
+        })?;
+
+    let claimed_by_another_comment = audio
+        .attached_comment_id
+        .as_ref()
+        .is_some_and(|attached| Some(attached) != existing_comment_id);
+
+    let valid = audio.user_id == *caller
+        && audio.status != MediaStatus::Failed
+        && audio.purpose == ImagePurpose::Comment
+        && audio.question_id.as_ref() == Some(question_id)
+        && !claimed_by_another_comment;
+
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::invalid_field(
+            "audioMediaId",
+            format!(
+                "voice clip `{audio_id}` is not a live, unattached comment clip owned by you \
+                 for this question"
+            ),
+        ))
+    }
+}
+
 async fn load_authors(
     state: &AppState,
     author_ids: &[UserId],
@@ -781,6 +914,14 @@ async fn hydrate_comment(
             None => None,
         }
     };
+    let audio = if is_deleted {
+        None
+    } else {
+        match &comment.audio_media_id {
+            Some(audio_id) => hydrate_comment_audio(state, group_id, cycle_id, audio_id).await?,
+            None => None,
+        }
+    };
 
     Ok(CommentResponse {
         comment_id: comment.comment_id,
@@ -792,6 +933,7 @@ async fn hydrate_comment(
             comment.body
         },
         image,
+        audio,
         created_at: comment.created_at,
         edited_at: comment.edited_at,
         deleted_at: comment.deleted_at,
@@ -824,6 +966,35 @@ async fn hydrate_comment_image(
         thumb_url: urls.thumb_url,
         width: urls.width,
         height: urls.height,
+    }))
+}
+
+/// The comment's attached voice clip, hydrated only while it's `ready`.
+/// Mirrors [`hydrate_comment_image`].
+async fn hydrate_comment_audio(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<Option<PublishedAudioResponse>, ApiError> {
+    let Some(audio) = media::get_audio(&state.repo, group_id, cycle_id, audio_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, "comment clip lookup failed");
+            ApiError::internal("failed to load comment voice clip")
+        })?
+    else {
+        return Ok(None);
+    };
+    let Some(ready) = state.media_urls.ready_audio_url(&audio).await? else {
+        return Ok(None);
+    };
+    Ok(Some(PublishedAudioResponse {
+        audio_id: audio.audio_id,
+        url: ready.url,
+        duration_ms: ready.duration_ms,
+        peaks: ready.peaks,
+        caption: audio.caption,
     }))
 }
 

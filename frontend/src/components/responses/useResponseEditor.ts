@@ -19,18 +19,28 @@ export type EditorStatus =
 type Draft = {
   body: string;
   imageMediaIds: string[];
+  /** Voice clips (`docs/design/frontend.md` §19.1) — a `pending`/`processing` clip's id joins this
+   * list as soon as its upload starts, unlike an image id, which waits for `ready` (`docs/design/api.md` §9.8). */
+  audioMediaIds: string[];
 };
 
+type DetachKind = "image" | "audio";
+
 type DetachWaiter = {
-  imageId: string;
+  kind: DetachKind;
+  mediaId: string;
   resolve: () => void;
   reject: (reason: unknown) => void;
 };
 
-/** Resolves every `detachImage` waiter whose image the server's draft no longer lists. */
+function draftLists(server: Draft, kind: DetachKind): string[] {
+  return kind === "image" ? server.imageMediaIds : server.audioMediaIds;
+}
+
+/** Resolves every `detachImage`/`detachAudio` waiter whose media the server's draft no longer lists. */
 function settleDetachWaiters(waiters: { current: DetachWaiter[] }, server: Draft): void {
   waiters.current = waiters.current.filter((waiter) => {
-    if (server.imageMediaIds.includes(waiter.imageId)) return true;
+    if (draftLists(server, waiter.kind).includes(waiter.mediaId)) return true;
     waiter.resolve();
     return false;
   });
@@ -58,11 +68,15 @@ type Params = {
   enabled?: boolean;
 };
 
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 function draftsEqual(a: Draft, b: Draft): boolean {
   return (
     a.body === b.body &&
-    a.imageMediaIds.length === b.imageMediaIds.length &&
-    a.imageMediaIds.every((id, i) => id === b.imageMediaIds[i])
+    sameIds(a.imageMediaIds, b.imageMediaIds) &&
+    sameIds(a.audioMediaIds, b.audioMediaIds)
   );
 }
 
@@ -79,6 +93,9 @@ function readStoredDraft(key: string): Draft | null {
     return {
       body: parsed.body,
       imageMediaIds: Array.isArray(parsed.imageMediaIds) ? parsed.imageMediaIds : [],
+      // Voice clips are never mirrored into the stored draft — the recorded `Blob` is too big for
+      // `localStorage` (`docs/design/frontend.md` §19.1) — so a restored draft always starts with none.
+      audioMediaIds: [],
     };
   } catch {
     return null;
@@ -87,7 +104,12 @@ function readStoredDraft(key: string): Draft | null {
 
 function writeStoredDraft(key: string, draft: Draft): void {
   try {
-    appStorage().setItem(key, JSON.stringify(draft));
+    // Voice clips are never mirrored (`docs/design/frontend.md` §19.1) — only `body` and
+    // `imageMediaIds` round-trip through `readStoredDraft`.
+    appStorage().setItem(
+      key,
+      JSON.stringify({ body: draft.body, imageMediaIds: draft.imageMediaIds }),
+    );
   } catch {
     // Best effort — a crashed write just means tab-crash recovery doesn't work this time.
   }
@@ -132,6 +154,7 @@ function toMyResponseSummary(response: S["ResponseDto"]): S["MyResponseSummary"]
     status: response.status,
     body: response.body,
     imageMediaIds: response.imageMediaIds,
+    audioMediaIds: response.audioMediaIds,
     pollOptionId: response.pollOptionId,
     updatedAt: response.updatedAt,
     publishedAt: response.publishedAt,
@@ -164,6 +187,7 @@ export function useResponseEditor({
   const initialDraft: Draft = {
     body: initial?.body ?? "",
     imageMediaIds: initial?.imageMediaIds ?? [],
+    audioMediaIds: initial?.audioMediaIds ?? [],
   };
   const restored = key ? readStoredDraft(key) : null;
   const startingDraft = restored && !draftsEqual(restored, initialDraft) ? restored : initialDraft;
@@ -206,10 +230,15 @@ export function useResponseEditor({
         kind: "text",
         body: draft.body,
         imageMediaIds: draft.imageMediaIds,
+        audioMediaIds: draft.audioMediaIds,
         publish,
       });
       attemptRef.current = 0;
-      serverDraftRef.current = { body: response.body ?? "", imageMediaIds: response.imageMediaIds };
+      serverDraftRef.current = {
+        body: response.body ?? "",
+        imageMediaIds: response.imageMediaIds,
+        audioMediaIds: response.audioMediaIds,
+      };
       settleDetachWaiters(detachWaitersRef, serverDraftRef.current);
       setLastResponse(response);
       setProblemDetail(null);
@@ -330,27 +359,39 @@ export function useResponseEditor({
     setLocal((prev) => ({ ...prev, imageMediaIds }));
   }, []);
 
+  const setAudioMediaIds = useCallback((audioMediaIds: string[]) => {
+    setLocal((prev) => ({ ...prev, audioMediaIds }));
+  }, []);
+
   /**
-   * Drops `imageId` from the draft (its ID, and its tokens via
-   * `transformBody`) and resolves once a save without it has landed — the
-   * first two steps of the editor's "remove image" (`docs/design/api.md`
-   * §9.4): the draft must stop referencing an image before
-   * `DELETE /uploads/{id}` removes it, or its next save would fail image
-   * validation. Rejects if saving stops (closed cycle, non-retryable error).
+   * Shared by `detachImage` and `detachAudio`: drops `mediaId` from `kind`'s list in the draft
+   * (and its tokens via `transformBody`, a no-op for audio since clips aren't inline tokens —
+   * `docs/design/media.md` §12) and resolves once a save without it has landed — the first two
+   * steps of "remove image"/"remove clip" (`docs/design/api.md` §9.4/§9.8): the draft must stop
+   * referencing the media before its `DELETE` removes it, or the next save would fail validation.
+   * Rejects if saving stops (closed cycle, non-retryable error).
    */
-  const detachImage = useCallback(
-    (imageId: string, transformBody: (body: string) => string): Promise<void> => {
+  const detachMedia = useCallback(
+    (kind: DetachKind, mediaId: string, transformBody: (body: string) => string): Promise<void> => {
       if (!enabled || closedRef.current) {
         return Promise.reject(new Error("The editor is no longer saving."));
       }
+      const current = localRef.current;
       const next: Draft = {
-        body: transformBody(localRef.current.body),
-        imageMediaIds: localRef.current.imageMediaIds.filter((id) => id !== imageId),
+        body: transformBody(current.body),
+        imageMediaIds:
+          kind === "image"
+            ? current.imageMediaIds.filter((id) => id !== mediaId)
+            : current.imageMediaIds,
+        audioMediaIds:
+          kind === "audio"
+            ? current.audioMediaIds.filter((id) => id !== mediaId)
+            : current.audioMediaIds,
       };
       localRef.current = next;
       setLocal(next);
       // Nothing on the server (or on its way there) references it.
-      if (!inFlightRef.current && !serverDraftRef.current.imageMediaIds.includes(imageId)) {
+      if (!inFlightRef.current && !draftLists(serverDraftRef.current, kind).includes(mediaId)) {
         return Promise.resolve();
       }
       if (debounceTimerRef.current) {
@@ -358,11 +399,22 @@ export function useResponseEditor({
         debounceTimerRef.current = null;
       }
       return new Promise<void>((resolve, reject) => {
-        detachWaitersRef.current.push({ imageId, resolve, reject });
+        detachWaitersRef.current.push({ kind, mediaId, resolve, reject });
         void performSaveRef.current(false);
       });
     },
     [enabled],
+  );
+
+  const detachImage = useCallback(
+    (imageId: string, transformBody: (body: string) => string) =>
+      detachMedia("image", imageId, transformBody),
+    [detachMedia],
+  );
+
+  const detachAudio = useCallback(
+    (audioId: string) => detachMedia("audio", audioId, (body) => body),
+    [detachMedia],
   );
 
   return {
@@ -370,12 +422,15 @@ export function useResponseEditor({
     setBody,
     imageMediaIds: local.imageMediaIds,
     setImageMediaIds,
+    audioMediaIds: local.audioMediaIds,
+    setAudioMediaIds,
     status,
     problemDetail,
     readOnly: status.kind === "closed",
     lastResponse,
     flush: () => flush(false),
     detachImage,
+    detachAudio,
     onBlur: () => void flush(false),
   };
 }

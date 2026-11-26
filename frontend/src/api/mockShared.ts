@@ -1,6 +1,6 @@
 import type { components } from "../types/api";
 import { ApiError, type ProblemDetails } from "./client";
-import { releaseMockUpload } from "./mockUploads";
+import { releaseMockAudioUpload, releaseMockUpload } from "./mockUploads";
 
 type S = components["schemas"];
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -38,6 +38,15 @@ export const imageRows = new Map<string, S["ImageMediaResponse"]>();
 export function deleteMockImage(imageId: string): void {
   imageRows.delete(imageId);
   releaseMockUpload(imageId);
+}
+
+/** The voice-clip equivalent of `imageRows` (`docs/design/media.md` §12). */
+export const audioRows = new Map<string, S["AudioMediaResponse"]>();
+
+/** A real delete (`docs/design/api.md` §9.8), mirroring `deleteMockImage`. */
+export function deleteMockAudio(audioId: string): void {
+  audioRows.delete(audioId);
+  releaseMockAudioUpload(audioId);
 }
 /** Returned by a per-feature mock route that doesn't handle the request. */
 export const NO_MOCK_ROUTE = Symbol("NO_MOCK_ROUTE");

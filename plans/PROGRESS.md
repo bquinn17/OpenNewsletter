@@ -6,7 +6,7 @@ Where the project stands, what's blocking it, and what's next. It's read at the 
 
 ## Status
 
-- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages, the owner UX review fixes, the group page tabs (Editions, Leaderboard, Members), and the "+" attach menu with GIFs from GIPHY.
+- **M0–M13.5 are code-complete**, along with the design-review fixes, presigned-S3 media serving, the configurable cycle cadence, the group leaderboard, the app's own sign-in pages, the owner UX review fixes, the group page tabs (Editions, Leaderboard, Members), the "+" attach menu with GIFs from GIPHY, and voice clips.
 - **Dev runs the latest `main`.** Every push to `main` deploys it ([D6](../docs/decisions.md#d6)).
 - **Deploy-shaped gates:** the API side of every dev gate has passed; [`build-order.md`](build-order.md) marks each check. What's left needs a browser, a second Google account or a phone (next step 3).
 - **M1** is partly done (B5).
@@ -45,7 +45,7 @@ Release builds abort in `aws-lc-sys` under gcc 9 (gcc bug 95189). Fix with `sudo
    - delete the `production` environment's `APP_SECRET_ARN` and `DEV_APP_SECRET_ARN` secrets. The workflows read those names as repo variables, so the secrets are unused.
    - create the GIPHY keys and set `DEV_VITE_GIPHY_API_KEY` and `VITE_GIPHY_API_KEY` ([`operator-setup.md` §11](../docs/operations/operator-setup.md#11-giphy-api-keys)); until then the GIF picker stays hidden
    - wire up the prod Pages repo, [`bquinn17/betterloop-site`](https://github.com/bquinn17/betterloop-site) ([`operator-setup.md` §10](../docs/operations/operator-setup.md#10-prod-frontend-pages-repo) steps 2–5)
-3. **Finish the unmarked gates in [`build-order.md`](build-order.md) against dev.** If `scripts/backfill_member_stats.py --env dev` hasn't been run since the leaderboard deployed, run it first, while the group is quiet: until it runs, the leaderboard and `editionsAnswered` count only what happened since that deploy ([`scripts/README.md`](../scripts/README.md)). The unmarked gates are the UI and device checks: uploading and the media CORS check in a browser (M8), the simulated month (M9), push on Chrome and an installed iOS PWA (M11), the rename showing without a reload (M12), `make redeploy-volatile` (M3.5), the full [`smoke-test.md`](../docs/operations/smoke-test.md), and the cadence settings pass in [`frontend-walkthrough.md`](../docs/operations/frontend-walkthrough.md) §16.2.
+3. **Finish the unmarked gates in [`build-order.md`](build-order.md) against dev.** If `scripts/backfill_member_stats.py --env dev` hasn't been run since the leaderboard deployed, run it first, while the group is quiet: until it runs, the leaderboard and `editionsAnswered` count only what happened since that deploy ([`scripts/README.md`](../scripts/README.md)). The unmarked gates are the UI and device checks: uploading and the media CORS check in a browser (M8), the simulated month (M9), push on Chrome and an installed iOS PWA (M11), the rename showing without a reload (M12), `make redeploy-volatile` (M3.5), the full [`smoke-test.md`](../docs/operations/smoke-test.md), and the cadence settings pass in [`frontend-walkthrough.md`](../docs/operations/frontend-walkthrough.md) §16.2, and recording and playing a voice clip on a phone, including the mic permission in an installed iOS PWA ([`frontend.md` §19](../docs/design/frontend.md#19-voice-clips)).
 4. **M14:** check `config.py`'s prod values, fill in the prod secret, then deploy ([`build-order.md`](build-order.md) M14) and run `scripts/backfill_member_stats.py --env prod` once. The prod hostnames are already set as repo variables.
 5. **Address the [frontend design review](../docs/frontend_design_review.md).** Fix its §1 defects before M14, then follow its §7 order. Each step updates [`frontend.md`](../docs/design/frontend.md) in the same change. The rest of the review doesn't block M14.
 
@@ -78,6 +78,7 @@ Product and UX:
 
 Frontend:
 - `apiFetch` treats every 401 as an expired token. A valid token from a caller who hasn't redeemed an invite also gets a 401, so those calls cost a pointless token refresh ([`frontend.md` §7.6](../docs/design/frontend.md#76-settingspage)).
+- Editing a comment can remove its voice clip or swap it for another, but shows it as a plain "Remove clip" link, not the clip card.
 - `ResponseEditor`'s preview and `ImageUploader` each refresh an expired image URL themselves, so one expired thumbnail costs two requests. Fix this the next time the editor is touched.
 
 Backend and ops:

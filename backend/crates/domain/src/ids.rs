@@ -61,6 +61,7 @@ id_newtype!(ResponseId);
 id_newtype!(CommentId);
 id_newtype!(ImageId);
 id_newtype!(AvatarId);
+id_newtype!(AudioId);
 id_newtype!(PollOptionId);
 id_newtype!(SubscriptionId);
 

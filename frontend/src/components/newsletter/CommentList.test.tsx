@@ -127,6 +127,7 @@ function comment(overrides: Partial<S["CommentResponse"]>): S["CommentResponse"]
     displayName: "Sam",
     body: "A comment",
     image: null,
+    audio: null,
     createdAt: "2026-06-05T09:00:00Z",
     editedAt: null,
     deletedAt: null,

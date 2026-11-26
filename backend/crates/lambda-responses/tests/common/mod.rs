@@ -4,9 +4,9 @@
 #![allow(dead_code, unused_imports)]
 
 use domain::{
-    CycleId, Group, GroupId, GroupMembership, ImageId, ImageMedia, ImageMimeType, ImagePurpose,
-    LockedQuestion, MediaStatus, Newsletter, NewsletterStatus, PollOption, PollOptionId,
-    QuestionId, QuestionKind, Role, UserId,
+    AudioId, AudioMedia, AudioMimeType, CycleId, Group, GroupId, GroupMembership, ImageId,
+    ImageMedia, ImageMimeType, ImagePurpose, LockedQuestion, MediaStatus, Newsletter,
+    NewsletterStatus, PollOption, PollOptionId, QuestionId, QuestionKind, Role, UserId,
 };
 use domain::{SignedDuration, Timestamp};
 use persistence::{groups, media, test_factories, Repo};
@@ -217,6 +217,63 @@ pub async fn seed_ready_response_image(
         group_id,
         cycle_id,
         image_id,
+        user_id,
+        MediaStatus::Ready,
+        ImagePurpose::Response,
+    )
+    .await
+}
+
+/// Mirrors [`seed_image`] for a voice clip.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    audio_id: &str,
+    user_id: &str,
+    status: MediaStatus,
+    purpose: ImagePurpose,
+) -> AudioId {
+    let audio = AudioMedia {
+        audio_id: AudioId::new(audio_id),
+        user_id: UserId::new(user_id),
+        group_id: GroupId::new(group_id),
+        cycle_id: CycleId::new(cycle_id),
+        question_id: None,
+        purpose,
+        mime_type: AudioMimeType::Webm,
+        original_key: format!("audio-uploads/{group_id}/{cycle_id}/{audio_id}.webm"),
+        clip_key: Some(format!("aud/{audio_id}/clip.webm")),
+        status,
+        bytes: 65_536,
+        duration_ms: Some(4_200),
+        peaks: Some(vec![10; shared::config::AUDIO_PEAK_COUNT]),
+        caption: None,
+        uploaded_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
+        processed_at: Some("2026-06-02T00:01:00Z".parse::<Timestamp>().unwrap()),
+        error_message: None,
+        attached_comment_id: None,
+    };
+    media::put_audio(repo, &audio).await.expect("audio written");
+    audio.audio_id
+}
+
+/// Mirrors [`seed_ready_response_image`]: a `pending` clip is also valid for
+/// a response attachment (`docs/design/media.md` §12's decided
+/// difference from images), so most tests just want one `ready`.
+pub async fn seed_ready_response_audio(
+    repo: &Repo,
+    group_id: &str,
+    cycle_id: &str,
+    audio_id: &str,
+    user_id: &str,
+) -> AudioId {
+    seed_audio(
+        repo,
+        group_id,
+        cycle_id,
+        audio_id,
         user_id,
         MediaStatus::Ready,
         ImagePurpose::Response,

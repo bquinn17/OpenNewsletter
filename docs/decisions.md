@@ -22,7 +22,7 @@ A full read-through of the design after the hardening milestone turned up twelve
 <a id="d2"></a>
 ### D2 — Non-empty drafts auto-publish at close
 
-**Decision.** When a cycle closes, the tick publishes every non-empty draft before it flips the cycle to `published`. Non-empty means a text answer with a body or images, or a poll pick. Empty drafts stay drafts. A poll pick saves as a draft as soon as it's made. While an answer is still an unpublished draft, the response editor says it will be published at close. Deadline reminders count a non-empty draft as answered.
+**Decision.** When a cycle closes, the tick publishes every non-empty draft before it flips the cycle to `published`. Non-empty means a text answer with a body, images or voice clips, or a poll pick. Empty drafts stay drafts. A poll pick saves as a draft as soon as it's made. While an answer is still an unpublished draft, the response editor says it will be published at close. Deadline reminders count a non-empty draft as answered.
 
 **Why.** A member who wrote an answer shouldn't be left out of the edition for not pressing a button. Running the sweep before the condition-guarded status flip also makes the close crash-safe, because a tick that dies midway leaves the cycle `open` and the next tick finishes the job.
 
@@ -222,6 +222,13 @@ The deployed site serves a demo at `/demo`: the normal app on the in-memory mock
 **Why.** GIFs are for a few friends having fun, and a setting most admins would never touch isn't worth its form control and `/config` plumbing. The owner accepted the trade-off: every reader of a page with a GIF contacts GIPHY, which sees their IP address. The mitigations keep GIPHY from linking a poster's device to its readers' devices except by timing. GIPHY's terms forbid proxying or caching its media, so it can't be re-hosted the way images are. A per-device "tap to load" switch can still be added later, on the frontend only.
 
 **Where.** [`frontend.md`](design/frontend.md) (the attach menu, GIF picker and renderer, CSP §12.1).
+
+<a id="audio-via-ffmpeg"></a>
+### Voice clips are transcoded by a static ffmpeg in a Lambda layer
+
+Every voice clip is transcoded to mono Opus at 24 kbps in WebM by `lambda-audio-process`, which runs a static arm64 `ffmpeg` from a Lambda layer. The same ffmpeg's decode pass gives the duration and the waveform peaks, so no `ffprobe` is shipped. The binary is John Van Sickle's static build, pinned by version and SHA-256 in `scripts/fetch_ffmpeg.sh`. His versioned old releases stay downloadable; BtbN's builds are kept for only 14 days, so a pin there would break. That build is GPL, which doesn't matter here: the binary only runs inside our Lambda and is never distributed.
+
+**Why transcode.** Browsers record in different formats (WebM/Opus in Chrome and Firefox, MP4/AAC in Safari), and picked files can be anything, including large WAVs. Serving one format gives one playback and caching story. Opus is the most compact codec browsers play, and Safari plays it in WebM but not in Ogg. Pure Rust (`symphonia` plus libopus bindings) would leave WebM muxing, resampling and the long tail of input formats to us. MediaConvert charges per output minute and is far more than this needs. See [`media.md`](design/media.md).
 
 <a id="early-bird-uses-last-edit-not-first-publish"></a>
 ### The year-in-review "Early bird" card uses the last edit, not the first publish

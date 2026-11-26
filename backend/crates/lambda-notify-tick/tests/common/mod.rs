@@ -294,6 +294,7 @@ async fn put_text_answer(repo: &Repo, ids: [&str; 5], status: domain::ResponseSt
         body: Some(body.to_owned()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
+        audio_media_ids: Vec::new(),
         updated_at: "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap(),
         published_at: is_published.then(|| "2026-06-03T00:00:00Z".parse::<Timestamp>().unwrap()),
         reaction_count: 0,

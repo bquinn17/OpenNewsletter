@@ -1432,3 +1432,27 @@ Built from `future-ideas.md` §9–§10. GIFs are frontend only; the image-capti
 
 **Found taking the PR's screenshots.** No GIF ever rendered in the demo or mock builds: the mock IDs had underscores (`demo_party`), which the renderer rejects as GIPHY IDs are alphanumeric, and the generated stand-in GIF files were corrupt. The mock now uses two GIFs the owner picked from GIPHY, and a demo test checks a published answer's GIF shows. Separately, in the demo the banner sat inside the sticky app bar, making it taller than a page's sticky header, so the app bar showed under a pinned edition header; the banner now sits above the bar.
 
+## Voice clips — what landed
+
+Built from `future-ideas.md` §8. A member records a clip (or uploads an audio file) from the "+" menu and attaches it to a text answer (up to 3) or a comment (1); readers play it inline with a waveform. Clips go straight to S3 by presigned PUT, and `lambda-audio-process` transcodes each one to mono Opus at 24 kbps in WebM with a static ffmpeg from a Lambda layer. Design: [`media.md` §12](../../docs/design/media.md#12-voice-clips), [`api.md` §9.8](../../docs/design/api.md#98-voice-clip-routes), [`data-model.md` §2.18](../../docs/design/data-model.md#218-audiomedia), [`infrastructure.md` §5.5](../../docs/design/infrastructure.md#55-lambda-audio-process-rust-mediapipelinestack), [`frontend.md` §19](../../docs/design/frontend.md#19-voice-clips).
+
+**Owner decisions.** One 2-minute cap for answers and comments. ffmpeg comes from John Van Sickle's static build, pinned by version and SHA-256 ([decision](../../docs/decisions.md#audio-via-ffmpeg)). Shipped with the recorder in the same release as the player, because prod hasn't launched.
+
+**Decisions (spec gaps).**
+- No `ffprobe`: ffmpeg's decode pass gives the duration and the peaks. The decode is bounded with `-t` to the cap plus 2 seconds, so a maliciously long file can't run the Lambda out of time.
+- Peaks are scaled so the loudest of the 48 bars is 255.
+- `GET /audio-uploads/{audioId}` is owner-only. Answers and comments accept a clip that's still `pending`, and refuse only a `failed` one, so a clip joins the draft as soon as its upload starts. Images join once they're ready.
+- A comment may carry an image and a clip at once.
+- The demo's clip is synthesized as a WAV in the browser, so no audio file or credit is shipped.
+- `MyResponseSummary` gained `audioMediaIds`, so a reopened draft keeps its clips.
+- Tests that run the real ffmpeg skip without it, except under `REQUIRE_FFMPEG=1`, which CI sets after installing it.
+- `lambda-audio-process` has its own small S3 event model (`s3_event.rs`), mirroring `lambda-image-process`, because `aws_lambda_events`' `s3` feature pulls in `chrono`.
+- A clip-only answer counts as answered everywhere the content check is mirrored: the SPA's `responseProgress` (Done's next question, the edition's progress), the mock API and `scripts/backfill_member_stats.py`.
+
+**Found in review.**
+- The layer directory held the download cache, so the tarball and an extracted `ffprobe` would have shipped in the layer. The cache now lives beside it.
+- The audio Lambda could read and delete the whole originals bucket. It's now scoped to `audio-uploads/*`.
+- A second imported-bucket construct gave the originals bucket a second `BucketNotifications` resource, which would race the first. Both triggers now share one.
+- `check_lambda_binaries.sh` didn't check the layer, and CDK drops a missing layer silently. The script now fails, and `deploy.yml` fetches ffmpeg and ships the layer in the release artifact.
+- The pinned ffmpeg was checked on Amazon Linux 2023: it has `libopus`, and the exact transcode command produces a WebM.
+

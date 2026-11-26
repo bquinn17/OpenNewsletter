@@ -4,15 +4,20 @@ use crate::presign;
 use crate::state::AppState;
 use crate::validation;
 use domain::api::{
-    AvatarMediaResponse, CreateAvatarRequest, CreateAvatarResponse, CreateUploadRequest,
-    CreateUploadResponse, ImageMediaResponse,
+    AudioMediaResponse, AvatarMediaResponse, CreateAudioUploadRequest, CreateAudioUploadResponse,
+    CreateAvatarRequest, CreateAvatarResponse, CreateUploadRequest, CreateUploadResponse,
+    ImageMediaResponse, PatchAudioUploadRequest,
 };
 use domain::{
-    ApiError, ApiErrorCode, AvatarId, AvatarMedia, CycleId, GroupId, ImageId, ImageMedia,
-    ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, ResponseStatus, Timestamp, UserId,
+    ApiError, ApiErrorCode, AudioId, AudioMedia, AvatarId, AvatarMedia, CycleId, GroupId, ImageId,
+    ImageMedia, ImagePurpose, MediaStatus, NewsletterStatus, QuestionId, ResponseStatus, Timestamp,
+    UserId,
 };
 use persistence::{auth, media, newsletters, questions, responses, users, RepoError};
-use shared::config::{MAX_AVATAR_BYTES, MAX_IMAGES_PER_RESPONSE, MAX_IMAGE_BYTES};
+use shared::config::{
+    MAX_AUDIO_BYTES, MAX_AUDIO_CLIPS_PER_RESPONSE, MAX_AVATAR_BYTES, MAX_IMAGES_PER_RESPONSE,
+    MAX_IMAGE_BYTES,
+};
 
 /// `POST /uploads` (§9.1). Validation order follows
 /// `docs/design/media.md` §3.1: membership, mime type, byte size, sha256
@@ -266,6 +271,315 @@ async fn release_from_my_response(
     }
     tracing::warn!(group_id = %group_id, cycle_id = %cycle_id, image_id = %image_id, "draft kept changing while releasing an image");
     Err(ApiError::internal("your draft kept changing; try again"))
+}
+
+/// `POST /audio-uploads` (`docs/design/media.md` §12). Mirrors
+/// [`create_upload`]: membership, mime type, byte size, sha256 shape,
+/// newsletter existence + cycle status for `purpose`, the question being
+/// locked into this cycle, then (for `purpose=response`) the
+/// per-answer clip cap.
+pub async fn create_audio_upload(
+    state: &AppState,
+    caller: &UserId,
+    request: CreateAudioUploadRequest,
+) -> Result<CreateAudioUploadResponse, ApiError> {
+    auth::require_membership(&state.repo, caller, &request.group_id, false).await?;
+
+    let mime = validation::parse_audio_mime_type(&request.mime_type)?;
+    validation::validate_audio_byte_size(request.byte_size, MAX_AUDIO_BYTES)?;
+    validation::validate_sha256(request.sha256.as_deref())?;
+    let purpose = request.purpose.unwrap_or(ImagePurpose::Response);
+
+    let newsletter = newsletters::get_newsletter(&state.repo, &request.group_id, &request.cycle_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %request.group_id, cycle_id = %request.cycle_id, "newsletter lookup failed");
+            ApiError::internal("failed to load newsletter")
+        })?
+        .ok_or_else(|| ApiError::not_found("newsletter not found"))?;
+
+    if newsletter.status == NewsletterStatus::Archived {
+        return Err(ApiError::new(
+            ApiErrorCode::NewsletterArchived,
+            "this edition has been archived",
+        ));
+    }
+    match purpose {
+        ImagePurpose::Response if newsletter.status != NewsletterStatus::Open => {
+            return Err(ApiError::new(
+                ApiErrorCode::CycleNotOpen,
+                "this cycle is not open for responses",
+            ));
+        }
+        ImagePurpose::Comment if newsletter.status != NewsletterStatus::Published => {
+            return Err(ApiError::new(
+                ApiErrorCode::CycleNotPublished,
+                "this cycle is not published",
+            ));
+        }
+        _ => {}
+    }
+
+    questions::get_locked_question(
+        &state.repo,
+        &request.group_id,
+        &request.cycle_id,
+        &request.question_id,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, group_id = %request.group_id, cycle_id = %request.cycle_id, "locked question lookup failed");
+        ApiError::internal("failed to load question")
+    })?
+    .ok_or_else(|| {
+        ApiError::invalid_field(
+            "questionId",
+            format!("questionId `{}` is not a locked question in this cycle", request.question_id),
+        )
+    })?;
+
+    if purpose == ImagePurpose::Response {
+        let count = media::count_active_response_audio(
+            &state.repo,
+            &request.group_id,
+            &request.cycle_id,
+            caller,
+            &request.question_id,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %request.group_id, cycle_id = %request.cycle_id, "response clip count failed");
+            ApiError::internal("failed to count your voice clips")
+        })?;
+        if count >= MAX_AUDIO_CLIPS_PER_RESPONSE {
+            return Err(ApiError::new(
+                ApiErrorCode::AudioLimitExceeded,
+                format!(
+                    "at most {MAX_AUDIO_CLIPS_PER_RESPONSE} voice clips may be attached to a response"
+                ),
+            ));
+        }
+    }
+
+    let audio_id = AudioId::generate();
+    let ext = validation::audio_extension_for(mime);
+    let original_key = format!(
+        "audio-uploads/{}/{}/{}/{}/{}.{}",
+        request.group_id, request.cycle_id, request.question_id, caller, audio_id, ext
+    );
+    let now = Timestamp::now();
+    let audio = AudioMedia {
+        audio_id: audio_id.clone(),
+        user_id: caller.clone(),
+        group_id: request.group_id.clone(),
+        cycle_id: request.cycle_id.clone(),
+        question_id: Some(request.question_id.clone()),
+        purpose,
+        mime_type: mime,
+        original_key: original_key.clone(),
+        clip_key: None,
+        status: MediaStatus::Pending,
+        bytes: request.byte_size,
+        duration_ms: None,
+        peaks: None,
+        caption: None,
+        uploaded_at: now,
+        processed_at: None,
+        error_message: None,
+        attached_comment_id: None,
+    };
+    media::put_audio(&state.repo, &audio).await.map_err(|e| {
+        tracing::error!(error = ?e, group_id = %request.group_id, cycle_id = %request.cycle_id, "audio row write failed");
+        ApiError::internal("failed to create voice clip")
+    })?;
+
+    let presigned = presign::presign_put(
+        &state.s3,
+        &state.media_originals_bucket,
+        &original_key,
+        &request.mime_type,
+        request.sha256.as_deref(),
+    )
+    .await?;
+
+    Ok(CreateAudioUploadResponse {
+        audio_id,
+        upload_url: presigned.upload_url,
+        headers: presigned.headers,
+        expires_in_seconds: presign::EXPIRES_IN_SECONDS,
+    })
+}
+
+/// `GET /audio-uploads/{audioId}`. Caller must own the clip — unlike
+/// `GET /uploads/{imageId}`, where any member may read, because a clip's
+/// waveform/caption are only meaningful to its uploader until it's attached
+/// and published; the published view carries its own hydrated shape.
+pub async fn get_audio_upload(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<AudioMediaResponse, ApiError> {
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
+    let audio = load_audio(state, group_id, cycle_id, audio_id).await?;
+    require_audio_owner(caller, &audio)?;
+    to_audio_response(state, audio).await
+}
+
+/// `PATCH /audio-uploads/{audioId}`. Caller must own the clip; allowed
+/// regardless of processing status, mirroring [`patch_upload`].
+pub async fn patch_audio_upload(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+    request: PatchAudioUploadRequest,
+) -> Result<AudioMediaResponse, ApiError> {
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
+    let audio = load_audio(state, group_id, cycle_id, audio_id).await?;
+    require_audio_owner(caller, &audio)?;
+
+    let caption = validation::validate_audio_caption(request.caption)?;
+    media::set_audio_caption(&state.repo, group_id, cycle_id, audio_id, caption.as_deref())
+        .await
+        .map_err(|e| match e {
+            RepoError::ConditionalCheckFailed => ApiError::not_found("voice clip not found"),
+            e => {
+                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "caption update failed");
+                ApiError::internal("failed to update caption")
+            }
+        })?;
+
+    let updated = load_audio(state, group_id, cycle_id, audio_id).await?;
+    to_audio_response(state, updated).await
+}
+
+/// `DELETE /audio-uploads/{audioId}`. Caller must own the clip. Mirrors
+/// [`delete_upload`] exactly: refused with `AUDIO_IN_USE` when a live comment
+/// still has it claimed, or the caller's published response still lists it;
+/// drops it from a draft first; idempotent; real deletes via `media-delete`.
+pub async fn delete_audio_upload(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<(), ApiError> {
+    auth::require_membership(&state.repo, caller, group_id, false).await?;
+    let Some(audio) = find_audio(state, group_id, cycle_id, audio_id).await? else {
+        return Ok(());
+    };
+    require_audio_owner(caller, &audio)?;
+
+    if audio.purpose == ImagePurpose::Comment && audio.attached_comment_id.is_some() {
+        return Err(ApiError::new(
+            ApiErrorCode::AudioInUse,
+            "voice clip is attached to a comment",
+        ));
+    }
+
+    if let Some(question_id) = &audio.question_id {
+        release_audio_from_my_response(state, caller, group_id, cycle_id, question_id, audio_id)
+            .await?;
+    }
+
+    media_delete::delete_audio_media(&state.repo, &state.image_deleter, &audio)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, audio_id = %audio_id, "audio delete failed");
+            ApiError::internal("failed to delete voice clip")
+        })
+}
+
+/// The response half of [`delete_audio_upload`]: refuse if the caller's
+/// published response lists the clip, and drop it from their draft if that
+/// does. Mirrors [`release_from_my_response`].
+async fn release_audio_from_my_response(
+    state: &AppState,
+    caller: &UserId,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    question_id: &QuestionId,
+    audio_id: &AudioId,
+) -> Result<(), ApiError> {
+    for _ in 0..RELEASE_ATTEMPTS {
+        let response =
+            responses::get_my_response(&state.repo, group_id, cycle_id, question_id, caller)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "response lookup failed");
+                    ApiError::internal("failed to check voice clip usage")
+                })?;
+        let Some(response) = response.filter(|r| r.audio_media_ids.contains(audio_id)) else {
+            return Ok(());
+        };
+        if response.status == ResponseStatus::Published {
+            return Err(ApiError::new(
+                ApiErrorCode::AudioInUse,
+                "voice clip is attached to your published response",
+            ));
+        }
+        match responses::remove_audio_from_draft(&state.repo, &response, audio_id, Timestamp::now())
+            .await
+        {
+            Ok(()) => return Ok(()),
+            Err(RepoError::ConditionalCheckFailed) => continue,
+            Err(e) => {
+                tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "removing the voice clip from the draft failed");
+                return Err(ApiError::internal(
+                    "failed to remove the voice clip from your draft",
+                ));
+            }
+        }
+    }
+    tracing::warn!(group_id = %group_id, cycle_id = %cycle_id, audio_id = %audio_id, "draft kept changing while releasing a voice clip");
+    Err(ApiError::internal("your draft kept changing; try again"))
+}
+
+async fn load_audio(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<AudioMedia, ApiError> {
+    find_audio(state, group_id, cycle_id, audio_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("voice clip not found"))
+}
+
+async fn find_audio(
+    state: &AppState,
+    group_id: &GroupId,
+    cycle_id: &CycleId,
+    audio_id: &AudioId,
+) -> Result<Option<AudioMedia>, ApiError> {
+    media::get_audio(&state.repo, group_id, cycle_id, audio_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, group_id = %group_id, cycle_id = %cycle_id, "audio lookup failed");
+            ApiError::internal("failed to load voice clip")
+        })
+}
+
+fn require_audio_owner(caller: &UserId, audio: &AudioMedia) -> Result<(), ApiError> {
+    if audio.user_id == *caller {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("you do not own this voice clip"))
+    }
+}
+
+async fn to_audio_response(
+    state: &AppState,
+    audio: AudioMedia,
+) -> Result<AudioMediaResponse, ApiError> {
+    let url = match state.media_urls.ready_audio_url(&audio).await? {
+        Some(ready) => Some(ready.url),
+        None => None,
+    };
+    Ok(AudioMediaResponse::new(audio, url))
 }
 
 /// `POST /avatars` (§9.7). No group/membership check — avatars cross group

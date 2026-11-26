@@ -11,7 +11,7 @@
 use aws_sdk_s3::config::{RequestChecksumCalculation, ResponseChecksumValidation};
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::Client as S3Client;
-use domain::{ApiError, AvatarId, ImageMedia, MediaStatus};
+use domain::{ApiError, AudioMedia, AvatarId, ImageMedia, MediaStatus};
 use shared::config::{MEDIA_URL_SIGN_WINDOW_SECONDS, MEDIA_URL_TTL_SECONDS};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -27,6 +27,15 @@ pub struct ReadyImageUrls {
     pub thumb_url: String,
     pub width: u32,
     pub height: u32,
+}
+
+/// A `ready` voice clip's presigned URL, plus its duration and waveform
+/// (`docs/design/media.md` §12).
+#[derive(Debug)]
+pub struct ReadyAudioUrl {
+    pub url: String,
+    pub duration_ms: u64,
+    pub peaks: Vec<u8>,
 }
 
 /// Issues presigned S3 GET URLs for the one processed bucket
@@ -63,6 +72,34 @@ impl MediaUrls {
     /// Presigned GET for a processed image's S3 key.
     pub async fn image_url(&self, key: &str) -> Result<String, ApiError> {
         self.presign_get_at(key, SystemTime::now()).await
+    }
+
+    /// Presigned GET for a processed voice clip's S3 key
+    /// (`docs/design/media.md` §12).
+    pub async fn audio_url(&self, key: &str) -> Result<String, ApiError> {
+        self.presign_get_at(key, SystemTime::now()).await
+    }
+
+    /// The clip's presigned URL, duration and peaks, or `None` until it's
+    /// `ready` with a `clip_key`, `duration_ms` and `peaks` recorded. Mirrors
+    /// [`Self::ready_image_urls`].
+    pub async fn ready_audio_url(
+        &self,
+        audio: &AudioMedia,
+    ) -> Result<Option<ReadyAudioUrl>, ApiError> {
+        if audio.status != MediaStatus::Ready {
+            return Ok(None);
+        }
+        let (Some(clip_key), Some(duration_ms), Some(peaks)) =
+            (&audio.clip_key, audio.duration_ms, audio.peaks.as_ref())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ReadyAudioUrl {
+            url: self.audio_url(clip_key).await?,
+            duration_ms,
+            peaks: peaks.clone(),
+        }))
     }
 
     /// Presigned GET for an avatar's display variant
@@ -258,6 +295,21 @@ mod tests {
         let a = urls.presign_get_at("img/k", t0).await.unwrap();
         let b = urls.presign_get_at("img/k", t1).await.unwrap();
         assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn audio_url_points_at_the_processed_bucket_and_key() {
+        let urls = media_urls();
+        let url = urls
+            .audio_url("aud/g1/202606/q1/u1/a1/clip.webm")
+            .await
+            .unwrap();
+        assert!(
+            url.starts_with(&format!(
+                "https://{BUCKET}.s3.us-east-1.amazonaws.com/aud/g1/202606/q1/u1/a1/clip.webm?"
+            )),
+            "{url}"
+        );
     }
 
     #[tokio::test]

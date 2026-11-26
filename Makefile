@@ -9,6 +9,7 @@ help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build-lambdas: ## Cross-compile every Lambda binary for arm64
+	./scripts/fetch_ffmpeg.sh
 	cd backend && BUILD_SHA=$$(git rev-parse --short HEAD) BUILD_AT=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 	    cargo lambda build --release --arm64
 
@@ -52,6 +53,7 @@ FUNCTION_responses-api     = Responses
 FUNCTION_engagement-api    = Engagement
 FUNCTION_media-api         = Media
 FUNCTION_image-process     = ImageProcess
+FUNCTION_audio-process     = AudioProcess
 FUNCTION_cycle-tick        = CycleTick
 FUNCTION_push-api          = Push
 FUNCTION_notify-tick       = NotifyTick
@@ -59,7 +61,7 @@ FUNCTION_notify-tick       = NotifyTick
 deploy-lambda: ## Fast-update one Lambda binary: make deploy-lambda LAMBDA=<binary-name>
 	@test -n "$(LAMBDA)" || { \
 	    echo "Usage: make deploy-lambda LAMBDA=<binary-name>"; \
-	    echo "Known binaries: groups-api invites-api invites-presignup newsletters-api questions-api responses-api engagement-api media-api image-process cycle-tick push-api notify-tick"; exit 1; }
+	    echo "Known binaries: groups-api invites-api invites-presignup newsletters-api questions-api responses-api engagement-api media-api image-process audio-process cycle-tick push-api notify-tick"; exit 1; }
 	@test -n "$(FUNCTION_$(LAMBDA))" || { \
 	    echo "Unknown binary '$(LAMBDA)'. Add it to the FUNCTION_* map in the Makefile."; exit 1; }
 	cd backend && cargo lambda build --release --arm64 --bin $(LAMBDA)

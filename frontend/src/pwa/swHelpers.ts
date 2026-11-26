@@ -102,3 +102,23 @@ export function mediaCacheKey(url: string): string {
   const parsed = new URL(url);
   return `${parsed.origin}${parsed.pathname}`;
 }
+
+/**
+ * Whether `url` is one of the processed media bucket's served paths, under `prefix`
+ * (`/img/`, `/avatar/`, `/aud/` — `docs/design/frontend.md` §5.2/§19.3). `mediaOrigin` is `null`
+ * when the build-time media base URL env var is missing or malformed, in which case nothing
+ * matches rather than matching every origin.
+ */
+export function isMediaPath(url: URL, mediaOrigin: string | null, prefix: string): boolean {
+  return mediaOrigin !== null && url.origin === mediaOrigin && url.pathname.startsWith(prefix);
+}
+
+/**
+ * The service worker's media caches store only full `200` responses, never a `206` partial
+ * (`docs/design/frontend.md` §19.3) — Safari always requests audio with a `Range` header, and a
+ * cached `206` would be a slice of the object, not the whole thing `RangeRequestsPlugin` expects
+ * to serve ranges from.
+ */
+export function isCacheableMediaStatus(status: number): boolean {
+  return status === 200;
+}

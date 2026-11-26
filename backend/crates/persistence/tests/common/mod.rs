@@ -170,7 +170,8 @@ pub fn draft_response(
         body: Some("My draft answer".into()),
         poll_option_id: None,
         image_media_ids: Vec::new(),
-        updated_at: utc("2026-06-02T00:00:00Z"),
+        audio_media_ids: Vec::new(),
+        updated_at: "2026-06-02T00:00:00Z".parse::<Timestamp>().unwrap(),
         published_at: None,
         reaction_count: 0,
     }
@@ -193,7 +194,8 @@ pub fn comment(
         author_user_id: UserId::new(author_user_id),
         body: "Nice answer!".into(),
         image_media_id: None,
-        created_at: utc("2026-06-06T10:00:00Z"),
+        audio_media_id: None,
+        created_at: "2026-06-06T10:00:00Z".parse::<Timestamp>().unwrap(),
         edited_at: None,
         deleted_at: None,
     }

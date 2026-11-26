@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { queryKeys, useConfig, useNewsletter, useUploads } from "../api/queries";
+import { queryKeys, useAudioUploads, useConfig, useNewsletter, useUploads } from "../api/queries";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PageErrorState } from "../components/layout/PageErrorState";
 import { Pill } from "../components/ui/Pill";
@@ -12,6 +12,8 @@ import { ResponseEditor } from "../components/responses/ResponseEditor";
 import { AUTO_PUBLISH_BADGE, DraftStatusBadge } from "../components/responses/DraftStatusBadge";
 import { useResponseEditor } from "../components/responses/useResponseEditor";
 import { useHydratedImages } from "../components/responses/useHydratedImages";
+import { useHydratedAudio } from "../components/responses/useHydratedAudio";
+import { VoiceClip } from "../components/newsletter/VoiceClip";
 import { usePollResponse } from "../components/responses/usePollResponse";
 import { PollPicker } from "../components/responses/PollPicker";
 import { GiphyLookupProvider } from "../giphy/GiphyLookupProvider";
@@ -100,6 +102,11 @@ function QuestionBody({
     cycleId,
     isText ? (question.myResponse?.imageMediaIds ?? []) : [],
   );
+  const { clips: hydratedClips, ready: clipsReady } = useHydratedAudio(
+    groupId,
+    cycleId,
+    isText ? (question.myResponse?.audioMediaIds ?? []) : [],
+  );
 
   const editor = useResponseEditor({
     groupId,
@@ -116,9 +123,13 @@ function QuestionBody({
   // The read-only view follows the current draft, including images added on this visit. Their
   // rows are the uploader's own `uploadQuery` entries, already cached.
   const viewImages = useUploads(groupId, cycleId, editor.imageMediaIds);
+  const viewClips = useAudioUploads(groupId, cycleId, editor.audioMediaIds);
 
   const isPublished = (editor.lastResponse?.status ?? question.myResponse?.status) === "published";
-  const canPublishText = editor.body.trim().length > 0 || editor.imageMediaIds.length > 0;
+  const canPublishText =
+    editor.body.trim().length > 0 ||
+    editor.imageMediaIds.length > 0 ||
+    editor.audioMediaIds.length > 0;
   const textIsUnpublishedDraft = !isPublished && canPublishText;
 
   const poll = usePollResponse({
@@ -184,6 +195,20 @@ function QuestionBody({
                   giphyVariant="answer"
                 />
               </GiphyLookupProvider>
+              {viewClips.map(
+                (clip) =>
+                  clip.url && (
+                    <VoiceClip
+                      key={clip.audioId}
+                      audioId={clip.audioId}
+                      url={clip.url}
+                      durationMs={clip.durationMs ?? 0}
+                      peaks={clip.peaks ?? []}
+                      caption={clip.caption}
+                      authorName="you"
+                    />
+                  ),
+              )}
               <button
                 type="button"
                 onClick={() => setShowEditor(true)}
@@ -200,7 +225,7 @@ function QuestionBody({
                 Changes save automatically and update your published answer.
               </div>
             )}
-            {!imagesReady ? (
+            {!imagesReady || !clipsReady ? (
               <div className="flex justify-center py-10">
                 <Spinner />
               </div>
@@ -213,10 +238,13 @@ function QuestionBody({
                 onBodyChange={editor.setBody}
                 onBlur={editor.onBlur}
                 onImageMediaIdsChange={editor.setImageMediaIds}
+                onAudioMediaIdsChange={editor.setAudioMediaIds}
                 onUploadingChange={setUploading}
                 initialImages={hydratedImages}
+                initialClips={hydratedClips}
                 readOnly={editor.readOnly}
                 onDetachImage={editor.detachImage}
+                onDetachAudio={editor.detachAudio}
               />
             )}
           </>

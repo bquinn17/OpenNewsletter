@@ -62,6 +62,10 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("media", "GET", "/uploads/{imageId}"),
     ("media", "DELETE", "/uploads/{imageId}"),
     ("media", "POST", "/uploads/{imageId}/complete"),
+    ("media", "POST", "/audio-uploads"),
+    ("media", "GET", "/audio-uploads/{audioId}"),
+    ("media", "PATCH", "/audio-uploads/{audioId}"),
+    ("media", "DELETE", "/audio-uploads/{audioId}"),
     ("media", "POST", "/avatars"),
     ("media", "GET", "/avatars/{avatarId}"),
     ("media", "DELETE", "/avatars/{avatarId}"),
@@ -175,6 +179,14 @@ class ApiStack(cdk.Stack):
                 media_processed_bucket.arn_for_objects("img/*"),
             ],
         )
+        delete_audio = iam.PolicyStatement(
+            actions=["s3:DeleteObject"],
+            resources=[
+                # `docs/design/media.md` §12 key layout.
+                media_originals_bucket.arn_for_objects("audio-uploads/*"),
+                media_processed_bucket.arn_for_objects("aud/*"),
+            ],
+        )
         delete_avatars = iam.PolicyStatement(
             actions=["s3:DeleteObject"],
             resources=[
@@ -183,13 +195,17 @@ class ApiStack(cdk.Stack):
                 media_processed_bucket.arn_for_objects("avatar/*"),
             ],
         )
-        # Image URLs are presigned GETs, which carry the signer's permissions
-        # (`docs/design/media.md` §4.1), so each Lambda that returns image or
-        # avatar URLs can read exactly the prefix it signs.
+        # Media URLs (image, audio, avatar) are presigned GETs, which carry the
+        # signer's permissions (`docs/design/media.md` §4.1), so each Lambda
+        # that returns such URLs can read exactly the prefix it signs.
         media_urls_env = {"PROCESSED_BUCKET": media_processed_bucket.bucket_name}
         read_images = iam.PolicyStatement(
             actions=["s3:GetObject"],
             resources=[media_processed_bucket.arn_for_objects("img/*")],
+        )
+        read_audio = iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[media_processed_bucket.arn_for_objects("aud/*")],
         )
         read_avatars = iam.PolicyStatement(
             actions=["s3:GetObject"],
@@ -222,8 +238,9 @@ class ApiStack(cdk.Stack):
             description="Newsletter list + detail",
             extra_environment=media_urls_env,
         )
-        # Answer and comment images, plus asker and comment-author avatars.
+        # Answer and comment images/audio, plus asker and comment-author avatars.
         self.newsletters_fn.add_to_role_policy(read_images)
+        self.newsletters_fn.add_to_role_policy(read_audio)
         self.newsletters_fn.add_to_role_policy(read_avatars)
         self.questions_fn = self._handler_lambda(
             "Questions",
@@ -243,17 +260,19 @@ class ApiStack(cdk.Stack):
             binary_name="engagement-api",
             description="Comments + reactions",
             extra_environment={
-                # Comment-image release on soft-delete/replace.
+                # Comment-image/audio release on soft-delete/replace.
                 **media_delete_env,
                 **media_urls_env,
             },
         )
         self.engagement_fn.add_to_role_policy(read_images)
+        self.engagement_fn.add_to_role_policy(read_audio)
         self.engagement_fn.add_to_role_policy(delete_media)
+        self.engagement_fn.add_to_role_policy(delete_audio)
         self.media_fn = self._handler_lambda(
             "Media",
             binary_name="media-api",
-            description="Uploads and avatars",
+            description="Uploads, audio, and avatars",
             memory_size=512,
             extra_environment={
                 **media_delete_env,
@@ -264,9 +283,11 @@ class ApiStack(cdk.Stack):
         media_originals_bucket.grant_put(self.media_fn)
         avatars_originals_bucket.grant_put(self.media_fn)
         self.media_fn.add_to_role_policy(read_images)
+        self.media_fn.add_to_role_policy(read_audio)
         self.media_fn.add_to_role_policy(read_avatars)
-        # `DELETE /uploads/{id}` and `DELETE /avatars/{id}`.
+        # `DELETE /uploads/{id}`, `DELETE /audio-uploads/{id}`, and `DELETE /avatars/{id}`.
         self.media_fn.add_to_role_policy(delete_media)
+        self.media_fn.add_to_role_policy(delete_audio)
         self.media_fn.add_to_role_policy(delete_avatars)
 
         self.push_fn = self._handler_lambda(

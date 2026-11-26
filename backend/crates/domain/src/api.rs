@@ -10,10 +10,10 @@
 
 use crate::Timestamp;
 use crate::{
-    AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings, Group, GroupId, ImageId, ImageMedia,
-    ImageMimeType, ImagePurpose, Invite, InviteStatus, MediaStatus, MemberStats, NewsletterStatus,
-    NotificationSettings, PollOptionId, QuestionId, QuestionKind, Response, ResponseId,
-    ResponseStatus, Role, SubscriptionId, User, UserId,
+    AudioId, AudioMedia, AudioMimeType, AvatarId, AvatarMedia, CommentId, CycleId, CycleSettings,
+    Group, GroupId, ImageId, ImageMedia, ImageMimeType, ImagePurpose, Invite, InviteStatus,
+    MediaStatus, MemberStats, NewsletterStatus, NotificationSettings, PollOptionId, QuestionId,
+    QuestionKind, Response, ResponseId, ResponseStatus, Role, SubscriptionId, User, UserId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -498,6 +498,7 @@ pub struct MyResponseSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     pub image_media_ids: Vec<ImageId>,
+    pub audio_media_ids: Vec<AudioId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_option_id: Option<PollOptionId>,
     pub updated_at: Timestamp,
@@ -529,6 +530,19 @@ pub struct PublishedImageResponse {
     pub height: u32,
 }
 
+/// A voice clip attached to a published answer or comment
+/// (`docs/design/media.md` §12). Only ever appears once `status=ready`
+/// — a `pending`/`failed` clip never reaches a published view.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedAudioResponse {
+    pub audio_id: AudioId,
+    pub url: String,
+    pub duration_ms: u64,
+    pub peaks: Vec<u8>,
+    pub caption: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReactionGroupResponse {
@@ -550,6 +564,9 @@ pub struct PublishedAnswerResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     pub images: Vec<PublishedImageResponse>,
+    /// Ready voice clips, in `audioMediaIds` order (`docs/design/media.md`
+    /// §12). Always present, possibly empty — a new field, expand-only.
+    pub audio: Vec<PublishedAudioResponse>,
     pub published_at: Timestamp,
     pub comments: Vec<CommentResponse>,
     pub reaction_groups: Vec<ReactionGroupResponse>,
@@ -626,6 +643,10 @@ pub struct ResponseDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_option_id: Option<PollOptionId>,
     pub image_media_ids: Vec<ImageId>,
+    /// Voice clips attached to a text answer, up to `MAX_AUDIO_CLIPS_PER_RESPONSE`
+    /// (`docs/design/media.md` §12). A new field, expand-only.
+    #[serde(default)]
+    pub audio_media_ids: Vec<AudioId>,
     pub updated_at: Timestamp,
     pub published_at: Option<Timestamp>,
 }
@@ -643,6 +664,7 @@ impl From<Response> for ResponseDto {
             body: r.body,
             poll_option_id: r.poll_option_id,
             image_media_ids: r.image_media_ids,
+            audio_media_ids: r.audio_media_ids,
             updated_at: r.updated_at,
             published_at: r.published_at,
         }
@@ -657,6 +679,12 @@ pub enum SaveResponseRequest {
     Text {
         body: String,
         image_media_ids: Vec<ImageId>,
+        /// Up to `MAX_AUDIO_CLIPS_PER_RESPONSE` voice clips
+        /// (`docs/design/media.md` §12). Absent (old clients) reads as
+        /// empty, and an empty list serializes as absent, so this expand-only
+        /// addition doesn't change the wire shape of an answer with no clips.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        audio_media_ids: Vec<AudioId>,
         publish: bool,
     },
     #[serde(rename_all = "camelCase")]
@@ -693,6 +721,10 @@ pub struct CommentResponse {
     pub display_name: String,
     pub body: String,
     pub image: Option<CommentImageResponse>,
+    /// The comment's voice clip, hydrated only while `ready`
+    /// (`docs/design/media.md` §12). A new field, expand-only.
+    #[serde(default)]
+    pub audio: Option<PublishedAudioResponse>,
     pub created_at: Timestamp,
     pub edited_at: Option<Timestamp>,
     pub deleted_at: Option<Timestamp>,
@@ -716,6 +748,10 @@ pub struct CreateCommentRequest {
     pub body: Option<String>,
     #[serde(default)]
     pub image_media_id: Option<ImageId>,
+    /// At most one voice clip (`docs/design/media.md` §12). A new
+    /// field, expand-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_media_id: Option<AudioId>,
 }
 
 /// `PATCH .../comments/{commentId}` request body (§8.3). An absent field is
@@ -733,6 +769,14 @@ pub struct PatchCommentRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub image_media_id: Option<Option<ImageId>>,
+    /// Same "absent vs explicit null" contract as `image_media_id`
+    /// (`docs/design/media.md` §12). A new field, expand-only.
+    #[serde(
+        default,
+        deserialize_with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audio_media_id: Option<Option<AudioId>>,
 }
 
 /// `GET`/`PUT`/`DELETE .../reactions` response (§8.5-§8.7). `reactionGroups`
@@ -880,6 +924,94 @@ impl AvatarMediaResponse {
             processed_at: avatar.processed_at,
         }
     }
+}
+
+// ===== `docs/design/media.md` §12 — Voice clip routes =====
+
+/// `POST /audio-uploads` request body. `mimeType` is a bare `String`, same
+/// reason as [`CreateUploadRequest::mime_type`]: an unrecognized value must
+/// reach the handler as `AUDIO_BAD_TYPE` (415), not fail deserialization.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateAudioUploadRequest {
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub question_id: QuestionId,
+    /// Defaults to `response` when absent, same as `CreateUploadRequest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<ImagePurpose>,
+    pub mime_type: String,
+    pub byte_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+/// `POST /audio-uploads` response.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAudioUploadResponse {
+    pub audio_id: AudioId,
+    pub upload_url: String,
+    /// Every header the presigned request was signed with, lower-cased; the
+    /// client sends them all verbatim on the PUT.
+    pub headers: BTreeMap<String, String>,
+    pub expires_in_seconds: u64,
+}
+
+/// `GET /audio-uploads/{audioId}` and `PATCH /audio-uploads/{audioId}`
+/// response.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMediaResponse {
+    pub audio_id: AudioId,
+    pub user_id: UserId,
+    pub group_id: GroupId,
+    pub cycle_id: CycleId,
+    pub question_id: Option<QuestionId>,
+    pub purpose: ImagePurpose,
+    pub mime_type: AudioMimeType,
+    pub status: MediaStatus,
+    pub bytes: u64,
+    pub duration_ms: Option<u64>,
+    pub peaks: Option<Vec<u8>>,
+    pub caption: Option<String>,
+    /// Presigned S3 GET URL for the processed clip; `null` until `status=ready`.
+    pub url: Option<String>,
+    pub error_message: Option<String>,
+    pub uploaded_at: Timestamp,
+    pub processed_at: Option<Timestamp>,
+}
+
+impl AudioMediaResponse {
+    pub fn new(audio: AudioMedia, url: Option<String>) -> Self {
+        Self {
+            audio_id: audio.audio_id,
+            user_id: audio.user_id,
+            group_id: audio.group_id,
+            cycle_id: audio.cycle_id,
+            question_id: audio.question_id,
+            purpose: audio.purpose,
+            mime_type: audio.mime_type,
+            status: audio.status,
+            bytes: audio.bytes,
+            duration_ms: audio.duration_ms,
+            peaks: audio.peaks,
+            caption: audio.caption,
+            url,
+            error_message: audio.error_message,
+            uploaded_at: audio.uploaded_at,
+            processed_at: audio.processed_at,
+        }
+    }
+}
+
+/// `PATCH /audio-uploads/{audioId}` request body. `caption` is a required
+/// key whose value is either a string or `null`; there is no "absent" state
+/// to distinguish, unlike `PatchMeRequest`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatchAudioUploadRequest {
+    pub caption: Option<String>,
 }
 
 // ===== `docs/design/api.md` §10 — Push routes =====
@@ -1170,6 +1302,7 @@ mod tests {
             SaveResponseRequest::Text {
                 body: "Lake 22, hands down.".into(),
                 image_media_ids: vec![ImageId::new("01H...")],
+                audio_media_ids: Vec::new(),
                 publish: false,
             }
         );

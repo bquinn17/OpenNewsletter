@@ -265,17 +265,25 @@ def test_originals_buckets_expire_uploads_after_7_days(
 def test_processed_bucket_allows_cors_reads_from_the_app_origin_only(
     env: str,
 ) -> None:
-    # Images load with `crossorigin="anonymous"` so the service worker can
-    # cache them (`docs/design/media.md` §4.1); localhost only in dev.
+    # Images and audio load with `crossorigin="anonymous"` so the service worker
+    # can cache them (`docs/design/media.md` §4.1, §12);
+    # localhost only in dev. Range header for Safari audio seeking.
     config = load_config(env)
     buckets = _media_persistent_template(env).find_resources("AWS::S3::Bucket")
     (processed,) = [v for k, v in buckets.items() if k.startswith("ProcessedBucket")]
     expected_origins = [f"https://{config.domain}"]
     if env == "dev":
         expected_origins.append("http://localhost:5173")
-    assert processed["Properties"]["CorsConfiguration"]["CorsRules"] == [
-        {"AllowedMethods": ["GET", "HEAD"], "AllowedOrigins": expected_origins}
-    ]
+    cors_rules = processed["Properties"]["CorsConfiguration"]["CorsRules"]
+    assert len(cors_rules) == 1
+    rule = cors_rules[0]
+    assert rule["AllowedMethods"] == ["GET", "HEAD"]
+    assert rule["AllowedOrigins"] == expected_origins
+    assert "Range" in rule.get("AllowedHeaders", [])
+    exposed = set(rule.get("ExposedHeaders", []))
+    assert "Content-Range" in exposed
+    assert "Accept-Ranges" in exposed
+    assert "Content-Length" in exposed
 
 
 def test_media_outputs_name_the_s3_origins_the_spa_needs(
@@ -617,6 +625,10 @@ def test_all_contract_routes_are_wired(api_template: assertions.Template) -> Non
         "GET /uploads/{imageId}",
         "DELETE /uploads/{imageId}",
         "POST /uploads/{imageId}/complete",
+        "POST /audio-uploads",
+        "GET /audio-uploads/{audioId}",
+        "PATCH /audio-uploads/{audioId}",
+        "DELETE /audio-uploads/{audioId}",
         "POST /avatars",
         "GET /avatars/{avatarId}",
         "DELETE /avatars/{avatarId}",
@@ -1339,6 +1351,10 @@ def _delete_targets(
 
 
 _MEDIA_DELETE = {("media-originals", "/uploads/*"), ("media-processed", "/img/*")}
+_AUDIO_DELETE = {
+    ("media-originals", "/audio-uploads/*"),
+    ("media-processed", "/aud/*"),
+}
 _AVATAR_DELETE = {
     ("avatars-originals", "/uploads/*"),
     ("media-processed", "/avatar/*"),
@@ -1348,8 +1364,8 @@ _AVATAR_DELETE = {
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("Media", _MEDIA_DELETE | _AVATAR_DELETE),
-        ("Engagement", _MEDIA_DELETE),
+        ("Media", _MEDIA_DELETE | _AUDIO_DELETE | _AVATAR_DELETE),
+        ("Engagement", _MEDIA_DELETE | _AUDIO_DELETE),
         ("Groups", _AVATAR_DELETE),
         ("Invites", set()),
         ("Newsletters", set()),
@@ -1377,15 +1393,16 @@ def _get_targets(
 
 
 _READ_IMAGES = {("media-processed", "/img/*")}
+_READ_AUDIO = {("media-processed", "/aud/*")}
 _READ_AVATARS = {("media-processed", "/avatar/*")}
 
 
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("Media", _READ_IMAGES | _READ_AVATARS),
-        ("Newsletters", _READ_IMAGES | _READ_AVATARS),
-        ("Engagement", _READ_IMAGES),
+        ("Media", _READ_IMAGES | _READ_AUDIO | _READ_AVATARS),
+        ("Newsletters", _READ_IMAGES | _READ_AUDIO | _READ_AVATARS),
+        ("Engagement", _READ_IMAGES | _READ_AUDIO),
         ("Groups", _READ_AVATARS),
         ("Questions", _READ_AVATARS),
         ("Invites", set()),
@@ -1594,3 +1611,143 @@ def test_api_handlers_have_cycle_frequency_env_vars(
                 },
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Audio Infrastructure
+# ---------------------------------------------------------------------------
+
+
+def test_audio_process_lambda_exists(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # AudioProcess Lambda is wired in MediaPipelineStack
+    _, pipeline = media_templates
+    pipeline.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"FunctionName": "OpenNewsletter-AudioProcess-dev"},
+    )
+
+
+def test_audio_process_lambda_arm64(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    lambdas = pipeline.find_resources("AWS::Lambda::Function")
+    audio_lambdas = [v for k, v in lambdas.items() if "AudioProcess" in k]
+    assert len(audio_lambdas) >= 1
+    for fn in audio_lambdas:
+        assert fn["Properties"]["Architectures"] == ["arm64"]
+
+
+def test_audio_process_lambda_memory(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    lambdas = pipeline.find_resources("AWS::Lambda::Function")
+    audio_lambdas = [v for k, v in lambdas.items() if "AudioProcess" in k]
+    assert len(audio_lambdas) >= 1
+    for fn in audio_lambdas:
+        assert fn["Properties"]["MemorySize"] == 1024
+
+
+def test_audio_process_has_ffmpeg_path_env_var(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    pipeline.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "OpenNewsletter-AudioProcess-dev",
+            "Environment": {
+                "Variables": assertions.Match.object_like(
+                    {
+                        "FFMPEG_PATH": "/opt/bin/ffmpeg",
+                        "TABLE_NAME": assertions.Match.any_value(),
+                        "MEDIA_ORIGINALS_BUCKET": assertions.Match.any_value(),
+                        "PROCESSED_BUCKET": assertions.Match.any_value(),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_audio_lifecycle_rule_expires_after_7_days(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # audio-uploads prefix also expires after 7 days like uploads/
+    persistent, _ = media_templates
+    rules = _bucket_lifecycle_rules(persistent, "OriginalsBucket")
+    audio_expiration_rules = [
+        r
+        for r in rules
+        if r.get("Prefix") == "audio-uploads/" and "ExpirationInDays" in r
+    ]
+    assert len(audio_expiration_rules) == 1
+    assert audio_expiration_rules[0]["ExpirationInDays"] == 7
+
+
+def test_processed_bucket_allows_range_header_for_audio(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # Processed bucket CORS must allow Range header for Safari audio seeking
+    persistent, _ = media_templates
+    buckets = persistent.find_resources("AWS::S3::Bucket")
+    (processed,) = [v for k, v in buckets.items() if k.startswith("ProcessedBucket")]
+    cors_rules = processed["Properties"]["CorsConfiguration"]["CorsRules"]
+    assert len(cors_rules) == 1
+    cors_rule = cors_rules[0]
+    assert "Range" in cors_rule.get("AllowedHeaders", [])
+    exposed = set(cors_rule.get("ExposedHeaders", []))
+    assert "Content-Range" in exposed
+    assert "Accept-Ranges" in exposed
+    assert "Content-Length" in exposed
+
+
+def test_originals_bucket_routes_each_prefix_to_its_own_processor(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    # Images and voice clips share the media-originals bucket. Both triggers sit
+    # on one BucketNotifications resource, because two would each rewrite the
+    # bucket's whole notification config and race.
+    _, pipeline = media_templates
+    configs = [
+        cfg
+        for res in pipeline.find_resources("Custom::S3BucketNotifications").values()
+        for cfg in res["Properties"]["NotificationConfiguration"].get(
+            "LambdaFunctionConfigurations", []
+        )
+    ]
+    by_prefix: dict[str, list[str]] = {}
+    for cfg in configs:
+        (rule,) = cfg["Filter"]["Key"]["FilterRules"]
+        arn = cfg["LambdaFunctionArn"]["Fn::GetAtt"][0]
+        by_prefix.setdefault(rule["Value"], []).append(arn)
+    audio = [a for a in by_prefix["audio-uploads/"] if a.startswith("AudioProcessFn")]
+    assert len(audio) == 1
+    assert all(a.startswith("ImageProcessFn") for a in by_prefix["uploads/"])
+    shared = [
+        res
+        for res in pipeline.find_resources("Custom::S3BucketNotifications").values()
+        if len(
+            res["Properties"]["NotificationConfiguration"].get(
+                "LambdaFunctionConfigurations", []
+            )
+        )
+        == 2
+    ]
+    assert len(shared) == 1
+
+
+def test_audio_process_reads_and_deletes_only_audio_prefixes(
+    media_templates: tuple[assertions.Template, assertions.Template],
+) -> None:
+    _, pipeline = media_templates
+    assert _get_targets(pipeline, "OpenNewsletter-AudioProcess-dev") == {
+        ("media-originals", "/audio-uploads/*")
+    }
+    assert _delete_targets(pipeline, "OpenNewsletter-AudioProcess-dev") == {
+        ("media-originals", "/audio-uploads/*"),
+        ("media-processed", "/aud/*"),
+    }

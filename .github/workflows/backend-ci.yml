@@ -64,10 +64,16 @@ jobs:
 
       - run: cargo deny check
 
+      - name: Install ffmpeg for audio processing tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       # There is no `integration` feature flag: this single `cargo test` runs
       # the unit, contract and DynamoDB-Local integration suites together,
       # against the `dynamodb-local` service above.
-      - run: cargo test --workspace
+      - name: Run tests with ffmpeg available
+        run: cargo test --workspace
+        env:
+          REQUIRE_FFMPEG: "1"
 
       # ubuntu-latest's system Python refuses `pip install` (PEP 668).
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

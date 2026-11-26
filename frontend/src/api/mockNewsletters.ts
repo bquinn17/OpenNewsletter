@@ -1,4 +1,5 @@
 import type { components } from "../types/api";
+import { synthesizeDemoClip } from "../utils/demoAudio";
 import {
   CALLER_ID,
   NO_MOCK_ROUTE,
@@ -9,6 +10,9 @@ import {
   newsletters,
   type MockRequest,
 } from "./mockShared";
+
+/** One seeded published answer's voice clip (`docs/design/frontend.md` §19.4) — rendered once. */
+const DEMO_CLIP = synthesizeDemoClip();
 
 type S = components["schemas"];
 type AskedBy = S["AskedBy"];
@@ -154,6 +158,7 @@ seedResponse("g_trail", OPEN_CYCLE_ID, "q_trail_hike", {
   status: "published",
   body: "Mailbox Peak kicked my butt but the view at the top was unreal.",
   imageMediaIds: [],
+  audioMediaIds: [],
   updatedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
   publishedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
 });
@@ -162,6 +167,7 @@ seedResponse("g_trail", OPEN_CYCLE_ID, "q_trail_photo", {
   status: "draft",
   body: "Still picking my favorite shot from the ridge walk...",
   imageMediaIds: [],
+  audioMediaIds: [],
   updatedAt: new Date(Date.now() - 12 * 60 * 60_000).toISOString(),
   publishedAt: null,
 });
@@ -170,6 +176,7 @@ seedResponse("g_meeple", OPEN_CYCLE_ID, "q_meeple_surprise", {
   status: "draft",
   body: "Wingspan, surprisingly — didn't expect to love the engine building.",
   imageMediaIds: [],
+  audioMediaIds: [],
   updatedAt: new Date(Date.now() - 10 * 60 * 60_000).toISOString(),
   publishedAt: null,
 });
@@ -178,6 +185,7 @@ seedResponse("g_meeple", OPEN_CYCLE_ID, "q_meeple_mvp", {
   status: "draft",
   body: "Tara, obviously. She swept us in Wavelength.",
   imageMediaIds: [],
+  audioMediaIds: [],
   updatedAt: new Date(Date.now() - 9 * 60 * 60_000).toISOString(),
   publishedAt: null,
 });
@@ -188,6 +196,7 @@ function toMyResponseSummary(dto: ResponseDto): MyResponseSummary {
     status: dto.status,
     body: dto.body,
     imageMediaIds: dto.imageMediaIds,
+    audioMediaIds: dto.audioMediaIds,
     pollOptionId: dto.pollOptionId,
     updatedAt: dto.updatedAt,
     publishedAt: dto.publishedAt,
@@ -237,6 +246,9 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
           "Can't beat the **ridge walk at sunset** — golden light the whole way down.\n\n" +
           "![Golden light on a ridgeline at sunset](image:img_pub_ridge)",
         images: [sampleImage("img_pub_ridge", "ridge-sunset.jpg", 1200, 797)],
+        audio: [
+          { audioId: "aud_pub_ridge", caption: "The last few minutes of light", ...DEMO_CLIP },
+        ],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 1000).toISOString(),
         // Seeded for M10 (`docs/design/engagement.md` §1) — one edited, one soft-deleted,
         // so VITE_USE_MOCKS=true demonstrates both without any manual steps.
@@ -247,6 +259,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
             displayName: "Quinn",
             body: "Same — the switchbacks are brutal.",
             image: null,
+            audio: null,
             createdAt: new Date(Date.now() - 27 * 24 * 60 * 60_000).toISOString(),
             editedAt: new Date(Date.now() - 27 * 24 * 60 * 60_000 + 60_000).toISOString(),
             deletedAt: null,
@@ -257,6 +270,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
             displayName: "Alex",
             body: "",
             image: null,
+            audio: null,
             createdAt: new Date(Date.now() - 26 * 24 * 60 * 60_000).toISOString(),
             editedAt: null,
             deletedAt: new Date(Date.now() - 25 * 24 * 60 * 60_000).toISOString(),
@@ -272,6 +286,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
           "Mailbox Peak nearly killed me but so worth it.\n\n" +
           "![The signed mailbox on the summit of Mailbox Peak](image:img_pub_hike)",
         images: [sampleImage("img_pub_hike", "mailbox-peak.jpg", 1200, 796)],
+        audio: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 2000).toISOString(),
         comments: [],
         reactionGroups: [],
@@ -292,6 +307,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         displayName: "Quinn",
         body: "From the summit.",
         images: [sampleImage("img_pub_photo1", "summit.jpg", 1200, 799)],
+        audio: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 3000).toISOString(),
         comments: [],
         reactionGroups: [],
@@ -328,6 +344,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         // resolves `demoparty` to a GIF served from `public/demo-media/`, no GIPHY call involved.
         body: "Planning next year's trip already.\n\n![party](giphy:demoparty)",
         images: [],
+        audio: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 4000).toISOString(),
         comments: [],
         reactionGroups: [],
@@ -348,6 +365,7 @@ const RICH_PUBLISHED_QUESTIONS: PublishedQuestion[] = [
         displayName: "Sam",
         body: "A podcast about long-distance trail running.",
         images: [],
+        audio: [],
         publishedAt: new Date(Date.now() - 28 * 24 * 60 * 60_000 + 5000).toISOString(),
         comments: [],
         reactionGroups: [],
@@ -369,6 +387,7 @@ function simplePublishedQuestions(
           displayName: otherMember.displayName,
           body: "Loved this one — great question.",
           images: [],
+          audio: [],
           publishedAt: publishedAtIso,
           comments: [],
           reactionGroups: [],
@@ -390,6 +409,7 @@ function simplePublishedQuestions(
           displayName: "Quinn",
           body: "Too many inside jokes to pick just one.",
           images: [],
+          audio: [],
           publishedAt: publishedAtIso,
           comments: [],
           reactionGroups: [],
@@ -502,7 +522,11 @@ function adjustSummaryCounts(
 function isNonEmpty(response: ResponseDto | undefined): boolean {
   if (!response) return false;
   if (response.kind === "poll") return !!response.pollOptionId;
-  return (response.body?.trim().length ?? 0) > 0 || response.imageMediaIds.length > 0;
+  return (
+    (response.body?.trim().length ?? 0) > 0 ||
+    response.imageMediaIds.length > 0 ||
+    response.audioMediaIds.length > 0
+  );
 }
 
 function handlePutMyResponse(
@@ -545,6 +569,8 @@ function handlePutMyResponse(
     body: request.kind === "text" ? request.body : undefined,
     pollOptionId: request.kind === "poll" ? request.pollOptionId : undefined,
     imageMediaIds: request.kind === "text" ? [...new Set(request.imageMediaIds)].slice(0, 10) : [],
+    audioMediaIds:
+      request.kind === "text" ? [...new Set(request.audioMediaIds ?? [])].slice(0, 3) : [],
     updatedAt: nowIso,
     publishedAt: wasPublished ? existing.publishedAt : request.publish ? nowIso : null,
   };

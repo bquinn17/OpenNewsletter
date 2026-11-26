@@ -1,7 +1,8 @@
 //! Request validation for the media routes (`docs/design/api.md` §9).
 
 use base64::Engine;
-use domain::{ApiError, ApiErrorCode, ImageMimeType};
+use domain::{ApiError, ApiErrorCode, AudioMimeType, ImageMimeType};
+use shared::config::MAX_AUDIO_CAPTION_CHARS;
 
 /// `mimeType` for `POST /uploads` — jpeg/png/webp/gif. An unrecognized
 /// string (including a type that's simply not one we accept, like an SVG)
@@ -47,6 +48,68 @@ pub fn extension_for(mime: ImageMimeType) -> &'static str {
     }
 }
 
+/// `mimeType` for `POST /audio-uploads`
+/// (`docs/design/media.md` §12): parameters such as `;codecs=opus`
+/// (which `MediaRecorder` adds) are stripped and the type lowercased before
+/// matching the allowlist. An unrecognized type is `AUDIO_BAD_TYPE` (415),
+/// same reason as [`parse_image_mime_type`].
+pub fn parse_audio_mime_type(raw: &str) -> Result<AudioMimeType, ApiError> {
+    let normalized = raw
+        .split(';')
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "audio/webm" => Ok(AudioMimeType::Webm),
+        "audio/ogg" => Ok(AudioMimeType::Ogg),
+        "audio/mp4" => Ok(AudioMimeType::Mp4),
+        "audio/x-m4a" => Ok(AudioMimeType::XM4a),
+        "audio/aac" => Ok(AudioMimeType::Aac),
+        "audio/mpeg" => Ok(AudioMimeType::Mpeg),
+        "audio/wav" => Ok(AudioMimeType::Wav),
+        "audio/x-wav" => Ok(AudioMimeType::XWav),
+        _ => Err(ApiError::new(
+            ApiErrorCode::AudioBadType,
+            format!("mimeType `{raw}` is not a supported audio type"),
+        )),
+    }
+}
+
+/// The file extension used in S3 keys for a given audio mime type.
+pub fn audio_extension_for(mime: AudioMimeType) -> &'static str {
+    match mime {
+        AudioMimeType::Webm => "webm",
+        AudioMimeType::Ogg => "ogg",
+        AudioMimeType::Mp4 => "mp4",
+        AudioMimeType::XM4a => "m4a",
+        AudioMimeType::Aac => "aac",
+        AudioMimeType::Mpeg => "mp3",
+        AudioMimeType::Wav => "wav",
+        AudioMimeType::XWav => "wav",
+    }
+}
+
+/// `caption` for `PATCH /audio-uploads/{audioId}` (`docs/design/media.md` §12).
+/// Trims whitespace; an empty or all-whitespace string clears the caption,
+/// same as `null`.
+pub fn validate_audio_caption(raw: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > MAX_AUDIO_CAPTION_CHARS {
+        return Err(ApiError::invalid_field(
+            "caption",
+            format!("caption must be at most {MAX_AUDIO_CAPTION_CHARS} characters"),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
 /// `byteSize` must be nonzero and no larger than `max_bytes`.
 pub fn validate_byte_size(byte_size: u64, max_bytes: u64) -> Result<(), ApiError> {
     if byte_size == 0 {
@@ -58,6 +121,24 @@ pub fn validate_byte_size(byte_size: u64, max_bytes: u64) -> Result<(), ApiError
     if byte_size > max_bytes {
         return Err(ApiError::new(
             ApiErrorCode::ImageTooLarge,
+            format!("byteSize must be at most {max_bytes} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+/// `byteSize` for `POST /audio-uploads`; same shape as [`validate_byte_size`]
+/// but with `AUDIO_TOO_LARGE` in place of `IMAGE_TOO_LARGE`.
+pub fn validate_audio_byte_size(byte_size: u64, max_bytes: u64) -> Result<(), ApiError> {
+    if byte_size == 0 {
+        return Err(ApiError::invalid_field(
+            "byteSize",
+            "byteSize must be greater than zero",
+        ));
+    }
+    if byte_size > max_bytes {
+        return Err(ApiError::new(
+            ApiErrorCode::AudioTooLarge,
             format!("byteSize must be at most {max_bytes} bytes"),
         ));
     }
@@ -162,5 +243,46 @@ mod tests {
     fn sha256_rejects_non_base64() {
         let err = validate_sha256(Some("not base64!!")).expect_err("not valid base64");
         assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn audio_caption_trims_and_clears_on_blank() {
+        assert_eq!(
+            validate_audio_caption(Some("  hi  ".into())).unwrap(),
+            Some("hi".into())
+        );
+        assert_eq!(validate_audio_caption(Some("   ".into())).unwrap(), None);
+        assert_eq!(validate_audio_caption(None).unwrap(), None);
+    }
+
+    #[test]
+    fn audio_caption_rejects_overlong() {
+        let err = validate_audio_caption(Some("a".repeat(MAX_AUDIO_CAPTION_CHARS + 1)))
+            .expect_err("too long");
+        assert_eq!(err.code, ApiErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn audio_byte_size_over_the_cap_is_audio_too_large_not_image() {
+        let err = validate_audio_byte_size(1_001, 1_000).expect_err("over the cap");
+        assert_eq!(err.code, ApiErrorCode::AudioTooLarge);
+    }
+
+    #[test]
+    fn audio_mime_type_strips_codec_parameters_and_lowercases() {
+        assert_eq!(
+            parse_audio_mime_type("audio/webm;codecs=opus").unwrap(),
+            AudioMimeType::Webm
+        );
+        assert_eq!(
+            parse_audio_mime_type("AUDIO/WAV").unwrap(),
+            AudioMimeType::Wav
+        );
+    }
+
+    #[test]
+    fn audio_mime_type_rejects_unknown_types() {
+        let err = parse_audio_mime_type("audio/flac").expect_err("flac is not allowed");
+        assert_eq!(err.code, ApiErrorCode::AudioBadType);
     }
 }

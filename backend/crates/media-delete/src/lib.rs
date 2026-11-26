@@ -13,7 +13,7 @@ pub mod fakes;
 pub use clients::S3ObjectStore;
 
 use async_trait::async_trait;
-use domain::{AvatarMedia, ImageMedia};
+use domain::{AudioMedia, AvatarMedia, ImageMedia};
 use persistence::{media, Repo, RepoError};
 use std::sync::Arc;
 
@@ -165,6 +165,50 @@ pub async fn delete_avatar_media(
         }
     }
     tracing::info!(user_id = %avatar.user_id, avatar_id = %avatar.avatar_id, "avatar deleted");
+    Ok(())
+}
+
+/// Delete a voice clip's original and processed objects, then delete its
+/// `AudioMedia` row. Mirrors [`delete_image_media`]; uses the same
+/// `MediaDeleter` as images, since voice clips share the media
+/// originals/processed buckets (`docs/design/media.md` §12).
+pub async fn delete_audio_media(
+    repo: &Repo,
+    deleter: &MediaDeleter,
+    audio: &AudioMedia,
+) -> Result<(), MediaDeleteError> {
+    let mut current = audio.clone();
+    for attempt in 1..=MAX_DELETE_ATTEMPTS {
+        let processed = [current.clip_key.as_deref()];
+        delete_objects(deleter, &current.original_key, &processed).await?;
+        match media::delete_audio_row(
+            repo,
+            &current.group_id,
+            &current.cycle_id,
+            &current.audio_id,
+            current.status,
+        )
+        .await
+        {
+            Ok(()) => break,
+            Err(RepoError::ConditionalCheckFailed) if attempt < MAX_DELETE_ATTEMPTS => {
+                tracing::info!(audio_id = %current.audio_id, "clip finished processing during its delete; deleting again");
+                match media::get_audio(
+                    repo,
+                    &current.group_id,
+                    &current.cycle_id,
+                    &current.audio_id,
+                )
+                .await?
+                {
+                    Some(fresh) => current = fresh,
+                    None => break,
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    tracing::info!(group_id = %audio.group_id, cycle_id = %audio.cycle_id, audio_id = %audio.audio_id, "voice clip deleted");
     Ok(())
 }
 

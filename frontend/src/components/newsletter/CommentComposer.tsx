@@ -4,6 +4,7 @@ import { useAddComment } from "../../api/mutations";
 import { env } from "../../env";
 import type { GiphyGif } from "../../giphy/giphyClient";
 import { giphyLimitRemainingMs, useGiphyLimit } from "../../state/giphyLimit";
+import { isVoiceRecordingSupported, MAX_AUDIO_CLIPS_PER_COMMENT } from "../../utils/voiceClip";
 import { AttachMenu, type AttachMenuHandle, type AttachMenuItem } from "../responses/AttachMenu";
 import { GiphyPicker } from "../responses/GiphyPicker";
 import {
@@ -11,6 +12,11 @@ import {
   type ImageUploaderHandle,
   type UploaderImage,
 } from "../responses/ImageUploader";
+import {
+  VoiceClipUploader,
+  type UploaderClip,
+  type VoiceClipUploaderHandle,
+} from "../responses/VoiceClipUploader";
 import { COUNTER_THRESHOLD, MAX_BODY_CHARS } from "./commentFormatting";
 
 type Props = {
@@ -27,23 +33,29 @@ function minutesLeft(ms: number): number {
 export function CommentComposer({ groupId, cycleId, questionId, responseId }: Props) {
   const [body, setBody] = useState("");
   const [images, setImages] = useState<UploaderImage[]>([]);
+  const [clips, setClips] = useState<UploaderClip[]>([]);
   const [gif, setGif] = useState<GiphyGif | null>(null);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  // Bumped after a post to remount the uploader: it owns its image list, and
-  // the posted image would otherwise stay in its single slot.
+  // Bumped after a post to remount the uploaders: they own their own attachment lists, and the
+  // posted image/clip would otherwise stay in its single slot.
   const [uploaderKey, setUploaderKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const addComment = useAddComment(groupId, cycleId, questionId);
   const uploaderRef = useRef<ImageUploaderHandle>(null);
+  const clipUploaderRef = useRef<VoiceClipUploaderHandle>(null);
   const attachMenuRef = useRef<AttachMenuHandle>(null);
   const giphyUntil = useGiphyLimit((s) => s.until);
   const giphyRateLimited = giphyUntil !== null && giphyUntil > Date.now();
 
   const readyImage = images.find((img) => img.status === "ready");
-  const uploading = images.some((img) => img.status === "uploading" || img.status === "processing");
+  const clip = clips[0];
+  const uploading =
+    images.some((img) => img.status === "uploading" || img.status === "processing") ||
+    clips.some((c) => c.status === "uploading" || c.status === "processing");
   const trimmed = body.trim();
-  const canPost = (!!trimmed || !!readyImage || !!gif) && !uploading && !addComment.isPending;
+  const canPost =
+    (!!trimmed || !!readyImage || !!clip || !!gif) && !uploading && !addComment.isPending;
 
   async function submit() {
     if (!canPost) return;
@@ -57,10 +69,12 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
         body: {
           body: withGif,
           ...(readyImage ? { imageMediaId: readyImage.imageId } : {}),
+          ...(clip ? { audioMediaId: clip.audioId } : {}),
         },
       });
       setBody("");
       setImages([]);
+      setClips([]);
       setGif(null);
       setUploaderKey((k) => k + 1);
     } catch (err) {
@@ -71,17 +85,21 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
-    uploaderRef.current?.acceptFiles(Array.from(e.dataTransfer.files));
+    const files = Array.from(e.dataTransfer.files);
+    uploaderRef.current?.acceptFiles(files.filter((f) => f.type.startsWith("image/")));
+    clipUploaderRef.current?.acceptFiles(files.filter((f) => f.type.startsWith("audio/")));
   }
 
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const files = Array.from(e.clipboardData?.files ?? []).filter((f) =>
-      f.type.startsWith("image/"),
-    );
-    if (files.length > 0) uploaderRef.current?.acceptFiles(files);
+    const files = Array.from(e.clipboardData?.files ?? []);
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const audioFiles = files.filter((f) => f.type.startsWith("audio/"));
+    if (imageFiles.length > 0) uploaderRef.current?.acceptFiles(imageFiles);
+    if (audioFiles.length > 0) clipUploaderRef.current?.acceptFiles(audioFiles);
   }
 
   const imageAtLimit = images.length >= 1;
+  const clipAtLimit = clips.length >= MAX_AUDIO_CLIPS_PER_COMMENT;
   const attachItems: AttachMenuItem[] = [
     {
       key: "photo",
@@ -92,6 +110,24 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
       onSelect: () => uploaderRef.current?.openPicker(),
     },
   ];
+  if (isVoiceRecordingSupported()) {
+    attachItems.push({
+      key: "record-voice-clip",
+      icon: "🎙️",
+      label: "Record a voice clip",
+      subtitle: clipAtLimit ? "Already attached" : "Tap to start recording",
+      disabled: clipAtLimit,
+      onSelect: () => clipUploaderRef.current?.startRecording(),
+    });
+  }
+  attachItems.push({
+    key: "upload-audio",
+    icon: "🎵",
+    label: "Upload audio",
+    subtitle: clipAtLimit ? "Already attached" : "Pick an audio file",
+    disabled: clipAtLimit,
+    onSelect: () => clipUploaderRef.current?.openPicker(),
+  });
   if (env.giphyApiKey) {
     attachItems.push({
       key: "gif",
@@ -140,7 +176,7 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
         </div>
       )}
       <ImageUploader
-        key={uploaderKey}
+        key={`image-${uploaderKey}`}
         ref={uploaderRef}
         groupId={groupId}
         cycleId={cycleId}
@@ -149,6 +185,17 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
         maxImages={1}
         onChange={setImages}
         inputLabel="Add a photo"
+      />
+      <VoiceClipUploader
+        key={`audio-${uploaderKey}`}
+        ref={clipUploaderRef}
+        groupId={groupId}
+        cycleId={cycleId}
+        questionId={questionId}
+        purpose="comment"
+        maxClips={MAX_AUDIO_CLIPS_PER_COMMENT}
+        onChange={setClips}
+        inputLabel="Add a voice clip"
       />
       {gif && (
         <div className="flex items-center gap-2 rounded-2xl border border-line bg-cream p-2 text-xs">
@@ -176,7 +223,11 @@ export function CommentComposer({ groupId, cycleId, questionId, responseId }: Pr
         </p>
       )}
       <div className="flex items-center justify-between gap-2">
-        <AttachMenu ref={attachMenuRef} items={attachItems} ariaLabel="Add a photo or GIF" />
+        <AttachMenu
+          ref={attachMenuRef}
+          items={attachItems}
+          ariaLabel="Add a photo, voice clip, or GIF"
+        />
         <button
           type="button"
           onClick={() => void submit()}

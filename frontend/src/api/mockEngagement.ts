@@ -2,7 +2,9 @@ import type { components } from "../types/api";
 import { isValidEmoji, normalizeEmoji } from "../utils/emoji";
 import { findPublishedAnswer } from "./mockNewsletters";
 import {
+  audioRows,
   CALLER_ID,
+  deleteMockAudio,
   deleteMockImage,
   MOCK_IMAGE_DATA_URL,
   fail,
@@ -56,6 +58,18 @@ function mockCommentImage(imageId: string): S["CommentImageResponse"] {
   };
 }
 
+/** The clip the caller uploaded, from its upload row (`mockTransport.ts`); mirrors `mockCommentImage`. */
+function mockCommentAudio(audioId: string): S["PublishedAudioResponse"] {
+  const row = audioRows.get(audioId);
+  return {
+    audioId,
+    url: row?.url ?? "",
+    durationMs: row?.durationMs ?? 3000,
+    peaks: row?.peaks ?? new Array(48).fill(80),
+    caption: row?.caption ?? null,
+  };
+}
+
 function listComments(answer: PublishedAnswer, query: URLSearchParams): S["CommentListResponse"] {
   const limit = query.get("limit");
   let items = [...answer.comments];
@@ -68,8 +82,9 @@ function createComment(answer: PublishedAnswer, body: unknown): S["CommentRespon
   const request = (body ?? {}) as S["CreateCommentRequest"];
   const text = (request.body ?? "").trim();
   const imageMediaId = request.imageMediaId ?? null;
-  if (!text && !imageMediaId) {
-    validationFailed("body", "a comment needs either text or an image");
+  const audioMediaId = request.audioMediaId ?? null;
+  if (!text && !imageMediaId && !audioMediaId) {
+    validationFailed("body", "a comment needs text, an image, or a voice clip");
   }
 
   const comment: S["CommentResponse"] = {
@@ -78,6 +93,7 @@ function createComment(answer: PublishedAnswer, body: unknown): S["CommentRespon
     displayName: "Quinn",
     body: text,
     image: imageMediaId ? mockCommentImage(imageMediaId) : null,
+    audio: audioMediaId ? mockCommentAudio(audioMediaId) : null,
     createdAt: new Date().toISOString(),
     editedAt: null,
     deletedAt: null,
@@ -106,17 +122,27 @@ function patchComment(
         ? null
         : mockCommentImage(request.imageMediaId)
       : comment.image;
-  if (!nextBody && !nextImage) {
-    validationFailed("body", "a comment needs either text or an image");
+  const nextAudio =
+    "audioMediaId" in request
+      ? request.audioMediaId === null || request.audioMediaId === undefined
+        ? null
+        : mockCommentAudio(request.audioMediaId)
+      : comment.audio;
+  if (!nextBody && !nextImage && !nextAudio) {
+    validationFailed("body", "a comment needs text, an image, or a voice clip");
   }
 
-  // Removing or replacing the image releases it, which deletes it for real (D8).
-  const released =
+  // Removing or replacing an attachment releases it, which deletes it for real (D8).
+  const releasedImage =
     comment.image && comment.image.imageId !== nextImage?.imageId ? comment.image.imageId : null;
+  const releasedAudio =
+    comment.audio && comment.audio.audioId !== nextAudio?.audioId ? comment.audio.audioId : null;
   comment.body = nextBody;
   comment.image = nextImage;
+  comment.audio = nextAudio;
   comment.editedAt = new Date().toISOString();
-  if (released) deleteMockImage(released);
+  if (releasedImage) deleteMockImage(releasedImage);
+  if (releasedAudio) deleteMockAudio(releasedAudio);
   return { ...comment };
 }
 
@@ -201,9 +227,11 @@ export function mockEngagementRoute(request: MockRequest): unknown {
           }
           comment.deletedAt = new Date().toISOString();
           comment.body = "";
-          // A deleted comment's image is deleted for real too (`docs/design/engagement.md` §1, D8).
+          // A deleted comment's attachments are deleted for real too (`docs/design/engagement.md` §1, D8).
           if (comment.image) deleteMockImage(comment.image.imageId);
+          if (comment.audio) deleteMockAudio(comment.audio.audioId);
           comment.image = null;
+          comment.audio = null;
         }
         return undefined;
       }

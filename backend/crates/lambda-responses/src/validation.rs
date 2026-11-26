@@ -1,7 +1,9 @@
 //! Request validation for response saves (`docs/design/api.md` §7.3).
 
-use domain::{ApiError, ApiErrorCode, ImageId, LockedQuestion, PollOptionId};
-use shared::config::{MAX_IMAGES_PER_RESPONSE, MAX_RESPONSE_BODY_CHARS};
+use domain::{ApiError, ApiErrorCode, AudioId, ImageId, LockedQuestion, PollOptionId};
+use shared::config::{
+    MAX_AUDIO_CLIPS_PER_RESPONSE, MAX_IMAGES_PER_RESPONSE, MAX_RESPONSE_BODY_CHARS,
+};
 use std::collections::HashSet;
 
 /// Body length, counted in chars (not bytes) — 0 to `MAX_RESPONSE_BODY_CHARS`.
@@ -29,6 +31,27 @@ pub fn dedupe_image_ids(ids: Vec<ImageId>) -> Result<Vec<ImageId>, ApiError> {
         return Err(ApiError::new(
             ApiErrorCode::ImageLimitExceeded,
             format!("at most {MAX_IMAGES_PER_RESPONSE} images may be attached to a response"),
+        ));
+    }
+    Ok(deduped)
+}
+
+/// Deduplicates `audioMediaIds` (preserving first-seen order) and caps the
+/// result at `MAX_AUDIO_CLIPS_PER_RESPONSE`, mirroring [`dedupe_image_ids`].
+pub fn dedupe_audio_ids(ids: Vec<AudioId>) -> Result<Vec<AudioId>, ApiError> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    let mut deduped = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.clone()) {
+            deduped.push(id);
+        }
+    }
+    if deduped.len() > MAX_AUDIO_CLIPS_PER_RESPONSE {
+        return Err(ApiError::new(
+            ApiErrorCode::AudioLimitExceeded,
+            format!(
+                "at most {MAX_AUDIO_CLIPS_PER_RESPONSE} voice clips may be attached to a response"
+            ),
         ));
     }
     Ok(deduped)
@@ -110,6 +133,22 @@ mod tests {
             .collect();
         let err = dedupe_image_ids(ids).expect_err("over the cap");
         assert_eq!(err.code, ApiErrorCode::ImageLimitExceeded);
+    }
+
+    #[test]
+    fn duplicate_audio_ids_are_removed() {
+        let ids = vec![AudioId::new("a1"), AudioId::new("a1"), AudioId::new("a2")];
+        let deduped = dedupe_audio_ids(ids).unwrap();
+        assert_eq!(deduped, vec![AudioId::new("a1"), AudioId::new("a2")]);
+    }
+
+    #[test]
+    fn too_many_distinct_audio_ids_is_rejected() {
+        let ids: Vec<AudioId> = (0..MAX_AUDIO_CLIPS_PER_RESPONSE + 1)
+            .map(|i| AudioId::new(format!("a{i}")))
+            .collect();
+        let err = dedupe_audio_ids(ids).expect_err("over the cap");
+        assert_eq!(err.code, ApiErrorCode::AudioLimitExceeded);
     }
 
     #[test]

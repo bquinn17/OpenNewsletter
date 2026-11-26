@@ -9,8 +9,14 @@ import { Avatar } from "../ui/Avatar";
 import { MediaImage } from "../ui/MediaImage";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ImageUploader, type UploaderImage } from "../responses/ImageUploader";
-import { PERMANENT_IMAGE_DELETE_MESSAGE } from "../../utils/permanentDelete";
+import { VoiceClipUploader, type UploaderClip } from "../responses/VoiceClipUploader";
+import {
+  PERMANENT_AUDIO_DELETE_MESSAGE,
+  PERMANENT_IMAGE_DELETE_MESSAGE,
+} from "../../utils/permanentDelete";
+import { MAX_AUDIO_CLIPS_PER_COMMENT } from "../../utils/voiceClip";
 import { MAX_BODY_CHARS } from "./commentFormatting";
+import { VoiceClip } from "./VoiceClip";
 
 type S = components["schemas"];
 type Comment = S["CommentResponse"];
@@ -46,9 +52,12 @@ export function CommentRow({
   const [editing, setEditing] = useState(false);
   const [draftBody, setDraftBody] = useState(comment.body);
   const [draftImages, setDraftImages] = useState<UploaderImage[]>([]);
+  const [draftClips, setDraftClips] = useState<UploaderClip[]>([]);
   const [imageRemoved, setImageRemoved] = useState(false);
+  const [audioRemoved, setAudioRemoved] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmImageRelease, setConfirmImageRelease] = useState(false);
+  const [confirmAudioRelease, setConfirmAudioRelease] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const editComment = useEditComment(groupId, cycleId, questionId);
@@ -60,7 +69,9 @@ export function CommentRow({
   function startEdit() {
     setDraftBody(comment.body);
     setDraftImages([]);
+    setDraftClips([]);
     setImageRemoved(false);
+    setAudioRemoved(false);
     setError(null);
     setEditing(true);
   }
@@ -68,16 +79,22 @@ export function CommentRow({
   function saveEdit() {
     const trimmed = draftBody.trim();
     const readyImage = draftImages.find((img) => img.status === "ready");
+    const clip = draftClips[0];
     const keepsExistingImage = !!comment.image && !imageRemoved;
-    if (!trimmed && !readyImage && !keepsExistingImage) {
-      setError("Add some text or an image.");
+    const keepsExistingAudio = !!comment.audio && !audioRemoved;
+    if (!trimmed && !readyImage && !keepsExistingImage && !clip && !keepsExistingAudio) {
+      setError("Add some text, an image, or a voice clip.");
       return;
     }
     setError(null);
-    // Removing or replacing the attached image deletes it for real once the
-    // edit commits (`docs/design/engagement.md` §1, D8), so confirm that first.
+    // Removing or replacing an attachment deletes it for real once the edit commits
+    // (`docs/design/engagement.md` §1, D8), so confirm that first.
     if (comment.image && (imageRemoved || readyImage)) {
       setConfirmImageRelease(true);
+      return;
+    }
+    if (comment.audio && (audioRemoved || clip)) {
+      setConfirmAudioRelease(true);
       return;
     }
     void commitEdit();
@@ -85,21 +102,24 @@ export function CommentRow({
 
   async function commitEdit() {
     setConfirmImageRelease(false);
+    setConfirmAudioRelease(false);
     const trimmed = draftBody.trim();
     const readyImage = draftImages.find((img) => img.status === "ready");
+    const clip = draftClips[0];
     try {
       await editComment.mutateAsync({
         responseId,
         commentId: comment.commentId,
         body: {
           body: trimmed,
-          // A freshly uploaded image wins: "Remove image" is how the author
-          // gets to the uploader to replace one, so it implies a swap.
+          // A freshly uploaded image/clip wins: "Remove" is how the author gets to the uploader
+          // to replace one, so it implies a swap.
           ...(readyImage
             ? { imageMediaId: readyImage.imageId }
             : imageRemoved
               ? { imageMediaId: null }
               : {}),
+          ...(clip ? { audioMediaId: clip.audioId } : audioRemoved ? { audioMediaId: null } : {}),
         },
       });
       setEditing(false);
@@ -208,6 +228,30 @@ export function CommentRow({
                   />
                 </div>
               )}
+              {comment.audio && !audioRemoved ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-inkmuted">Voice clip attached</span>
+                  <button
+                    type="button"
+                    onClick={() => setAudioRemoved(true)}
+                    disabled={busy}
+                    className="text-xs font-semibold text-coral disabled:opacity-50"
+                  >
+                    Remove clip
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <VoiceClipUploader
+                    groupId={groupId}
+                    cycleId={cycleId}
+                    questionId={questionId}
+                    purpose="comment"
+                    maxClips={MAX_AUDIO_CLIPS_PER_COMMENT}
+                    onChange={setDraftClips}
+                  />
+                </div>
+              )}
               {error && (
                 <p role="alert" className="mt-1 text-xs font-semibold text-coral">
                   {error}
@@ -257,6 +301,17 @@ export function CommentRow({
                   />
                 </a>
               )}
+              {comment.audio && (
+                <VoiceClip
+                  audioId={comment.audio.audioId}
+                  url={comment.audio.url}
+                  durationMs={comment.audio.durationMs}
+                  peaks={comment.audio.peaks}
+                  caption={comment.audio.caption}
+                  authorName={comment.displayName}
+                  colorClassName={avatarColorClassName}
+                />
+              )}
             </>
           )}
         </div>
@@ -268,7 +323,9 @@ export function CommentRow({
         message={
           comment.image
             ? "This can't be undone. This also permanently deletes the attached image. It can't be recovered."
-            : "This can't be undone."
+            : comment.audio
+              ? "This can't be undone. This also permanently deletes the attached voice clip. It can't be recovered."
+              : "This can't be undone."
         }
         confirmLabel="Delete"
         tone="danger"
@@ -286,6 +343,17 @@ export function CommentRow({
         busy={editComment.isPending}
         onConfirm={() => void commitEdit()}
         onCancel={() => setConfirmImageRelease(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmAudioRelease}
+        title="Delete the attached voice clip?"
+        message={PERMANENT_AUDIO_DELETE_MESSAGE}
+        confirmLabel="Delete clip and save"
+        tone="danger"
+        busy={editComment.isPending}
+        onConfirm={() => void commitEdit()}
+        onCancel={() => setConfirmAudioRelease(false)}
       />
     </div>
   );

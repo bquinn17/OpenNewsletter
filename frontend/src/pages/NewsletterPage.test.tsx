@@ -129,6 +129,7 @@ describe("NewsletterPage", () => {
             status: "published",
             body: "My answer",
             imageMediaIds: [],
+            audioMediaIds: [],
             updatedAt: "2026-06-02T00:00:00Z",
             publishedAt: "2026-06-02T00:00:00Z",
           },
@@ -155,6 +156,7 @@ describe("NewsletterPage", () => {
       status: "draft" as const,
       body,
       imageMediaIds: [],
+      audioMediaIds: [],
       updatedAt: "2026-06-02T00:00:00Z",
       publishedAt: null,
     });
@@ -232,6 +234,7 @@ describe("NewsletterPage", () => {
               displayName: "Quinn",
               body: "All good here.",
               images: [],
+              audio: [],
               publishedAt: "2026-06-05T00:00:01Z",
               comments: [],
               reactionGroups: [],
